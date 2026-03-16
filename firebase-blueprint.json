@@ -1,0 +1,176 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "A product available in the restaurant",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "price": { "type": "number" },
+        "cost": { "type": "number" },
+        "stock": { "type": "number" },
+        "barcode": { "type": "string" },
+        "image": { "type": "string" },
+        "isPromotional": { "type": "boolean" },
+        "promoPrice": { "type": "number" },
+        "displayOrder": { "type": "number" }
+      },
+      "required": ["id", "name", "category", "price", "cost", "stock"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "A customer order",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tableNumber": { "type": "number" },
+        "type": { "type": "string", "enum": ["table", "delivery", "takeout"] },
+        "status": { "type": "string" },
+        "total": { "type": "number" },
+        "deliveryFee": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "customerAddress": { "type": "string" },
+        "courierId": { "type": "string" },
+        "customerId": { "type": "string" },
+        "paymentMethod": { "type": "string" },
+        "isFiscalIssued": { "type": "boolean" },
+        "fiscalKey": { "type": "string" },
+        "customerDocument": { "type": "string" },
+        "wantsFiscalCoupon": { "type": "boolean" },
+        "changeFor": { "type": "number" }
+      },
+      "required": ["id", "type", "status", "total", "createdAt"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "A regular customer",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "document": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "address": { "type": "string" },
+        "balance": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "document", "phone", "balance", "createdAt"]
+    },
+    "FinancialRecord": {
+      "title": "Financial Record",
+      "description": "An income or expense record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["income", "expense"] },
+        "amount": { "type": "number" },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["pending", "paid"] }
+      },
+      "required": ["id", "type", "amount", "category", "description", "date"]
+    },
+    "User": {
+      "title": "User",
+      "description": "A system user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenantId": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "email", "role", "status", "createdAt"]
+    },
+    "Tenant": {
+      "title": "Tenant",
+      "description": "A SaaS customer (restaurant/business)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "ownerId", "active", "createdAt"]
+    },
+    "AuditLog": {
+      "title": "Audit Log",
+      "description": "A log of system actions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userRole": { "type": "string" },
+        "action": { "type": "string" },
+        "description": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "userName", "userRole", "action", "description", "timestamp"]
+    },
+    "RawMaterial": {
+      "title": "Raw Material",
+      "description": "Ingredients and supplies",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "unit": { "type": "string" },
+        "currentStock": { "type": "number" },
+        "minStock": { "type": "number" },
+        "costPerUnit": { "type": "number" },
+        "category": { "type": "string" }
+      },
+      "required": ["id", "name", "unit", "currentStock", "minStock", "costPerUnit", "category"]
+    },
+    "CashClosingReport": {
+      "title": "Cash Closing Report",
+      "description": "Report generated when closing the cash register",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "openedAt": { "type": "string", "format": "date-time" },
+        "closedAt": { "type": "string", "format": "date-time" },
+        "openingValue": { "type": "number" },
+        "expectedValue": { "type": "number" },
+        "actualValue": { "type": "number" },
+        "difference": { "type": "number" },
+        "totalSales": { "type": "number" },
+        "closedBy": { "type": "string" }
+      },
+      "required": ["id", "openedAt", "closedAt", "openingValue", "expectedValue", "actualValue", "difference", "totalSales", "closedBy"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Global application settings",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" }
+      },
+      "required": ["id"]
+    }
+  },
+  "firestore": {
+    "products": { "schema": "Product", "description": "Collection of products" },
+    "orders": { "schema": "Order", "description": "Collection of orders" },
+    "customers": { "schema": "Customer", "description": "Collection of customers" },
+    "financialRecords": { "schema": "FinancialRecord", "description": "Collection of financial records" },
+    "users": { "schema": "User", "description": "Collection of users" },
+    "auditLogs": { "schema": "AuditLog", "description": "Collection of audit logs" },
+    "rawMaterials": { "schema": "RawMaterial", "description": "Collection of raw materials" },
+    "cashClosings": { "schema": "CashClosingReport", "description": "Collection of cash closings" },
+    "settings": { "schema": "Settings", "description": "Global settings" },
+    "tenants": { "schema": "Tenant", "description": "Collection of SaaS tenants" }
+  }
+}

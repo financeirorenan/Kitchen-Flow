@@ -1,0 +1,7 @@
+{
+  "name": "GastroAI POS - Gestão Inteligente para Restaurantes",
+  "description": "Sistema completo de PDV para bares e restaurantes com IA integrada para análise de CMV, gestão de mesas, KDS, estoque e entregas.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
