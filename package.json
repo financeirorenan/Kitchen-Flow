@@ -4,22 +4,41 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "tsx server.ts",
     "build": "vite build",
     "lint": "tsc",
     "preview": "vite preview"
   },
   "dependencies": {
     "@google/genai": "^1.35.0",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node-forge": "^1.3.14",
+    "@types/xml-crypto": "^1.4.6",
+    "@vis.gl/react-google-maps": "^1.8.3",
+    "axios": "^1.14.0",
+    "cors": "^2.8.6",
     "dexie": "^4.0.1",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
     "firebase": "^12.10.0",
+    "framer-motion": "^12.38.0",
     "lucide-react": "^0.562.0",
+    "motion": "^12.38.0",
+    "node-forge": "^1.4.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
-    "recharts": "^3.6.0"
+    "react-router-dom": "^7.3.0",
+    "recharts": "^3.6.0",
+    "tsx": "^4.21.0",
+    "xml-crypto": "^6.1.2",
+    "xmlbuilder2": "^4.0.3"
   },
   "devDependencies": {
+    "@types/google.maps": "^3.65.0",
     "@types/node": "^22.14.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"

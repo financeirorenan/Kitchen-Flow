@@ -1,7 +1,6 @@
 {
-  "name": "GastroAI POS - Gestão Inteligente para Restaurantes",
+  "name": "KitchenFlow AI",
   "description": "Sistema completo de PDV para bares e restaurantes com IA integrada para análise de CMV, gestão de mesas, KDS, estoque e entregas.",
-  "requestFramePermissions": [
-    "camera"
-  ]
+  "requestFramePermissions": ["geolocation", "usb"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -1,9 +1,9 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, memo } from 'react';
 import { getManagerInsights } from '../services/gemini';
 import { Brain, Sparkles, TrendingUp, AlertTriangle } from 'lucide-react';
 
-const AIInsights: React.FC<{ sales: any; inventory: any }> = ({ sales, inventory }) => {
+const AIInsights: React.FC<{ sales: any; inventory: any }> = memo(({ sales, inventory }) => {
   const [insights, setInsights] = useState<string>('');
   const [loading, setLoading] = useState(true);
 
@@ -69,6 +69,6 @@ const AIInsights: React.FC<{ sales: any; inventory: any }> = ({ sales, inventory
       </div>
     </div>
   );
-};
+});
 
 export default AIInsights;

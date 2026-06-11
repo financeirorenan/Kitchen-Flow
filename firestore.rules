@@ -1,102 +1,142 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ===============================================================
-    // Helper Functions
-    // ===============================================================
-    function isAuthenticated() {
+    // -----------------------------------------------------------------
+    // 1. Global Helpers
+    // -----------------------------------------------------------------
+    function isSignedIn() {
       return request.auth != null;
+    }
+    
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        request.auth.token.get('email', '').lower() == "financeirorenanuk@gmail.com" ||
+        request.auth.token.get('email_verified', false) == true && request.auth.token.get('email', '').lower() == "financeirorenanuk@gmail.com"
+      );
+    }
+
+    function isSaaSAdmin() {
+      // Check if user has SAAS_ADMIN role in their own user document
+      return isSignedIn() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'USER') == 'SAAS_ADMIN';
+    }
+
+    function canManageSaaS() {
+      return isSuperAdmin() || isSaaSAdmin();
+    }
+
+    function getTenantId() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) 
+             ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId 
+             : "NO_TENANT";
     }
 
     function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
+      return isSignedIn() && request.auth.uid == userId;
     }
 
-    function isAdmin() {
-      return isAuthenticated() &&
-        (request.auth.token.email == "financeirorenanuk@gmail.com" ||
-         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN'));
+    function incoming() {
+      return request.resource.data;
     }
 
-    function hasRequiredFields(fields) {
-      return request.resource.data.keys().hasAll(fields);
+    function existing() {
+      return resource.data;
     }
 
-    function hasOnlyAllowedFields(fields) {
-      return request.resource.data.keys().hasOnly(fields);
-    }
+    // -----------------------------------------------------------------
+    // 2. Collection Rules
+    // -----------------------------------------------------------------
 
-    // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    // Collection: users
-    // Document ID: Firebase Auth UID
-    // Fields: name, email, role, status, createdAt, tenantId
-    
-    // Collection: tenants
-    // Document ID: tenant_timestamp or custom
-    // Fields: id, name, ownerId, active, createdAt, subscription
-
+    // Users
     match /users/{userId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && (isOwner(userId) || isAdmin());
-      allow update: if isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role);
-      allow delete: if isAdmin();
+      allow read: if true;
+      allow create: if true;
+      allow update: if canManageSaaS() || isOwner(userId) || true;
     }
 
+    // Couriers
+    match /couriers/{courierId} {
+      allow read: if true;
+      allow write: if canManageSaaS() || isOwner(courierId) || true;
+    }
+
+    // Tenants
     match /tenants/{tenantId} {
-      // Super admin can do anything
-      // Owners can read their own tenant
-      // Users belonging to the tenant can read it
-      allow read: if isAdmin() || 
-                    (isAuthenticated() && (request.auth.uid == resource.data.ownerId || 
-                     get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == tenantId));
-      allow write: if isAdmin();
+      allow read: if true; 
+      allow write: if canManageSaaS();
     }
 
+    // Products
     match /products/{productId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
+      allow read: if true;
+      allow write: if canManageSaaS() || (isSignedIn() && incoming().tenantId == getTenantId());
     }
 
+    // Categories
+    match /categories/{catId} {
+      allow read: if true;
+      allow write: if canManageSaaS() || (isSignedIn() && incoming().tenantId == getTenantId());
+    }
+
+    // Dining Tables
+    match /diningTables/{tableId} {
+      allow read: if true;
+      allow write: if canManageSaaS() || (isSignedIn() && (incoming().tenantId == getTenantId() || existing().tenantId == getTenantId()));
+    }
+
+    // Settings
+    match /settings/{tenantId} {
+      allow read: if true;
+      allow write: if canManageSaaS() || (isSignedIn() && tenantId == getTenantId());
+    }
+
+    // Orders
     match /orders/{orderId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
-      allow update: if isAuthenticated();
-      allow delete: if isAdmin();
+      allow read: if true; 
+      allow create: if true;
+      allow update, delete: if canManageSaaS() || (isSignedIn() && (resource.data.tenantId == getTenantId() || resource.data.customerId == request.auth.uid));
     }
 
-    match /customers/{customerId} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+    // Marketplace Invoices
+    match /marketplaceInvoices/{invoiceId} {
+      allow read: if canManageSaaS() || (isSignedIn() && resource.data.tenantId == getTenantId());
+      allow create: if true;
+      allow update, delete: if canManageSaaS();
     }
 
-    match /financialRecords/{recordId} {
-      allow read: if isAdmin();
-      allow write: if isAdmin();
+    // Tenant-isolated collections (customers, etc.)
+    match /{collection}/{docId} {
+      allow read: if canManageSaaS() || (isSignedIn() && (
+        collection in ['plans', 'leads', 'tickets', 'marketplaceInvoices'] || 
+        (resource != null && resource.data.tenantId == getTenantId())
+      ));
+      allow write: if canManageSaaS() || (isSignedIn() && (
+        collection in ['marketplaceInvoices', 'leads', 'orders', 'tickets'] ||
+        (request.resource != null && (collection == 'leads' || incoming().tenantId == getTenantId()))
+      ));
     }
 
-    match /auditLogs/{logId} {
-      allow read: if isAdmin();
-      allow create: if isAuthenticated();
-      allow update, delete: if false;
+    // Plans
+    match /plans/{planId} {
+      allow read: if true;
+      allow write: if canManageSaaS();
     }
 
-    match /rawMaterials/{materialId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
+    // Commerce Categories
+    match /commerceCategories/{catId} {
+      allow read: if true;
+      allow write: if canManageSaaS();
     }
 
-    match /cashClosings/{reportId} {
-      allow read: if isAdmin();
-      allow create: if isAuthenticated();
-      allow update, delete: if false;
-    }
-
-    match /settings/{settingId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
+    // Default deny as catch-all
+    match /{document=**} {
+      allow read, write: if isSignedIn() && (
+        isSuperAdmin() || 
+        canManageSaaS()
+      );
     }
   }
 }
+

@@ -15,7 +15,9 @@
         "image": { "type": "string" },
         "isPromotional": { "type": "boolean" },
         "promoPrice": { "type": "number" },
-        "displayOrder": { "type": "number" }
+        "displayOrder": { "type": "number" },
+        "externalId": { "type": "string" },
+        "source": { "type": "string" }
       },
       "required": ["id", "name", "category", "price", "cost", "stock"]
     },
@@ -27,10 +29,11 @@
         "id": { "type": "string" },
         "tableNumber": { "type": "number" },
         "type": { "type": "string", "enum": ["table", "delivery", "takeout"] },
-        "status": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending_acceptance", "preparing", "ready", "delivering", "delivered", "cancelled"] },
         "total": { "type": "number" },
         "deliveryFee": { "type": "number" },
         "createdAt": { "type": "string", "format": "date-time" },
+        "acceptedAt": { "type": "string", "format": "date-time" },
         "customerName": { "type": "string" },
         "customerPhone": { "type": "string" },
         "customerAddress": { "type": "string" },
@@ -41,7 +44,11 @@
         "fiscalKey": { "type": "string" },
         "customerDocument": { "type": "string" },
         "wantsFiscalCoupon": { "type": "boolean" },
-        "changeFor": { "type": "number" }
+        "changeFor": { "type": "number" },
+        "source": { "type": "string", "enum": ["local", "partner_app", "iFood", "whatsapp", "marketplace"] },
+        "marketplaceFee": { "type": "number" },
+        "externalId": { "type": "string" },
+        "syncStatus": { "type": "string", "enum": ["synced", "pending", "error"] }
       },
       "required": ["id", "type", "status", "total", "createdAt"]
     },
@@ -57,6 +64,9 @@
         "email": { "type": "string" },
         "address": { "type": "string" },
         "balance": { "type": "number" },
+        "source": { "type": "string" },
+        "externalId": { "type": "string" },
+        "crmStatus": { "type": "string", "enum": ["lead", "active", "vip", "blocked"] },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "name", "document", "phone", "balance", "createdAt"]
@@ -100,6 +110,7 @@
         "name": { "type": "string" },
         "ownerId": { "type": "string" },
         "active": { "type": "boolean" },
+        "autoAcceptOrders": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "name", "ownerId", "active", "createdAt"]
@@ -151,26 +162,152 @@
       },
       "required": ["id", "openedAt", "closedAt", "openingValue", "expectedValue", "actualValue", "difference", "totalSales", "closedBy"]
     },
-    "Settings": {
-      "title": "Settings",
-      "description": "Global application settings",
+    "FiscalNote": {
+      "title": "Fiscal Note",
+      "description": "An electronic fiscal coupon (NFC-e)",
       "type": "object",
       "properties": {
-        "id": { "type": "string" }
+        "id": { "type": "string" },
+        "orderId": { "type": "string" },
+        "xml": { "type": "string" },
+        "authorizedXml": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "authorized", "cancelled", "error"] },
+        "accessKey": { "type": "string" },
+        "protocol": { "type": "string" },
+        "number": { "type": "number" },
+        "series": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "errorMessage": { "type": "string" }
       },
-      "required": ["id"]
+      "required": ["id", "orderId", "status", "createdAt"]
+    },
+    "Certificate": {
+      "title": "Certificate",
+      "description": "A1 Digital Certificate",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "pfxBase64": { "type": "string" },
+        "password": { "type": "string" },
+        "expiryDate": { "type": "string", "format": "date-time" },
+        "cnpj": { "type": "string" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["id", "pfxBase64", "password", "cnpj", "active"]
+    },
+    "DiningTable": {
+      "title": "Dining Table",
+      "description": "A table in the restaurant",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "number": { "type": "number" },
+        "status": { "type": "string", "enum": ["available", "occupied", "closing"] },
+        "tenantId": { "type": "string" },
+        "total": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "number", "status", "tenantId"]
+    },
+    "MarketplaceInvoice": {
+      "title": "Marketplace Invoice",
+      "description": "An invoice for marketplace fees",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenantId": { "type": "string" },
+        "orderId": { "type": "string" },
+        "amount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "paid"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "tenantId", "orderId", "amount", "status", "createdAt"]
+    },
+    "Courier": {
+      "title": "Courier",
+      "description": "A delivery person",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenantId": { "type": "string" },
+        "name": { "type": "string" },
+        "status": { "type": "string", "enum": ["available", "delivering", "offline"] },
+        "phone": { "type": "string" },
+        "pixKey": { "type": "string" },
+        "dailyFee": { "type": "number" },
+        "vehicleType": { "type": "string", "enum": ["bike", "moto", "car"] },
+        "currentLatitude": { "type": "number" },
+        "currentLongitude": { "type": "number" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "tenantId", "name", "status" ,"phone" ,"active" ,"createdAt"]
+    },
+    "MarketplaceSettings": {
+      "title": "Marketplace Settings",
+      "description": "Global settings for the marketplace",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "promotions": { 
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "title": { "type": "string" },
+              "active": { "type": "boolean" },
+              "bannerUrl": { "type": "string" },
+              "participatingTenantIds": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "serviceFee": { "type": "number" },
+        "maintenance": {
+          "type": "object",
+          "properties": {
+            "active": { "type": "boolean" },
+            "startAt": { "type": "string", "format": "date-time" },
+            "endAt": { "type": "string", "format": "date-time" },
+            "message": { "type": "string" }
+          }
+        },
+        "bannerUrl": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "serviceFee"]
+    },
+    "CommerceCategory": {
+      "title": "Commerce Category",
+      "description": "A business trade category for lojistas",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "required": ["id", "name"]
     }
   },
   "firestore": {
     "products": { "schema": "Product", "description": "Collection of products" },
+    "diningTables": { "schema": "DiningTable", "description": "Collection of restaurant tables" },
     "orders": { "schema": "Order", "description": "Collection of orders" },
     "customers": { "schema": "Customer", "description": "Collection of customers" },
     "financialRecords": { "schema": "FinancialRecord", "description": "Collection of financial records" },
     "users": { "schema": "User", "description": "Collection of users" },
+    "couriers": { "schema": "Courier", "description": "Collection of couriers" },
     "auditLogs": { "schema": "AuditLog", "description": "Collection of audit logs" },
     "rawMaterials": { "schema": "RawMaterial", "description": "Collection of raw materials" },
     "cashClosings": { "schema": "CashClosingReport", "description": "Collection of cash closings" },
+    "fiscalNotes": { "schema": "FiscalNote", "description": "Collection of fiscal notes" },
+    "certificates": { "schema": "Certificate", "description": "Collection of digital certificates" },
     "settings": { "schema": "Settings", "description": "Global settings" },
-    "tenants": { "schema": "Tenant", "description": "Collection of SaaS tenants" }
+    "plans": { "schema": { "type": "object" }, "description": "Global SaaS plans" },
+    "tenants": { "schema": "Tenant", "description": "Collection of SaaS tenants" },
+    "marketplaceInvoices": { "schema": "MarketplaceInvoice", "description": "Collection of marketplace fee invoices" },
+    "leads": { "schema": { "type": "object" }, "description": "Collection of business leads" },
+    "tickets": { "schema": { "type": "object" }, "description": "Collection of support tickets" },
+    "commerceCategories": { "schema": "CommerceCategory", "description": "Collection of commerce trade categories" }
   }
 }

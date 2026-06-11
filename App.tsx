@@ -1,5 +1,6 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { maskPhone, maskCPF, maskCEP } from './utils/masks';
 import Sidebar from './components/Sidebar';
 import Tables from './components/Tables';
 import KDS from './components/KDS';
@@ -14,21 +15,35 @@ import DigitalMenuConfig from './components/DigitalMenuConfig';
 import AdminSettingsComponent from './components/AdminSettings';
 import CustomersPanel from './components/CustomersPanel';
 import SaaSAdmin from './components/SaaSAdmin';
+import KitchenflowWebsite from './components/KitchenflowWebsite';
+import PartnerHub from './components/PartnerHub';
+import SupportView from './components/SupportView';
+import Marketplace from './components/Marketplace';
+import CourierApp from './components/CourierApp';
+import IntelligentReports from './components/IntelligentReports';
+import LojistaCopilot from './components/LojistaCopilot';
 import { db as localDb } from './services/db';
 import { auth, db } from './firebase';
+import { handlePrintOrder } from './services/printService';
 import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
-import { doc, getDoc, setDoc, collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
+import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, onSnapshot, query, where, orderBy, limit, addDoc, writeBatch } from 'firebase/firestore';
+import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import Login from './components/Login';
+import { UserProfileModal } from './components/UserProfileModal';
+import { PrintPreviewModal } from './components/PrintPreviewModal';
 import { 
   INITIAL_PRODUCTS, 
   INITIAL_TABLES, 
   INITIAL_COURIERS,
   INITIAL_USERS,
   INITIAL_AUDIT_LOGS,
+  INITIAL_RAW_MATERIALS,
   ROLE_DEFAULT_PERMISSIONS as INITIAL_ROLE_PERMISSIONS
 } from './constants';
-import { Product, Table, Order, Courier, FinancialRecord, User, UserRole, AuditLog, Permission, OrderItem, PaymentMethod, PriceHistory, DigitalMenuSettings, AdminSettings, Customer, CustomerTransaction, RawMaterial, CashClosingReport, Tenant } from './types';
+import { Product, Table, Order, OrderStatus, Courier, FinancialRecord, User, UserRole, UserPreset, AuditLog, Permission, OrderItem, PaymentMethod, PriceHistory, DigitalMenuSettings, AdminSettings, Customer, CustomerTransaction, RawMaterial, CashClosingReport, Tenant, BankAccount } from './types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
+import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
+import { compressImage } from './lib/imageUtils';
 import { 
   BarChart as BarChartIcon,
   Plus, 
@@ -40,13 +55,25 @@ import {
   X as CloseIcon, 
   Smartphone, 
   ShoppingBag, 
+  Shield,
   MessageCircle, 
   UserCircle, 
   Store, 
   Database, 
   Menu, 
   X,
-  XCircle
+  XCircle,
+  Lock,
+  AlertTriangle,
+  CheckCircle2,
+  AlertCircle,
+  Cloud,
+  ArrowUpRight,
+  ArrowDownLeft,
+  Wallet,
+  TrendingUp,
+  Utensils,
+  Bike
 } from 'lucide-react';
 
 interface CashSession {
@@ -55,12 +82,175 @@ interface CashSession {
   openedAt: Date | null;
 }
 
+const ALL_MODULES: { id: Permission; label: string }[] = [
+  { id: 'dashboard_view', label: 'Painel AI' },
+  { id: 'pos_access', label: 'Vendas PDV' },
+  { id: 'marketplace_manage', label: 'Marketplace Nova' },
+  { id: 'tables_manage', label: 'Mesas / Comandas' },
+  { id: 'kds_view', label: 'Monitor de Pedidos (KDS)' },
+  { id: 'delivery_manage', label: 'Painel de Entregas' },
+  { id: 'digital_menu_manage', label: 'Cardápio Digital' },
+  { id: 'customers_manage', label: 'Gestão de Clientes / Fiado' },
+  { id: 'inventory_edit', label: 'Controle de Estoque' },
+  { id: 'finance_view', label: 'Gestão Financeira' },
+  { id: 'cmv_analysis', label: 'Análise de CMV' },
+  { id: 'users_manage', label: 'Gestão de Equipe' },
+  { id: 'admin_settings_manage', label: 'Configurações do Sistema' },
+  { id: 'fiscal_manage', label: 'Gestão Fiscal' },
+  { id: 'courier_app_access', label: 'Rastreio de Entregadores' },
+];
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  }
+}
+
+const STATUS_PRIORITY: Record<string, number> = {
+  'pending': 1,
+  'preparing': 2,
+  'ready': 3,
+  'delivering': 4,
+  'delivered': 5,
+  'finished': 6, // Finished is the ultimate terminal state
+  'cancelled': 0
+};
+
+const handleFirestoreError = (error: unknown, operationType: OperationType, path: string | null) => {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: null, // Would need more context to get from state easily here
+      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+        providerId: provider.providerId,
+        email: provider.email,
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  return errInfo;
+};
+
+const convertTimestamps = (obj: any): any => {
+  if (obj === null || typeof obj !== 'object') return obj;
+  
+  if (obj instanceof Date) return obj;
+
+  // This handles Firestore Timestamps
+  if (typeof obj.toDate === 'function') {
+    return obj.toDate();
+  }
+  
+  if (Array.isArray(obj)) {
+    return obj.map(convertTimestamps);
+  }
+
+  const newObj: any = {};
+  Object.keys(obj).forEach(key => {
+    newObj[key] = convertTimestamps(obj[key]);
+  });
+  return newObj;
+};
+
+const cleanObject = (obj: any): any => {
+  if (obj === null || typeof obj !== 'object') return obj;
+  if (obj instanceof Date) return obj;
+  if (Array.isArray(obj)) return obj.map(cleanObject);
+
+  const newObj: any = {};
+  Object.keys(obj).forEach(key => {
+    const val = obj[key];
+    if (val !== undefined) {
+      newObj[key] = cleanObject(val);
+    }
+  });
+  return newObj;
+};
+
 const App: React.FC = () => {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [currentUserData, setCurrentUserData] = useState<User | null>(null);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  
+  const [quotaExceeded, setQuotaExceeded] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  const [activePrintJob, setActivePrintJob] = useState<{
+    order: Partial<Order>;
+    settings: AdminSettings;
+    html: string;
+    rawText: string;
+    isFiscal: boolean;
+  } | null>(null);
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  useEffect(() => {
+    const handlePrintNotification = (e: Event) => {
+      const customEvent = e as CustomEvent<{ message: string; type: 'success' | 'error' | 'info' }>;
+      if (customEvent.detail) {
+        showToast(customEvent.detail.message, customEvent.detail.type || 'success');
+      }
+    };
+    
+    const handleShowPrintModal = (e: Event) => {
+      const customEvent = e as CustomEvent<{
+        order: Partial<Order>;
+        settings: AdminSettings;
+        html: string;
+        rawText: string;
+        isFiscal: boolean;
+      }>;
+      if (customEvent.detail) {
+        setActivePrintJob(customEvent.detail);
+        setIsPrintModalOpen(true);
+      }
+    };
+
+    window.addEventListener('gastroai-print-notifier', handlePrintNotification);
+    window.addEventListener('gastroai-show-print-modal', handleShowPrintModal);
+    
+    return () => {
+      window.removeEventListener('gastroai-print-notifier', handlePrintNotification);
+      window.removeEventListener('gastroai-show-print-modal', handleShowPrintModal);
+    };
+  }, []);
+
   const [isDbLoaded, setIsDbLoaded] = useState(false);
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [pdvEditOrder, setPdvEditOrder] = useState<Order | null>(null);
+  const [returnToTab, setReturnToTab] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState('merchant-copilot');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [tables, setTables] = useState<Table[]>([]);
@@ -76,25 +266,178 @@ const App: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
   const [cashClosings, setCashClosings] = useState<CashClosingReport[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [productCategories, setProductCategories] = useState<string[]>(['Entradas', 'Buffet', 'Pratos Principais', 'Lanches', 'Batatas Recheadas', 'Pasteis', 'Bebidas']);
+  const [rawMaterialCategories, setRawMaterialCategories] = useState<string[]>(['Proteínas', 'Hortifruti', 'Laticínios', 'Grãos', 'Bebidas', 'Embalagens', 'Limpeza', 'Outros']);
   const [cashSession, setCashSession] = useState<CashSession>({ isOpen: false, openingValue: 0, openedAt: null });
+  const lastWriteTimeRef = useRef<number>(0);
   const [tenantData, setTenantData] = useState<Tenant | null>(null);
+  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
+  const [currentProject, setCurrentProject] = useState<'PLATFORM' | 'RESTAURANT' | 'MARKETPLACE' | 'COURIER' | 'WEBSITE'>('PLATFORM');
+  const [viewingTenantId, setViewingTenantId] = useState<string | null>(null);
+  const [viewingTenantName, setViewingTenantName] = useState<string | null>(null);
+  const [viewingTenantLogo, setViewingTenantLogo] = useState<string | null>(null);
 
-  const isSuperAdmin = user?.email === 'financeirorenanuk@gmail.com';
+  useEffect(() => {
+    const checkApiKey = async () => {
+      if (typeof window !== 'undefined' && (window as any).aistudio) {
+        try {
+          const selected = await (window as any).aistudio.hasSelectedApiKey();
+          setHasApiKey(selected);
+        } catch (err) {
+          console.error("Error checking API key:", err);
+          setHasApiKey(true);
+        }
+      } else {
+        setHasApiKey(true);
+      }
+    };
+    checkApiKey();
+  }, []);
+
+  const handleSelectApiKey = async () => {
+    if ((window as any).aistudio) {
+      try {
+        await (window as any).aistudio.openSelectKey();
+        setHasApiKey(true);
+      } catch (err) {
+        console.error("Error opening key selector:", err);
+      }
+    }
+  };
+
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const isSuperAdmin = user?.email?.toLowerCase() === 'financeirorenanuk@gmail.com' || currentUserData?.role === 'SAAS_ADMIN';
+
+  const hasPermission = (permission: Permission) => {
+    if (isSuperAdmin) return true;
+    return currentUserData?.permissions?.includes(permission) || false;
+  };
+
+  const [marketplaceProfile, setMarketplaceProfile] = useState<{name: string, phone: string} | null>(null);
+
+  // Carregar perfil do marketplace do localStorage se existir
+  useEffect(() => {
+    const saved = localStorage.getItem('marketplace_profile');
+    if (saved) setMarketplaceProfile(JSON.parse(saved));
+  }, []);
+
+  const handleUpdateMarketplaceProfile = (data: {name: string, phone: string}) => {
+    setMarketplaceProfile(data);
+    localStorage.setItem('marketplace_profile', JSON.stringify(data));
+  };
+
+  useEffect(() => {
+    const path = location.pathname;
+    if (path.startsWith('/site') || path.startsWith('/kitchenflow')) {
+      if (currentProject !== 'WEBSITE') setCurrentProject('WEBSITE');
+    } else if (path.startsWith('/saas')) {
+      if (currentUserData) {
+        if (currentUserData.role === 'COURIER') {
+          navigate('/entregador', { replace: true });
+          return;
+        }
+        if (currentUserData.role === 'CUSTOMER') {
+          navigate('/marketplace', { replace: true });
+          return;
+        }
+        if (!isSuperAdmin) {
+          navigate('/lojista', { replace: true });
+          return;
+        }
+      }
+      if (currentProject !== 'PLATFORM') setCurrentProject('PLATFORM');
+      if (activeTab === 'merchant-copilot') setActiveTab('saas-admin');
+    } else if (path.startsWith('/lojista')) {
+      if (currentUserData) {
+        if (currentUserData.role === 'COURIER') {
+          navigate('/entregador', { replace: true });
+          return;
+        }
+        if (currentUserData.role === 'CUSTOMER') {
+          navigate('/marketplace', { replace: true });
+          return;
+        }
+        const allowedRoles = ['OWNER', 'ADMIN', 'MANAGER', 'CHEF', 'CASHIER', 'WAITER', 'KDS', 'STOCK_ANALYST'];
+        if (!allowedRoles.includes(currentUserData.role) && !isSuperAdmin) {
+          navigate('/marketplace', { replace: true });
+          return;
+        }
+      }
+      if (currentProject !== 'RESTAURANT') setCurrentProject('RESTAURANT');
+      if (activeTab === 'saas-admin' || activeTab === 'courier-app') setActiveTab('merchant-copilot');
+    } else if (path.startsWith('/entregador')) {
+      if (currentProject !== 'COURIER') setCurrentProject('COURIER');
+      setActiveTab('courier-app');
+    } else if (path.startsWith('/marketplace') || path === '/') {
+      if (path === '/') {
+        if (isSuperAdmin) {
+          navigate('/saas', { replace: true });
+        } else if (currentUserData?.role === 'COURIER') {
+          navigate('/entregador', { replace: true });
+        } else {
+          navigate('/marketplace', { replace: true });
+        }
+      } else {
+        if (currentProject !== 'MARKETPLACE') setCurrentProject('MARKETPLACE');
+      }
+    }
+  }, [location.pathname, isSuperAdmin, currentProject, activeTab, navigate, currentUserData]);
+
+  useEffect(() => {
+    (window as any).setActiveTab = (tab: string) => {
+      if (tab === 'marketplace') {
+        navigate('/marketplace');
+      } else {
+        setActiveTab(tab);
+      }
+    };
+    return () => { delete (window as any).setActiveTab; };
+  }, [navigate]);
+
+  const handleViewTenant = (tenantId: string, name?: string, logo?: string) => {
+    setViewingTenantId(tenantId);
+    setViewingTenantName(name || null);
+    setViewingTenantLogo(logo || null);
+    setCurrentProject('RESTAURANT');
+    setActiveTab('merchant-copilot');
+    navigate('/lojista');
+  };
+
+  const handleStopViewingTenant = () => {
+    setViewingTenantId(null);
+    setViewingTenantName(null);
+    setViewingTenantLogo(null);
+    setCurrentProject('PLATFORM');
+    setActiveTab('saas-admin');
+    navigate('/saas');
+  };
 
   const [digitalMenuSettings, setDigitalMenuSettings] = useState<DigitalMenuSettings>({
-    primaryColor: '#4f46e5',
-    restaurantName: 'GastroAI Bistrô',
-    welcomeMessage: 'Olá! Seja bem-vindo ao nosso cardápio digital.',
+    primaryColor: '#E31B23',
+    accentColor: '#FACC15',
+    fontFamily: 'sans',
+    restaurantName: 'Viva Lá Fome!',
+    welcomeMessage: 'O melhor delivery da região! Peça agora e receba em casa.',
     allowOrdering: true,
     showStock: true,
-    bannerUrl: 'https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?q=80&w=2070&auto=format&fit=crop',
+    bannerUrl: 'https://images.unsplash.com/photo-1550547660-d9450f859349?q=80&w=1000&auto=format&fit=crop',
     logoUrl: '',
     categoryImages: {
       'Bebidas': 'https://images.unsplash.com/photo-1544145945-f904253d0c71?w=400',
       'Lanches': 'https://images.unsplash.com/photo-1571091718767-18b5b1457add?w=400',
-      'Sobremesas': 'https://images.unsplash.com/photo-1551024506-0bccd828d307?w=400',
-      'Entradas': 'https://images.unsplash.com/photo-1541014741259-df549fa3322e?w=400',
-      'Pratos Principais': 'https://images.unsplash.com/photo-1544025162-d76694265947?w=400'
+      'Porções': 'https://images.unsplash.com/photo-1541014741259-df549fa3322e?w=400',
+      'Pratos': 'https://images.unsplash.com/photo-1544025162-d76694265947?w=400',
+      'Sobremesas': 'https://images.unsplash.com/photo-1551024601-bec78aea704b?w=400'
+    },
+    dailyPromo: {
+      title: 'Combo Irresistível',
+      subtitle: 'Aproveite nossa seleção especial com desconto exclusivo.',
+      price: 34.90,
+      originalPrice: 49.90,
+      active: true
     }
   });
 
@@ -117,44 +460,597 @@ const App: React.FC = () => {
       { day: 'Sábado', open: '10:00', close: '23:00', isClosed: false },
       { day: 'Domingo', open: '10:00', close: '21:00', isClosed: false },
     ],
-    fiscal: { environment: 'homologacao', certificateStatus: 'valid', certificateExpiry: '15/12/2025', cscId: '000001', cscToken: 'A1B2C3D4E5', nextNfceNumber: 154, series: 1, taxRegime: 'simples_nacional' } as any,
-    printing: { paperWidth: '80mm', autoPrintOrder: true, headerText: 'BEM VINDO AO GASTROAI', footerText: 'Obrigado!', showLogo: true },
-    apis: { googleMapsKey: '', whatsappToken: '', ifoodWebhook: '', integrationActive: false }
+    fiscal: { 
+      environment: 'homologacao', 
+      certificateStatus: 'missing', 
+      certificateExpiry: '', 
+      cscId: '', 
+      cscToken: '', 
+      nextNfceNumber: 1, 
+      series: 1, 
+      taxRegime: 'simples_nacional',
+      cnpj: '12.345.678/0001-90',
+      razaoSocial: 'GastroAI Soluções Alimentares LTDA',
+      inscricaoEstadual: '123.456.789.110',
+      address: {
+        logradouro: 'Av. Paulista',
+        numero: '1000',
+        bairro: 'Bela Vista',
+        municipio: 'São Paulo',
+        uf: 'SP',
+        cep: '01310-100',
+        codigoMunicipio: '3550308'
+      }
+    } as any,
+    printing: { paperWidth: '80mm', autoPrintOrder: false, headerText: 'BEM VINDO AO GASTROAI', footerText: 'Obrigado!', showLogo: true },
+    apis: { googleMapsKey: '', whatsappToken: '', ifoodWebhook: '', integrationActive: false },
+    deliveryFee: 7.00,
+    isDeliveryEnabled: true,
+    isPickupEnabled: true,
+    minOrderValue: 20.00,
+    estimatedDeliveryTime: '30-45 min',
+    estimatedPickupTime: '15-20 min',
+    autoAcceptOrders: false,
+    paymentMethods: [
+      { id: '1', name: 'Dinheiro', type: 'cash', feePercentage: 0, active: true },
+      { id: '2', name: 'Cartão de Crédito', type: 'credit', feePercentage: 3.2, active: true, operatorId: 'op-1' },
+      { id: '3', name: 'Cartão de Débito', type: 'debit', feePercentage: 1.9, active: true, operatorId: 'op-1' },
+      { id: '4', name: 'PIX', type: 'pix', feePercentage: 0, active: true },
+      { id: '5', name: 'Vale Refeição', type: 'voucher', feePercentage: 5.0, active: true },
+      { id: '6', name: 'Fiado (Conta Cliente)', type: 'account', feePercentage: 0, active: true },
+    ],
+    operators: [
+      { id: 'op-1', name: 'Stone', active: true },
+      { id: 'op-2', name: 'Rede', active: true },
+      { id: 'op-3', name: 'Getnet', active: true },
+    ],
+    saasIntegration: {
+      isCustomerAppEnabled: false,
+      appFeePerOrder: 1.50,
+      billingAccumulated: 0
+    }
   });
+
+  // Ref para rastrear IDs de pedidos já notificados
+  const notifiedOrdersRef = useRef<Set<string>>(new Set());
+
+  // Campainha de novos pedidos (Para até ser aceito)
+  const bellAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    // Toca o sino em loop enquanto houver pedidos digitais pendentes de aceitação
+    if (incomingDigitalOrders.length > 0) {
+      if (!bellAudioRef.current) {
+        bellAudioRef.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+        bellAudioRef.current.loop = true;
+        bellAudioRef.current.volume = 0.6;
+      }
+      bellAudioRef.current.play().catch(e => console.log('Bloqueio de áudio (campainha):', e));
+    } else {
+      if (bellAudioRef.current) {
+        bellAudioRef.current.pause();
+        bellAudioRef.current.currentTime = 0;
+      }
+    }
+    
+    // Cleanup ao desmontar
+    return () => {
+      if (bellAudioRef.current) {
+        bellAudioRef.current.pause();
+        bellAudioRef.current = null;
+      }
+    };
+  }, [incomingDigitalOrders.length]);
+
+  // Carregar dados de todas as coleções do tenant quando mudar (Suporte SaaS / Multi-tenant)
+  useEffect(() => {
+    // Reset states when switching tenants to avoid leaking previous tenant data or placeholders
+    setProducts([]);
+    setTables([]);
+    setCustomers([]);
+    setOrders([]);
+    setFinancialRecords([]);
+    setRawMaterials([]);
+    setBankAccounts([]);
+    setCouriers([]);
+    setAuditLogs([]);
+    setUsers([]);
+    setTenantData(null);
+    setProductCategories([]);
+    setRawMaterialCategories([]);
+    setCashClosings([]);
+    setCashSession({ isOpen: false, openingValue: 0, openedAt: null });
+    setAdminSettings({
+      companyName: '',
+      logoUrl: '',
+      cnpj: '',
+      address: '',
+      phone: '',
+      socialMedia: { instagram: '', facebook: '', whatsapp: '' },
+      businessHours: [
+        { day: 'Segunda-feira', open: '09:00', close: '22:00', isClosed: false },
+        { day: 'Terça-feira', open: '09:00', close: '22:00', isClosed: false },
+        { day: 'Quarta-feira', open: '09:00', close: '22:00', isClosed: false },
+        { day: 'Quinta-feira', open: '09:00', close: '22:00', isClosed: false },
+        { day: 'Sexta-feira', open: '09:00', close: '23:00', isClosed: false },
+        { day: 'Sábado', open: '10:00', close: '23:00', isClosed: false },
+        { day: 'Domingo', open: '10:00', close: '21:00', isClosed: false },
+      ],
+      fiscal: { 
+        environment: 'homologacao', 
+        certificateStatus: 'missing', 
+        certificateExpiry: '', 
+        cscId: '', 
+        cscToken: '', 
+        nextNfceNumber: 1, 
+        series: 1, 
+        taxRegime: 'simples_nacional',
+        cnpj: '',
+        razaoSocial: '',
+        inscricaoEstadual: '',
+        address: {
+          logradouro: '',
+          numero: '',
+          bairro: '',
+          municipio: '',
+          uf: '',
+          cep: '',
+          codigoMunicipio: ''
+        }
+      } as any,
+      printing: { paperWidth: '80mm', autoPrintOrder: false, headerText: '', footerText: '', showLogo: false },
+      apis: { googleMapsKey: '', whatsappToken: '', ifoodWebhook: '', integrationActive: false },
+      deliveryFee: 7.00,
+      isDeliveryEnabled: true,
+      isPickupEnabled: true,
+      minOrderValue: 20.00,
+      estimatedDeliveryTime: '30-45 min',
+      estimatedPickupTime: '15-20 min',
+      autoAcceptOrders: false,
+      paymentMethods: [
+        { id: '1', name: 'Dinheiro', type: 'cash', feePercentage: 0, active: true },
+        { id: '2', name: 'Cartão de Crédito', type: 'credit', feePercentage: 3.2, active: true, operatorId: 'op-1' },
+        { id: '3', name: 'Cartão de Débito', type: 'debit', feePercentage: 1.9, active: true, operatorId: 'op-1' },
+        { id: '4', name: 'PIX', type: 'pix', feePercentage: 0, active: true },
+        { id: '5', name: 'Vale Refeição', type: 'voucher', feePercentage: 5.0, active: true },
+        { id: '6', name: 'Fiado (Conta Cliente)', type: 'account', feePercentage: 0, active: true },
+      ],
+      operators: [
+        { id: 'op-1', name: 'Stone', active: true },
+        { id: 'op-2', name: 'Rede', active: true },
+        { id: 'op-3', name: 'Getnet', active: true },
+      ],
+      saasIntegration: {
+        isCustomerAppEnabled: false,
+        appFeePerOrder: 1.50,
+        billingAccumulated: 0
+      }
+    });
+
+    setDigitalMenuSettings({
+      primaryColor: '#E31B23',
+      accentColor: '#FACC15',
+      fontFamily: 'sans',
+      restaurantName: '',
+      welcomeMessage: '',
+      allowOrdering: true,
+      showStock: true,
+      bannerUrl: 'https://images.unsplash.com/photo-1550547660-d9450f859349?q=80&w=1000&auto=format&fit=crop',
+      logoUrl: '',
+      categoryImages: {
+        'Bebidas': 'https://images.unsplash.com/photo-1544145945-f904253d0c71?w=400',
+        'Lanches': 'https://images.unsplash.com/photo-1571091718767-18b5b1457add?w=400',
+        'Porções': 'https://images.unsplash.com/photo-1541014741259-df549fa3322e?w=400',
+        'Pratos': 'https://images.unsplash.com/photo-1544025162-d76694265947?w=400',
+        'Sobremesas': 'https://images.unsplash.com/photo-1551024601-bec78aea704b?w=400'
+      },
+      dailyPromo: {
+        title: '',
+        subtitle: '',
+        price: 0,
+        originalPrice: 0,
+        active: false
+      }
+    });
+    notifiedOrdersRef.current.clear();
+    setCashSession({ isOpen: false, openingValue: 0, openedAt: null });
+
+    // PRIORIDADE: Primeiro o ID que estamos visualizando (Suporte), depois o ID do próprio usuário logado
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    if (!effectiveTenantId) {
+      setTenantData(null);
+      setAdminSettings(prev => ({
+        ...prev,
+        companyName: 'GastroAI',
+        logoUrl: ''
+      }));
+      setDigitalMenuSettings(prev => ({
+        ...prev,
+        restaurantName: 'GastroAI',
+        logoUrl: ''
+      }));
+      return;
+    }
+
+    let activeTenantName: string | null = null;
+    let activeTenantLogo: string | null = null;
+
+    const collectionsToSync = [
+      { name: 'products', setter: setProducts, syncType: 'snapshot', limit: 300 },
+      { name: 'diningTables', setter: setTables, syncType: 'snapshot' },
+      { name: 'customers', setter: setCustomers, syncType: 'snapshot', limit: 200 },
+      { name: 'orders', setter: setOrders, syncType: 'snapshot', recentOnly: true, limit: 150 },
+      { name: 'financialRecords', setter: setFinancialRecords, syncType: 'snapshot', limit: 100, recentOnly: true },
+      { name: 'rawMaterials', setter: setRawMaterials, syncType: 'snapshot', limit: 200 },
+      { name: 'bankAccounts', setter: setBankAccounts, syncType: 'snapshot', limit: 50 },
+      { name: 'couriers', setter: setCouriers, syncType: 'snapshot', limit: 50 },
+      { name: 'auditLogs', setter: setAuditLogs, syncType: 'snapshot', limit: 30 },
+      { name: 'users', setter: setUsers, syncType: 'snapshot', limit: 50 },
+      { name: 'cashClosings', setter: setCashClosings, syncType: 'snapshot', limit: 20 }
+    ];
+
+    const unsubscribes = collectionsToSync.map(col => {
+      let q = query(collection(db, col.name), where('tenantId', '==', effectiveTenantId));
+      
+      // Otimização agressiva de READS/Quota
+      if (col.recentOnly) {
+         if (col.name === 'orders') {
+            const yesterday = new Date();
+            yesterday.setHours(yesterday.getHours() - 36); // 36 horas para cobrir turnos longos
+            q = query(q, where('createdAt', '>=', yesterday));
+         } else if (col.name === 'financialRecords') {
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+            q = query(q, where('date', '>=', thirtyDaysAgo));
+         } else if (col.name === 'cashClosings') {
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+            // Cash closings use closedAt instead of date
+            q = query(q, where('closedAt', '>=', thirtyDaysAgo));
+         }
+      }
+
+      if (col.limit) {
+         const sortField = col.name === 'orders' ? 'createdAt' : 
+                          (col.name === 'auditLogs' || col.name === 'inventoryLogs' ? 'timestamp' : 
+                          (col.name === 'financialRecords' ? 'date' : 
+                          (col.name === 'cashClosings' ? 'closedAt' : null)));
+         
+         if (sortField) {
+            q = query(q, orderBy(sortField, 'desc'), limit(col.limit));
+         } else {
+            q = query(q, limit(col.limit));
+         }
+      }
+
+      return onSnapshot(q, (snapshot) => {
+        let items = snapshot.docs.map(doc => {
+          const docData = doc.data();
+          const item = convertTimestamps({ ...docData, _firestoreId: doc.id });
+          // Use data's ID if present, otherwise fallback to Firestore doc ID
+          if (item.id === undefined || item.id === null || (typeof item.id === 'number' && isNaN(item.id))) {
+             item.id = doc.id;
+          }
+          
+          // Preserve the original document ID for better identification in operations
+          item.docId = doc.id;
+          return item;
+        });
+
+        // Cleanup items even if query filters are used (redundancy for safety)
+        if (col.name === 'orders') {
+          const yesterday = new Date();
+          yesterday.setHours(yesterday.getHours() - 24);
+          items = items.filter(o => {
+            const createdAt = o.createdAt instanceof Date ? o.createdAt : new Date(o.createdAt);
+            // Always keep active orders, even if older (shouldn't happen with correct query but for safety)
+            if (['pending', 'preparing', 'ready', 'delivering'].includes(o.status)) return true;
+            return createdAt >= yesterday;
+          });
+
+          // Proteção contra status repetidos e notificações (Sync Resiliency)
+          const newOrders = items.filter((o: any) => 
+            (o.status === 'preparing' || o.status === 'pending') && 
+            !notifiedOrdersRef.current.has(o.id)
+          );
+          
+          if (newOrders.length > 0) {
+            newOrders.forEach(o => notifiedOrdersRef.current.add(o.id));
+          }
+
+          // Proteção contra downgrade de status para pedidos (Sync Resiliency)
+          setOrders(prev => {
+            const updated = [...prev];
+            items.forEach((cloudOrder: any) => {
+              const existingIdx = updated.findIndex(o => o.id === cloudOrder.id);
+              if (existingIdx > -1) {
+                const localStatus = updated[existingIdx].status;
+                const cloudStatus = cloudOrder.status;
+                const localPriority = STATUS_PRIORITY[localStatus] || 0;
+                const cloudPriority = STATUS_PRIORITY[cloudStatus] || 0;
+
+                const terminalStatuses = ['delivered', 'finished', 'cancelled'];
+                const localIsTerminal = terminalStatuses.includes(localStatus);
+                const cloudIsTerminal = terminalStatuses.includes(cloudStatus);
+
+                // Se o status local já estiver mais avançado ou já for terminal, mantém o local
+                // Exceto se o cloud for "cancelled" (cancelamento remoto deve ser respeitado)
+                if ((localPriority > cloudPriority || (localIsTerminal && !cloudIsTerminal)) && cloudStatus !== 'cancelled') {
+                  console.log(`Resilience: Ignored cloud status downgrade for order ${cloudOrder.id} (${cloudStatus} ignored, keeping ${localStatus})`);
+                } else {
+                  updated[existingIdx] = cloudOrder;
+                }
+              } else {
+                updated.push(cloudOrder);
+              }
+            });
+            return updated;
+          });
+        } else {
+          col.setter(items);
+        }
+      }, (error) => {
+        if (error.message?.includes("Quota exceeded") || error.message?.includes("quota")) {
+          setQuotaExceeded(true);
+        } else {
+          handleFirestoreError(error, OperationType.LIST, col.name);
+        }
+      });
+    });
+
+    const settingsUnsub = onSnapshot(doc(db, 'settings', effectiveTenantId), (snapshot) => {
+      if (snapshot.exists()) {
+        const rawData = snapshot.data();
+        const s = convertTimestamps(rawData);
+        
+        if (s.admin) {
+          // Explicitly remove legacy cashSession from nested admin object if it exists
+          const cleanAdmin = { ...s.admin };
+          if (cleanAdmin.cashSession) delete cleanAdmin.cashSession;
+          
+          setAdminSettings(prev => {
+            const finalCompanyName = activeTenantName || cleanAdmin.companyName || prev.companyName;
+            const finalLogoUrl = activeTenantLogo || cleanAdmin.logoUrl || '';
+            
+            return {
+              ...prev,
+              ...cleanAdmin,
+              companyName: finalCompanyName,
+              logoUrl: finalLogoUrl,
+              // Deep merge nested objects to avoid overwriting them completely if firestore doc is partial
+              socialMedia: { ...(prev.socialMedia || {}), ...(cleanAdmin.socialMedia || {}) },
+              fiscal: { ...(prev.fiscal || {}), ...(cleanAdmin.fiscal || {}) },
+              printing: { ...(prev.printing || {}), ...(cleanAdmin.printing || {}) },
+              apis: { ...(prev.apis || {}), ...(cleanAdmin.apis || {}) },
+              saasIntegration: { ...(prev.saasIntegration || {}), ...(cleanAdmin.saasIntegration || {}) }
+            };
+          });
+        }
+        if (s.digitalMenu) {
+          setDigitalMenuSettings(prev => {
+            const finalRestaurantName = activeTenantName || s.digitalMenu.restaurantName || prev.restaurantName;
+            const finalLogoUrl = activeTenantLogo || s.digitalMenu.logoUrl || '';
+            
+            return {
+              ...prev,
+              ...s.digitalMenu,
+              restaurantName: finalRestaurantName,
+              logoUrl: finalLogoUrl,
+              dailyPromo: { ...(prev.dailyPromo || { title: '', subtitle: '', price: 0, originalPrice: 0, active: false }), ...(s.digitalMenu.dailyPromo || {}) }
+            };
+          });
+        }
+        if (s.productCategories) {
+          setProductCategories(s.productCategories);
+        }
+        if (s.rawMaterialCategories) {
+          setRawMaterialCategories(s.rawMaterialCategories);
+        }
+        if (s.cashSession) {
+          // Only update if we don't have pending writes to this specific field to avoid flipping back 
+          // during a close/open operation. We ignore snapshots for 5 seconds after a local write.
+          const now = Date.now();
+          if (now - lastWriteTimeRef.current > 5000) {
+            setCashSession(prev => {
+              const incomingTime = s.cashSession.openedAt instanceof Date ? s.cashSession.openedAt.getTime() : (s.cashSession.openedAt ? new Date(s.cashSession.openedAt).getTime() : 0);
+              const prevTime = prev.openedAt instanceof Date ? prev.openedAt.getTime() : (prev.openedAt ? new Date(prev.openedAt).getTime() : 0);
+              
+              if (prev.isOpen !== s.cashSession.isOpen || prevTime !== incomingTime) {
+                return s.cashSession;
+              }
+              return prev;
+            });
+          }
+        } else {
+          // Safeguard: reset cash session if current tenant settings doc contains no open session
+          setCashSession({ isOpen: false, openingValue: 0, openedAt: null });
+        }
+      }
+    }, (error) => {
+      if (error.message?.includes("Quota exceeded") || error.message?.includes("quota")) {
+        setQuotaExceeded(true);
+      } else {
+        handleFirestoreError(error, OperationType.GET, `settings/${effectiveTenantId}`);
+      }
+    });
+
+    const tenantUnsub = onSnapshot(doc(db, 'tenants', effectiveTenantId), (snapshot) => {
+      if (snapshot.exists()) {
+        const loadedTenant = convertTimestamps(snapshot.data()) as Tenant;
+        setTenantData(loadedTenant);
+        activeTenantName = loadedTenant.name;
+        activeTenantLogo = loadedTenant.logoUrl || null;
+        
+        // Garante que os nomes de exibição nas configurações administrativas e do menu digital
+        // correspondam exatamente ao nome do cliente (tenant) selecionado em tempo real,
+        // evitando fallbacks indesejados para "Viva Lá Fome" ou dados de demonstração locais.
+        setAdminSettings(prev => ({
+          ...prev,
+          companyName: loadedTenant.name || prev.companyName,
+          logoUrl: loadedTenant.logoUrl || ''
+        }));
+        setDigitalMenuSettings(prev => ({
+          ...prev,
+          restaurantName: loadedTenant.name || prev.restaurantName,
+          logoUrl: loadedTenant.logoUrl || ''
+        }));
+      }
+    }, (error) => {
+      if (error.message?.includes("Quota exceeded") || error.message?.includes("quota")) {
+        setQuotaExceeded(true);
+      } else {
+        handleFirestoreError(error, OperationType.GET, `tenants/${effectiveTenantId}`);
+      }
+    });
+
+    return () => {
+      unsubscribes.forEach(unsub => unsub());
+      settingsUnsub();
+      tenantUnsub();
+    };
+  }, [currentUserData?.tenantId, viewingTenantId, isSuperAdmin]);
 
   // Monitorar estado de autenticação
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
       if (firebaseUser) {
-        // Buscar ou criar dados do usuário no Firestore
+        // 1. Buscar dados do usuário no Firestore pelo UID
         const userDocRef = doc(db, 'users', firebaseUser.uid);
         const userDoc = await getDoc(userDocRef);
 
+        let finalUserData: User | null = null;
+
         if (userDoc.exists()) {
-          const userData = userDoc.data() as User;
-          setCurrentUserData(userData);
+          // Usuário já vinculado via UID
+          finalUserData = convertTimestamps(userDoc.data()) as User;
+        } else if (firebaseUser.email) {
+          // 2. Se não encontrou pelo UID, tentar encontrar por EMAIL (Pré-cadastro)
+          const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', firebaseUser.email), limit(1));
+          const usersByEmailSnap = await getDocs(usersByEmailQuery);
+          
+          if (!usersByEmailSnap.empty) {
+            // Encontrou um pré-cadastro por email
+            const existingUserDoc = usersByEmailSnap.docs[0];
+            const existingUserData = existingUserDoc.data() as User;
+            
+            // Vincular o UID do Auth ao documento do Firestore (Convertendo random ID p/ UID)
+            finalUserData = {
+              ...existingUserData,
+              id: firebaseUser.uid,
+              updatedAt: new Date()
+            } as any;
+
+            // Criar novo documento com UID e remover o antigo (ou apenas merge se o ID era igual, mas addDoc gera random)
+            await setDoc(userDocRef, finalUserData);
+            if (existingUserDoc.id !== firebaseUser.uid) {
+              await deleteDoc(existingUserDoc.ref);
+            }
+          }
+        }
+
+        if (finalUserData) {
+          setCurrentUserData(finalUserData);
           
           // Se o usuário pertence a um tenant, buscar dados do tenant
-          if (userData.tenantId) {
-            const tenantDoc = await getDoc(doc(db, 'tenants', userData.tenantId));
-            if (tenantDoc.exists()) {
-              setTenantData(tenantDoc.data() as Tenant);
+          if (finalUserData.tenantId && finalUserData.tenantId !== 'GLOBAL') {
+            try {
+              const tenantDoc = await getDoc(doc(db, 'tenants', finalUserData.tenantId));
+              if (tenantDoc.exists()) {
+                setTenantData(convertTimestamps(tenantDoc.data()) as Tenant);
+              }
+            } catch (err: any) {
+              if (err.message?.includes("Quota exceeded")) {
+                console.warn("Cota do Firebase atingida. Usando dados básicos do tenant.");
+                setTenantData({ id: finalUserData.tenantId, name: 'Restaurante (Modo Offline)', plan: 'free' } as any);
+              }
             }
           }
         } else {
-          // Criar novo usuário (primeiro acesso)
-          const newUser: User = {
-            id: firebaseUser.uid,
-            name: firebaseUser.displayName || 'Novo Usuário',
-            email: firebaseUser.email || '',
-            role: firebaseUser.email === 'financeirorenanuk@gmail.com' ? 'ADMIN' : 'WAITER',
-            permissions: [], // Será preenchido pelo role
-            status: 'online',
-            createdAt: new Date()
-          };
-          await setDoc(userDocRef, newUser);
-          setCurrentUserData(newUser);
+          // 3. Criar novo usuário do zero se nada foi encontrado (Apenas permitido no Marketplace ou se for Master)
+          const isMaster = firebaseUser.email === 'financeirorenanuk@gmail.com';
+          const isMarketplaceRoute = window.location.pathname.startsWith('/marketplace');
+
+          if (!isMaster && !isMarketplaceRoute) {
+            // Verificar especificamente se este email foi pré-cadastrado como entregador por algum lojista
+            let isCourier = false;
+            let courierDataToLink: any = null;
+            let courierDocRef: any = null;
+
+            if (firebaseUser.email) {
+              const courierQuery = query(collection(db, 'couriers'), where('email', '==', firebaseUser.email), limit(1));
+              const courierSnap = await getDocs(courierQuery);
+              if (!courierSnap.empty) {
+                isCourier = true;
+                courierDocRef = courierSnap.docs[0].ref;
+                courierDataToLink = courierSnap.docs[0].data();
+              }
+            }
+
+            if (!isCourier) {
+              // Não possui cadastro de lojista ou entregador - desconectar imediatamente!
+              await auth.signOut();
+              setUser(null);
+              setCurrentUserData(null);
+              setAuthLoading(false);
+              return;
+            } else if (courierDataToLink) {
+              // Vincular entregador pré-cadastrado
+              const role = 'COURIER';
+              const tenantId = courierDataToLink.tenantId;
+              const name = courierDataToLink.name || firebaseUser.displayName || 'Novo Entregador';
+
+              await setDoc(doc(db, 'couriers', firebaseUser.uid), { ...courierDataToLink, id: firebaseUser.uid }, { merge: true });
+              if (courierDocRef.id !== firebaseUser.uid) {
+                await deleteDoc(courierDocRef);
+              }
+
+              const newUser: User = {
+                id: firebaseUser.uid,
+                name: name,
+                email: firebaseUser.email || '',
+                role: role as UserRole,
+                tenantId: tenantId,
+                permissions: ['dashboard_view' as Permission],
+                status: 'online',
+                active: true,
+                createdAt: new Date()
+              };
+
+              await setDoc(userDocRef, newUser);
+              setCurrentUserData(newUser);
+              finalUserData = newUser;
+            }
+          } else {
+            // Se for master ou se estiver no marketplace, permite o auto-cadastro
+            let role: UserRole = isMaster ? 'SAAS_ADMIN' : 'CUSTOMER';
+            let tenantId = isMaster ? '' : 'GLOBAL';
+            let name = firebaseUser.displayName || 'Novo Usuário';
+
+            const newUser: User = {
+              id: firebaseUser.uid,
+              name: name,
+              email: firebaseUser.email || '',
+              role: role as UserRole,
+              tenantId: tenantId,
+              permissions: isMaster ? ALL_MODULES.map(m => m.id) : [],
+              status: 'online',
+              active: true,
+              createdAt: new Date()
+            };
+
+            await setDoc(userDocRef, newUser);
+            setCurrentUserData(newUser);
+            finalUserData = newUser;
+          }
+        }
+
+        // Auto-redirect for specific roles if on a neutral path
+        const isNeutralPath = location.pathname === '/' || location.pathname === '/marketplace';
+        if (finalUserData?.role === 'COURIER' && isNeutralPath) {
+          setActiveTab('courier-app');
+        } else if (finalUserData?.role === 'SAAS_ADMIN' && isNeutralPath) {
+          navigate('/saas');
         }
       } else {
         setCurrentUserData(null);
@@ -163,91 +1059,424 @@ const App: React.FC = () => {
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [navigate, location.pathname]);
 
-  // Carregamento inicial do banco de dados
+  // Carregamento inicial do banco de dados (Apenas para uso local/demo ou se não estivermos sincronizando com nuvem)
   useEffect(() => {
+    let isMounted = true;
     if (!user) return;
+    // Se estivermos visualizando um tenant específico em nuvem, não carregamos o mock local para não poluir o estado
+    if (viewingTenantId || (currentUserData && currentUserData.tenantId)) {
+      setIsDbLoaded(true);
+      return;
+    }
 
     const initDb = async () => {
       try {
         const pCount = await localDb.products.count();
-        if (pCount === 0) {
+        if (pCount === 0 && isMounted) {
           // Popula com dados iniciais se estiver vazio
           await localDb.products.bulkAdd(INITIAL_PRODUCTS);
           await localDb.diningTables.bulkAdd(INITIAL_TABLES);
           await localDb.couriers.bulkAdd(INITIAL_COURIERS);
           await localDb.users.bulkAdd(INITIAL_USERS);
           await localDb.auditLogs.bulkAdd(INITIAL_AUDIT_LOGS);
+          await localDb.rawMaterials.bulkAdd(INITIAL_RAW_MATERIALS);
           await localDb.settings.add({ 
             id: 'global', 
             admin: adminSettings, 
             digitalMenu: digitalMenuSettings 
           });
+          await localDb.bankAccounts.add({
+            id: '1',
+            tenantId: 'default',
+            name: 'Caixa Principal',
+            bankName: 'Dinheiro',
+            initialBalance: 0,
+            currentBalance: 0,
+            createdAt: new Date()
+          });
         }
 
-        // Carrega para o estado
-        const [p, t, c, o, u, l, f, s, rm, cc] = await Promise.all([
-          localDb.products.toArray(),
-          localDb.diningTables.toArray(),
-          localDb.couriers.toArray(),
-          localDb.orders.toArray(),
-          localDb.users.toArray(),
-          localDb.auditLogs.toArray(),
-          localDb.financialRecords.toArray(),
-          localDb.settings.get('global'),
-          localDb.rawMaterials.toArray(),
-          localDb.cashClosings.toArray()
-        ]);
+        // CARREGA APENAS SE NÃO ESTIVERMOS NO MODO NUVEM/TENANT (Para evitar sobrescrita)
+        if (!currentUserData?.tenantId && !viewingTenantId && isMounted) {
+          const [p, t, c, o, u, l, f, s, rm, cc, ba] = await Promise.all([
+            localDb.products.toArray(),
+            localDb.diningTables.toArray(),
+            localDb.couriers.toArray(),
+            localDb.orders.toArray(),
+            localDb.users.toArray(),
+            localDb.auditLogs.toArray(),
+            localDb.financialRecords.toArray(),
+            localDb.settings.get('global'),
+            localDb.rawMaterials.toArray(),
+            localDb.cashClosings.toArray(),
+            localDb.bankAccounts.toArray()
+          ]);
 
-        setProducts(p);
-        setTables(t);
-        setCouriers(c);
-        setOrders(o.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()));
-        setUsers(u);
-        setAuditLogs(l.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()));
-        setFinancialRecords(f.sort((a, b) => b.date.getTime() - a.date.getTime()));
-        setRawMaterials(rm);
-        setCashClosings(cc.sort((a, b) => b.closedAt.getTime() - a.closedAt.getTime()));
-        if (s) {
-          // Merge with defaults to ensure all properties exist
-          setAdminSettings(prev => ({
-            ...prev,
-            ...s.admin,
-            socialMedia: { ...prev.socialMedia, ...s.admin.socialMedia },
-            fiscal: { ...prev.fiscal, ...s.admin.fiscal },
-            printing: { ...prev.printing, ...s.admin.printing },
-            apis: { ...prev.apis, ...s.admin.apis }
-          }));
-          setDigitalMenuSettings(prev => ({ ...prev, ...s.digitalMenu }));
-          if (s.cashSession) {
-            setCashSession(s.cashSession);
+          if (isMounted) {
+            setProducts(p);
+            setTables(t);
+            setCouriers(c);
+            setOrders(o.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()));
+            setUsers(u);
+            setAuditLogs(l.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()));
+            setFinancialRecords(f.sort((a, b) => b.date.getTime() - a.date.getTime()));
+            setRawMaterials(rm);
+            setCashClosings(cc.sort((a, b) => b.closedAt.getTime() - a.closedAt.getTime()));
+            setBankAccounts(ba);
+            
+            if (s) {
+              setAdminSettings(prev => ({
+                ...prev,
+                ...s.admin,
+                socialMedia: { ...prev.socialMedia, ...s.admin.socialMedia },
+                fiscal: { ...prev.fiscal, ...s.admin.fiscal },
+                printing: { ...prev.printing, ...s.admin.printing },
+                apis: { ...prev.apis, ...s.admin.apis }
+              }));
+              setDigitalMenuSettings(prev => ({ ...prev, ...s.digitalMenu }));
+              if (s.cashSession) {
+                setCashSession(s.cashSession);
+              }
+              if (s.productCategories) {
+                setProductCategories(s.productCategories);
+              }
+              if (s.rawMaterialCategories) {
+                setRawMaterialCategories(s.rawMaterialCategories);
+              }
+            }
+
+            // Clientes
+            const cust = await localDb.customers.toArray();
+            setCustomers(cust);
+
+            setIsDbLoaded(true);
           }
         }
-
-        // Clientes
-        const cust = await localDb.customers.toArray();
-        setCustomers(cust);
-
-        setIsDbLoaded(true);
       } catch (err) {
         console.error("DB Initialization Error:", err);
       }
     };
 
     initDb();
-  }, [user]);
+    return () => { isMounted = false; };
+  }, [user, viewingTenantId, currentUserData?.tenantId]);
 
   const handleLogout = () => {
     signOut(auth);
   };
 
-  // Persistência de configurações quando mudam
+  const handleSaveSettings = async () => {
+    try {
+      const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+      const s = await localDb.settings.get(effectiveTenantId || 'global');
+      
+      // Ensure images are compressed before saving to Firestore (1MB limit)
+      let compressedLogo = digitalMenuSettings.logoUrl;
+      let compressedBanner = digitalMenuSettings.bannerUrl;
+      let compressedAdminLogo = adminSettings.logoUrl;
+
+      if (compressedLogo && compressedLogo.length > 100000 && compressedLogo.startsWith('data:image/')) {
+        compressedLogo = await compressImage(compressedLogo, 400, 400, 0.7);
+      }
+      if (compressedBanner && compressedBanner.length > 200000 && compressedBanner.startsWith('data:image/')) {
+        compressedBanner = await compressImage(compressedBanner, 800, 450, 0.7);
+      }
+      if (compressedAdminLogo && compressedAdminLogo.length > 100000 && compressedAdminLogo.startsWith('data:image/')) {
+        compressedAdminLogo = await compressImage(compressedAdminLogo, 400, 400, 0.7);
+      }
+
+      const updatedDigitalMenu = { ...digitalMenuSettings, logoUrl: compressedLogo, bannerUrl: compressedBanner };
+      const updatedAdmin = { ...adminSettings, logoUrl: compressedAdminLogo };
+
+      // Limpar campos de estado interno que não devem ir para o Firestore admin settings
+      const adminToSync = { ...updatedAdmin };
+      if ((adminToSync as any).cashSession) delete (adminToSync as any).cashSession;
+
+      await localDb.settings.put({
+        id: effectiveTenantId || 'global',
+        admin: updatedAdmin,
+        digitalMenu: updatedDigitalMenu,
+        cashSession: cashSession, // MANDATORY: Use active React state, never fall back to other-tenant s?.cashSession!
+        productCategories,
+        rawMaterialCategories
+      });
+
+      // Sync to Firestore if tenantId exists
+      if (effectiveTenantId) {
+        const batch = writeBatch(db);
+        
+        // Sync Settings
+        batch.set(doc(db, 'settings', effectiveTenantId), {
+          admin: cleanObject(adminToSync),
+          digitalMenu: cleanObject(updatedDigitalMenu),
+          cashSession: cashSession, // MANDATORY: Use active React state, never fall back to other-tenant s?.cashSession!
+          productCategories,
+          rawMaterialCategories,
+          updatedAt: new Date()
+        }, { merge: true });
+        
+        // Sync Tenant Profile (This is what shows up in the Marketplace and SaaS Admin)
+        const tenantUpdate: any = {
+          logoUrl: updatedDigitalMenu.logoUrl || updatedAdmin.logoUrl || tenantData?.logoUrl,
+          bannerUrl: updatedDigitalMenu.bannerUrl || tenantData?.bannerUrl,
+          description: updatedDigitalMenu.welcomeMessage,
+          name: updatedDigitalMenu.restaurantName || updatedAdmin.companyName,
+          cnpj: updatedAdmin.cnpj || tenantData?.cnpj,
+          address: updatedAdmin.address,
+          phone: updatedAdmin.phone,
+          updatedAt: new Date()
+        };
+
+        if (tenantData?.category) {
+          tenantUpdate.category = tenantData.category;
+        }
+
+        batch.set(doc(db, 'tenants', effectiveTenantId), cleanObject(tenantUpdate), { merge: true });
+
+        // Batch sync products for public marketplace visibility
+        const currentProducts = effectiveTenantId ? products : await localDb.products.toArray();
+        // Only sync products that are available for marketplace
+        const productsToSync = currentProducts.filter(p => p.isAvailableOnline);
+        
+        // Limit to 480 to stay within 500 batch limit
+        productsToSync.slice(0, 480).forEach(product => {
+          batch.set(doc(db, 'products', product.id), {
+            ...product,
+            active: product.active ?? true,
+            updatedAt: new Date(),
+            tenantId: effectiveTenantId
+          }, { merge: true });
+        });
+
+        await batch.commit();
+        console.log(`Cloud Sync: Synchronized ${currentProducts.length} items to Marketplace.`);
+      }
+
+      return true;
+    } catch (err) {
+      console.error("Error saving settings:", err);
+      return false;
+    }
+  };
+
+  const weeklySalesData = useMemo(() => {
+    const last7Days = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - (6 - i));
+      d.setHours(0, 0, 0, 0);
+      return { 
+        name: d.toLocaleDateString('pt-BR', { weekday: 'short' }), 
+        date: d,
+        sales: 0 
+      };
+    });
+
+    orders.forEach(order => {
+      if (order.status === 'finished' || order.status === 'delivered') {
+        const orderDate = order.createdAt instanceof Date ? order.createdAt : new Date(order.createdAt);
+        const dayMatch = last7Days.find(d => 
+          d.date.getDate() === orderDate.getDate() && 
+          d.date.getMonth() === orderDate.getMonth()
+        );
+        if (dayMatch) {
+          dayMatch.sales += order.total || 0;
+        }
+      }
+    });
+
+    return last7Days.map(({ name, sales }) => ({ name, sales }));
+  }, [orders]);
+
+  const dailyStats = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const todayOrders = orders.filter(o => {
+      const d = o.createdAt instanceof Date ? o.createdAt : new Date(o.createdAt);
+      return d >= today && (o.status === 'finished' || o.status === 'delivered');
+    });
+
+    return {
+      total: todayOrders.reduce((acc, o) => acc + (o.total || 0), 0),
+      count: todayOrders.length,
+      average: todayOrders.length > 0 ? todayOrders.reduce((acc, o) => acc + (o.total || 0), 0) / todayOrders.length : 0
+    };
+  }, [orders]);
+
+  const dailyCashFlow = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const todayRecords = financialRecords.filter(r => {
+      const recordDate = r.date instanceof Date ? r.date : new Date(r.date);
+      const rd = new Date(recordDate);
+      rd.setHours(0, 0, 0, 0);
+      return rd.getTime() === today.getTime();
+    });
+
+    const entries = todayRecords
+      .filter(r => r.type === 'income')
+      .reduce((sum, r) => sum + (r.amount || 0), 0);
+
+    const outlays = todayRecords
+      .filter(r => r.type === 'expense')
+      .reduce((sum, r) => sum + (r.amount || 0), 0);
+
+    const net = entries - outlays;
+
+    const recentMovements = [...todayRecords]
+      .sort((a, b) => {
+        const da = a.date instanceof Date ? a.date : new Date(a.date);
+        const db = b.date instanceof Date ? b.date : new Date(b.date);
+        return db.getTime() - da.getTime();
+      })
+      .slice(0, 5);
+
+    const categorySums = {
+      tables: 0,
+      delivery: 0,
+      marketplace: 0,
+      digitalMenu: 0,
+      balcao: 0,
+      others: 0
+    };
+
+    todayRecords.filter(r => r.type === 'income').forEach(r => {
+      const desc = (r.description || "").toLowerCase();
+      const cat = (r.category || "").toLowerCase();
+      
+      if (desc.includes("marketplace") || cat.includes("marketplace") || desc.includes("site delivery") || desc.includes("ifood")) {
+        categorySums.marketplace += r.amount || 0;
+      } else if (desc.includes("digital") || desc.includes("cardápio") || cat.includes("digital") || cat.includes("cardápio") || desc.includes("qr code") || desc.includes("qrcode")) {
+        categorySums.digitalMenu += r.amount || 0;
+      } else if (desc.includes("mesa") || cat.includes("mesa") || desc.includes("consumo")) {
+        categorySums.tables += r.amount || 0;
+      } else if (desc.includes("entrega") || cat.includes("entrega") || desc.includes("delivery") || cat.includes("delivery")) {
+        categorySums.delivery += r.amount || 0;
+      } else if (desc.includes("balcão") || cat.includes("balcão") || desc.includes("balcao") || cat.includes("balcao") || desc.includes("takeout") || cat.includes("takeout") || desc.includes("retirada") || cat.includes("retirada") || desc.includes("retirar") || cat.includes("retirar")) {
+        categorySums.balcao += r.amount || 0;
+      } else {
+        if (desc.startsWith("mesa ") || desc.startsWith("consumo parcial mesa")) {
+          categorySums.tables += r.amount || 0;
+        } else if (desc.includes("abertura de caixa") || desc.includes("suprimento")) {
+          categorySums.others += r.amount || 0;
+        } else {
+          categorySums.balcao += r.amount || 0;
+        }
+      }
+    });
+
+    return {
+      entries,
+      outlays,
+      net,
+      recentMovements,
+      categorySums
+    };
+  }, [financialRecords]);
   useEffect(() => {
     if (isDbLoaded) {
-      localDb.settings.put({ id: 'global', admin: adminSettings, digitalMenu: digitalMenuSettings });
+      const clearOldOrders = async () => {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        const oldFinishedOrders = await localDb.orders
+          .where('status')
+          .equals('finished')
+          .filter(o => new Date(o.createdAt) < today)
+          .toArray();
+          
+        if (oldFinishedOrders.length > 0) {
+          const ids = oldFinishedOrders.map(o => o.id);
+          await localDb.orders.bulkDelete(ids);
+          setOrders(prev => prev.filter(o => !ids.includes(o.id)));
+          console.log(`Limpando ${ids.length} pedidos finalizados de dias anteriores.`);
+        }
+      };
+      clearOldOrders();
     }
-  }, [adminSettings, digitalMenuSettings, isDbLoaded]);
+  }, [isDbLoaded]);
+
+  // Real-time Cloud Order Listener (Marketplace Integration)
+  useEffect(() => {
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    
+    if (effectiveTenantId) {
+      const q = query(
+        collection(db, 'orders'),
+        where('tenantId', '==', effectiveTenantId),
+        where('status', '==', 'pending')
+      );
+
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        snapshot.docChanges().forEach(async (change) => {
+          if (change.type === 'added') {
+            const cloudOrder = { ...change.doc.data(), id: change.doc.id } as Order;
+            
+            try {
+              const localOrder = await localDb.orders.get(cloudOrder.id);
+              // Ignore if already processed or in a final state locally
+              if (localOrder && (['preparing', 'ready', 'delivering', 'delivered', 'cancelled', 'finished'].includes(localOrder.status))) {
+                console.log(`Sync: Order ${cloudOrder.id} already in state ${localOrder.status}, ignoring duplicate notify.`);
+                return;
+              }
+
+              // Double check if it's already in the main state to prevent UI flickers
+              if (orders.some(o => o.id === cloudOrder.id && (['preparing', 'ready', 'delivering', 'delivered', 'cancelled', 'finished'].includes(o.status)))) {
+                return;
+              }
+
+              if ((cloudOrder.createdAt as any)?.toDate) {
+                cloudOrder.createdAt = (cloudOrder.createdAt as any).toDate();
+              } else if (cloudOrder.createdAt) {
+                cloudOrder.createdAt = new Date(cloudOrder.createdAt);
+              }
+              
+              // Notify about new marketplace/digital order
+              triggerWhatsAppMock("🛒 Novo Pedido!", `Olá! Você recebeu um novo pedido de ${cloudOrder.customerName} via ${cloudOrder.source === 'marketplace' ? 'Marketplace' : 'Cardápio Digital'}.`);
+
+              if (adminSettings.autoAcceptOrders) {
+                 const acceptedOrder: Order = { 
+                   ...cloudOrder, 
+                   source: cloudOrder.source || 'whatsapp',
+                   status: 'preparing' as const, 
+                   deliveryFee: cloudOrder.type === 'delivery' ? globalDeliveryFee : 0 
+                 };
+                 await localDb.orders.put(acceptedOrder);
+                 setOrders(prev => [acceptedOrder, ...prev.filter(o => o.id !== acceptedOrder.id)]);
+                 
+                 await updateDoc(doc(db, 'orders', cloudOrder.id), { 
+                   status: 'preparing', 
+                   updatedAt: new Date(),
+                   acceptedAt: new Date()
+                 });
+                 
+                 triggerWhatsAppMock("✅ Pedido Aceito!", `Olá ${cloudOrder.customerName}, pedido #${cloudOrder.id.slice(-4)} em produção!`);
+                 addLog('u1', 'DIGITAL', `Pedido #${cloudOrder.id.slice(-4)} ACEITO AUTOMATICAMENTE`);
+                 return;
+              }
+
+              setIncomingDigitalOrders(prev => {
+                if (prev.some(o => o.id === cloudOrder.id)) return prev;
+                return [cloudOrder, ...prev];
+              });
+              addLog('u1', 'DIGITAL', `Novo pedido digital: #${cloudOrder.id.slice(-4)}`);
+            } catch (err) {
+              console.error("Error processing cloud order:", err);
+            }
+          } else if (change.type === 'removed') {
+            setIncomingDigitalOrders(prev => prev.filter(o => o.id !== change.doc.id));
+          }
+        });
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'orders');
+      });
+
+      return () => unsubscribe();
+    }
+  }, [currentUserData?.tenantId, viewingTenantId, adminSettings.autoAcceptOrders, globalDeliveryFee]);
 
   const [mockWhatsAppNotify, setMockWhatsAppNotify] = useState<{title: string, msg: string} | null>(null);
 
@@ -257,163 +1486,1699 @@ const App: React.FC = () => {
   };
 
   const handleAddFinancialRecord = async (record: Partial<FinancialRecord>) => {
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    
+    if (!record.amount || record.amount <= 0) {
+      showToast("Por favor, informe um valor válido.", 'error');
+      return;
+    }
+
+    // Calculo automático de taxas com base na forma de pagamento
+    let feeAmount = record.feeAmount || 0;
+    if (record.paymentMethod && record.type === 'income' && !record.feeAmount && adminSettings?.paymentMethods) {
+       const methodConfig = adminSettings.paymentMethods.find(m => 
+          m.name.toLowerCase() === record.paymentMethod?.toLowerCase() || 
+          m.type === record.paymentMethod?.toLowerCase()
+       );
+       
+       if (methodConfig && methodConfig.feePercentage > 0) {
+          feeAmount = (record.amount * methodConfig.feePercentage) / 100;
+          if (methodConfig.fixedFee) feeAmount += methodConfig.fixedFee;
+       }
+    }
+
     const newRecord: FinancialRecord = {
-      id: Math.random().toString(36).substr(2, 9),
+      id: record.id || Math.random().toString(36).substr(2, 9),
+      tenantId: effectiveTenantId || 't1',
       type: record.type || 'expense',
       amount: record.amount || 0,
+      feeAmount,
+      paymentMethod: record.paymentMethod,
       category: record.category || 'Outros',
       description: record.description || 'Lançamento manual',
       date: record.date || new Date(),
-      status: record.status || 'paid'
+      shiftOpenedAt: cashSession.isOpen ? (cashSession.openedAt || new Date()) : undefined
     };
-    await localDb.financialRecords.add(newRecord);
+    
+    // Optimistic Update
     setFinancialRecords(prev => [newRecord, ...prev]);
+
+    if (effectiveTenantId) {
+      try {
+        await setDoc(doc(db, 'financialRecords', newRecord.id), cleanObject({
+          ...newRecord,
+          createdAt: new Date()
+        }));
+        showToast(`Lançamento realizado: ${newRecord.description}`);
+      } catch (err) {
+        console.error("Error syncing financial record:", err);
+        showToast("Erro ao sincronizar com a nuvem.", 'error');
+      }
+    } else {
+      await localDb.financialRecords.put(newRecord);
+    }
+    
     addLog('u1', 'FINANCEIRO', `Novo lançamento: ${newRecord.description}`);
   };
 
   const handleUpdateFinancialRecord = async (id: string, updates: Partial<FinancialRecord>) => {
-    await localDb.financialRecords.update(id, updates);
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    if (effectiveTenantId) {
+      await setDoc(doc(db, 'financialRecords', id), {
+        ...updates,
+        updatedAt: new Date()
+      }, { merge: true });
+    } else {
+      await localDb.financialRecords.update(id, updates);
+    }
     setFinancialRecords(prev => prev.map(r => r.id === id ? { ...r, ...updates } : r));
-    addLog('u1', 'FINANCEIRO', `Registro financeiro atualizado: ${id}`);
+    addLog('u1', 'FINANCEIRO', `Registro financeiro updated: ${id}`);
+  };
+
+  const handleDeleteFinancialRecord = async (id: string) => {
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    if (effectiveTenantId) {
+      await deleteDoc(doc(db, 'financialRecords', id));
+    } else {
+      await localDb.financialRecords.delete(id);
+    }
+    setFinancialRecords(prev => prev.filter(r => r.id !== id));
+    addLog('u1', 'FINANCEIRO', `Registro financeiro excluído: ${id}`);
+  };
+
+  const handleClearSalesAndFinance = async () => {
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    
+    // 1. Clear Local Database (IndexedDB)
+    await localDb.orders.clear();
+    await localDb.financialRecords.clear();
+    await localDb.cashClosings.clear();
+    await localDb.counterOrders.clear();
+    
+    const localTables = await localDb.diningTables.toArray();
+    for (const t of localTables) {
+      await localDb.diningTables.update(t.id, {
+        status: 'available',
+        items: [],
+        total: 0,
+        currentOrderId: null
+      } as any);
+    }
+    
+    const s = await localDb.settings.get('global');
+    if (s) {
+      await localDb.settings.put({
+        ...s,
+        cashSession: { isOpen: false, openingValue: 0, openedAt: null }
+      });
+    }
+
+    // 2. Reset React State
+    setOrders([]);
+    setFinancialRecords([]);
+    setCashClosings([]);
+    setTables(prev => prev.map(t => ({ ...t, status: 'available', items: [], total: 0, currentOrderId: null } as any)));
+    setCashSession({ isOpen: false, openingValue: 0, openedAt: null });
+
+    // 3. Reset Cloud Database (Firestore)
+    if (effectiveTenantId) {
+      try {
+        const collectionsToClear = ['orders', 'financialRecords', 'cashClosings', 'counterOrders'];
+        
+        for (const colName of collectionsToClear) {
+          const snapshot = await getDocs(query(
+            collection(db, colName),
+            where('tenantId', '==', effectiveTenantId)
+          ));
+          
+          if (!snapshot.empty) {
+            let batch = writeBatch(db);
+            let count = 0;
+            for (const docSnap of snapshot.docs) {
+              batch.delete(docSnap.ref);
+              count++;
+              if (count >= 400) {
+                await batch.commit();
+                batch = writeBatch(db);
+                count = 0;
+              }
+            }
+            if (count > 0) {
+              await batch.commit();
+            }
+          }
+        }
+
+        // Reset Firestore tables
+        const tablesSnapshot = await getDocs(query(
+          collection(db, 'diningTables'),
+          where('tenantId', '==', effectiveTenantId)
+        ));
+        
+        if (!tablesSnapshot.empty) {
+          const batch = writeBatch(db);
+          tablesSnapshot.docs.forEach(docSnap => {
+            batch.update(docSnap.ref, {
+              status: 'available',
+              items: [],
+              total: 0,
+              currentOrderId: null,
+              updatedAt: new Date()
+            });
+          });
+          await batch.commit();
+        }
+
+        // Reset Settings on Cloud
+        const settingsRef = doc(db, 'settings', effectiveTenantId);
+        await updateDoc(settingsRef, {
+          cashSession: { isOpen: false, openingValue: 0, openedAt: null }
+        }).catch(() => {});
+
+        showToast("Dados de vendas e financeiro limpos da nuvem e local.");
+      } catch (cloudErr) {
+        console.error("Erro ao sincronizar limpeza com Firestore:", cloudErr);
+        throw new Error("Erro ao limpar dados na nuvem: " + (cloudErr as Error).message);
+      }
+    } else {
+      showToast("Dados de vendas e financeiro apagados localmente!");
+    }
+
+    addLog('u1', 'SISTEMA', `Limpeza de movimentações de vendas e financeiro concluída`);
+  };
+
+  const handleAddBankAccount = async (bank: Partial<BankAccount>) => {
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    const newBank: BankAccount = {
+      id: bank.id || Math.random().toString(36).substr(2, 9),
+      tenantId: effectiveTenantId || 't1',
+      name: bank.name || '',
+      bankName: bank.bankName || '',
+      initialBalance: bank.initialBalance || 0,
+      currentBalance: bank.initialBalance || 0,
+      createdAt: new Date()
+    };
+
+    if (effectiveTenantId) {
+      await setDoc(doc(db, 'bankAccounts', newBank.id), cleanObject({
+        ...newBank,
+        createdAt: new Date()
+      }));
+    } else {
+      await localDb.bankAccounts.add(newBank);
+      setBankAccounts(prev => [...prev, newBank]);
+    }
+    
+    addLog('u1', 'FINANCEIRO', `Nova conta bancária: ${newBank.name}`);
+  };
+
+  const handleUpdateBankAccount = async (id: string, updates: Partial<BankAccount>) => {
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    if (effectiveTenantId) {
+      await setDoc(doc(db, 'bankAccounts', id), {
+        ...updates,
+        updatedAt: new Date()
+      }, { merge: true });
+    } else {
+      await localDb.bankAccounts.update(id, updates);
+      setBankAccounts(prev => prev.map(b => b.id === id ? { ...b, ...updates } : b));
+    }
+    addLog('u1', 'FINANCEIRO', `Conta bancária atualizada: ${id}`);
+  };
+
+  const handleDeleteBankAccount = async (id: string) => {
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    if (effectiveTenantId) {
+      await deleteDoc(doc(db, 'bankAccounts', id));
+    } else {
+      await localDb.bankAccounts.delete(id);
+      setBankAccounts(prev => prev.filter(b => b.id !== id));
+    }
+    addLog('u1', 'FINANCEIRO', `Conta bancária excluída: ${id}`);
   };
 
   const handleAddCustomer = async (customer: Partial<Customer>) => {
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    const normalizePhone = (p?: string) => p ? p.replace(/\D/g, '') : '';
+    const incomingPhoneNorm = normalizePhone(customer.phone);
+
+    // Encontrar o primeiro cliente já cadastrado com este telefone (normalizado)
+    const existing = customers.find(c => normalizePhone(c.phone) === incomingPhoneNorm);
+
+    if (existing) {
+      const balanceToMerge = customer.balance || 0;
+      const historyToMerge = customer.history || [];
+      const updatedAddresses = Array.from(new Set([
+        ...(existing.addresses || []),
+        ...(customer.addresses || []),
+        ...(customer.address ? [customer.address] : [])
+      ])).filter(Boolean);
+
+      const updatedFields: Partial<Customer> = {
+        balance: existing.balance + balanceToMerge,
+        history: [...historyToMerge, ...existing.history],
+        addresses: updatedAddresses
+      };
+
+      if (customer.name && !existing.name) {
+        updatedFields.name = customer.name;
+      }
+      if (customer.document && !existing.document) {
+        updatedFields.document = customer.document;
+      }
+      if (customer.email && !existing.email) {
+        updatedFields.email = customer.email;
+      }
+
+      await handleUpdateCustomer(existing.id, updatedFields);
+      addLog('u1', 'CLIENTES', `Cliente com telefone duplicado (${customer.phone}) unificado no perfil existente: ${existing.name}`);
+      return existing;
+    }
+
     const newCustomer: Customer = {
-      id: `ct${Date.now()}`,
+      id: customer.id || `ct-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      tenantId: effectiveTenantId || 't1',
       name: customer.name || '',
       document: customer.document || '',
       phone: customer.phone || '',
       email: customer.email,
       address: customer.address,
+      addresses: customer.address ? [customer.address] : [],
       balance: customer.balance || 0,
       createdAt: new Date(),
       history: customer.history || []
     };
-    await localDb.customers.add(newCustomer);
-    setCustomers(prev => [newCustomer, ...prev]);
+
+    if (effectiveTenantId) {
+      await setDoc(doc(db, 'customers', newCustomer.id), cleanObject({
+        ...newCustomer,
+        createdAt: new Date()
+      }));
+      // OPTIMISTIC LOCAL STATE UPDATE - CRITICAL FOR IN-CONTEXT CUSTOMER ACCESS
+      setCustomers(prev => {
+        const exists = prev.some(c => c.id === newCustomer.id);
+        if (exists) return prev.map(c => c.id === newCustomer.id ? newCustomer : c);
+        return [newCustomer, ...prev];
+      });
+    } else {
+      await localDb.customers.put(newCustomer);
+      setCustomers(prev => [newCustomer, ...prev]);
+    }
+    
     addLog('u1', 'CLIENTES', `Novo cliente cadastrado: ${newCustomer.name}`);
+    return newCustomer;
   };
 
   const handleUpdateCustomer = async (id: string, updates: Partial<Customer>) => {
-    await localDb.customers.update(id, updates);
-    setCustomers(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    const normalizePhone = (p?: string) => p ? p.replace(/\D/g, '') : '';
+
+    if (updates.phone) {
+      const currentCustomer = customers.find(c => c.id === id);
+      if (currentCustomer) {
+        const targetPhoneNorm = normalizePhone(updates.phone);
+        // Procurar se existe OUTRO cliente com este mesmo telefone (normalizado)
+        const existingOther = customers.find(c => c.id !== id && normalizePhone(c.phone) === targetPhoneNorm);
+
+        if (existingOther) {
+          // Unificar o cliente atual (id) dentro do outro existente (existingOther)
+          const balanceToMerge = currentCustomer.balance;
+          const historyToMerge = currentCustomer.history || [];
+          const updatedAddresses = Array.from(new Set([
+            ...(existingOther.addresses || []),
+            ...(currentCustomer.addresses || []),
+            ...(currentCustomer.address ? [currentCustomer.address] : []),
+            ...(updates.address ? [updates.address] : [])
+          ])).filter(Boolean);
+
+          const mergedFields: Partial<Customer> = {
+            balance: existingOther.balance + balanceToMerge,
+            history: [...historyToMerge, ...existingOther.history],
+            addresses: updatedAddresses
+          };
+
+          if (updates.name) {
+            mergedFields.name = updates.name;
+          }
+          if (updates.document && !existingOther.document) {
+            mergedFields.document = updates.document;
+          }
+          if (updates.email && !existingOther.email) {
+            mergedFields.email = updates.email;
+          }
+
+          // 1. Atualizar o cliente existente (existingOther)
+          if (effectiveTenantId) {
+            await setDoc(doc(db, 'customers', existingOther.id), cleanObject({
+              ...mergedFields,
+              updatedAt: new Date()
+            }), { merge: true });
+          } else {
+            const currentOtherFull = { ...existingOther, ...mergedFields };
+            await localDb.customers.put(currentOtherFull);
+            setCustomers(prev => prev.filter(c => c.id !== id).map(c => c.id === existingOther.id ? currentOtherFull : c));
+          }
+
+          // 2. Apagar o cliente duplicado que foi unificado (id)
+          if (effectiveTenantId) {
+            await deleteDoc(doc(db, 'customers', id));
+          } else {
+            await localDb.customers.delete(id);
+            setCustomers(prev => prev.filter(c => c.id !== id));
+          }
+
+          // 3. Atualizar todos os pedidos/historico antigos para apontar para o novo customerId unificado
+          const relatedOrders = orders.filter(o => o.customerId === id);
+          if (relatedOrders.length > 0) {
+            if (effectiveTenantId) {
+              const batch = writeBatch(db);
+              relatedOrders.forEach(o => {
+                const targetDocId = o.docId || o.id;
+                batch.update(doc(db, 'orders', targetDocId), { customerId: existingOther.id });
+              });
+              await batch.commit();
+            } else {
+              for (const o of relatedOrders) {
+                await localDb.orders.update(o.id, { customerId: existingOther.id });
+              }
+              setOrders(prev => prev.map(o => o.customerId === id ? { ...o, customerId: existingOther.id } : o));
+            }
+          }
+
+          addLog('u1', 'CLIENTES', `Unificação por telefone: Cliente "${currentCustomer.name}" foi unificado com "${existingOther.name}" por conflito de telefone.`);
+          return;
+        }
+      }
+    }
+
+    if (effectiveTenantId) {
+      await setDoc(doc(db, 'customers', id), cleanObject({
+        ...updates,
+        updatedAt: new Date()
+      }), { merge: true });
+      // OPTIMISTIC LOCAL STATE UPDATE - CRITICAL FOR REALTIME RESPONSIVENESS
+      setCustomers(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+    } else {
+      await localDb.customers.update(id, updates);
+      setCustomers(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+    }
     addLog('u1', 'CLIENTES', `Cliente atualizado: ${id}`);
   };
 
   const handleUpdateCourier = async (id: string, updates: Partial<Courier>) => {
-    await localDb.couriers.update(id, updates);
-    setCouriers(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    if (effectiveTenantId) {
+      await setDoc(doc(db, 'couriers', id), cleanObject({
+        ...updates,
+        updatedAt: new Date()
+      }), { merge: true });
+    } else {
+      await localDb.couriers.update(id, updates);
+      setCouriers(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+    }
     addLog('u1', 'ENTREGAS', `Entregador atualizado: ${id}`);
   };
 
-  const handleSendToKitchen = async (tableId: number, items: OrderItem[], isCounter?: boolean) => {
+  const handleReturnCourierCash = async (courierId: string, amount: number) => {
+    const courier = couriers.find(c => c.id === courierId);
+    if (!courier) return;
+
+    const newCashHeld = Math.max(0, (courier.cashHeld || 0) - amount);
+    await handleUpdateCourier(courierId, { cashHeld: newCashHeld });
+    
+    // Registrar entrada no financeiro como recebimento de motoboy
+    await handleAddFinancialRecord({
+      type: 'income',
+      amount: amount,
+      category: 'Recebimento Motoboy',
+      description: `Dinheiro devolvido por ${courier.name}`,
+      date: new Date()
+    });
+
+    addLog('u1', 'FINANCEIRO', `Recebido R$ ${amount.toFixed(2)} de ${courier.name}. Saldo em mãos atualizado.`);
+  };
+
+  const handleSendToKitchen = async (tableId: number | string, items: OrderItem[], isCounter?: boolean) => {
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    
+    // Encontrar o número da mesa para exibir no KDS em vez do ID técnico
+    const tableInfo = isCounter 
+      ? counterOrders.find(t => t.id === tableId)
+      : tables.find(t => t.id === tableId || (t as any).docId === tableId);
+    
+    const displayTableNumber = tableInfo ? tableInfo.number : tableId;
+
+    // Check if we are updating an existing active order for this table
+    const activeOrder = orders.find(o => 
+      o.type === (isCounter ? 'takeout' : 'table') &&
+      (o.id === tableId || String(o.tableNumber) === String(displayTableNumber)) && 
+      !['finished', 'cancelled', 'delivered'].includes(o.status)
+    );
+    
+    if (activeOrder) {
+      const updatedItems = [...activeOrder.items];
+      items.forEach(newItem => {
+        updatedItems.push({ ...newItem, sentToKitchen: true });
+      });
+
+      // Reset status to 'preparing' so it reappears/remains in the KDS preparing section for the kitchen staff to see and produce
+      const updates: Partial<Order> = {
+        items: updatedItems,
+        total: updatedItems.reduce((acc, i) => acc + (i.price * i.quantity), 0),
+        status: 'preparing',
+        updatedAt: new Date()
+      };
+
+      if (effectiveTenantId) {
+        const targetDocId = activeOrder.docId || activeOrder.id;
+        try {
+          await setDoc(doc(db, 'orders', targetDocId), updates, { merge: true });
+          
+          // Ensure table currentOrderId is synced
+          if (!isCounter) {
+            const docId = (tableInfo as any)?.docId || (typeof tableId === 'string' ? tableId : null);
+            if (docId) {
+              await updateDoc(doc(db, 'diningTables', docId), { currentOrderId: activeOrder.id });
+            }
+          }
+        } catch (error) {
+          handleFirestoreError(error, OperationType.WRITE, `orders/${targetDocId}`);
+        }
+      }
+      
+      await localDb.orders.update(activeOrder.id, updates);
+      setOrders(prev => prev.map(o => o.id === activeOrder.id ? { ...o, ...updates } as Order : o));
+      addLog('u1', 'COZINHA', `Pedido ${activeOrder.id} (Mesa ${displayTableNumber}) atualizado com novos itens`);
+      return;
+    }
+
     const kitchenOrder: Order = {
       id: `KDS-${Math.random().toString(36).substr(2, 4).toUpperCase()}`,
-      tableNumber: isCounter ? undefined : tableId,
+      tableNumber: displayTableNumber, 
       type: isCounter ? 'takeout' : 'table',
       status: 'preparing',
-      items: items,
+      items: items.map(i => ({ ...i, sentToKitchen: true })),
       total: items.reduce((acc, i) => acc + (i.price * i.quantity), 0),
-      createdAt: new Date()
+      createdAt: new Date(),
+      tenantId: effectiveTenantId || 't1'
     };
-    await localDb.orders.add(kitchenOrder);
-    setOrders(prev => [kitchenOrder, ...prev]);
-    addLog('u1', 'COZINHA', `Pedido enviado para cozinha: ${isCounter ? 'Balcão' : `Mesa ${tableId}`}`);
+
+    if (effectiveTenantId) {
+       await setDoc(doc(db, 'orders', kitchenOrder.id), cleanObject({
+         ...kitchenOrder,
+         createdAt: new Date()
+       }));
+       
+       // Importante: atualizar a mesa com o currentOrderId para evitar duplicidade no fechamento
+       if (!isCounter) {
+          const docId = (tableInfo as any)?.docId || (typeof tableId === 'string' ? tableId : null);
+          if (docId) {
+            await updateDoc(doc(db, 'diningTables', docId), { currentOrderId: kitchenOrder.id });
+          }
+       }
+    }
+    
+    // Atualizar estado local da mesa também
+    if (isCounter) {
+      setCounterOrders(prev => prev.map(t => t.id === tableId ? { ...t, currentOrderId: kitchenOrder.id } : t));
+    } else {
+      setTables(prev => prev.map(t => t.id === tableId || (t as any).docId === tableId ? { ...t, currentOrderId: kitchenOrder.id } : t));
+    }
+
+    await localDb.orders.put(kitchenOrder);
+    setOrders(prev => [kitchenOrder, ...prev.filter(o => o.id !== kitchenOrder.id)]);
+    addLog('u1', 'COZINHA', `Pedido enviado para cozinha: ${isCounter ? 'Balcão' : `Mesa ${displayTableNumber}`}`);
+  };
+
+  const handleUpdateLogisticsSettings = async (updates: Partial<AdminSettings>) => {
+    // Remove cashSession from updates to prevent it from leaking into admin settings doc
+    const filteredUpdates = { ...updates };
+    if ((filteredUpdates as any).cashSession) delete (filteredUpdates as any).cashSession;
+
+    const newSettings = { ...adminSettings, ...filteredUpdates };
+    setAdminSettings(newSettings);
+    
+    // Create a clean version for cloud avoiding cashSession in the admin nested object
+    const cleanAdminForCloud = { ...newSettings };
+    if ((cleanAdminForCloud as any).cashSession) delete (cleanAdminForCloud as any).cashSession;
+
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    if (effectiveTenantId) {
+      try {
+        await setDoc(doc(db, 'settings', effectiveTenantId), { 
+          admin: cleanAdminForCloud,
+          updatedAt: new Date() 
+        }, { merge: true });
+      } catch (e) {
+        console.error("Error updating logistics settings:", e);
+      }
+    }
+    
+    // Persistir no Dexie com a estrutura correta (AppSettings)
+    await localDb.settings.put({ 
+      id: effectiveTenantId || 'global',
+      admin: newSettings,
+      digitalMenu: digitalMenuSettings,
+      cashSession: cashSession
+    });
   };
 
   const handleUpdateOrderStatus = async (id: string, status: Order['status']) => {
-    await localDb.orders.update(id, { status });
-    setOrders(prev => prev.map(o => o.id === id ? { ...o, status } : o));
+    const order = orders.find(o => o.id === id);
+    if (!order) return;
+
+    // Prevent backwards transitions and modification of terminal statuses
+    const terminalStatuses: OrderStatus[] = ['delivered', 'finished', 'cancelled'];
+    const currentStatus = order.status;
+
+    if (terminalStatuses.includes(currentStatus) && status !== 'cancelled') {
+        console.warn(`Attempted to modify a terminal order ${id} (${currentStatus}). State preserved.`);
+        return;
+    }
+
+    if (status !== 'cancelled') {
+        const currentPriority = STATUS_PRIORITY[currentStatus] || 0;
+        const newPriority = STATUS_PRIORITY[status] || 0;
+        
+        // Regra do Usuário: 
+        // 1. Permitir retroceder de 'delivering' (4) para 'ready' (3)
+        // 2. Bloquear retroceder de 'ready' (3) para 'preparing' (2) ou menos
+        // 3. Bloquear outros retrocessos
+        const isAllowedRetrocession = (currentStatus === 'delivering' && status === 'ready');
+
+        if (newPriority < currentPriority && !isAllowedRetrocession) {
+          console.warn(`Attempted invalid status transition for order ${id}: ${currentStatus} -> ${status}`);
+          return;
+        }
+
+        // Se já chegou em 'ready', nunca volta para 'preparing'
+        if (currentPriority >= 3 && newPriority < 3) {
+          console.warn(`Attempted to return a ready order to kitchen (${id}). Blocked.`);
+          return;
+        }
+    }
+
+    const now = new Date();
+    const updates: Partial<Order> = { 
+      status, 
+      updatedAt: now 
+    };
+
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+
+    // Add specific timestamps for lifecycle tracking
+    if (status === 'preparing') updates.acceptedAt = now;
+    if (status === 'ready') updates.readyAt = now;
+    if (status === 'delivering') updates.dispatchedAt = now;
+    if (status === 'delivered') updates.deliveredAt = now;
+    if (status === 'finished') {
+      updates.finishedAt = now;
+      
+      // Ciclo Final para pedidos de Marketplace/Delivery (Igual às Mesas)
+      // Se estiver finalizando, registra no financeiro se não foi registrado antes
+      const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+      if (effectiveTenantId && !order.isSettled) {
+        try {
+          // Registrar Receita
+          let recordCategory = 'Vendas Mesa';
+          let recordDesc = `Pedido #${order.id.slice(-4)} (${order.type.toUpperCase()}) - Finalizado`;
+          
+          if (order.source === 'marketplace' || order.source === 'iFood') {
+            recordCategory = 'Vendas Marketplace';
+            recordDesc = `Pedido #${order.id.slice(-4)} (Marketplace) - Finalizado`;
+          } else if (order.source === 'whatsapp' || order.source === 'partner_app' || (order.source as string) === 'digital_menu' || order.tableNumber !== undefined) {
+            recordCategory = 'Vendas Cardápio Digital';
+            recordDesc = `Pedido #${order.id.slice(-4)} (Cardápio Digital) - Finalizado`;
+          } else {
+            recordCategory = order.type === 'delivery' ? 'Vendas Entrega' : (order.type === 'takeout' ? 'Vendas Balcão' : 'Vendas Mesa');
+            recordDesc = `Pedido #${order.id.slice(-4)} (${order.type === 'delivery' ? 'DELIVERY' : (order.type === 'takeout' ? 'BALCÃO' : 'MESA')}) - Finalizado`;
+          }
+
+          await handleAddFinancialRecord({
+            type: 'income',
+            amount: order.total,
+            category: recordCategory,
+            description: `${recordDesc} - Pagamento: ${order.paymentMethod || 'dinheiro'}`,
+            date: new Date(),
+            paymentMethod: order.paymentMethod || 'dinheiro',
+            orderId: order.id
+          });
+
+          // Se for do Marketplace, acumular taxa de R$ 1,50
+          if (order.source === 'marketplace') {
+            const currentSettings = adminSettings;
+            const appFee = currentSettings.saasIntegration?.appFeePerOrder || 1.50;
+            const newBillingAccumulated = (currentSettings.saasIntegration?.billingAccumulated || 0) + appFee;
+            
+            const updatedSaas = {
+              ...currentSettings.saasIntegration,
+              billingAccumulated: newBillingAccumulated
+            };
+            
+            await handleUpdateLogisticsSettings({ saasIntegration: updatedSaas });
+            addLog('u1', 'SISTEMA', `Taxa de marketplace registrada: R$ ${appFee.toFixed(2)}`);
+          }
+
+          updates.isSettled = true;
+        } catch (e) {
+          console.error("Erro ao processar ciclo final do pedido:", e);
+        }
+      }
+    }
+
+    await localDb.orders.update(id, updates);
+    setOrders(prev => prev.map(o => o.id === id ? { ...o, ...updates } : o));
+    
+    // Se o pedido foi entregue, processar ganhos e liberar o motoboy
+    if (status === 'delivered' && order?.courierId) {
+      const courier = couriers.find(c => c.id === order.courierId);
+      if (courier) {
+        const today = new Date();
+        const lastDaily = courier.lastDailyFeeDate ? new Date(courier.lastDailyFeeDate) : null;
+        const isNewDay = !lastDaily || 
+                        lastDaily.getDate() !== today.getDate() || 
+                        lastDaily.getMonth() !== today.getMonth() || 
+                        lastDaily.getFullYear() !== today.getFullYear();
+
+        const courierUpdates: Partial<Courier> = {};
+        
+        // Se for a primeira entrega do dia, adiciona diária aos ganhos
+        if (isNewDay && courier.dailyFee && courier.dailyFee > 0) {
+          courierUpdates.lastDailyFeeDate = today;
+          courierUpdates.earnings = (courier.earnings || 0) + courier.dailyFee;
+          addLog('u1', 'ENTREGAS', `Diária de R$ ${courier.dailyFee.toFixed(2)} creditada para ${courier.name} na 1ª entrega.`);
+        }
+
+        // Adiciona taxa de entrega aos ganhos (courierEarnings ou deliveryFee)
+        const deliveryEarning = order.courierEarnings || order.deliveryFee || 0;
+        courierUpdates.earnings = (courierUpdates.earnings || courier.earnings || 0) + deliveryEarning;
+        
+        // Se pagou em dinheiro, acumula no cashHeld do motoboy
+        if (order.paymentMethod === 'dinheiro') {
+          courierUpdates.cashHeld = (courier.cashHeld || 0) + order.total;
+        }
+
+        // Só libera se não tiver mais NENHUM pedido em rota
+        const otherActiveOrders = orders.filter(o => o.id !== id && o.courierId === courier.id && o.status === 'delivering');
+        if (otherActiveOrders.length === 0) {
+          courierUpdates.status = 'available';
+        }
+
+        await localDb.couriers.update(courier.id, courierUpdates);
+        setCouriers(prev => prev.map(c => c.id === courier.id ? { ...c, ...courierUpdates } : c));
+
+        if (effectiveTenantId) {
+           await setDoc(doc(db, 'couriers', courier.id), courierUpdates, { merge: true });
+        }
+      }
+    }
+    
     addLog('u1', 'PEDIDO', `Pedido ${id} alterado para ${status}`);
-  };
 
-  const handleAssignCourier = async (orderId: string, courierId: string) => {
-    await localDb.orders.update(orderId, { courierId, status: 'delivering' });
-    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, courierId, status: 'delivering' } : o));
-    addLog('u1', 'ENTREGA', `Entregador atribuído ao pedido ${orderId}`);
-  };
-
-  const handleUpdateTable = async (id: number, items: OrderItem[], status: Table['status'], isCounter?: boolean) => {
-    if (isCounter) {
-      setCounterOrders(prev => prev.map(t => t.id === id ? { ...t, items, status, total: items.reduce((a, b) => a + (b.price * b.quantity), 0) } : t));
-    } else {
-      await localDb.diningTables.update(id, { items, status, total: items.reduce((a, b) => a + (b.price * b.quantity), 0) });
-      setTables(prev => prev.map(t => t.id === id ? { ...t, items, status, total: items.reduce((a, b) => a + (b.price * b.quantity), 0) } : t));
+    // Sync status to cloud if we are in a tenant context
+    if (effectiveTenantId) {
+      try {
+        const targetDocId = order.docId || order.id || id;
+        await setDoc(doc(db, 'orders', targetDocId), cleanObject({
+          ...updates,
+          // Se for concluído, registrar horário legível para relatórios simples
+          ...(status === 'delivered' || status === 'finished' ? { completedAt: now } : {})
+        }), { merge: true });
+      } catch (e) {
+        console.error(`Error syncing status check for cloud order ${id}:`, e);
+      }
     }
   };
 
-  const handleAddCounterOrder = () => {
+  const handleAddCourier = async (courier: Partial<Courier>) => {
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    const newCourier: Courier = {
+      id: courier.id || `c${Date.now()}`,
+      tenantId: effectiveTenantId || 't1',
+      name: courier.name || '',
+      phone: courier.phone || '',
+      email: courier.email,
+      document: courier.document,
+      cnh: courier.cnh,
+      vehiclePlate: courier.vehiclePlate,
+      vehicleType: courier.vehicleType as any || 'moto',
+      address: courier.address,
+      pixKey: courier.pixKey,
+      dailyFee: courier.dailyFee || 0,
+      status: 'offline',
+      active: true,
+      createdAt: new Date()
+    };
+    
+    if (effectiveTenantId) {
+       await setDoc(doc(db, 'couriers', newCourier.id), {
+         ...newCourier,
+         createdAt: new Date()
+       });
+       
+       // If email provided, also ensure a User record exists for app access
+       if (newCourier.email) {
+         const userDoc = await getDoc(doc(db, 'users', newCourier.id));
+         if (!userDoc.exists()) {
+           await setDoc(doc(db, 'users', newCourier.id), {
+             id: newCourier.id,
+             tenantId: newCourier.tenantId,
+             name: newCourier.name,
+             email: newCourier.email,
+             role: 'COURIER',
+             active: true,
+             status: 'offline',
+             createdAt: new Date()
+           });
+         }
+       }
+    } else {
+      await localDb.couriers.add(newCourier);
+      const updatedCouriers = await localDb.couriers.toArray();
+      setCouriers(updatedCouriers);
+    }
+    addLog('u1', 'ENTREGAS', `Novo entregador cadastrado: ${newCourier.name}`);
+  };
+
+  const handleEditOrderInPDV = (order: Order) => {
+    // Melhoria para manter o usuário na aba original após edição (como solicitado para o KDS)
+    if (activeTab !== 'tables') {
+      setReturnToTab(activeTab);
+      setActiveTab('tables');
+    }
+    setPdvEditOrder(order);
+  };
+
+  const handleUpdateOrder = async (id: string, updates: Partial<Order>) => {
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    
+    await localDb.orders.update(id, updates);
+    setOrders(prev => prev.map(o => o.id === id ? { ...o, ...updates } : o));
+    
+    if (effectiveTenantId) {
+      try {
+        const order = orders.find(o => o.id === id);
+        const targetDocId = order?.docId || order?.id || id;
+        await setDoc(doc(db, 'orders', targetDocId), cleanObject({ ...updates, updatedAt: new Date() }), { merge: true });
+      } catch (e) {
+        console.error(`Error syncing order update ${id}:`, e);
+      }
+    }
+    
+    // Se forma de pagamento ou total foi alterada, sincronizar com o lançamento financeiro correspondente
+    if (updates.paymentMethod || updates.total !== undefined) {
+      const order = orders.find(o => o.id === id);
+      if (order) {
+        const matchingRecord = financialRecords.find(r => 
+          r.orderId === id ||
+          (r.description && r.description.includes(`#${id.slice(-4)}`))
+        );
+        if (matchingRecord) {
+          const newAmount = updates.total !== undefined ? updates.total : matchingRecord.amount;
+          const newPaymentMethod = updates.paymentMethod || matchingRecord.paymentMethod;
+          
+          let newDescription = matchingRecord.description;
+          if (updates.paymentMethod) {
+            // Substitui "Pagamento: X" por "Pagamento: Y"
+            if (newDescription.includes("Pagamento:")) {
+              newDescription = newDescription.replace(/(Pagamento:\s*)([^\s,]+)/i, `$1${updates.paymentMethod}`);
+            } else {
+              newDescription = `${newDescription} - Pagamento: ${updates.paymentMethod}`;
+            }
+          }
+          
+          await handleUpdateFinancialRecord(matchingRecord.id, { 
+            amount: newAmount,
+            paymentMethod: newPaymentMethod,
+            description: newDescription
+          });
+        }
+      }
+    }
+
+    addLog('u1', 'PEDIDO', `Pedido ${id} atualizado: ${Object.keys(updates).join(', ')}`);
+  };
+
+  const handleAssignCourier = async (orderId: string, courierId: string) => {
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    const courier = couriers.find(c => c.id === courierId);
+    
+    // Calculate route position: check how many orders are already assigned to this courier that are not delivered
+    const currentAssignments = orders.filter(o => o.courierId === courierId && !['delivered', 'cancelled'].includes(o.status));
+    const routePosition = currentAssignments.length + 1;
+    
+    // Get repasse from courier data or default to 0
+    const courierEarnings = courier?.earningsPerDelivery || 0;
+
+    const updates = { 
+      courierId, 
+      routePosition,
+      courierEarnings,
+      status: 'delivering' as Order['status'], // Mark as delivering immediately when assigned
+      updatedAt: new Date() 
+    };
+    
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, ...updates } : o));
+    
+    if (effectiveTenantId) {
+      try {
+        const order = orders.find(o => o.id === orderId);
+        const targetDocId = order?.docId || order?.id || orderId;
+        await updateDoc(doc(db, 'orders', targetDocId), updates);
+      } catch (e) {
+        console.error(`Error syncing courier assignment ${orderId}:`, e);
+      }
+    }
+    
+    addLog('u1', 'ENTREGA', `Entregador atribuído ao pedido ${orderId} na posição ${routePosition}`);
+  };
+
+  const handleDispatchCourier = async (courierId: string) => {
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    
+    await localDb.couriers.update(courierId, { status: 'delivering' });
+    setCouriers(prev => prev.map(c => c.id === courierId ? { ...c, status: 'delivering' } : c));
+    
+    if (effectiveTenantId) {
+      try {
+        await setDoc(doc(db, 'couriers', courierId), { 
+          status: 'delivering', 
+          updatedAt: new Date() 
+        }, { merge: true });
+      } catch (e) {
+        console.error(`Error syncing courier dispatch ${courierId}:`, e);
+      }
+    }
+    
+    addLog('u1', 'ENTREGA', `Entregador ${courierId} saiu para entrega (Em Rota)`);
+  };
+
+  const [isAddingTable, setIsAddingTable] = useState(false);
+
+  const handleAddTable = async () => {
+    if (isAddingTable) return;
+    
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || (isSuperAdmin ? `saas-admin-${user?.uid}` : null);
+    
+    if (!effectiveTenantId) {
+      showToast("Vínculo com restaurante necessário.", 'error');
+      return;
+    }
+
+    setIsAddingTable(true);
+    try {
+      // Determine the next number and ID safely within the current tenant's scope
+      // Ensure we only use numeric IDs/numbers for calculations
+      const validTables = tables.filter(t => 
+        t && 
+        (typeof t.number === 'number' || !isNaN(Number(t.number))) && 
+        (typeof t.id === 'number' || !isNaN(Number(t.id)))
+      );
+      
+      const nextNumber = validTables.length > 0 ? Math.max(...validTables.map(t => Number(t.number))) + 1 : 1;
+      const nextId = validTables.length > 0 ? Math.max(...validTables.map(t => Number(t.id))) + 1 : 1;
+      
+      // Final sanity check for NaN
+      if (isNaN(nextNumber) || isNaN(nextId)) {
+        throw new Error("Falha ao calcular próximo número/ID da mesa.");
+      }
+
+      // Aggressive check for duplicates in current state
+      if (tables.some(t => Number(t.number) === nextNumber)) {
+        console.warn(`Table number ${nextNumber} already exists in local state.`);
+        // Try to find the actual next available number
+        let safeNumber = nextNumber;
+        while (tables.some(t => Number(t.number) === safeNumber)) {
+          safeNumber++;
+        }
+        
+        const newTable: Table = {
+          id: nextId + (safeNumber - nextNumber),
+          number: safeNumber,
+          status: 'available',
+          items: [],
+          total: 0,
+          tenantId: effectiveTenantId
+        };
+        
+        await addDoc(collection(db, 'diningTables'), {
+          ...newTable,
+          updatedAt: new Date()
+        });
+        addLog('u1', 'MESAS', `Nova mesa adicionada: ${safeNumber}`);
+        return;
+      }
+
+      const newTable: Table = {
+        id: nextId,
+        number: nextNumber,
+        status: 'available',
+        items: [],
+        total: 0,
+        tenantId: effectiveTenantId
+      };
+
+      await addDoc(collection(db, 'diningTables'), {
+        ...newTable,
+        updatedAt: new Date()
+      });
+      
+      addLog('u1', 'MESAS', `Nova mesa adicionada: ${nextNumber}`);
+    } catch (error) {
+      console.error("Error adding table:", error);
+      showToast("Erro ao adicionar mesa.", 'error');
+    } finally {
+      setIsAddingTable(false);
+    }
+  };
+
+  const handleDeleteTable = async (id: number | string) => {
+    // Robust search for the table in local state
+    const numericId = typeof id === 'string' ? Number(id) : id;
+    
+    // First, try to find by docId/firestoreId (exact match)
+    let table = tables.find(t => (t as any).docId === id || (t as any)._firestoreId === id);
+    
+    // If not found, fall back to numeric ID
+    if (!table) {
+      table = tables.find(t => t.id === id || (typeof t.id === 'number' && t.id === numericId));
+    }
+    
+    if (!table) {
+      console.warn(`Table not found for deletion. ID input: ${id}`);
+      // Fallback: if id is clearly a docId string, try direct deletion
+      if (typeof id === 'string' && isNaN(numericId)) {
+        try {
+          await deleteDoc(doc(db, 'diningTables', id));
+          return;
+        } catch (e) {
+          console.error("Direct delete failed:", e);
+        }
+      }
+      return;
+    }
+
+    if (table.status !== 'available') {
+      showToast("Não é possível excluir uma mesa em uso.", 'error');
+      return;
+    }
+
+    const effectiveTenantId = table.tenantId || viewingTenantId || currentUserData?.tenantId;
+    
+    if (effectiveTenantId) {
+      try {
+        const docId = (table as any).docId || (table as any)._firestoreId || (typeof id === 'string' && isNaN(numericId) ? id : null);
+        
+        if (docId) {
+          await deleteDoc(doc(db, 'diningTables', docId));
+        } else {
+          // Fallback to query by numeric ID and tenantId
+          const q = query(
+            collection(db, 'diningTables'), 
+            where('id', '==', numericId), 
+            where('tenantId', '==', effectiveTenantId)
+          );
+          const snapshot = await getDocs(q);
+          const batch = writeBatch(db);
+          snapshot.docs.forEach(d => batch.delete(d.ref));
+          await batch.commit();
+        }
+        addLog('u1', 'MESAS', `Mesa ${table.number} excluída`);
+      } catch (error) {
+        console.error("Error deleting table from cloud:", error);
+        showToast("Erro ao excluir mesa. Verifique suas permissões.", 'error');
+      }
+    } else {
+      await localDb.diningTables.delete(numericId);
+      setTables(prev => prev.filter(t => t.id !== id && t.id !== numericId));
+      addLog('u1', 'MESAS', `Mesa ${table.number} excluída (Local)`);
+    }
+  };
+
+  const handleUpdateTable = async (id: number | string, items: OrderItem[], status: Table['status'], isCounter?: boolean) => {
+    const total = items.reduce((a, b) => a + (b.price * b.quantity), 0);
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || (isSuperAdmin ? `saas-admin-${user?.uid}` : null);
+    const numericId = typeof id === 'string' ? Number(id) : id;
+
+    if (isCounter) {
+      setCounterOrders(prev => prev.map(t => t.id === id || t.id === numericId ? { ...t, items, status, total } : t));
+      // Sincronizar com Firestore se for balcão também!
+      if (effectiveTenantId) {
+        try {
+          const docId = `counter-${id}`; 
+          // Note: Balcão orders are temporary tables, but we should sync them if they are in Firestore
+          // However, usually they were only local. Let's make it consistent.
+          // In some versions, they might be in diningTables too.
+        } catch (e) {}
+      }
+    } else {
+      // Local update
+      if (!isNaN(numericId)) {
+        await localDb.diningTables.update(numericId, { items, status, total });
+      }
+      setTables(prev => prev.map(t => t.id === id || t.id === numericId || (t as any).docId === id ? { ...t, items, status, total } : t));
+
+      // Cloud Sync
+      if (effectiveTenantId) {
+        try {
+          const table = tables.find(t => t.id === id || t.id === numericId || (t as any).docId === id);
+          const docId = (table as any).docId || (typeof id === 'string' && isNaN(numericId) ? id : null);
+
+          if (docId) {
+            await setDoc(doc(db, 'diningTables', docId), cleanObject({ items, status, total, updatedAt: new Date() }), { merge: true });
+          } else {
+            const q = query(
+              collection(db, 'diningTables'), 
+              where('id', '==', numericId), 
+              where('tenantId', '==', effectiveTenantId)
+            );
+            const snapshot = await getDocs(q);
+            if (!snapshot.empty) {
+              const batch = writeBatch(db);
+              snapshot.docs.forEach(d => batch.update(d.ref, cleanObject({ items, status, total, updatedAt: new Date() })));
+              await batch.commit();
+            }
+          }
+        } catch (error) {
+          console.error("Error syncing table update to cloud:", error);
+        }
+      }
+    }
+  };
+
+  const handleAddCounterOrder = async () => {
     const newCounter: Table = {
       id: Date.now(),
+      number: counterOrders.length + 1,
       status: 'occupied',
       items: [],
-      total: 0
+      total: 0,
+      tenantId: viewingTenantId || currentUserData?.tenantId || 't1'
     };
     setCounterOrders(prev => [...prev, newCounter]);
     addLog('u1', 'BALCÃO', 'Nova comanda de balcão aberta');
     return newCounter.id;
   };
 
-  const handleCloseTable = async (tableId: number, method: PaymentMethod, fiscal: boolean, customerId?: string, isCounter?: boolean, deliveryInfo?: { address: string, fee: number }, customerDocument?: string) => {
+  const handleCancelTable = async (tableId: number | string, isCounter?: boolean) => {
+    try {
+      const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || (isSuperAdmin ? `saas-admin-${user?.uid}` : null);
+      const strId = String(tableId);
+      const numericId = Number(strId.replace(/\D/g, ''));
+      
+      const table = isCounter 
+        ? counterOrders.find(t => t.id === tableId) 
+        : tables.find(t => t.id === tableId || t.id === numericId || (t as any).docId === tableId);
+
+      // Remove pedidos de cozinha (KDS-) pendentes ou prontos para esta mesa/balcão
+      const tableNumber = table?.number || tableId;
+      const kitchenOrderIdsToRemove = orders
+        .filter(o => 
+          (o.status === 'preparing' || o.status === 'ready') && 
+          o.id.startsWith('KDS-') && 
+          (String(o.tableNumber) === String(tableNumber))
+        )
+        .map(o => o.id);
+      
+      if (kitchenOrderIdsToRemove.length > 0) {
+        await localDb.orders.bulkDelete(kitchenOrderIdsToRemove);
+        setOrders(prev => prev.filter(o => !kitchenOrderIdsToRemove.includes(o.id)));
+        
+        if (effectiveTenantId) {
+           for (const kid of kitchenOrderIdsToRemove) {
+             try {
+               await deleteDoc(doc(db, 'orders', kid));
+             } catch (e) {
+               console.error(`Error deleting cloud KDS order ${kid}:`, e);
+             }
+           }
+        }
+      }
+
+      if (isCounter) {
+        setCounterOrders(prev => prev.filter(t => t.id !== tableId && t.id !== numericId));
+      } else {
+        // Redefinir localmente
+        if (!isNaN(numericId)) {
+          await localDb.diningTables.update(numericId, { items: [], status: 'available', total: 0, currentOrderId: undefined } as any);
+        }
+        setTables(prev => prev.map(t => t.id === tableId || t.id === numericId || (t as any).docId === tableId ? { ...t, items: [], status: 'available', total: 0, currentOrderId: undefined } : t));
+        
+        // Sincronização Cloud Robusta
+        if (effectiveTenantId) {
+          try {
+            const docId = (table as any)?.docId || (typeof tableId === 'string' && isNaN(numericId) ? tableId : null);
+            
+            if (docId) {
+              await updateDoc(doc(db, 'diningTables', docId), { 
+                items: [], 
+                status: 'available', 
+                total: 0, 
+                currentOrderId: null, 
+                updatedAt: new Date() 
+              });
+            } else if (!isNaN(numericId)) {
+              const q = query(collection(db, 'diningTables'), where('id', '==', numericId), where('tenantId', '==', effectiveTenantId));
+              const snapshot = await getDocs(q);
+              if (!snapshot.empty) {
+                await updateDoc(snapshot.docs[0].ref, { items: [], status: 'available', total: 0, currentOrderId: null, updatedAt: new Date() });
+              }
+            }
+          } catch (e) {
+            console.error("Error resetting table in cloud during cancel:", e);
+          }
+        }
+      }
+      addLog('u1', 'CANCELAMENTO', `${isCounter ? 'Balcão' : `Mesa ${table?.number || tableId}`} cancelado`);
+    } catch (error) {
+      console.error('Erro ao cancelar venda:', error);
+      showToast('Erro ao cancelar venda. Tente novamente.', 'error');
+    }
+  };
+
+  const handleTransferTable = async (fromTableId: number | string, toTableId: number | string, isCounter?: boolean) => {
+    try {
+      const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || (isSuperAdmin ? `saas-admin-${user?.uid}` : null);
+      const fromNumericId = typeof fromTableId === 'string' ? Number(fromTableId) : fromTableId;
+      const toNumericId = typeof toTableId === 'string' ? Number(toTableId) : toTableId;
+
+      const source = isCounter ? counterOrders : tables;
+      const fromTable = source.find(t => t.id === fromTableId || t.id === fromNumericId || (t as any).docId === fromTableId);
+      const toTable = tables.find(t => t.id === toTableId || t.id === toNumericId || (t as any).docId === toTableId);
+
+      if (!fromTable || !toTable) {
+        showToast("Mesa de origem ou destino não encontrada.", 'error');
+        return false;
+      }
+      if (toTable.status !== 'available') {
+        showToast("A mesa de destino já está ocupada.", 'error');
+        return false;
+      }
+
+      // Transfer items
+      const items = fromTable.items;
+      const total = fromTable.total;
+
+      // Update destination table
+      if (!isNaN(toNumericId)) {
+        await localDb.diningTables.update(toNumericId, { items, status: 'occupied', total });
+      }
+      setTables(prev => prev.map(t => t.id === toTableId || t.id === toNumericId || (t as any).docId === toTableId ? { ...t, items, status: 'occupied', total } : t));
+
+      // Clear source table
+      if (isCounter) {
+        setCounterOrders(prev => prev.filter(t => t.id !== fromTableId && t.id !== fromNumericId));
+      } else {
+        if (!isNaN(fromNumericId)) {
+          await localDb.diningTables.update(fromNumericId, { items: [], status: 'available', total: 0 });
+        }
+        setTables(prev => prev.map(t => t.id === fromTableId || t.id === fromNumericId || (t as any).docId === fromTableId ? { ...t, items: [], status: 'available', total: 0 } : t));
+      }
+
+      // Update KDS orders if any
+      const fromTableNumber = fromTable?.number || fromTableId;
+      const toTableNumber = toTable?.number || toTableId;
+      const kitchenOrdersToUpdate = orders.filter(o => 
+        (o.status === 'preparing' || o.status === 'ready') && 
+        o.id.startsWith('KDS-') && 
+        (String(o.tableNumber) === String(fromTableNumber))
+      );
+
+      for (const order of kitchenOrdersToUpdate) {
+        await localDb.orders.update(order.id, { tableNumber: toTableNumber });
+      }
+      
+      if (kitchenOrdersToUpdate.length > 0) {
+        setOrders(prev => prev.map(o => 
+          kitchenOrdersToUpdate.some(ko => ko.id === o.id) ? { ...o, tableNumber: toTableNumber } : o
+        ));
+      }
+
+      // Cloud Sync
+      if (effectiveTenantId) {
+        try {
+          const batch = writeBatch(db);
+          
+          const fromDocId = (fromTable as any).docId || (typeof fromTableId === 'string' && isNaN(fromNumericId) ? fromTableId : null);
+          const toDocId = (toTable as any).docId || (typeof toTableId === 'string' && isNaN(toNumericId) ? toTableId : null);
+
+          // Update destination
+          if (toDocId) {
+            batch.update(doc(db, 'diningTables', toDocId), { items, status: 'occupied', total, updatedAt: new Date() });
+          } else if (!isNaN(toNumericId)) {
+            const qTo = query(collection(db, 'diningTables'), where('id', '==', toNumericId), where('tenantId', '==', effectiveTenantId));
+            const snapTo = await getDocs(qTo);
+            snapTo.docs.forEach(d => batch.update(d.ref, { items, status: 'occupied', total, updatedAt: new Date() }));
+          }
+          
+          // Update source
+          if (fromDocId) {
+            batch.update(doc(db, 'diningTables', fromDocId), { items: [], status: 'available', total: 0, updatedAt: new Date() });
+          } else if (!isNaN(fromNumericId)) {
+            const qFrom = query(collection(db, 'diningTables'), where('id', '==', fromNumericId), where('tenantId', '==', effectiveTenantId));
+            const snapFrom = await getDocs(qFrom);
+            snapFrom.docs.forEach(d => batch.update(d.ref, { items: [], status: 'available', total: 0, updatedAt: new Date() }));
+          }
+          
+          // Update KDS orders in cloud
+          for (const ko of kitchenOrdersToUpdate) {
+            const targetDocId = ko.docId || ko.id;
+            batch.update(doc(db, 'orders', targetDocId), { tableNumber: toTableNumber, updatedAt: new Date() });
+          }
+
+          await batch.commit();
+        } catch (error) {
+          console.error("Error syncing table transfer to cloud:", error);
+        }
+      }
+
+      addLog('u1', 'TRANSFERÊNCIA', `Pedido transferido da ${isCounter ? 'Comanda' : `Mesa ${fromTableId}`} para a Mesa ${toTableId}`);
+      return true;
+    } catch (error) {
+      console.error('Erro ao transferir mesa:', error);
+      showToast('Erro ao transferir mesa. Tente novamente.', 'error');
+      return false;
+    }
+  };
+
+  const handleCloseTable = async (
+    tableId: number, 
+    method: PaymentMethod, 
+    fiscal: boolean, 
+    customerId?: string, 
+    isCounter?: boolean, 
+    deliveryInfo?: { address: string, fee: number, name?: string, phone?: string }, 
+    customerDocument?: string,
+    payments?: { method: PaymentMethod, amount: number, customerId?: string, isFiscalIssued?: boolean, fiscalKey?: string, customerDocument?: string }[],
+    changeFor?: number,
+    additionalFee?: number,
+    additionalFeeReason?: string,
+    discount?: number
+  ) => {
+    // 1. Identificar a mesa e seu docId para sincronização precisa
     const source = isCounter ? counterOrders : tables;
     const table = source.find(t => t.id === tableId);
-    if (!table) return;
+    if (!table || table.items.length === 0) {
+      showToast("Não é possível fechar um pedido sem itens.", 'error');
+      return;
+    }
+
+    const docId = (table as any).docId || (typeof tableId === 'string' ? tableId : null);
+    const finalTotal = table.total + (deliveryInfo?.fee || 0) + (additionalFee || 0) - (discount || 0);
+    const existingOrderId = table.currentOrderId;
+
+    // 1. Validar Estoque (Melhoria de Especialista em Testes)
+    // Verificamos antes de gerar o pedido para evitar inconsistências
+    for (const item of table.items) {
+      const product = products.find(p => p.id === item.productId);
+      if (product && product.trackStock) {
+        const currentStock = product.stock || 0;
+        if (currentStock < item.quantity) {
+          showToast(`Estoque insuficiente: ${product.name}`, 'error');
+          return;
+        }
+      }
+    }
+
+    const tableNumber = table?.number || tableId;
+
+    const isRealDelivery = !!(deliveryInfo && (deliveryInfo.address || (deliveryInfo.fee && deliveryInfo.fee > 0)));
 
     const newOrder: Order = {
-      id: Math.random().toString(36).substr(2, 6).toUpperCase(),
-      tableNumber: isCounter ? undefined : tableId,
+      id: existingOrderId || Math.random().toString(36).substr(2, 6).toUpperCase(),
+      tableNumber: isCounter ? undefined : tableNumber,
       items: table.items,
-      total: table.total + (deliveryInfo?.fee || 0),
-      type: deliveryInfo ? 'delivery' : (isCounter ? 'takeout' : 'table'),
-      status: deliveryInfo ? 'preparing' : 'delivered',
-      createdAt: new Date(),
+      total: finalTotal,
+      type: isRealDelivery ? 'delivery' : (isCounter ? 'takeout' : 'table'),
+      status: isRealDelivery 
+        ? 'preparing' 
+        : (isCounter && !table.items.every(i => i.sentToKitchen)) 
+          ? 'preparing' 
+          : 'delivered', // Table/Counter orders that are being closed/paid are considered delivered/finished
+      deliveryMethod: isRealDelivery ? 'entrega' : undefined,
+      createdAt: table.currentOrderId ? (orders.find(o => o.id === table.currentOrderId)?.createdAt || new Date()) : new Date(),
       paymentMethod: method,
+      payments: payments?.map(p => ({ ...p, timestamp: new Date() })),
       isFiscalIssued: fiscal,
-      fiscalKey: fiscal ? Array.from({length: 44}, () => Math.floor(Math.random() * 10)).join('') : undefined,
+      fiscalKey: undefined,
       customerId: customerId,
       customerDocument: customerDocument,
+      customerName: deliveryInfo?.name || table.items[0]?.observation?.split(' ')[0], 
+      customerPhone: deliveryInfo?.phone,
       customerAddress: deliveryInfo?.address,
-      deliveryFee: deliveryInfo?.fee
+      deliveryFee: deliveryInfo?.fee,
+      changeFor: changeFor,
+      additionalFee: additionalFee || 0,
+      additionalFeeReason: additionalFeeReason || '',
+      discount: discount || 0,
+      tenantId: viewingTenantId || currentUserData?.tenantId || 't1',
+      source: table.currentOrderId ? (orders.find(o => o.id === table.currentOrderId)?.source || 'local') : 'local',
+      isSettled: true,
+      finishedAt: new Date(),
+      updatedAt: new Date()
     };
 
-    await localDb.orders.add(newOrder);
-    setOrders(prev => [newOrder, ...prev]);
-    
-    if (isCounter) {
-      setCounterOrders(prev => prev.filter(t => t.id !== tableId));
-    } else {
-      await localDb.diningTables.update(tableId, { items: [], status: 'available', total: 0 });
-      setTables(prev => prev.map(t => t.id === tableId ? { ...t, items: [], status: 'available', total: 0 } : t));
-    }
-    
-    const finalTotal = table.total + (deliveryInfo?.fee || 0);
+    // NFC-e Emission Logic
+    if (fiscal) {
+      try {
+        const response = await fetch('/api/fiscal/issue', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            order: newOrder,
+            settings: adminSettings.fiscal,
+            customerDocument: customerDocument
+          })
+        });
 
-    if (method === 'conta_cliente' && customerId) {
-      const customer = customers.find(c => c.id === customerId);
-      if (customer) {
-        const transaction: CustomerTransaction = {
-          id: `t${Date.now()}`,
-          type: 'debit',
-          amount: finalTotal,
-          description: `Consumo ${deliveryInfo ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} (Pedido #${newOrder.id})`,
-          date: new Date()
-        };
-        await handleUpdateCustomer(customerId, {
-          balance: customer.balance + finalTotal,
-          history: [transaction, ...customer.history]
+        if (response.ok) {
+          const result = await response.json();
+          if (result.success) {
+            newOrder.fiscalKey = result.nfeKey;
+            newOrder.isFiscalIssued = true;
+            addLog('u1', 'FISCAL', `NFC-e emitida com sucesso: ${result.nfeKey}`);
+          } else {
+            console.error('Erro SEFAZ:', result.error);
+            addLog('u1', 'FISCAL', `Erro ao emitir NFC-e: ${result.error}`);
+            showToast(`Erro SEFAZ: ${result.error}`, 'error');
+          }
+        } else {
+          const errorData = await response.json();
+          console.error('Erro API Fiscal:', errorData.error);
+          showToast(`Erro na emissão fiscal: ${errorData.error}`, 'error');
+        }
+      } catch (error) {
+        console.error('Erro de conexão fiscal:', error);
+        showToast('Erro de conexão com o serviço fiscal.', 'error');
+      }
+    }
+
+    // Marcar todos os pedidos relacionados a esta mesa/balcão como finalizados
+    const relatedOrdersToFinish = orders.filter(o => 
+      o.id !== newOrder.id &&
+      (o.status === 'pending' || o.status === 'preparing' || o.status === 'ready' || o.status === 'delivered') && 
+      (
+        (existingOrderId && o.id === existingOrderId) ||
+        (tableNumber !== undefined && tableNumber !== null && String(o.tableNumber) === String(tableNumber) && !isCounter)
+      )
+    );
+    
+    if (relatedOrdersToFinish.length > 0) {
+      const now = new Date();
+      const orderIds = relatedOrdersToFinish.map(o => o.id);
+      
+      // Update local
+      setOrders(prev => prev.map(o => orderIds.includes(o.id) ? { ...o, status: 'finished', finishedAt: now, updatedAt: now } : o));
+      
+      // Sync cloud
+      if (viewingTenantId || currentUserData?.tenantId) {
+        const batch = writeBatch(db);
+        relatedOrdersToFinish.forEach(ro => {
+          const targetDocId = ro.docId || ro.id;
+          batch.update(doc(db, 'orders', targetDocId), { 
+            status: 'finished', 
+            finishedAt: now, 
+            updatedAt: now,
+            completedAt: now 
+          });
+        });
+        await batch.commit();
+      }
+    }
+
+    // Redução de Estoque
+    for (const item of table.items) {
+      const product = products.find(p => p.id === item.productId);
+      if (product) {
+        // Reduz estoque do produto (se controlado)
+        if (product.trackStock) {
+          const newStock = Math.max(0, (product.stock || 0) - item.quantity);
+          await handleUpdateProduct({ ...product, stock: newStock });
+        }
+
+        // Reduz estoque de insumos (Ficha Técnica)
+        if (product.technicalSheet && product.technicalSheet.length > 0) {
+          for (const tsItem of product.technicalSheet) {
+            const rawMaterial = rawMaterials.find(rm => rm.id === tsItem.rawMaterialId);
+            if (rawMaterial) {
+              const reduction = tsItem.quantity * item.quantity;
+              await handleUpdateRawMaterial({
+                ...rawMaterial,
+                currentStock: Math.max(0, rawMaterial.currentStock - reduction)
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // CRM: Salvar ou atualizar cliente se for delivery manual com nome/telefone
+    if (deliveryInfo?.name && deliveryInfo?.phone) {
+      const normalizePhone = (p?: string) => p ? p.replace(/\D/g, '') : '';
+      const targetPhoneNorm = normalizePhone(deliveryInfo.phone);
+      const existingCustomer = customers.find(c => normalizePhone(c.phone) === targetPhoneNorm);
+      if (existingCustomer) {
+        const updatedAddresses = [...(existingCustomer.addresses || [])];
+        if (deliveryInfo.address && !updatedAddresses.includes(deliveryInfo.address)) {
+          updatedAddresses.push(deliveryInfo.address);
+        }
+        await handleUpdateCustomer(existingCustomer.id, {
+          name: deliveryInfo.name,
+          address: deliveryInfo.address || existingCustomer.address,
+          addresses: updatedAddresses
+        });
+      } else {
+        await handleAddCustomer({
+          name: deliveryInfo.name,
+          phone: deliveryInfo.phone,
+          address: deliveryInfo.address,
+          balance: 0
         });
       }
-    } else {
-      await handleAddFinancialRecord({
-        type: 'income',
-        amount: finalTotal,
-        category: deliveryInfo ? 'Vendas Entrega' : (isCounter ? 'Vendas Balcão' : 'Vendas Mesa'),
-        description: `${deliveryInfo ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} - Pagamento: ${method}`,
-        date: new Date()
-      });
     }
 
-    addLog('u1', 'VENDA', `${deliveryInfo ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} encerrada. Total: R$ ${finalTotal.toFixed(2)}`);
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    if (effectiveTenantId) {
+      await setDoc(doc(db, 'orders', newOrder.id), cleanObject({
+        ...newOrder
+      }));
+      // OPTIMISTIC LOCAL STATE UPDATE - CRITICAL FOR REALTIME RESPONSIVENESS AND IMMEDIATE TOTALS
+      setOrders(prev => {
+        const exists = prev.some(o => o.id === newOrder.id);
+        if (exists) return prev.map(o => o.id === newOrder.id ? newOrder : o);
+        return [newOrder, ...prev];
+      });
+      
+      if (!isCounter) {
+        // RESET ROBUSTO DA MESA
+        const resetData = { 
+          items: [], 
+          status: 'available' as const, 
+          total: 0, 
+          currentOrderId: null, 
+          updatedAt: new Date() 
+        };
+
+        if (docId) {
+          await updateDoc(doc(db, 'diningTables', docId), resetData);
+        } else {
+          const q = query(collection(db, 'diningTables'), where('id', '==', tableId), where('tenantId', '==', effectiveTenantId));
+          const snapshot = await getDocs(q);
+          if (!snapshot.empty) {
+            await updateDoc(snapshot.docs[0].ref, resetData);
+          }
+        }
+        
+        // Atualizar local para garantir feedback instantâneo
+        setTables(prev => prev.map(t => t.id === tableId || (t as any).docId === docId ? { ...t, ...resetData } : t));
+      }
+    } else {
+      await localDb.orders.put(newOrder);
+      setOrders(prev => {
+        const exists = prev.some(o => o.id === newOrder.id);
+        if (exists) return prev.map(o => o.id === newOrder.id ? newOrder : o);
+        return [newOrder, ...prev];
+      });
+      
+      if (!isCounter) {
+        const resetData = { items: [], status: 'available' as const, total: 0, currentOrderId: undefined };
+        await localDb.diningTables.update(tableId, resetData);
+        setTables(prev => prev.map(t => t.id === tableId ? { ...t, ...resetData } : t));
+      }
+    }
+
+    // Always update local counter state
+    if (isCounter) {
+      setCounterOrders(prev => prev.filter(t => t.id !== tableId));
+    }
+
+
+    addLog('u1', 'PEDIDO', `Pedido ${newOrder.id} finalizado e mesa liberada.`);
+
+    if (pdvEditOrder) {
+      setPdvEditOrder(null);
+    }
+
+    // Se for do Marketplace, acumular taxa de R$ 1,50
+    if (newOrder.source === 'marketplace') {
+      const appFee = adminSettings.saasIntegration?.appFeePerOrder || 1.50;
+      const newBillingAccumulated = (adminSettings.saasIntegration?.billingAccumulated || 0) + appFee;
+      const updatedSaas = {
+        ...adminSettings.saasIntegration,
+        billingAccumulated: newBillingAccumulated
+      };
+      await handleUpdateLogisticsSettings({ saasIntegration: updatedSaas });
+    }
+
+    // IMPRESSÃO FINAL (Normal ou Fiscal)
+    if (adminSettings.printing?.autoPrintOrder || fiscal) {
+      handlePrintOrder(newOrder, adminSettings, { isFiscal: fiscal });
+    }
+
+    addLog('u1', 'VENDA', `${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} encerrada. Total: R$ ${finalTotal.toFixed(2)}`);
+
+    if (payments && payments.length > 0) {
+      const customerUpdates: Record<string, { totalDebit: number, transactions: CustomerTransaction[] }> = {};
+      
+      for (const p of payments) {
+        const currentCustomerId = p.customerId || customerId;
+        if (p.method === 'conta_cliente' && currentCustomerId) {
+          if (!customerUpdates[currentCustomerId]) {
+            customerUpdates[currentCustomerId] = { totalDebit: 0, transactions: [] };
+          }
+          customerUpdates[currentCustomerId].totalDebit += p.amount;
+          customerUpdates[currentCustomerId].transactions.push({
+            id: `tr-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+            type: 'debit',
+            amount: p.amount,
+            description: `Consumo Parcial ${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} (Pedido #${newOrder.id})`,
+            date: new Date(),
+            items: newOrder.items?.map(it => ({ name: it.name, quantity: it.quantity, price: it.price }))
+          });
+        } else {
+          await handleAddFinancialRecord({
+            type: 'income',
+            amount: p.amount,
+            category: isRealDelivery ? 'Vendas Entrega' : (isCounter ? 'Vendas Balcão' : 'Vendas Mesa'),
+            description: `${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} - Pagamento: ${p.method}`,
+            date: new Date(),
+            paymentMethod: p.method,
+            orderId: newOrder.id
+          });
+        }
+      }
+
+      for (const [cId, update] of Object.entries(customerUpdates)) {
+        const customer = customers.find(c => c.id === cId);
+        if (customer) {
+          await handleUpdateCustomer(cId, {
+            balance: customer.balance + update.totalDebit,
+            history: [...update.transactions, ...customer.history]
+          });
+        }
+      }
+    } else {
+      // Pagamento único (legado/simples)
+      if (method === 'conta_cliente' && customerId) {
+        const customer = customers.find(c => c.id === customerId);
+        if (customer) {
+          const transaction: CustomerTransaction = {
+            id: `tr-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+            type: 'debit',
+            amount: finalTotal,
+            description: `Consumo ${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} (Pedido #${newOrder.id})`,
+            date: new Date(),
+            items: newOrder.items?.map(it => ({ name: it.name, quantity: it.quantity, price: it.price }))
+          };
+          await handleUpdateCustomer(customerId, {
+            balance: customer.balance + finalTotal,
+            history: [transaction, ...customer.history]
+          });
+        }
+      } else {
+        await handleAddFinancialRecord({
+          type: 'income',
+          amount: finalTotal,
+          category: isRealDelivery ? 'Vendas Entrega' : (isCounter ? 'Vendas Balcão' : 'Vendas Mesa'),
+          description: `${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} - Pagamento: ${method}`,
+          date: new Date(),
+          paymentMethod: method,
+          orderId: newOrder.id
+        });
+      }
+    }
+
+    addLog('u1', 'VENDA', `${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} encerrada. Total: R$ ${finalTotal.toFixed(2)}`);
+  };
+
+  const handleSettleOrders = async (orderIds: string[], settledDailyFee: number = 0) => {
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    if (!orderIds.length) return;
+
+    showToast(`Processando acerto de ${orderIds.length} pedidos...`, 'info');
+
+    // Find the courier from the first order to update their totals
+    const firstOrder = orders.find(o => o.id === orderIds[0]);
+    const courierId = firstOrder?.courierId;
+    
+    let totalEarningsToDeduct = settledDailyFee;
+    let totalCashToDeduct = 0;
+
+    for (const id of orderIds) {
+      const order = orders.find(o => o.id === id);
+      if (order && !order.isSettled) {
+        totalEarningsToDeduct += (order.courierEarnings || 0);
+        if (order.paymentMethod === 'dinheiro') {
+          totalCashToDeduct += (order.total || 0);
+        }
+      }
+
+      if (effectiveTenantId) {
+        try {
+          const targetDocId = order?.docId || order?.id || id;
+          await setDoc(doc(db, 'orders', targetDocId), { 
+            isSettled: true, 
+            status: 'finished',
+            updatedAt: new Date() 
+          }, { merge: true });
+        } catch (e) {
+          console.error(`Error settling cloud order ${id}:`, e);
+        }
+      }
+      await localDb.orders.update(id, { isSettled: true, status: 'finished' });
+    }
+
+    // Update courier balances
+    if (courierId && effectiveTenantId) {
+      try {
+        const courier = couriers.find(c => c.id === courierId);
+        if (courier) {
+          const newEarnings = Math.max(0, (courier.earnings || 0) - totalEarningsToDeduct);
+          const newCash = Math.max(0, (courier.cashHeld || 0) - totalCashToDeduct);
+          
+          await updateDoc(doc(db, 'couriers', courierId), {
+            earnings: newEarnings,
+            cashHeld: newCash,
+            updatedAt: new Date()
+          });
+          
+          // Also create a financial record for the collective settlement if relevant
+          await handleAddFinancialRecord({
+            type: 'expense',
+            amount: totalEarningsToDeduct,
+            category: 'Entregadores',
+            description: `Acerto de ${orderIds.length} entregas - ${courier.name}`,
+            date: new Date(),
+            status: 'paid'
+          });
+        }
+      } catch (e) {
+        console.error("Error updating courier balance after settlement:", e);
+      }
+    }
+
+    showToast("Acerto realizado com sucesso!");
+    addLog('u1', 'ENTREGA', `Acerto realizado para ${orderIds.length} pedidos. R$ ${totalEarningsToDeduct.toFixed(2)} pagos.`);
   };
 
   const addLog = async (userId: string, action: string, description: string) => {
@@ -421,6 +3186,7 @@ const App: React.FC = () => {
     if (!user) return;
     const newLog: AuditLog = {
       id: Math.random().toString(36).substr(2, 9),
+      tenantId: user.tenantId,
       userId: user.id,
       userName: user.name,
       userRole: user.role,
@@ -432,21 +3198,331 @@ const App: React.FC = () => {
     setAuditLogs(prev => [newLog, ...prev]);
   };
 
-  const handleUpdateProduct = async (product: Product) => {
-    await localDb.products.put(product);
-    setProducts(prev => prev.map(p => p.id === product.id ? product : p));
-    addLog('u1', 'ESTOQUE', `Produto atualizado: ${product.name}`);
+  const handleAddUser = async (user: Partial<User>) => {
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    const trimmedEmail = (user.email || '').trim().toLowerCase();
+    const trimmedPassword = (user.password || '').trim();
+    const newUser: User = {
+      id: user.id || `u${Date.now()}`,
+      tenantId: effectiveTenantId || 't1',
+      name: (user.name || '').trim(),
+      email: trimmedEmail,
+      password: trimmedPassword, // Salva a senha informada pelo lojista
+      role: user.role || 'WAITER',
+      permissions: user.permissions || [],
+      status: 'offline',
+      active: true,
+      lastAccess: new Date(),
+      createdAt: new Date(),
+      observations: user.observations,
+      presets: []
+    };
+
+    if (effectiveTenantId) {
+      try {
+        await setDoc(doc(db, 'users', newUser.id), {
+          ...newUser,
+          updatedAt: new Date()
+        });
+
+        // Se for entregador, criar registro na coleção de couriers também
+        if (newUser.role === 'COURIER') {
+          const newCourier: Courier = {
+            id: newUser.id,
+            tenantId: newUser.tenantId,
+            name: newUser.name,
+            phone: '', // Pode ser preenchido depois
+            status: 'offline',
+            active: true,
+            createdAt: new Date()
+          };
+          await setDoc(doc(db, 'couriers', newUser.id), newCourier);
+        }
+        showToast(`Usuário cadastrado: ${newUser.name}`);
+      } catch (err) {
+        console.error("Error syncing user:", err);
+        showToast("Erro ao salvar usuário na nuvem.", "error");
+      }
+    } else {
+      await localDb.users.add(newUser);
+      setUsers(prev => [...prev, newUser]);
+    }
+    
+    addLog('u1', 'USUARIOS', `Novo usuário cadastrado: ${newUser.name}`);
   };
 
+  const handleUpdateUser = async (id: string, updates: Partial<User>) => {
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    
+    // Se a senha estiver vazia, remove das atualizações para não sobreescrever
+    const finalUpdates = { ...updates };
+    if (finalUpdates.email) {
+      finalUpdates.email = finalUpdates.email.trim().toLowerCase();
+    }
+    if (finalUpdates.password !== undefined) {
+      finalUpdates.password = finalUpdates.password.trim();
+    }
+    if (finalUpdates.password === '') {
+      delete finalUpdates.password;
+    }
+
+    if (effectiveTenantId) {
+      await updateDoc(doc(db, 'users', id), cleanObject({
+        ...finalUpdates,
+        updatedAt: new Date()
+      }));
+
+      // Sincronizar com couriers se houver mudança de nome ou role
+      if (updates.role === 'COURIER' || (updates.name && users.find(u => u.id === id)?.role === 'COURIER')) {
+        const user = users.find(u => u.id === id);
+        if (user) {
+          const courierUpdate: any = { 
+            name: updates.name || user.name,
+            updatedAt: new Date()
+          };
+          if (updates.active !== undefined) courierUpdate.active = updates.active;
+          await setDoc(doc(db, 'couriers', id), courierUpdate, { merge: true });
+        }
+      }
+    } else {
+      await localDb.users.update(id, updates);
+      setUsers(prev => prev.map(u => u.id === id ? { ...u, ...updates } : u));
+    }
+    addLog('u1', 'USUARIOS', `Usuário atualizado: ${id}`);
+  };
+
+  const handleDeleteUser = async (id: string) => {
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    
+    if (effectiveTenantId) {
+      // Inativar no firestore
+      await updateDoc(doc(db, 'users', id), { active: false, status: 'offline', updatedAt: new Date() });
+    } else {
+      // Inativar em vez de remover
+      await localDb.users.update(id, { active: false, status: 'offline' });
+      setUsers(prev => prev.map(u => u.id === id ? { ...u, active: false, status: 'offline' } : u));
+    }
+    addLog('u1', 'USUARIOS', `Usuário inativado: ${id}`);
+  };
+
+  const handleSaveUserPreset = async (userId: string, preset: UserPreset) => {
+    const user = users.find(u => u.id === userId);
+    if (!user) return;
+    
+    const updatedPresets = user.presets ? [...user.presets] : [];
+    const existingIndex = updatedPresets.findIndex(p => p.id === preset.id);
+    
+    if (existingIndex > -1) {
+      updatedPresets[existingIndex] = preset;
+    } else {
+      updatedPresets.push(preset);
+    }
+    
+    await handleUpdateUser(userId, { presets: updatedPresets });
+  };
+
+  const handleAddProduct = async (product: Partial<Product>) => {
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    const newProduct: Product = {
+      id: product.id || `p${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      tenantId: effectiveTenantId || 't1',
+      name: product.name || '',
+      category: product.category || 'Geral',
+      price: product.price || 0,
+      cost: product.cost || 0,
+      stock: product.stock || 0,
+      minStock: product.minStock || 0,
+      unit: product.unit || 'un',
+      barcode: product.barcode || '',
+      image: product.image || '',
+      options: product.options || [],
+      technicalSheet: product.technicalSheet || [],
+      active: true,
+      isAvailableOnline: true,
+      isAvailableDigitalMenu: true
+    };
+
+    if (effectiveTenantId) {
+      try {
+        await setDoc(doc(db, 'products', newProduct.id), cleanObject({
+          ...newProduct,
+          createdAt: new Date()
+        }));
+        showToast(`Produto cadastrado: ${newProduct.name}`);
+      } catch (err) {
+        console.error("Erro ao sincronizar produto com a nuvem:", err);
+        showToast("Erro ao salvar produto.", "error");
+      }
+    } else {
+      await localDb.products.add(newProduct);
+      setProducts(prev => [...prev, newProduct]);
+    }
+
+    addLog('u1', 'ESTOQUE', `Novo produto cadastrado: ${newProduct.name}`);
+  };
+
+  const handleUpdateProductCategories = async (newCategories: string[] | ((prev: string[]) => string[])) => {
+    setProductCategories(prev => {
+      const resolved = typeof newCategories === 'function' ? newCategories(prev) : newCategories;
+      // Persist in localDb settings
+      const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+      localDb.settings.get(effectiveTenantId || 'global').then(s => {
+        if (s) {
+          localDb.settings.put({
+            ...s,
+            productCategories: resolved
+          });
+        } else {
+          localDb.settings.put({
+            id: effectiveTenantId || 'global',
+            productCategories: resolved,
+            admin: adminSettings,
+            digitalMenu: digitalMenuSettings,
+            cashSession: cashSession
+          });
+        }
+      }).catch(err => console.error("Error saving product categories:", err));
+
+      // Persist in Firestore settings if tenantId exists
+      if (effectiveTenantId) {
+        setDoc(doc(db, 'settings', effectiveTenantId), {
+          productCategories: resolved,
+          updatedAt: new Date()
+        }, { merge: true }).catch(err => console.error("Error syncing product categories to cloud:", err));
+      }
+
+      return resolved;
+    });
+  };
+
+  const handleUpdateRawMaterialCategories = async (newCategories: string[] | ((prev: string[]) => string[])) => {
+    setRawMaterialCategories(prev => {
+      const resolved = typeof newCategories === 'function' ? newCategories(prev) : newCategories;
+      // Persist in localDb settings
+      const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+      localDb.settings.get(effectiveTenantId || 'global').then(s => {
+        if (s) {
+          localDb.settings.put({
+            ...s,
+            rawMaterialCategories: resolved
+          });
+        } else {
+          localDb.settings.put({
+            id: effectiveTenantId || 'global',
+            rawMaterialCategories: resolved,
+            admin: adminSettings,
+            digitalMenu: digitalMenuSettings,
+            cashSession: cashSession
+          });
+        }
+      }).catch(err => console.error("Error saving raw material categories:", err));
+
+      // Persist in Firestore settings if tenantId exists
+      if (effectiveTenantId) {
+        setDoc(doc(db, 'settings', effectiveTenantId), {
+          rawMaterialCategories: resolved,
+          updatedAt: new Date()
+        }, { merge: true }).catch(err => console.error("Error syncing raw material categories to cloud:", err));
+      }
+
+      return resolved;
+    });
+  };
+
+  const handleUpdateProduct = async (product: Product) => {
+    let finalProduct = { ...product };
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+
+    // Prevent large document errors by compressing base64 images
+    if (finalProduct.image && finalProduct.image.startsWith('data:image/') && finalProduct.image.length > 50000) {
+      try {
+        const compressed = await compressImage(finalProduct.image, 512, 512, 0.7);
+        finalProduct.image = compressed;
+      } catch (err) {
+        console.error("Error compressing product image:", err);
+      }
+    }
+
+    const { id, ...updates } = finalProduct;
+    
+    if (effectiveTenantId) {
+      try {
+        await setDoc(doc(db, 'products', id), cleanObject({
+          ...finalProduct,
+          updatedAt: new Date()
+        }), { merge: true });
+      } catch (err) {
+        console.error("Erro ao atualizar produto na nuvem:", err);
+        if (err instanceof Error && err.message.includes("exceeds the maximum allowed size")) {
+          try {
+            const sizeReducedProduct = { ...finalProduct, image: '' };
+            await setDoc(doc(db, 'products', id), {
+               ...sizeReducedProduct,
+               updatedAt: new Date()
+            }, { merge: true });
+          } catch (retryErr) {
+            console.error("Retry without image failed:", retryErr);
+          }
+        }
+      }
+    } else {
+      await localDb.products.update(id, updates);
+      setProducts(prev => prev.map(p => p.id === id ? finalProduct : p));
+    }
+
+    addLog('u1', 'ESTOQUE', `Produto atualizado: ${finalProduct.name}`);
+  };
+
+  const handleDeleteProduct = async (id: string) => {
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    const product = products.find(p => p.id === id);
+    
+    if (effectiveTenantId) {
+      try {
+        await deleteDoc(doc(db, 'products', id));
+      } catch (err) {
+        console.error("Erro ao excluir produto da nuvem:", err);
+      }
+    } else {
+      await localDb.products.delete(id);
+      setProducts(prev => prev.filter(p => p.id !== id));
+    }
+
+    if (product) addLog('u1', 'ESTOQUE', `Produto excluído: ${product.name}`);
+  };
+
+
   const handleUpdateRawMaterial = async (material: RawMaterial) => {
-    await localDb.rawMaterials.put(material);
-    setRawMaterials(prev => prev.map(m => m.id === material.id ? material : m));
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    if (effectiveTenantId) {
+      await setDoc(doc(db, 'rawMaterials', material.id), {
+        ...material,
+        updatedAt: new Date()
+      }, { merge: true });
+    } else {
+      await localDb.rawMaterials.put(material);
+      setRawMaterials(prev => prev.map(m => m.id === material.id ? material : m));
+    }
     addLog('u1', 'INSUMOS', `Insumo atualizado: ${material.name}`);
   };
 
+  const handleDeleteRawMaterial = async (id: string) => {
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    const material = rawMaterials.find(m => m.id === id);
+    if (effectiveTenantId) {
+      await deleteDoc(doc(db, 'rawMaterials', id));
+    } else {
+      await localDb.rawMaterials.delete(id);
+      setRawMaterials(prev => prev.filter(m => m.id !== id));
+    }
+    if (material) addLog('u1', 'INSUMOS', `Insumo excluído: ${material.name}`);
+  };
+
   const handleAddRawMaterial = async (material: Partial<RawMaterial>) => {
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
     const newMaterial: RawMaterial = {
-      id: `rm${Date.now()}`,
+      id: material.id || `rm${Date.now()}`,
+      tenantId: effectiveTenantId || 't1',
       name: material.name || '',
       unit: material.unit || 'un',
       currentStock: material.currentStock || 0,
@@ -454,104 +3530,527 @@ const App: React.FC = () => {
       costPerUnit: material.costPerUnit || 0,
       category: material.category || 'Geral'
     };
-    await localDb.rawMaterials.add(newMaterial);
-    setRawMaterials(prev => [...prev, newMaterial]);
+    if (effectiveTenantId) {
+      await setDoc(doc(db, 'rawMaterials', newMaterial.id), {
+        ...newMaterial,
+        createdAt: new Date()
+      });
+    } else {
+      await localDb.rawMaterials.add(newMaterial);
+      setRawMaterials(prev => [...prev, newMaterial]);
+    }
     addLog('u1', 'INSUMOS', `Novo insumo cadastrado: ${newMaterial.name}`);
   };
 
   const handleOpenCash = async (value: number) => {
-    const newSession = { isOpen: true, openingValue: value, openedAt: new Date() };
-    setCashSession(newSession);
-    addLog('u1', 'CAIXA', `Caixa aberto com R$ ${value.toFixed(2)}`);
-    
-    // Persist
-    const s = await localDb.settings.get('global');
-    if (s) {
-      await localDb.settings.put({ ...s, cashSession: newSession });
+    try {
+      const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+      const now = new Date();
+      const newSession = { isOpen: true, openingValue: value, openedAt: now };
+      
+      // Update states immediately (Optimistic)
+      lastWriteTimeRef.current = Date.now();
+      setCashSession(newSession);
+      
+      // Add financial record for opening
+      const openRecord: FinancialRecord = {
+        id: `open-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        tenantId: effectiveTenantId || 't1',
+        type: 'income',
+        amount: value,
+        category: 'Abertura de Caixa',
+        description: `Fundo de Troco - Abertura de Caixa`,
+        date: now,
+        status: 'paid',
+        paymentMethod: 'dinheiro',
+        // Associate with this session specifically
+        shiftOpenedAt: now
+      };
+
+      // Handle Local Storage
+      try {
+        const s = await localDb.settings.get(effectiveTenantId || 'global');
+        if (s) {
+          await localDb.settings.put({ ...s, cashSession: newSession });
+        } else {
+          await localDb.settings.put({
+            id: effectiveTenantId || 'global',
+            admin: adminSettings,
+            digitalMenu: digitalMenuSettings,
+            cashSession: newSession
+          });
+        }
+        await localDb.financialRecords.add(openRecord);
+        setFinancialRecords(prev => [openRecord, ...prev]);
+      } catch (localErr) {
+        console.error("Local storage error during open cash:", localErr);
+      }
+
+      // Handle Cloud Storage
+      if (effectiveTenantId) {
+        try {
+          const batch = writeBatch(db);
+          
+          // Update settings
+          batch.set(doc(db, 'settings', effectiveTenantId), {
+            cashSession: newSession,
+            updatedAt: now
+          }, { merge: true });
+          
+          // Add financial record
+          batch.set(doc(db, 'financialRecords', openRecord.id), cleanObject(openRecord));
+          
+          await batch.commit();
+        } catch (cloudErr) {
+          console.error("Cloud storage error during open cash:", cloudErr);
+          showToast("Caixa aberto localmente, mas erro ao sincronizar com nuvem.", 'info');
+        }
+      }
+      
+      addLog('u1', 'CAIXA', `Caixa aberto com R$ ${value.toFixed(2)}`);
+      showToast("Caixa aberto com sucesso!", 'success');
+    } catch (err) {
+      console.error("Critical error in handleOpenCash:", err);
+      showToast("Não foi possível abrir o caixa.", 'error');
     }
   };
 
   const handleCloseCash = async (actualValue: number, observations?: string) => {
-    if (!cashSession.openedAt) return;
-
-    // Calculate expected value based on sales since openedAt
-    const salesSinceOpen = orders.filter(o => o.createdAt >= cashSession.openedAt!);
-    const totalSales = salesSinceOpen.reduce((acc, o) => acc + o.total, 0);
-    const expectedValue = cashSession.openingValue + totalSales;
-
-    const salesByMethod: Record<PaymentMethod, number> = {
-      dinheiro: 0,
-      cartao_credito: 0,
-      cartao_debito: 0,
-      pix: 0,
-      vale_refeicao: 0,
-      conta_cliente: 0
-    };
-
-    salesSinceOpen.forEach(o => {
-      if (o.paymentMethod) {
-        salesByMethod[o.paymentMethod] += o.total;
+    try {
+      const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+      // Robust parsing of openedAt
+      let openedDate: Date;
+      if (cashSession.openedAt instanceof Date) {
+        openedDate = cashSession.openedAt;
+      } else if (cashSession.openedAt) {
+        openedDate = new Date(cashSession.openedAt);
+      } else {
+        showToast("Houve um problema ao identificar o horário de abertura do caixa.", 'error');
+        return null;
       }
-    });
 
-    const report: CashClosingReport = {
-      id: `cc${Date.now()}`,
-      openedAt: cashSession.openedAt,
-      closedAt: new Date(),
-      openingValue: cashSession.openingValue,
-      expectedValue,
-      actualValue,
-      difference: actualValue - expectedValue,
-      salesByMethod,
-      totalSales,
-      closedBy: 'Administrador', // Should come from current user
-      observations
-    };
+      if (isNaN(openedDate.getTime())) {
+        console.error("Invalid opening date detected:", cashSession.openedAt);
+        showToast("Formato de data de abertura inválido. Tente reabrir o caixa.", 'error');
+        return null;
+      }
+      
+      // Expert Tester Improvement: Verify couriers with money in hand
+      const busyCouriers = couriers.filter(c => (c.cashHeld || 0) > 0.01);
+      // We removed window.confirm as it is handled by the UI or can be ignored if the user proceeds
+      
+      showToast("Processando fechamento...", 'info');
 
-    await localDb.cashClosings.add(report);
-    setCashClosings(prev => [report, ...prev]);
-
-    // Record difference in financial records if any
-    if (report.difference !== 0) {
-      const diffRecord: FinancialRecord = {
-        id: `diff-${Date.now()}`,
-        type: report.difference > 0 ? 'income' : 'expense',
-        amount: Math.abs(report.difference),
-        category: 'Ajuste de Caixa',
-        description: `Diferença no fechamento de caixa (${report.difference > 0 ? 'Sobra' : 'Quebra'}) - Ref: ${report.id}`,
-        date: new Date(),
-        status: 'paid'
+      const parseToDate = (val: any): Date => {
+        if (!val) return new Date(0);
+        if (val instanceof Date) return val;
+        if (typeof val.toDate === 'function') return val.toDate();
+        if (val.seconds !== undefined) return new Date(val.seconds * 1000);
+        const parsed = new Date(val);
+        return isNaN(parsed.getTime()) ? new Date(0) : parsed;
       };
-      await localDb.financialRecords.add(diffRecord);
-      setFinancialRecords(prev => [diffRecord, ...prev]);
+
+      const getStandardPaymentMethod = (method: string): string => {
+        if (!method) return 'dinheiro';
+        const cleanMethod = String(method).trim().toLowerCase();
+        
+        const standardKeys = ['dinheiro', 'cartao_credito', 'cartao_debito', 'pix', 'vale_refeicao', 'conta_cliente'];
+        if (standardKeys.includes(cleanMethod)) return cleanMethod;
+        
+        if (cleanMethod === 'cash') return 'dinheiro';
+        if (cleanMethod === 'credit') return 'cartao_credito';
+        if (cleanMethod === 'debit') return 'cartao_debito';
+        if (cleanMethod === 'voucher') return 'vale_refeicao';
+        if (cleanMethod === 'account') return 'conta_cliente';
+        if (cleanMethod === 'fiado') return 'conta_cliente';
+
+        if (adminSettings && adminSettings.paymentMethods) {
+          const config = adminSettings.paymentMethods.find(m => 
+            m.id === method || 
+            m.name.trim().toLowerCase() === cleanMethod ||
+            m.type.trim().toLowerCase() === cleanMethod
+          );
+          if (config) {
+            switch (config.type) {
+              case 'cash': return 'dinheiro';
+              case 'credit': return 'cartao_credito';
+              case 'debit': return 'cartao_debito';
+              case 'pix': return 'pix';
+              case 'voucher': return 'vale_refeicao';
+              case 'account': return 'conta_cliente';
+            }
+          }
+        }
+
+        if (cleanMethod.includes('dinheiro') || cleanMethod.includes('money') || cleanMethod.includes('efetivo') || cleanMethod.includes('cedula')) return 'dinheiro';
+        if (cleanMethod.includes('credito') || cleanMethod.includes('crédito')) return 'cartao_credito';
+        if (cleanMethod.includes('debito') || cleanMethod.includes('débito')) return 'cartao_debito';
+        if (cleanMethod.includes('pix')) return 'pix';
+        if (cleanMethod.includes('vale') || cleanMethod.includes('refeicao') || cleanMethod.includes('refeição') || cleanMethod.includes('ticket') || cleanMethod.includes('sodexo') || cleanMethod.includes('vr')) return 'vale_refeicao';
+        if (cleanMethod.includes('fiado') || cleanMethod.includes('cliente') || cleanMethod.includes('carteira') || cleanMethod.includes('conta')) return 'conta_cliente';
+
+        return 'dinheiro';
+      };
+
+      // ROBUST CALCULATION: Fetch ALL orders during the session
+      let salesSinceOpen: Order[] = orders.filter(o => {
+        const createdAt = parseToDate(o.createdAt);
+        return createdAt >= openedDate;
+      });
+
+      let recordsDuringSession: FinancialRecord[] = financialRecords.filter(r => {
+        // Prefer shiftOpenedAt link if available for strict session association
+        if (r.shiftOpenedAt) {
+          const shiftDate = parseToDate(r.shiftOpenedAt);
+          return Math.abs(shiftDate.getTime() - openedDate.getTime()) < 5000 && r.status === 'paid'; // 5s tolerance
+        }
+        const date = parseToDate(r.date);
+        return date >= openedDate && r.status === 'paid';
+      });
+
+      // Try to get fresh data if online
+      if (effectiveTenantId) {
+        try {
+          const [ordersSnapshot, recordsSnapshot] = await Promise.all([
+             getDocs(query(collection(db, 'orders'), where('tenantId', '==', effectiveTenantId), where('createdAt', '>=', openedDate))),
+             getDocs(query(collection(db, 'financialRecords'), where('tenantId', '==', effectiveTenantId), where('date', '>=', openedDate), where('status', '==', 'paid')))
+          ]);
+          
+          if (!ordersSnapshot.empty) {
+            salesSinceOpen = ordersSnapshot.docs.map(d => ({ ...d.data(), id: d.id, createdAt: (d.data().createdAt as any)?.toDate ? (d.data().createdAt as any).toDate() : new Date(d.data().createdAt) } as Order));
+          }
+          if (!recordsSnapshot.empty) {
+            recordsDuringSession = recordsSnapshot.docs.map(d => {
+              const data = d.data() as any;
+              return {
+                ...data,
+                id: d.id,
+                date: data.date?.toDate ? data.date.toDate() : new Date(data.date),
+                shiftOpenedAt: data.shiftOpenedAt?.toDate ? data.shiftOpenedAt.toDate() : (data.shiftOpenedAt ? new Date(data.shiftOpenedAt) : undefined)
+              } as FinancialRecord;
+            });
+          }
+        } catch (err) {
+          console.warn('Usando dados locais para o fechamento devido a falha na nuvem:', err);
+        }
+      }
+
+      const totalSales = salesSinceOpen.reduce((acc, o) => acc + (o.total || 0), 0);
+      
+      const salesByMethod: Record<PaymentMethod, number> = {
+        dinheiro: 0,
+        cartao_credito: 0,
+        cartao_debito: 0,
+        pix: 0,
+        vale_refeicao: 0,
+        conta_cliente: 0
+      };
+
+      salesSinceOpen.forEach(o => {
+        if (o.payments && o.payments.length > 0) {
+          o.payments.forEach(p => {
+            const method = getStandardPaymentMethod(p.method);
+            if (salesByMethod[method] !== undefined) {
+              salesByMethod[method] += (p.amount || 0);
+            }
+          });
+        } else if (o.paymentMethod) {
+          const method = getStandardPaymentMethod(o.paymentMethod);
+          if (salesByMethod[method] !== undefined) {
+            salesByMethod[method] += (o.total || 0);
+          }
+        }
+      });
+
+       const cashIncomes = recordsDuringSession
+         .filter(r => r.type === 'income' && r.paymentMethod === 'dinheiro' && r.category === 'Suprimento')
+         .reduce((acc, r) => acc + (r.amount || 0), 0);
+       
+       const cashExpenses = recordsDuringSession
+         .filter(r => r.type === 'expense' && r.paymentMethod === 'dinheiro' && r.category === 'Sangria')
+         .reduce((acc, r) => acc + (r.amount || 0), 0);
+
+      const expectedCash = (cashSession.openingValue || 0) + (salesByMethod.dinheiro || 0) + cashIncomes - cashExpenses;
+
+      const report: CashClosingReport = {
+        id: `cc${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        tenantId: effectiveTenantId || 't1',
+        openedAt: cashSession.openedAt,
+        closedAt: new Date(),
+        openingValue: cashSession.openingValue,
+        expectedValue: expectedCash,
+        actualValue,
+        difference: actualValue - expectedCash,
+        salesByMethod,
+        totalSales,
+        closedBy: currentUserData?.name || 'Sistema',
+        observations: (observations || '') + (cashIncomes > 0 || cashExpenses > 0 ? `\n(Movimentações: Suprimentos: R$ ${cashIncomes.toFixed(2)}, Sangrias: R$ ${cashExpenses.toFixed(2)})` : '')
+      };
+
+      // Reseting tables local state
+      const updatedTables = tables.map(t => ({ 
+        ...t, 
+        status: 'available' as const, 
+        currentOrderId: undefined, 
+        items: [], 
+        total: 0 
+      }));
+      
+      // resetting session state
+      const closedSession = { isOpen: false, openingValue: 0, openedAt: null };
+
+      // Update UI state immediately (Optimistic update)
+      lastWriteTimeRef.current = Date.now();
+      setTables(updatedTables);
+      setCashSession(closedSession);
+
+      // Try LocalDB Updates as a unit
+      try {
+        await localDb.cashClosings.add(report);
+        setCashClosings(prev => [report, ...prev]);
+
+        // 1. ALWAYS create a "Fechamento de Caixa" record for the extrato
+        const closureFinancialRec: FinancialRecord = {
+          id: `close-${report.id}`,
+          tenantId: effectiveTenantId || 't1',
+          type: 'income',
+          amount: 0,
+          category: 'Fechamento de Caixa',
+          description: `Fechamento de Turno - Operador: ${report.closedBy}`,
+          date: report.closedAt,
+          status: 'paid',
+          paymentMethod: 'dinheiro',
+          shiftOpenedAt: openedDate
+        };
+
+        // 2. Differences record
+        let diffRec: FinancialRecord | null = null;
+        if (Math.abs(report.difference) >= 0.01) {
+          diffRec = {
+            id: `diff-${report.id}`,
+            tenantId: effectiveTenantId || 't1',
+            type: report.difference > 0 ? 'income' : 'expense',
+            amount: Math.abs(report.difference),
+            category: 'Ajuste de Caixa',
+            description: `Diferença no fechamento: ${report.difference > 0 ? 'Sobra' : 'Quebra'}`,
+            date: new Date(),
+            status: 'paid',
+            paymentMethod: 'dinheiro',
+            shiftOpenedAt: openedDate
+          };
+        }
+
+        await localDb.financialRecords.add(closureFinancialRec);
+        if (diffRec) await localDb.financialRecords.add(diffRec);
+
+        setFinancialRecords(prev => {
+          const newRecords = [closureFinancialRec];
+          if (diffRec) newRecords.push(diffRec);
+          return [...newRecords, ...prev];
+        });
+
+        // Table reset in LocalDB
+        for (const t of updatedTables) {
+          await localDb.diningTables.update(t.id, { status: 'available', currentOrderId: null, items: [], total: 0 });
+        }
+        
+        const s = await localDb.settings.get(effectiveTenantId || 'global');
+        if (s) {
+          await localDb.settings.put({ ...s, cashSession: closedSession });
+        } else {
+          await localDb.settings.put({
+            id: effectiveTenantId || 'global',
+            admin: adminSettings,
+            digitalMenu: digitalMenuSettings,
+            cashSession: closedSession
+          });
+        }
+
+        // 3. Sync everything to Cloud
+        if (effectiveTenantId) {
+          try {
+            const batch = writeBatch(db);
+            
+            // Saving Report
+            batch.set(doc(db, 'cashClosings', report.id), cleanObject(report));
+            
+            // Saving Financial Records
+            batch.set(doc(db, 'financialRecords', closureFinancialRec.id), cleanObject(closureFinancialRec));
+            if (diffRec) batch.set(doc(db, 'financialRecords', diffRec.id), cleanObject(diffRec));
+
+            // Settings Reset
+          batch.set(doc(db, 'settings', effectiveTenantId), {
+            cashSession: closedSession,
+            updatedAt: new Date()
+          }, { merge: true });
+          
+          // Tables Reset
+          updatedTables.forEach(t => {
+            const docId = (t as any).docId || (t as any)._firestoreId;
+            if (docId) {
+              batch.update(doc(db, 'diningTables', docId), {
+                status: 'available', items: [], total: 0, currentOrderId: null, updatedAt: new Date()
+              });
+            }
+          });
+
+          // Finalize pending orders - Better: query for ALL pending orders to be sure
+          const ordersToCloseSnapshot = await getDocs(query(
+            collection(db, 'orders'), 
+            where('tenantId', '==', effectiveTenantId),
+            where('status', 'in', ['pending', 'preparing', 'ready', 'delivered'])
+          ));
+          
+          ordersToCloseSnapshot.docs.forEach(oDoc => {
+            batch.update(oDoc.ref, { 
+              status: 'finished', 
+              finishedAt: new Date(), 
+              updatedAt: new Date() 
+            });
+          });
+
+          await batch.commit();
+        } catch (cloudErr) {
+          console.error("Cloud sync error during closure:", cloudErr);
+          showToast("Caixa fechado offline. Alguns dados podem não ter sido sincronizados.", 'info');
+        }
+      }
+    } catch (localErr) {
+      console.error("Error during local closure operations:", localErr);
     }
 
-    const closedSession = { isOpen: false, openingValue: 0, openedAt: null };
-    setCashSession(closedSession);
-    addLog('u1', 'CAIXA', `Caixa fechado. Diferença: R$ ${(actualValue - expectedValue).toFixed(2)}`);
-    
-    // Persist
-    const s = await localDb.settings.get('global');
-    if (s) {
-      await localDb.settings.put({ ...s, cashSession: closedSession });
+    addLog('u1', 'CAIXA', `Caixa encerrado com diferença de R$ ${report.difference.toFixed(2)}`);
+      showToast("Caixa fechado com sucesso!", 'success');
+      
+      return report;
+    } catch (error) {
+      console.error("Critical error closing cash session:", error);
+      showToast("Ocorreu um erro ao fechar o caixa.", 'error');
+      return null;
     }
-
-    return report;
   };
 
-  if (authLoading) {
+  const isMarketplace = location.pathname.startsWith('/marketplace') || location.pathname === '/';
+
+  if (authLoading || (hasApiKey === null && !isMarketplace)) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-slate-400 font-black text-[10px] uppercase tracking-widest">Carregando Sistema...</p>
+          <p className="text-slate-400 font-black text-[10px] uppercase tracking-widest animate-pulse">Carregando GastroAI...</p>
         </div>
       </div>
     );
   }
 
-  if (!user) {
+  if (hasApiKey === false) {
+    return (
+      <div className="fixed inset-0 z-[9999] bg-slate-900 flex items-center justify-center p-6 text-center">
+        <div className="max-w-md w-full bg-white rounded-[2.5rem] p-10 shadow-2xl space-y-6">
+          <div className="w-20 h-20 bg-indigo-100 text-indigo-600 rounded-3xl flex items-center justify-center mx-auto mb-6">
+            <Database size={40} />
+          </div>
+          <h1 className="text-3xl font-black text-slate-800 tracking-tighter">Configuração Necessária</h1>
+          <p className="text-slate-500 font-medium leading-relaxed">
+            Para utilizar as funcionalidades de IA avançadas (como geração de imagens em alta resolução), você precisa selecionar uma chave de API do Google Cloud com faturamento ativado.
+          </p>
+          <div className="bg-amber-50 border border-amber-100 p-4 rounded-2xl text-left">
+            <p className="text-xs font-bold text-amber-800 uppercase tracking-widest mb-1">Importante</p>
+            <p className="text-xs text-amber-700 leading-relaxed">
+              Certifique-se de que o projeto do Google Cloud tenha o faturamento ativado. Consulte a <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="underline font-bold">documentação de faturamento</a> para mais detalhes.
+            </p>
+          </div>
+          <button
+            onClick={handleSelectApiKey}
+            className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100"
+          >
+            Selecionar Chave de API
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const isMarketplaceRoute = location.pathname.startsWith('/marketplace');
+  const isWebsiteRoute = location.pathname.startsWith('/site') || location.pathname.startsWith('/kitchenflow');
+  const isPublicRoute = isMarketplaceRoute || isWebsiteRoute;
+
+  // 1. Se o usuário NÃO está autenticado no Firebase Auth
+  // e tenta acessar uma rota privada/privilegiada (não pública):
+  if (!user && !isPublicRoute && location.pathname !== '/') {
     return <Login onLoginSuccess={() => {}} />;
+  }
+
+  // 2. Se o usuário está autenticado no Firebase Auth mas os dados no Firestore (currentUserData) ainda NÃO carregaram:
+  // Mostramos tela de carregamento para garantir consistência e evitar mostrar plataforma nula ou vazia.
+  if (user && !currentUserData && authLoading && !isPublicRoute) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-slate-400 font-black text-[10px] uppercase tracking-widest animate-pulse">Buscando perfil de acesso...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. Se já carregou o login (authLoading é falso), mas o usuário logado NÃO possui cadastro correspondente (currentUserData é null)
+  // e tenta acessar roteamento privado, bloqueamos e mostramos tela amigável explicativa, permitindo logout.
+  if (user && !currentUserData && !authLoading && !isPublicRoute && location.pathname !== '/') {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <div className="bg-white p-8 sm:p-10 rounded-[2.5rem] border border-slate-100 shadow-2xl max-w-sm w-full text-center space-y-6">
+          <div className="w-20 h-20 bg-rose-50 border border-rose-100 text-rose-600 rounded-3xl flex items-center justify-center mx-auto">
+            <XCircle size={40} />
+          </div>
+          <div>
+            <h2 className="text-2xl font-black text-slate-800 tracking-tighter">Acesso Não Autorizado</h2>
+            <p className="text-slate-500 font-bold text-sm mt-3 leading-relaxed">
+              O e-mail <span className="text-slate-700 underline">{user.email}</span> não está associado a nenhuma conta registrada neste sistema.
+            </p>
+          </div>
+          <button 
+            onClick={handleLogout}
+            className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-opacity-90 transition-all shadow-xl shadow-indigo-100"
+          >
+            Sair e Mudar de Conta
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // 4. Se o usuário está logado mas tem role CUSTOMER e tenta acessar painel restrito administrativo:
+  if (user && currentUserData && currentUserData.role === 'CUSTOMER' && !isPublicRoute && location.pathname !== '/') {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <div className="bg-white p-8 sm:p-10 rounded-[2.5rem] border border-slate-100 shadow-2xl max-w-sm w-full text-center space-y-6">
+          <div className="w-20 h-20 bg-amber-50 border border-amber-100 text-amber-600 rounded-3xl flex items-center justify-center mx-auto">
+            <Lock size={40} />
+          </div>
+          <div>
+            <h2 className="text-2xl font-black text-slate-800 tracking-tighter">Área Comercial Restrita</h2>
+            <p className="text-slate-500 font-medium text-sm mt-3 leading-relaxed">
+              Sua conta está registrada como <strong className="text-indigo-600">Cliente do Marketplace</strong> e não possui permissões administrativas para gerenciar lojas.
+            </p>
+          </div>
+          <div className="space-y-3">
+            <button 
+              onClick={() => navigate('/marketplace')}
+              className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-opacity-90 transition-all shadow-xl shadow-indigo-100"
+            >
+              Ir para o Marketplace
+            </button>
+            <button 
+              onClick={handleLogout}
+              className="w-full py-3.5 bg-slate-100 text-slate-600 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-200 transition-all"
+            >
+              Fazer Logout / Outra Conta
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   // Bloqueio se o tenant estiver inativo (exceto para super admin)
@@ -577,7 +4076,7 @@ const App: React.FC = () => {
     );
   }
 
-  if (!isDbLoaded) {
+  if (!isDbLoaded && !isMarketplace) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
@@ -589,20 +4088,105 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="flex min-h-screen bg-slate-50 relative overflow-hidden">
-      <Sidebar 
-        activeTab={activeTab} 
-        setActiveTab={setActiveTab} 
-        isOpen={isSidebarOpen}
-        onClose={() => setIsSidebarOpen(false)}
-        user={currentUserData || { name: user.displayName || 'Usuário', role: 'WAITER', avatar: user.photoURL || undefined } as any}
-        onLogout={handleLogout}
-        allowedModules={isSuperAdmin ? undefined : tenantData?.subscription.allowedModules}
-        isSuperAdmin={isSuperAdmin}
-      />
+    <div className="flex h-screen max-h-screen w-screen bg-slate-50 relative overflow-hidden">
+      {/* Sistema Online / Toast Global */}
+      <AnimatePresence>
+        {toast && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20, x: '-50%' }}
+            animate={{ opacity: 1, y: 20, x: '-50%' }}
+            exit={{ opacity: 0, scale: 0.95, x: '-50%' }}
+            className={`fixed top-0 left-1/2 -translate-x-1/2 z-[9999] px-6 py-3 rounded-2xl shadow-2xl border backdrop-blur-md flex items-center gap-3 min-w-[320px] ${
+              toast.type === 'success' ? 'bg-emerald-500/90 border-emerald-400 text-white' : 
+              toast.type === 'error' ? 'bg-rose-500/90 border-rose-400 text-white' : 
+              'bg-brand-primary/90 border-brand-primary/40 text-white'
+            }`}
+          >
+            {toast.type === 'success' && <CheckCircle2 size={20} />}
+            {toast.type === 'error' && <AlertCircle size={20} />}
+            {toast.type === 'info' && <Cloud size={20} className="animate-pulse" />}
+            <div className="flex flex-col">
+              <span className="text-[10px] font-black uppercase tracking-widest opacity-70">Sistema {toast.type === 'success' ? 'OK' : 'Alerta'}</span>
+              <span className="text-sm font-bold">{toast.message}</span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {currentProject !== 'MARKETPLACE' && currentProject !== 'COURIER' && currentProject !== 'WEBSITE' && (
+        <Sidebar 
+          activeTab={activeTab} 
+          setActiveTab={(tab) => {
+            if (tab === 'marketplace') {
+              navigate('/marketplace');
+            } else {
+              setActiveTab(tab);
+            }
+          }}
+          isOpen={isSidebarOpen}
+          onClose={() => setIsSidebarOpen(false)}
+          user={currentUserData || { name: user.displayName || 'Usuário', role: 'WAITER', avatar: user.photoURL || undefined } as any}
+          onLogout={handleLogout}
+          allowedModules={isSuperAdmin ? undefined : tenantData?.subscription.allowedModules}
+          isSuperAdmin={isSuperAdmin}
+          isSaaSMode={currentProject === 'PLATFORM'}
+          restaurantName={currentProject === 'PLATFORM' ? 'KitchenFlow AI' : (viewingTenantName || tenantData?.name || adminSettings.companyName || 'GastroAI')}
+          logoUrl={currentProject === 'PLATFORM' ? undefined : (viewingTenantLogo || tenantData?.logoUrl || adminSettings.logoUrl)}
+          onProfileClick={() => setIsProfileOpen(true)}
+        />
+      )}
       
       <main className="flex-1 flex flex-col min-w-0 bg-slate-50 overflow-hidden">
-        {/* Header Mobile */}
+        {currentProject === 'WEBSITE' ? (
+          <KitchenflowWebsite />
+        ) : currentProject === 'MARKETPLACE' || currentProject === 'COURIER' ? (
+          <Routes>
+            <Route path="/entregador" element={
+               user ? (
+                 (currentUserData?.role === 'COURIER' || currentUserData?.permissions?.includes('courier_app_access')) ? (
+                   <CourierApp currentUser={currentUserData} />
+                 ) : (
+                   <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6 text-center">
+                      <div className="bg-white p-8 rounded-[2.5rem] shadow-xl max-w-sm">
+                        <h2 className="text-xl font-black text-slate-800 mb-2">Acesso Negado</h2>
+                        <p className="text-sm text-slate-500 mb-6">Esta área é exclusiva para entregadores cadastrados.</p>
+                        <button onClick={handleLogout} className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold uppercase text-[10px]">Sair e Logar como Entregador</button>
+                      </div>
+                   </div>
+                 )
+               ) : <Login onLoginSuccess={() => {}} />
+            } />
+            <Route path="/marketplace" element={
+              <Marketplace 
+                currentUser={user} 
+                profile={marketplaceProfile}
+                onUpdateProfile={handleUpdateMarketplaceProfile}
+                onSelectTenant={() => {}} 
+              />
+            } />
+            <Route path="/marketplace/:tenantId" element={
+              <Marketplace 
+                currentUser={user} 
+                profile={marketplaceProfile}
+                onUpdateProfile={handleUpdateMarketplaceProfile}
+                onSelectTenant={() => {}} 
+              />
+            } />
+            <Route path="/perfil" element={
+              <Marketplace 
+                currentUser={user} 
+                profile={marketplaceProfile}
+                onUpdateProfile={handleUpdateMarketplaceProfile}
+                onSelectTenant={() => {}} 
+              />
+            } />
+            <Route path="*" element={<Navigate to="/marketplace" replace />} />
+          </Routes>
+        ) : (
+          currentUserData?.role === 'COURIER' ? (
+            <Navigate to="/entregador" replace />
+          ) : (
+            <>
+              {/* Header Mobile */}
         <header className="lg:hidden bg-white border-b p-2 flex items-center justify-between sticky top-0 z-30">
           <button 
             onClick={() => setIsSidebarOpen(true)}
@@ -611,106 +4195,606 @@ const App: React.FC = () => {
             <Menu size={20} />
           </button>
           <div className="flex items-center gap-2">
-            <div className="w-6 h-6 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold text-xs">G</div>
-            <span className="font-bold text-slate-800">GastroAI</span>
+            <div className={`w-8 h-8 ${currentProject === 'PLATFORM' ? 'bg-slate-950 border border-white/10' : 'bg-indigo-600'} rounded-lg flex items-center justify-center text-white font-black text-xs overflow-hidden`}>
+              {currentProject === 'PLATFORM' ? (
+                <svg viewBox="0 0 100 100" className="w-full h-full p-1" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <defs>
+                    <linearGradient id="intermundosGradHeader" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#10b981" />
+                      <stop offset="100%" stopColor="#047857" />
+                    </linearGradient>
+                  </defs>
+                  <polygon points="50,10 90,50 50,90 10,50" stroke="url(#intermundosGradHeader)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.3" />
+                  <polygon points="50,5 81.82,18.18 95,50 81.82,81.82 50,95 18.18,81.82 5,50 18.18,18.18" stroke="url(#intermundosGradHeader)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  <line x1="50" y1="5" x2="50" y2="95" stroke="url(#intermundosGradHeader)" strokeWidth="1" strokeLinecap="round" opacity="0.4" />
+                  <line x1="5" y1="50" x2="95" y2="50" stroke="url(#intermundosGradHeader)" strokeWidth="1" strokeLinecap="round" opacity="0.4" />
+                  <line x1="18.18" y1="18.18" x2="81.82" y2="81.82" stroke="url(#intermundosGradHeader)" strokeWidth="1" strokeLinecap="round" opacity="0.4" />
+                  <line x1="18.18" y1="81.82" x2="81.82" y2="18.18" stroke="url(#intermundosGradHeader)" strokeWidth="1" strokeLinecap="round" opacity="0.4" />
+                  <polygon points="50,5 81.82,18.18 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.15" />
+                  <polygon points="50,5 18.18,18.18 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.05" />
+                  <polygon points="95,50 81.82,18.18 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.1" />
+                  <polygon points="95,50 81.82,81.82 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.2" />
+                  <polygon points="50,95 81.82,81.82 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.25" />
+                  <polygon points="50,95 18.18,81.82 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.15" />
+                  <polygon points="5,50 18.18,81.82 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.1" />
+                  <polygon points="5,50 18.18,18.18 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.2" />
+                  <circle cx="50" cy="50" r="10" fill="#ffffff" opacity="0.15" />
+                  <circle cx="50" cy="50" r="4" fill="#047857" />
+                  <circle cx="50" cy="50" r="2" fill="#34d399" />
+                </svg>
+              ) : (
+                (viewingTenantLogo || tenantData?.logoUrl || adminSettings.logoUrl) ? (
+                  <img src={viewingTenantLogo || tenantData?.logoUrl || adminSettings.logoUrl} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                ) : (
+                  (viewingTenantName || tenantData?.name || adminSettings.companyName || 'G').substring(0, 1).toUpperCase()
+                )
+              )}
+            </div>
+            <span className="font-bold text-slate-800">
+              {currentProject === 'PLATFORM' ? 'Saas Adm' : (viewingTenantName || tenantData?.name || adminSettings.companyName || 'Carregando...')}
+            </span>
           </div>
           <div className="w-10" /> {/* Spacer */}
         </header>
 
-        <div className="flex-1 p-1 overflow-y-auto max-h-screen custom-scrollbar">
-          <header className="flex justify-between items-center mb-4">
-            <div>
-              <h2 className="text-[10px] font-black text-indigo-600 uppercase tracking-[0.2em] mb-1">GastroAI Management System</h2>
-              <h1 className="text-2xl font-black text-slate-800 tracking-tighter">
-                {activeTab === 'dashboard' ? 'Painel de Controle' : 
-                 activeTab === 'tables' ? 'Mesas e Comandas' :
-                 activeTab === 'kds' ? 'Monitor de Pedidos' :
-                 activeTab === 'delivery' ? 'Painel de Entregas' :
-                 activeTab === 'digital-menu' ? 'Cardápio Digital' :
-                 activeTab === 'customers' ? 'Gestão de Clientes' :
-                 activeTab === 'inventory' ? 'Controle de Estoque' :
-                 activeTab === 'finance' ? 'Gestão Financeira' :
-                 activeTab === 'ai-cmv' ? 'Assistente de Cardápio' :
-                 activeTab === 'users' ? 'Gestão de Equipe' :
-                 activeTab === 'saas-admin' ? 'Gestão SaaS' :
-                  activeTab === 'settings' ? 'Configurações do Sistema' : activeTab}
-              </h1>
+        <div className={`flex-1 p-1 custom-scrollbar ${activeTab === 'kds' ? 'h-[calc(100vh-64px)] lg:h-[calc(100vh-20px)] overflow-hidden flex flex-col' : 'overflow-y-auto max-h-screen'}`}>
+          {currentProject === 'PLATFORM' ? (
+            <SaaSAdmin 
+              activeTab={activeTab}
+              onViewTenant={handleViewTenant} 
+              onNavigate={(tab) => {
+                if (tab === 'marketplace') {
+                  navigate('/marketplace');
+                } else {
+                  setActiveTab(tab);
+                }
+              }}
+            />
+          ) : (
+            <>
+              <header className="flex justify-between items-center mb-4 bg-white p-6 rounded-[2.5rem] border shadow-sm">
+            <div className="flex items-center gap-4">
+              <div>
+                <h2 className="text-[10px] font-black text-indigo-600 uppercase tracking-[0.2em] mb-1">
+                  Painel Lojista Profissional
+                </h2>
+                <h1 className="text-3xl font-black text-slate-800 tracking-tighter flex items-center gap-3">
+                  <span className="text-slate-600">
+                    {activeTab === 'dashboard' ? 'Painel de Controle' : 
+                     activeTab === 'tables' ? 'Mesas e Comandas' :
+                     activeTab === 'kds' ? 'Monitor de Pedidos' :
+                     activeTab === 'delivery' ? 'Painel de Entregas' :
+                     activeTab === 'digital-menu' ? 'Cardápio Digital' :
+                     activeTab === 'customers' ? 'Gestão de Clientes' :
+                     activeTab === 'inventory' ? 'Controle de Estoque' :
+                     activeTab === 'finance' ? 'Gestão Financeira' :
+                     activeTab === 'merchant-copilot' ? 'Módulo Lojista' :
+                     activeTab === 'ai-cmv' ? 'Assistente de Cardápio' :
+                     activeTab === 'reports' ? 'Relatórios Inteligentes' :
+                     activeTab === 'users' ? 'Gestão de Equipe' :
+                     activeTab === 'saas-admin' ? 'Gestão SaaS' :
+                      activeTab === 'settings' ? 'Configurações do Sistema' : activeTab}
+                  </span>
+                </h1>
+              </div>
             </div>
-            <div className="flex items-center gap-3">
-               <div className="hidden sm:flex items-center gap-2 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-100 shadow-sm">
-                  <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                  <span className="text-[10px] font-black text-emerald-600 uppercase tracking-wider">Banco Local Ativo</span>
+            <div className="flex items-center gap-4">
+               {isSuperAdmin && viewingTenantId && (
+                 <button 
+                   onClick={handleStopViewingTenant}
+                   className="flex items-center gap-2 px-6 py-3 bg-rose-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-rose-200 hover:bg-rose-700 transition-all border-b-4 border-rose-800 active:translate-y-[2px] active:border-b-0 group"
+                 >
+                   <Shield size={16} className="group-hover:rotate-12 transition-transform" />
+                   Sair do Modo de Visualização (Tenant: {viewingTenantName || tenantData?.name || 'Carregando...'})
+                 </button>
+               )}
+               <div 
+                 onClick={() => setIsProfileOpen(true)}
+                 className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center text-white font-black shadow-xl shadow-slate-200 text-sm cursor-pointer hover:bg-slate-800 transition-all hover:scale-105 active:scale-[0.98] overflow-hidden shrink-0"
+                 title="Editar Perfil"
+               >
+                 {currentUserData?.avatar ? (
+                   <img src={currentUserData.avatar} alt={currentUserData.name} className="w-full h-full object-cover animate-fade-in" referrerPolicy="no-referrer" />
+                 ) : (
+                   (viewingTenantName || tenantData?.name || adminSettings.companyName || 'GastroAI').substring(0, 2).toUpperCase()
+                 )}
                </div>
-               <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center text-white font-black shadow-xl shadow-indigo-100 text-xs">GA</div>
             </div>
           </header>
-        {activeTab === 'dashboard' && (
-          <div className="space-y-4 animate-in fade-in duration-500">
+
+          {quotaExceeded && (
+            <div className="mb-4 bg-rose-50 border-2 border-rose-100 p-4 rounded-2xl flex items-center gap-4 animate-pulse">
+              <div className="w-10 h-10 bg-rose-500 rounded-xl flex items-center justify-center text-white shrink-0">
+                <AlertTriangle size={20} />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-rose-800 font-black text-xs uppercase tracking-widest">Limite de Sincronização Atingido (Quota)</h3>
+                <p className="text-[10px] text-rose-600 font-bold leading-tight">
+                  O Firebase atingiu o limite gratuito de leituras para hoje. O sistema está operando com dados locais salvos.
+                  Novos dados da rede podem não aparecer até que o limite seja resetado automaticamente (geralmente à meia-noite).
+                </p>
+              </div>
+              <button 
+                onClick={() => window.location.reload()}
+                className="px-3 py-1 bg-rose-500 text-white rounded-lg font-black text-[8px] uppercase tracking-widest hover:bg-rose-600 transition-colors shrink-0"
+              >
+                Tentar Recarregar
+              </button>
+              <button 
+                onClick={() => setQuotaExceeded(false)}
+                className="p-2 text-rose-400 hover:text-rose-600 transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
+
+          <div className={`p-4 md:p-6 custom-scrollbar flex-1 flex flex-col ${activeTab === 'kds' ? 'min-h-0 overflow-hidden pb-4' : 'pb-20'}`}>
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={activeTab}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.2 }}
+                className={`flex-1 flex flex-col ${activeTab === 'kds' ? 'min-h-0 overflow-hidden h-full' : ''}`}
+              >
+                {activeTab === 'dashboard-obsolete' && hasPermission('dashboard_view') && (
+          <div className="space-y-4 animate-in fade-in duration-500 max-w-7xl mx-auto w-full">
             <AIInsights sales={orders} inventory={products} />
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-              <div className="lg:col-span-3 space-y-4">
-                <DashboardAlerts products={products} onNavigateToInventory={() => setActiveTab('inventory')} />
-                <div className="bg-white p-6 rounded-[2.5rem] border shadow-sm h-[300px]">
-                  <h3 className="text-sm font-black text-slate-800 mb-4 flex items-center gap-2">
-                    <BarChartIcon size={18} className="text-indigo-600" />
-                    Desempenho de Vendas (7 Dias)
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+              <div className="lg:col-span-8 space-y-4">
+                <DashboardAlerts 
+                  products={products} 
+                  rawMaterials={rawMaterials}
+                  onNavigateToInventory={() => setActiveTab('inventory')} 
+                />
+                
+                {/* Card de Fluxo de Caixa Operacional Diário */}
+                <div className="bg-white p-6 rounded-3xl border shadow-sm space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-slate-900 flex items-center justify-center text-white">
+                        <Wallet size={16} />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-black text-slate-800 tracking-tight flex items-center gap-2">
+                          Fluxo de Caixa Operacional Diário
+                        </h3>
+                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Resumo comparativo de hoje</p>
+                      </div>
+                    </div>
+                    <span className="bg-emerald-50 text-emerald-700 text-[10px] font-extrabold uppercase tracking-wide px-2.5 py-1 rounded-xl border border-emerald-150">
+                      Entradas vs Despesas
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-t border-slate-100 pt-4">
+                    <div className="bg-emerald-50/10 border border-emerald-100/40 p-3 rounded-2xl flex flex-col">
+                      <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest flex items-center gap-1">
+                        <ArrowUpRight size={10} /> Entradas / Vendas PDV
+                      </span>
+                      <span className="text-xl font-black text-emerald-600 tracking-tight mt-1">
+                        R$ {dailyCashFlow.entries.toFixed(2)}
+                      </span>
+                      <span className="text-[9px] font-bold text-slate-400 mt-0.5">
+                        {dailyCashFlow.recentMovements.filter(m => m.type === 'income').length} lançamentos
+                      </span>
+                    </div>
+
+                    <div className="bg-rose-50/10 border border-rose-100/40 p-3 rounded-2xl flex flex-col">
+                      <span className="text-[9px] font-black text-rose-500 uppercase tracking-widest flex items-center gap-1">
+                        <ArrowDownLeft size={10} /> Saídas / Despesas
+                      </span>
+                      <span className="text-xl font-black text-rose-500 tracking-tight mt-1">
+                        R$ {dailyCashFlow.outlays.toFixed(2)}
+                      </span>
+                      <span className="text-[9px] font-bold text-slate-400 mt-0.5">
+                        {dailyCashFlow.recentMovements.filter(m => m.type === 'expense').length} saídas/sangrias
+                      </span>
+                    </div>
+
+                    <div className={`p-3 rounded-2xl border flex flex-col ${dailyCashFlow.net >= 0 ? 'bg-indigo-50/15 border-indigo-100/40' : 'bg-rose-50/15 border-rose-100/40'}`}>
+                      <span className={`text-[9px] font-black uppercase tracking-widest flex items-center gap-1 ${dailyCashFlow.net >= 0 ? 'text-indigo-600' : 'text-rose-600'}`}>
+                        <TrendingUp size={10} /> Saldo Operacional Líquido
+                      </span>
+                      <span className={`text-xl font-black tracking-tight mt-1 ${dailyCashFlow.net >= 0 ? 'text-indigo-600' : 'text-rose-600'}`}>
+                        R$ {dailyCashFlow.net.toFixed(2)}
+                      </span>
+                      <span className="text-[9px] font-bold text-slate-400 mt-0.5">
+                        Resultado final
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Barra comparativa de proporção */}
+                  {(dailyCashFlow.entries > 0 || dailyCashFlow.outlays > 0) ? (
+                    <div className="space-y-1.5 bg-slate-50/50 p-3 rounded-2xl border border-slate-100/60">
+                      <div className="flex justify-between items-center text-[10px] font-bold text-slate-400">
+                        <span className="flex items-center gap-1">Proporção Operacional</span>
+                        <span>{((dailyCashFlow.entries / (dailyCashFlow.entries + dailyCashFlow.outlays || 1)) * 100).toFixed(0)}% Entrada / {((dailyCashFlow.outlays / (dailyCashFlow.entries + dailyCashFlow.outlays || 1)) * 100).toFixed(0)}% Saída</span>
+                      </div>
+                      <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden flex shadow-inner">
+                        <div 
+                          style={{ width: `${(dailyCashFlow.entries / (dailyCashFlow.entries + dailyCashFlow.outlays || 1)) * 100}%` }} 
+                          className="bg-emerald-500 h-full transition-all duration-500" 
+                        />
+                        <div 
+                          style={{ width: `${(dailyCashFlow.outlays / (dailyCashFlow.entries + dailyCashFlow.outlays || 1)) * 100}%` }} 
+                          className="bg-rose-500 h-full transition-all duration-500" 
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-3.5 text-slate-400 font-semibold text-[11px] border border-dashed rounded-2xl bg-slate-50 border-slate-200/50">
+                      Nenhuma movimentação financeira foi registrada para comparação hoje.
+                    </div>
+                  )}
+
+                  {/* Movimentações Recentes por Canal */}
+                  <div className="space-y-3 pt-1 font-sans">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                      Faturamento por Canal de Venda (Hoje)
+                    </h4>
+                    {(() => {
+                      const totalIncomes = (
+                        dailyCashFlow.categorySums.tables + 
+                        dailyCashFlow.categorySums.delivery + 
+                        dailyCashFlow.categorySums.marketplace + 
+                        dailyCashFlow.categorySums.digitalMenu + 
+                        dailyCashFlow.categorySums.balcao + 
+                        dailyCashFlow.categorySums.others
+                      ) || 1;
+
+                      const salesChannels = [
+                        { id: 'tables', label: 'Mesas / Salão', value: dailyCashFlow.categorySums.tables, icon: Utensils, colorClass: 'bg-indigo-50 text-indigo-600 border-indigo-100/50', progressColor: 'bg-indigo-500', description: 'Consumo presencial' },
+                        { id: 'delivery', label: 'Delivery Próprio', value: dailyCashFlow.categorySums.delivery, icon: Bike, colorClass: 'bg-sky-50 text-sky-600 border-sky-100/50', progressColor: 'bg-sky-500', description: 'Entregador próprio' },
+                        { id: 'marketplace', label: 'Marketplaces (iFood)', value: dailyCashFlow.categorySums.marketplace, icon: ShoppingBag, colorClass: 'bg-rose-50 text-rose-600 border-rose-100/50', progressColor: 'bg-rose-500', description: 'Canais integrados' },
+                        { id: 'digitalMenu', label: 'Cardápio Digital', value: dailyCashFlow.categorySums.digitalMenu, icon: Smartphone, colorClass: 'bg-emerald-50 text-emerald-600 border-emerald-100/50', progressColor: 'bg-emerald-500', description: 'Autoatendimento QR' },
+                        { id: 'balcao', label: 'Balcão / PDV Direto', value: dailyCashFlow.categorySums.balcao, icon: Store, colorClass: 'bg-amber-50 text-amber-600 border-amber-100/50', progressColor: 'bg-amber-500', description: 'Vendas rápidas caixa' },
+                      ];
+
+                      return (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                          {salesChannels.map(channel => {
+                            const pct = totalIncomes > 1 ? (channel.value / totalIncomes) * 100 : 0;
+                            return (
+                              <div key={channel.id} className="p-3 bg-slate-50 hover:bg-slate-100/40 border border-slate-150/60 rounded-2xl flex flex-col justify-between transition-all">
+                                <div className="flex justify-between items-start">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <div className={`w-8 h-8 rounded-xl border ${channel.colorClass} flex items-center justify-center shrink-0`}>
+                                      <channel.icon size={14} />
+                                    </div>
+                                    <div className="min-w-0">
+                                      <span className="text-xs font-black text-slate-700 leading-tight block truncate">{channel.label}</span>
+                                      <span className="text-[9px] font-bold text-slate-400 mt-0.5 block leading-none truncate">{channel.description}</span>
+                                    </div>
+                                  </div>
+                                  <span className="text-[10px] font-extrabold text-slate-400 shrink-0 select-none">
+                                    {pct > 0 ? `${pct.toFixed(0)}%` : '0%'}
+                                  </span>
+                                </div>
+                                <div className="mt-3">
+                                  <span className="text-[13px] font-black text-slate-800">
+                                    R$ {channel.value.toFixed(2)}
+                                  </span>
+                                  <div className="h-1.5 w-full bg-slate-200/50 rounded-full overflow-hidden mt-1 flex">
+                                    <div 
+                                      style={{ width: `${pct}%` }} 
+                                      className={`h-full ${channel.progressColor} rounded-full transition-all duration-300`} 
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+
+                <div className="bg-white p-6 rounded-3xl border shadow-sm h-[350px]">
+                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                    <BarChartIcon size={14} className="text-indigo-600" />
+                    Gráfico de Desempenho
                   </h3>
                   <ResponsiveContainer width="100%" height="85%">
-                    <AreaChart data={[{ name: 'Seg', sales: 4000 }, { name: 'Ter', sales: 3000 }, { name: 'Qua', sales: 5000 }, { name: 'Qui', sales: 4780 }, { name: 'Sex', sales: 8890 }, { name: 'Sáb', sales: 9390 }, { name: 'Dom', sales: 7490 }]}>
+                    <AreaChart data={weeklySalesData}>
                       <defs>
                         <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.3}/>
+                          <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.1}/>
                           <stop offset="95%" stopColor="#4f46e5" stopOpacity={0}/>
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                      <XAxis dataKey="name" tick={{fontSize: 10, fontWeight: 600, fill: '#94a3b8'}} axisLine={false} tickLine={false} />
-                      <YAxis tick={{fontSize: 10, fontWeight: 600, fill: '#94a3b8'}} axisLine={false} tickLine={false} />
+                      <XAxis dataKey="name" tick={{fontSize: 9, fontWeight: 800, fill: '#94a3b8'}} axisLine={false} tickLine={false} />
+                      <YAxis tick={{fontSize: 9, fontWeight: 800, fill: '#94a3b8'}} axisLine={false} tickLine={false} />
                       <Tooltip 
                         contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                        formatter={(value: any) => [`R$ ${Number(value).toFixed(2)}`, 'Vendas']}
                       />
-                      <Area type="monotone" dataKey="sales" stroke="#4f46e5" strokeWidth={4} fillOpacity={1} fill="url(#colorSales)" />
+                      <Area type="monotone" dataKey="sales" stroke="#4f46e5" strokeWidth={3} fillOpacity={1} fill="url(#colorSales)" />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
               </div>
-              <div className="bg-white p-6 rounded-[2.5rem] border shadow-sm flex flex-col h-fit gap-4">
-                <h3 className="text-sm font-black text-slate-800">Resumo Diário</h3>
-                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Vendido</p>
-                  <p className="text-2xl font-black text-slate-800 tracking-tighter">R$ {orders.reduce((acc, o) => acc + o.total, 0).toFixed(2)}</p>
+
+              {/* Stats Card (Phone 1 Style) */}
+              <div className="lg:col-span-4 space-y-4">
+                <div className="bg-white rounded-3xl border shadow-sm overflow-hidden">
+                  <div className="bg-slate-50 p-4 border-b flex items-center gap-3">
+                    {viewingTenantLogo || tenantData?.logoUrl || adminSettings.logoUrl ? (
+                      <img src={viewingTenantLogo || tenantData?.logoUrl || adminSettings.logoUrl} className="w-10 h-10 rounded-xl object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-black text-xs">
+                        {(viewingTenantName || tenantData?.name || adminSettings.companyName || 'G').substring(0, 2).toUpperCase()}
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Hoje no Restaurante</p>
+                      <h3 className="text-xl font-black text-slate-800 tracking-tighter">{viewingTenantName || tenantData?.name || adminSettings.companyName}</h3>
+                    </div>
+                  </div>
+                  <div className="p-4 space-y-4">
+                    {[
+                      { label: 'Pedidos Hoje:', value: dailyStats.count, color: 'text-slate-800' },
+                      { label: 'Vendas Hoje:', value: `R$ ${dailyStats.total.toFixed(2)}`, color: 'text-emerald-600', bold: true },
+                      { label: 'Ticket Médio:', value: `R$ ${dailyStats.average.toFixed(2)}`, color: 'text-indigo-600', bold: true },
+                      { label: 'Em preparo:', value: orders.filter(o => o.status === 'preparing').length, color: 'text-amber-600' },
+                      { label: 'Prontos:', value: orders.filter(o => o.status === 'ready').length, color: 'text-emerald-600' },
+                    ].map((stat, i) => (
+                      <div key={i} className="flex justify-between items-center border-b border-slate-50 pb-2 last:border-0 last:pb-0">
+                        <span className="text-xs font-bold text-slate-500">{stat.label}</span>
+                        <span className={`text-sm font-black ${stat.color} ${stat.bold ? 'text-base' : ''}`}>{stat.value}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <div className="p-4 bg-indigo-50 rounded-2xl border border-indigo-100">
-                  <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Pedidos Realizados</p>
-                  <p className="text-2xl font-black text-indigo-600 tracking-tighter">{orders.length}</p>
+
+                {/* Mais Vendido Section (Phone 1 Style) */}
+                <div className="bg-white rounded-3xl border shadow-sm p-4">
+                  <h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-4">Mais Vendido</h3>
+                  {products.length > 0 ? (
+                    <div className="flex gap-4 items-center">
+                      <div className="w-20 h-20 rounded-2xl bg-slate-50 overflow-hidden border">
+                         <img src={products[0]?.image || `https://picsum.photos/seed/food/200/200`} className="w-full h-full object-cover" />
+                      </div>
+                      <div>
+                        <h4 className="font-black text-slate-800 text-sm">{products[0]?.name}</h4>
+                        <p className="text-lg font-black text-indigo-600 mt-1">R$ {(products[0]?.price || 0).toFixed(2)}</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-[10px] font-bold text-slate-300 uppercase italic">Nenhum produto cadastrado</p>
+                  )}
                 </div>
-                <div className="p-4 bg-rose-50 rounded-2xl border border-rose-100">
-                  <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-1">Saldo em Fiado</p>
-                  <p className="text-2xl font-black text-rose-600 tracking-tighter">R$ {customers.reduce((a,b)=>a+b.balance,0).toFixed(2)}</p>
+
+                <div className="flex gap-2">
+                  <button onClick={() => setActiveTab('finance')} className="flex-1 py-3 bg-slate-900 text-white rounded-2xl font-black text-[9px] uppercase tracking-widest hover:bg-slate-800 shadow-lg">Financeiro</button>
+                  <button onClick={() => setActiveTab('kds')} className="flex-1 py-3 bg-indigo-600 text-white rounded-2xl font-black text-[9px] uppercase tracking-widest hover:bg-indigo-500 shadow-lg">Pedidos</button>
                 </div>
-                <button 
-                  onClick={() => setActiveTab('finance')}
-                  className="w-full py-3 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-800 transition-all shadow-lg shadow-slate-200"
-                >
-                  Ver Financeiro Completo
-                </button>
               </div>
             </div>
           </div>
         )}
-        {activeTab === 'tables' && <Tables tables={tables} counterOrders={counterOrders} products={products} orders={orders} customers={customers} cashSession={cashSession} onUpdateTable={handleUpdateTable} onCloseTable={handleCloseTable} onSendToKitchen={handleSendToKitchen} onOpenCash={handleOpenCash} onCloseCash={handleCloseCash} onAddCounterOrder={handleAddCounterOrder} />}
-        {activeTab === 'customers' && <CustomersPanel customers={customers} onAddCustomer={handleAddCustomer} onUpdateCustomer={handleUpdateCustomer} onAddFinancialRecord={handleAddFinancialRecord} />}
-        {activeTab === 'delivery' && <Delivery orders={orders} couriers={couriers} deliveryFee={globalDeliveryFee} onUpdateStatus={handleUpdateOrderStatus} onAssignCourier={handleAssignCourier} onAddCourier={(c) => localDb.couriers.add(c as Courier).then(()=>localDb.couriers.toArray().then(setCouriers))} onUpdateCourier={handleUpdateCourier} onUpdateDeliveryFee={setGlobalDeliveryFee} onAddFinancialRecord={handleAddFinancialRecord} />}
-        {activeTab === 'inventory' && <Inventory products={products} rawMaterials={rawMaterials} onUpdateProduct={handleUpdateProduct} onUpdateRawMaterial={handleUpdateRawMaterial} onAddRawMaterial={handleAddRawMaterial} />}
-        {activeTab === 'finance' && <Finance orders={orders} customers={customers} couriers={couriers} manualRecords={financialRecords} cashClosings={cashClosings} onAddRecord={handleAddFinancialRecord} onUpdateRecord={handleUpdateFinancialRecord} onUpdateCustomer={handleUpdateCustomer} />}
-        {activeTab === 'users' && <UsersPanel users={users} auditLogs={auditLogs} rolePermissions={rolePermissions} onAddUser={(u) => localDb.users.add(u as User).then(()=>localDb.users.toArray().then(setUsers))} onUpdateRole={()=>{}} onUpdateRolePermissions={()=>{}} />}
-        {activeTab === 'saas-admin' && isSuperAdmin && <SaaSAdmin />}
-        {activeTab === 'kds' && <KDS orders={orders} couriers={couriers} onUpdateStatus={handleUpdateOrderStatus} onAssignCourier={handleAssignCourier} />}
-        {activeTab === 'digital-menu' && <DigitalMenuConfig settings={digitalMenuSettings} onUpdateSettings={setDigitalMenuSettings} products={products} tables={tables} onUpdateProduct={handleUpdateProduct} onPlaceDigitalOrder={(order) => setIncomingDigitalOrders(prev => [...prev, order])} />}
-        {activeTab === 'ai-cmv' && <CMVAnalysis products={products} rawMaterials={rawMaterials} onUpdateProduct={handleUpdateProduct} />}
-        {activeTab === 'settings' && <AdminSettingsComponent settings={adminSettings} onUpdateSettings={setAdminSettings} />}
-        </div>
-      </main>
+        {activeTab === 'tables' && hasPermission('tables_manage') && <Tables 
+          tables={tables} 
+          counterOrders={counterOrders} 
+          products={products} 
+          orders={orders} 
+          financialRecords={financialRecords}
+          customers={customers} 
+          adminSettings={adminSettings}
+          digitalMenuSettings={digitalMenuSettings}
+          cashSession={cashSession} 
+          tenantId={viewingTenantId || currentUserData?.tenantId || 't1'}
+          onUpdateTable={handleUpdateTable} 
+          onAddTable={handleAddTable}
+          onDeleteTable={handleDeleteTable}
+          onCloseTable={handleCloseTable} 
+          onSendToKitchen={handleSendToKitchen} 
+          onOpenCash={handleOpenCash} 
+          onCloseCash={handleCloseCash} 
+          onAddCounterOrder={handleAddCounterOrder}
+          onCancelTable={handleCancelTable}
+          onTransferTable={handleTransferTable}
+          defaultDeliveryFee={adminSettings.deliveryFee}
+          onAddCustomer={handleAddCustomer}
+          onAddFinancialRecord={handleAddFinancialRecord}
+          pdvEditOrder={pdvEditOrder}
+          onCancelPdvEdit={() => {
+            setPdvEditOrder(null);
+            if (returnToTab) {
+              setActiveTab(returnToTab);
+              setReturnToTab(null);
+            }
+          }}
+          onUpdateOrder={handleUpdateOrder}
+          onNavigate={setActiveTab}
+          showToast={showToast}
+        />}
+        {activeTab === 'customers' && hasPermission('customers_manage') && <CustomersPanel customers={customers} onAddCustomer={handleAddCustomer} onUpdateCustomer={handleUpdateCustomer} onAddFinancialRecord={handleAddFinancialRecord} />}
+        {activeTab === 'delivery' && hasPermission('delivery_manage') && (
+          <Delivery 
+            orders={orders} 
+            couriers={couriers} 
+            products={products}
+            deliveryFee={globalDeliveryFee} 
+            adminSettings={adminSettings}
+            onUpdateAdminSettings={handleUpdateLogisticsSettings}
+            onUpdateStatus={handleUpdateOrderStatus} 
+            onAssignCourier={handleAssignCourier} 
+            onDispatchCourier={handleDispatchCourier}
+            onUpdateOrder={handleUpdateOrder}
+            onEditOrderInPDV={handleEditOrderInPDV}
+            onAddCourier={handleAddCourier} 
+            onUpdateCourier={handleUpdateCourier} 
+            onUpdateDeliveryFee={setGlobalDeliveryFee} 
+            onReturnCash={handleReturnCourierCash}
+            isDeliveryEnabled={adminSettings?.isDeliveryEnabled ?? false}
+            isPickupEnabled={adminSettings?.isPickupEnabled ?? false}
+            minOrderValue={adminSettings?.minOrderValue ?? 0}
+            estimatedDeliveryTime={adminSettings?.estimatedDeliveryTime ?? ''}
+            estimatedPickupTime={adminSettings?.estimatedPickupTime ?? ''}
+            onUpdateLogisticsSettings={async (settings) => {
+              const newAdminSettings = {
+                ...adminSettings,
+                deliveryFee: settings.deliveryFee,
+                isDeliveryEnabled: settings.isDeliveryEnabled,
+                isPickupEnabled: settings.isPickupEnabled,
+                minOrderValue: settings.minOrderValue,
+                estimatedDeliveryTime: settings.estimatedDeliveryTime,
+                estimatedPickupTime: settings.estimatedPickupTime
+              };
+              setAdminSettings(newAdminSettings);
+              setGlobalDeliveryFee(settings.deliveryFee);
+              
+              // Persistir local e na nuvem
+              await handleUpdateLogisticsSettings(newAdminSettings);
+              addLog('u1', 'CONFIG', 'Configurações de logística atualizadas');
+            }}
+            onAddFinancialRecord={handleAddFinancialRecord}
+            onSettleOrders={handleSettleOrders}
+            onNavigate={setActiveTab}
+          />
+        )}
+        {activeTab === 'inventory' && hasPermission('inventory_edit') && (
+          <Inventory 
+            products={products} 
+            rawMaterials={rawMaterials} 
+            onUpdateProduct={handleUpdateProduct} 
+            onAddProduct={handleAddProduct} 
+            onDeleteProduct={handleDeleteProduct}
+            onUpdateRawMaterial={handleUpdateRawMaterial} 
+            onAddRawMaterial={handleAddRawMaterial}
+            onDeleteRawMaterial={handleDeleteRawMaterial}
+            digitalMenuSettings={digitalMenuSettings}
+            onUpdateDigitalMenuSettings={setDigitalMenuSettings}
+            productCategories={productCategories}
+            setProductCategories={handleUpdateProductCategories}
+            rawMaterialCategories={rawMaterialCategories}
+            setRawMaterialCategories={handleUpdateRawMaterialCategories}
+            onSyncCloud={handleSaveSettings}
+            orders={orders}
+          />
+        )}
+        {activeTab === 'finance' && hasPermission('finance_view') && (
+          <Finance 
+            orders={orders} 
+            products={products}
+            customers={customers} 
+            couriers={couriers} 
+            manualRecords={financialRecords} 
+            cashClosings={cashClosings} 
+            bankAccounts={bankAccounts}
+            adminSettings={adminSettings}
+            cashSession={cashSession}
+            onAddRecord={handleAddFinancialRecord} 
+            onUpdateRecord={handleUpdateFinancialRecord} 
+            onDeleteRecord={handleDeleteFinancialRecord}
+            onUpdateCustomer={handleUpdateCustomer} 
+            onAddBank={handleAddBankAccount}
+            onUpdateBank={handleUpdateBankAccount}
+            onDeleteBank={handleDeleteBankAccount}
+            onSettleOrders={handleSettleOrders}
+            onUpdateAdminSettings={handleSaveSettings}
+          />
+        )}
+        {activeTab === 'merchant-copilot' && hasPermission('finance_view') && (
+          <LojistaCopilot 
+            orders={orders}
+            products={products}
+            manualRecords={financialRecords}
+            adminSettings={adminSettings}
+            rawMaterials={rawMaterials}
+            onUpdateProduct={handleUpdateProduct}
+            onNavigateToInventory={() => setActiveTab('inventory')}
+          />
+        )}
+        {activeTab === 'users' && hasPermission('users_manage') && (
+          <UsersPanel 
+            users={users} 
+            auditLogs={auditLogs} 
+            rolePermissions={rolePermissions} 
+            onAddUser={handleAddUser} 
+            onUpdateUser={handleUpdateUser} 
+            onDeleteUser={handleDeleteUser} 
+            onUpdateRole={(id, role) => handleUpdateUser(id, { role })} 
+            onUpdateRolePermissions={(role, perms) => setRolePermissions(prev => ({ ...prev, [role]: perms }))} 
+            onSavePreset={handleSaveUserPreset}
+            isSuperAdmin={isSuperAdmin}
+            allowedModules={isSuperAdmin ? undefined : tenantData?.subscription?.allowedModules}
+          />
+        )}
+        {activeTab === 'kds' && hasPermission('kds_view') && (
+          <KDS 
+            orders={orders} 
+            couriers={couriers} 
+            products={products}
+            adminSettings={adminSettings}
+            tables={tables}
+            cashSession={cashSession}
+            onUpdateStatus={handleUpdateOrderStatus} 
+            onAssignCourier={handleAssignCourier} 
+            onUpdateOrder={handleUpdateOrder}
+            onEditOrderInPDV={handleEditOrderInPDV}
+            onUpdateLogisticsSettings={async (settings) => {
+              const newAdminSettings = { ...adminSettings, ...settings };
+              setAdminSettings(newAdminSettings);
+              // Persistir local e na nuvem
+              await handleUpdateLogisticsSettings(newAdminSettings);
+            }}
+            onNavigate={setActiveTab}
+          />
+        )}
+        {activeTab === 'digital-menu' && hasPermission('digital_menu_manage') && (
+          <DigitalMenuConfig 
+            settings={digitalMenuSettings} 
+            onUpdateSettings={setDigitalMenuSettings} 
+            products={products} 
+            tables={tables} 
+            onUpdateProduct={handleUpdateProduct} 
+            onPlaceDigitalOrder={(order) => setIncomingDigitalOrders(prev => [...prev, order])}
+            onSaveSettings={handleSaveSettings}
+            isDeliveryEnabled={adminSettings.isDeliveryEnabled}
+            isPickupEnabled={adminSettings.isPickupEnabled}
+            deliveryFee={adminSettings.deliveryFee}
+            minOrderValue={adminSettings.minOrderValue}
+            estimatedDeliveryTime={adminSettings.estimatedDeliveryTime}
+            estimatedPickupTime={adminSettings.estimatedPickupTime}
+          />
+        )}
+
+        {activeTab === 'support' && (
+          <SupportView 
+            restaurantName={adminSettings.companyName}
+            tenantId={currentUserData?.tenantId}
+          />
+        )}
+        {activeTab === 'settings' && hasPermission('admin_settings_manage') && (
+          <AdminSettingsComponent 
+            settings={adminSettings} 
+            onUpdateSettings={setAdminSettings}
+            onSaveSettings={handleSaveSettings}
+            allowedModules={isSuperAdmin ? undefined : tenantData?.subscription.allowedModules}
+            products={products}
+            orders={orders}
+            customers={customers}
+            currentUser={currentUserData}
+            onClearSalesAndFinance={handleClearSalesAndFinance}
+          />
+        )}
+              </motion.div>
+            </AnimatePresence>
+          </div>
+                </>
+              )}
+            </div>
+          </>
+        )
+      )}
+    </main>
 
       {mockWhatsAppNotify && (
         <div className="fixed top-8 right-8 z-[300] w-full max-w-sm px-4 animate-in slide-in-from-right-10">
@@ -726,41 +4810,177 @@ const App: React.FC = () => {
       )}
 
       {incomingDigitalOrders.length > 0 && (
-        <div className="fixed bottom-8 right-8 z-[200] flex flex-col gap-4 w-96 animate-in slide-in-from-right-10">
-          {incomingDigitalOrders.map((order) => (
-            <div key={order.id} className="bg-white border-2 border-indigo-600 rounded-[2rem] shadow-2xl p-6 space-y-4">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center">
-                  {order.type === 'delivery' ? <ShoppingBag size={24} /> : order.type === 'takeout' ? <Store size={24} /> : <Smartphone size={24} />}
+        <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md animate-in fade-in duration-300">
+          <div className="w-full max-w-lg space-y-4">
+            {incomingDigitalOrders.slice(0, 1).map((order) => (
+              <div key={order.id} className="bg-white border-4 border-indigo-600 rounded-[2.5rem] shadow-2xl p-8 space-y-6 animate-in zoom-in-95">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="w-16 h-16 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center shadow-inner">
+                      {order.type === 'delivery' ? <ShoppingBag size={32} /> : order.type === 'takeout' ? <Store size={32} /> : <Smartphone size={32} />}
+                    </div>
+                    <div>
+                      <h4 className="text-xl font-black text-slate-800 tracking-tight">Novo Pedido {order.type === 'delivery' ? 'Delivery' : 'Digital'}</h4>
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Aguardando seu aceite</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-2xl font-black text-indigo-600 leading-none">R$ {(order.total || 0).toFixed(2)}</p>
+                    {order.paymentMethod === 'dinheiro' && <p className="text-[10px] font-black text-emerald-600 uppercase mt-1">Pagamento em Dinheiro</p>}
+                  </div>
                 </div>
-                <div>
-                  <h4 className="font-black text-slate-800">Novo Pedido {order.type === 'takeout' ? 'Retirada' : 'Digital'}</h4>
-                  <p className="text-[10px] font-bold text-slate-400 uppercase">{order.customerName} • R$ {order.total.toFixed(2)}</p>
-                  {order.paymentMethod === 'dinheiro' && order.changeFor && (
-                    <p className="text-[10px] font-black text-emerald-600 uppercase mt-1">
-                      Leva troco para R$ {order.changeFor.toFixed(2)} (Troco: R$ {(order.changeFor - order.total).toFixed(2)})
-                    </p>
-                  )}
+
+                <div className="bg-slate-50 rounded-2xl p-5 border border-slate-100 space-y-3">
+                   <div className="flex justify-between items-center pb-2 border-b border-slate-200/50">
+                      <span className="text-[10px] font-black text-slate-400 uppercase">Cliente</span>
+                      <span className="text-xs font-bold text-slate-800">{order.customerName}</span>
+                   </div>
+                   {order.customerPhone && (
+                     <div className="flex justify-between items-center pb-2 border-b border-slate-200/50">
+                        <span className="text-[10px] font-black text-slate-400 uppercase">Telefone</span>
+                        <span className="text-xs font-bold text-slate-800">{order.customerPhone}</span>
+                     </div>
+                   )}
+                   <div className="pt-2">
+                      <span className="text-[10px] font-black text-slate-400 uppercase block mb-2">Itens do Pedido</span>
+                      <div className="space-y-1.5">
+                        {order.items.map((item, idx) => (
+                          <p key={idx} className="text-xs font-bold text-slate-700 flex justify-between">
+                            <span>{item.quantity}x {item.name}</span>
+                            <span>R$ {((item.price || 0) * (item.quantity || 0)).toFixed(2)}</span>
+                          </p>
+                        ))}
+                      </div>
+                   </div>
+                </div>
+
+                {order.paymentMethod === 'dinheiro' && order.changeFor && (
+                  <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-100 flex items-center justify-between">
+                    <p className="text-xs font-black text-emerald-700 uppercase">Troco para</p>
+                    <p className="text-lg font-black text-emerald-600">R$ {(order.changeFor || 0).toFixed(2)}</p>
+                  </div>
+                )}
+
+                <div className="flex gap-3">
+                  <button onClick={async () => {
+                     if (confirm("Deseja realmente recusar este pedido? Esta ação não pode ser desfeita.")) {
+                       setIncomingDigitalOrders(prev => prev.filter(o => o.id !== order.id));
+                       
+                       triggerWhatsAppMock("🚫 Pedido Recusado", `O pedido #${order.id.slice(-4)} foi cancelado pelo estabelecimento.`);
+                       addLog('u1', 'DIGITAL', `Pedido #${order.id.slice(-4)} RECUSADO`);
+                       
+                       if (order.id) {
+                         try {
+                            await setDoc(doc(db, 'orders', order.id), { status: 'cancelled', updatedAt: new Date() }, { merge: true });
+                         } catch (e) {
+                            console.error("Error updating cloud order:", e);
+                         }
+                       }
+                     }
+                  }} className="flex-1 py-4 bg-slate-100 text-slate-500 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-rose-50 hover:text-rose-600 transition-all">Recusar Pedido</button>
+                  <button onClick={async () => {
+                     if (order.customerPhone) {
+                       try {
+                          const existingCustomer = customers.find(c => c.phone === order.customerPhone);
+                          if (!existingCustomer) {
+                            await handleAddCustomer({
+                              name: order.customerName,
+                              phone: order.customerPhone,
+                                     history: [{
+                                id: `tr-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                                date: new Date(),
+                                type: 'debit',
+                                description: `Primeiro pedido via Marketplace (#${order.id.slice(-4)})`, items: order.items?.map(it => ({ name: it.name, quantity: it.quantity, price: it.price })),
+                                amount: order.total
+                              }]
+                            });
+                          } else {
+                            const updatedHistory: CustomerTransaction[] = [
+                              ...(existingCustomer.history || []),
+                              {
+                                id: `tr-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                                date: new Date(),
+                                type: 'debit',
+                                description: `Pedido via Marketplace (#${order.id.slice(-4)})`, items: order.items?.map(it => ({ name: it.name, quantity: it.quantity, price: it.price })),
+                                amount: order.total
+                              }
+                            ];
+                            await handleUpdateCustomer(existingCustomer.id, { 
+                              history: updatedHistory,
+                              address: order.customerAddress || existingCustomer.address
+                            });
+                          }
+                       } catch (e) {
+                         console.error("Erro ao processar cliente do marketplace:", e);
+                       }
+                     }
+
+                     const acceptedOrder: Order = { 
+                       ...order, 
+                       source: order.source || 'whatsapp',
+                       status: 'preparing',
+                       deliveryFee: order.type === 'delivery' ? globalDeliveryFee : 0 
+                     };
+                     await localDb.orders.put(acceptedOrder);
+                     setOrders(prev => {
+                       const exists = prev.some(o => o.id === acceptedOrder.id);
+                       if (exists) {
+                         return prev.map(o => o.id === acceptedOrder.id ? acceptedOrder : o);
+                       }
+                       return [acceptedOrder, ...prev];
+                     });
+                     setIncomingDigitalOrders(prev => prev.filter(o => o.id !== order.id));
+                     
+                     triggerWhatsAppMock("✅ Pedido Confirmado", `Recebemos seu pedido #${order.id.slice(-4)}! Já estamos preparando.`);
+                     
+                     if (order.id) {
+                       try {
+                         await setDoc(doc(db, 'orders', order.id), { 
+                           status: 'preparing', 
+                           updatedAt: new Date(),
+                           acceptedAt: new Date()
+                         }, { merge: true });
+                       } catch (e) {
+                         console.error("Error accepting cloud order:", e);
+                       }
+                     }
+
+                     if (order.type === 'table' && order.tableNumber) {
+                       handleUpdateTable(order.tableNumber, order.items, 'occupied');
+                     }
+                     triggerWhatsAppMock("✅ Pedido Aceito!", `Olá ${order.customerName}, seu pedido #${order.id.slice(-4)} foi aceito e já está em produção!`);
+                     addLog('u1', 'DIGITAL', `Pedido #${order.id.slice(-4)} ACEITO E ENVIADO À COZINHA`);
+                  }} className="flex-[1.5] py-4 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-200">Aceitar Pedido</button>
                 </div>
               </div>
-              <div className="flex gap-2">
-                <button onClick={() => { setIncomingDigitalOrders(prev => prev.filter(o => o.id !== order.id)); addLog('u1', 'DIGITAL', `Pedido #${order.id.slice(-4)} RECUSADO`); }} className="flex-1 py-3 bg-slate-100 text-slate-500 rounded-xl font-black text-[10px] uppercase">Recusar</button>
-                <button onClick={async () => {
-                   const acceptedOrder = { ...order, status: 'preparing' as const, deliveryFee: order.type === 'delivery' ? globalDeliveryFee : 0 };
-                   await localDb.orders.add(acceptedOrder);
-                   setOrders(prev => [acceptedOrder, ...prev]);
-                   setIncomingDigitalOrders(prev => prev.filter(o => o.id !== order.id));
-                   if (order.type === 'table' && order.tableNumber) {
-                     handleUpdateTable(order.tableNumber, order.items, 'occupied');
-                   }
-                   triggerWhatsAppMock("✅ Pedido Aceito!", `Olá ${order.customerName}, seu pedido #${order.id.slice(-4)} foi aceito e já está em produção!`);
-                   addLog('u1', 'DIGITAL', `Pedido #${order.id.slice(-4)} ACEITO E ENVIADO À COZINHA`);
-                }} className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-black text-[10px] uppercase shadow-lg shadow-indigo-100">Aceitar</button>
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       )}
+
+      <AnimatePresence>
+        {isProfileOpen && (
+          <UserProfileModal
+            isOpen={isProfileOpen}
+            onClose={() => setIsProfileOpen(false)}
+            currentUserData={currentUserData}
+            onUpdateUser={(updatedData) => {
+              setCurrentUserData(updatedData);
+            }}
+            showToast={(msg, typ) => showToast(msg, typ)}
+          />
+        )}
+        {isPrintModalOpen && activePrintJob && (
+          <PrintPreviewModal
+            isOpen={isPrintModalOpen}
+            onClose={() => {
+              setIsPrintModalOpen(false);
+              setActivePrintJob(null);
+            }}
+            printJob={activePrintJob}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 };

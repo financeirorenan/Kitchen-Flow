@@ -4,8 +4,37 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GastroAI POS</title>
+    <title>KitchenFlow AI POS</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              brand: {
+                primary: '#FF4F18', // Vibrant Red-Orange Food/Delivery Vibe
+                secondary: '#FF3B30', // Urgent Coral Red
+                black: '#111111',
+                white: '#FFFFFF',
+              },
+              indigo: {
+                50: '#FFF5F2',
+                100: '#FFE6DF',
+                500: '#FF4F18',
+                600: '#E03D0C',
+                700: '#FF3B30',
+                800: '#B82300',
+                900: '#111111',
+              },
+              slate: {
+                900: '#111111',
+                950: '#0A0A0A',
+              }
+            }
+          }
+        }
+      }
+    </script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         html { font-size: 14px; }
@@ -30,6 +59,20 @@
         .animate-spin-slow {
           animation: spin-slow 8s linear infinite;
         }
+        @keyframes pulse-slow {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.8; transform: scale(0.98); }
+        }
+        .animate-pulse-slow {
+          animation: pulse-slow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        .no-scrollbar::-webkit-scrollbar {
+          display: none;
+        }
+        .no-scrollbar {
+          -ms-overflow-style: none;
+          scrollbar-width: none;
+        }
         /* Compact UI overrides */
         .compact-p { padding: 0.75rem !important; }
         .compact-m { margin: 0.75rem !important; }
@@ -49,8 +92,9 @@
 }
 </script>
 <link rel="stylesheet" href="/index.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
 </head>
-<body class="bg-slate-50 text-slate-900">
+<body class="bg-brand-white text-brand-black">
     <div id="root"></div>
 <script type="module" src="/index.tsx"></script>
 </body>

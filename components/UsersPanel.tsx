@@ -1,11 +1,13 @@
 
-import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { User, UserRole, AuditLog, Permission } from '../types';
+import React, { useState, useMemo, useRef, useEffect, memo } from 'react';
+import { motion } from 'framer-motion';
+import { User, UserRole, UserPreset, AuditLog, Permission } from '../types';
 import { 
   UserPlus, Shield, Mail, MoreVertical, ShieldCheck, UserCog, 
   ChefHat, Wallet, Utensils, History, Users, Search, Activity,
   X, Check, Lock, Settings2, Edit3, Briefcase, FileText, Calendar,
-  Filter, CheckSquare, Square, ChevronDown, Sparkles, Save, User as UserIcon
+  Filter, CheckSquare, Square, ChevronDown, Sparkles, Save, User as UserIcon,
+  LayoutDashboard, AlertTriangle
 } from 'lucide-react';
 
 interface UsersPanelProps {
@@ -13,8 +15,13 @@ interface UsersPanelProps {
   auditLogs: AuditLog[];
   rolePermissions: Record<UserRole, Permission[]>;
   onAddUser: (user: Partial<User>) => void;
+  onUpdateUser: (id: string, updates: Partial<User>) => void;
+  onDeleteUser: (id: string) => void;
   onUpdateRole: (id: string, role: UserRole) => void;
   onUpdateRolePermissions: (role: UserRole, permissions: Permission[]) => void;
+  onSavePreset: (userId: string, preset: UserPreset) => void;
+  allowedModules?: Permission[];
+  isSuperAdmin?: boolean;
 }
 
 const ALL_PERMISSIONS: { id: Permission; label: string; group: string; description: string }[] = [
@@ -25,8 +32,9 @@ const ALL_PERMISSIONS: { id: Permission; label: string; group: string; descripti
   { id: 'pos_access', label: 'Acesso PDV', group: 'Operacional', description: 'Realiza vendas no caixa' },
   { id: 'tables_manage', label: 'Mesas', group: 'Operacional', description: 'Abre e fecha mesas de atendimento' },
   { id: 'kds_view', label: 'Cozinha (KDS)', group: 'Operacional', description: 'Monitora pedidos na cozinha' },
-  { id: 'delivery_manage', label: 'Entregas', group: 'Operacional', description: 'Gerencia motoboys e entregas' },
+  { id: 'delivery_manage', label: 'Entregas', group: 'Operacional', description: 'Gerencia entregadores e logística' },
   { id: 'inventory_edit', label: 'Estoque', group: 'Operacional', description: 'Altera quantidades e custos de produtos' },
+  { id: 'courier_app_access', label: 'Acesso App Entregador', group: 'Operacional', description: 'Permite que este usuário acesse o aplicativo mobile do entregador' },
 ];
 
 const ROLE_DETAILS: Record<UserRole, { label: string; description: string; color: string }> = {
@@ -35,37 +43,71 @@ const ROLE_DETAILS: Record<UserRole, { label: string; description: string; color
   CHEF: { label: 'Chef de Cozinha', description: 'KDS e controle de estoque.', color: 'text-rose-600 bg-rose-50 border-rose-100' },
   CASHIER: { label: 'Operador de Caixa', description: 'Vendas e fechamento de caixa.', color: 'text-emerald-600 bg-emerald-50 border-emerald-100' },
   WAITER: { label: 'Garçom / Atendente', description: 'Atendimento de mesas e pedidos.', color: 'text-blue-600 bg-blue-50 border-blue-100' },
+  KDS: { label: 'Monitor de Pedidos', description: 'Visualização e preparo de pedidos.', color: 'text-orange-600 bg-orange-50 border-orange-100' },
+  SAAS_ADMIN: { label: 'SaaS Admin', description: 'Gestão da plataforma SaaS.', color: 'text-purple-600 bg-purple-50 border-purple-100' },
+  COURIER: { label: 'Entregador', description: 'Acesso ao App mobile do entregador.', color: 'text-orange-600 bg-orange-50 border-orange-100' },
+  CUSTOMER: { label: 'Cliente', description: 'Conta de cliente do Marketplace.', color: 'text-slate-600 bg-slate-50 border-slate-100' },
+  OWNER: { label: 'Proprietário', description: 'Acesso total ao estabelecimento.', color: 'text-brand-primary bg-brand-primary/10 border-brand-primary/20' },
+  STOCK_ANALYST: { label: 'Analista de Estoque', description: 'Monitora insumos, custos e CMV.', color: 'text-teal-600 bg-teal-50 border-teal-100' },
 };
 
-const UsersPanel: React.FC<UsersPanelProps> = ({ 
+const UsersPanel: React.FC<UsersPanelProps> = memo(({ 
   users, 
   auditLogs, 
   rolePermissions, 
   onAddUser, 
+  onUpdateUser,
+  onDeleteUser,
   onUpdateRole, 
-  onUpdateRolePermissions 
+  onUpdateRolePermissions,
+  onSavePreset,
+  allowedModules = [],
+  isSuperAdmin = false
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<'team' | 'roles' | 'audit'>('team');
   const [searchTerm, setSearchTerm] = useState('');
   const [showModal, setShowModal] = useState(false);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
   const [editingRole, setEditingRole] = useState<UserRole | null>(null);
+  const [showPresetsModal, setShowPresetsModal] = useState<User | null>(null);
   
-  // Modal states for adding user
+  // Modal states for adding/editing user
   const [newName, setNewName] = useState('');
   const [newEmail, setNewEmail] = useState('');
+  const [newPassword, setNewPassword] = useState('');
   const [newRole, setNewRole] = useState<UserRole>('WAITER');
-  const [newPermissions, setNewPermissions] = useState<Permission[]>(rolePermissions.WAITER);
+  const [newPermissions, setNewPermissions] = useState<Permission[]>(rolePermissions.WAITER || []);
   const [newObservations, setNewObservations] = useState('');
+  const [newActive, setNewActive] = useState(true);
   const [permSearch, setPermSearch] = useState('');
   const [rolePermSearch, setRolePermSearch] = useState('');
   const [isRoleDropdownOpen, setIsRoleDropdownOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState<string | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
+
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [confirmConfig, setConfirmConfig] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type: 'danger' | 'warning' | 'info';
+  } | null>(null);
+
+  const confirmAction = (title: string, message: string, onConfirm: () => void, type: 'danger' | 'warning' | 'info' = 'danger') => {
+    setConfirmConfig({ title, message, onConfirm, type });
+    setShowConfirmModal(true);
+  };
 
   const roleDropdownRef = useRef<HTMLDivElement>(null);
+  const userMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (roleDropdownRef.current && !roleDropdownRef.current.contains(event.target as Node)) {
         setIsRoleDropdownOpen(false);
+      }
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setUserMenuOpen(null);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -79,12 +121,15 @@ const UsersPanel: React.FC<UsersPanelProps> = ({
       case 'CHEF': return <ChefHat size={18} />;
       case 'CASHIER': return <Wallet size={18} />;
       case 'WAITER': return <Utensils size={18} />;
+      case 'KDS': return <LayoutDashboard size={18} />;
+      case 'SAAS_ADMIN': return <Shield size={18} />;
+      case 'STOCK_ANALYST': return <Briefcase size={18} />;
     }
   };
 
   const handleRoleTemplateSelect = (role: UserRole) => {
     setNewRole(role);
-    setNewPermissions([...rolePermissions[role]]);
+    setNewPermissions([...(rolePermissions[role] || [])]);
     setIsRoleDropdownOpen(false);
   };
 
@@ -105,45 +150,124 @@ const UsersPanel: React.FC<UsersPanelProps> = ({
     }
   };
 
+  const visiblePermissions = useMemo(() => {
+    if (isSuperAdmin || !allowedModules || allowedModules.length === 0) return ALL_PERMISSIONS;
+    return ALL_PERMISSIONS.filter(p => allowedModules.includes(p.id));
+  }, [isSuperAdmin, allowedModules]);
+
   const filteredPermissions = useMemo(() => {
-    return ALL_PERMISSIONS.filter(p => 
+    return visiblePermissions.filter(p => 
       p.label.toLowerCase().includes(permSearch.toLowerCase()) || 
       p.description.toLowerCase().includes(permSearch.toLowerCase())
     );
-  }, [permSearch]);
+  }, [visiblePermissions, permSearch]);
 
   const filteredPresetPermissions = useMemo(() => {
-    return ALL_PERMISSIONS.filter(p => 
+    return visiblePermissions.filter(p => 
       p.label.toLowerCase().includes(rolePermSearch.toLowerCase()) || 
       p.description.toLowerCase().includes(rolePermSearch.toLowerCase())
     );
-  }, [rolePermSearch]);
+  }, [visiblePermissions, rolePermSearch]);
+
+  const handleOpenEditUser = (user: User) => {
+    setEditingUser(user);
+    setNewName(user.name);
+    setNewEmail(user.email);
+    setNewPassword(''); // Começa vazio ao editar, para o lojista opcionalmente preencher nova senha
+    setNewRole(user.role);
+    setNewPermissions(user.permissions || []);
+    setNewObservations(user.observations || '');
+    setNewActive(user.active);
+    setValidationError(null);
+    setShowModal(true);
+    setUserMenuOpen(null);
+  };
 
   const handleSaveUser = () => {
-    if (!newName || !newEmail) return;
-    onAddUser({
-      name: newName,
-      email: newEmail,
+    setValidationError(null);
+
+    const nameVal = newName.trim();
+    const emailVal = newEmail.trim().toLowerCase();
+    const passwordVal = newPassword.trim();
+
+    if (!nameVal) {
+      setValidationError("O nome completo do membro da equipe é obrigatório.");
+      return;
+    }
+
+    if (!emailVal) {
+      setValidationError("O e-mail profissional é obrigatório.");
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(emailVal)) {
+      setValidationError("Por favor, informe um endereço de e-mail válido (exemplo@dominio.com).");
+      return;
+    }
+
+    // Verificar e-mails duplicados na equipe (exceto se for o próprio usuário sendo editado)
+    const emailExists = users.some(u => u.email.toLowerCase() === emailVal && (!editingUser || u.id !== editingUser.id));
+    if (emailExists) {
+      setValidationError("Este e-mail já está em uso por outro membro registrado na equipe.");
+      return;
+    }
+
+    if (!editingUser) {
+      // Novo usuário: a senha é estritamente obrigatória e precisa de mínimo 6 caracteres
+      if (!passwordVal) {
+        setValidationError("A senha de acesso provisória é obrigatória para cadastrar novos usuários.");
+        return;
+      }
+      if (passwordVal.length < 6) {
+        setValidationError("A senha de acesso deve ter pelo menos 6 caracteres para garantir a segurança no Firebase.");
+        return;
+      }
+    } else {
+      // Editando usuário: senha de alteração é opcional, mas se informada deve ter pelo menos 6 caracteres
+      if (passwordVal && passwordVal.length < 6) {
+        setValidationError("A nova senha de acesso deve ter no mínimo 6 caracteres.");
+        return;
+      }
+    }
+
+    const userData = {
+      name: nameVal,
+      email: emailVal,
+      password: passwordVal,
       role: newRole,
       permissions: newPermissions,
-      observations: newObservations
-    });
+      observations: newObservations.trim(),
+      active: newActive
+    };
+
+    if (editingUser) {
+      onUpdateUser(editingUser.id, userData);
+    } else {
+      onAddUser(userData);
+    }
+    
     setShowModal(false);
+    setEditingUser(null);
     resetForm();
   };
 
   const resetForm = () => {
     setNewName('');
     setNewEmail('');
+    setNewPassword('');
     setNewRole('WAITER');
-    setNewPermissions(rolePermissions.WAITER);
+    setNewPermissions(rolePermissions.WAITER || []);
     setNewObservations('');
+    setNewActive(true);
     setPermSearch('');
+    setEditingUser(null);
+    setValidationError(null);
   };
 
   const openEditRole = (role: UserRole) => {
     setEditingRole(role);
-    setRolePresetPermissions([...rolePermissions[role]]);
+    setRolePresetPermissions([...(rolePermissions[role] || [])]);
     setRolePermSearch('');
   };
 
@@ -165,33 +289,37 @@ const UsersPanel: React.FC<UsersPanelProps> = ({
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div className="flex bg-white p-1 rounded-2xl border shadow-sm">
-          <button 
-            onClick={() => setActiveSubTab('team')}
-            className={`flex items-center gap-2 px-6 py-2 rounded-xl font-bold transition-all ${activeSubTab === 'team' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-          >
-            <Users size={18} />
-            Equipe
-          </button>
-          <button 
-            onClick={() => setActiveSubTab('roles')}
-            className={`flex items-center gap-2 px-6 py-2 rounded-xl font-bold transition-all ${activeSubTab === 'roles' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-          >
-            <Briefcase size={18} />
-            Cargos
-          </button>
-          <button 
-            onClick={() => setActiveSubTab('audit')}
-            className={`flex items-center gap-2 px-6 py-2 rounded-xl font-bold transition-all ${activeSubTab === 'audit' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-          >
-            <History size={18} />
-            Auditoria
-          </button>
+        <div className="flex bg-slate-50 p-1 rounded-2xl border border-slate-200 shadow-inner">
+          {[
+            { id: 'team', label: 'Equipe', icon: Users },
+            { id: 'roles', label: 'Cargos', icon: Briefcase },
+            { id: 'audit', label: 'Auditoria', icon: History },
+          ].map(tab => (
+            <button 
+              key={tab.id}
+              onClick={() => setActiveSubTab(tab.id as any)}
+              className={`relative flex items-center gap-2 px-6 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${
+                activeSubTab === tab.id ? 'text-white' : 'text-slate-500 hover:bg-slate-100'
+              }`}
+            >
+              {activeSubTab === tab.id && (
+                <motion.div 
+                  layoutId="usersTabPill"
+                  className="absolute inset-0 bg-indigo-600 rounded-xl shadow-lg shadow-indigo-100"
+                  transition={{ type: "spring", bounce: 0.15, duration: 0.5 }}
+                />
+              )}
+              <span className="relative z-10 flex items-center gap-2">
+                <tab.icon size={16} strokeWidth={activeSubTab === tab.id ? 3 : 2} />
+                {tab.label}
+              </span>
+            </button>
+          ))}
         </div>
         
         {activeSubTab === 'team' ? (
           <button 
-            onClick={() => setShowModal(true)}
+            onClick={() => { resetForm(); setShowModal(true); }}
             className="bg-indigo-600 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200"
           >
             <UserPlus size={20} />
@@ -214,19 +342,19 @@ const UsersPanel: React.FC<UsersPanelProps> = ({
       </div>
 
       {activeSubTab === 'team' ? (
-        <div className="bg-white rounded-3xl border shadow-sm overflow-hidden animate-in fade-in duration-500">
+        <div className="bg-white rounded-3xl border shadow-sm overflow-visible animate-in fade-in duration-500">
           <table className="w-full text-left">
             <thead className="bg-slate-50 border-b">
               <tr>
-                <th className="px-6 py-4 font-bold text-slate-500 text-sm">Usuário</th>
+                <th className="px-6 py-4 font-bold text-slate-500 text-sm rounded-tl-3xl">Usuário</th>
                 <th className="px-6 py-4 font-bold text-slate-500 text-sm">Função / Nível</th>
                 <th className="px-6 py-4 font-bold text-slate-500 text-sm">Permissões Ativas</th>
                 <th className="px-6 py-4 font-bold text-slate-500 text-sm">Status</th>
-                <th className="px-6 py-4 font-bold text-slate-500 text-sm text-right">Ações</th>
+                <th className="px-6 py-4 font-bold text-slate-500 text-sm text-right rounded-tr-3xl">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y">
-              {users.map(user => (
+              {users.map((user, index) => (
                 <tr key={user.id} className="hover:bg-slate-50 transition-colors">
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-4">
@@ -249,26 +377,68 @@ const UsersPanel: React.FC<UsersPanelProps> = ({
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex flex-wrap gap-1 max-w-[200px]">
-                      {user.permissions.slice(0, 3).map(p => (
+                      {(user.permissions || []).slice(0, 3).map(p => (
                         <span key={p} className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-medium">
                           {ALL_PERMISSIONS.find(ap => ap.id === p)?.label}
                         </span>
                       ))}
-                      {user.permissions.length > 3 && (
-                        <span className="text-[10px] text-slate-400 font-bold">+{user.permissions.length - 3}</span>
+                      {(user.permissions || []).length > 3 && (
+                        <span className="text-[10px] text-slate-400 font-bold">+{(user.permissions || []).length - 3}</span>
                       )}
                     </div>
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-2">
-                      <span className={`w-2 h-2 rounded-full ${user.status === 'online' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`}></span>
-                      <span className="text-sm text-slate-600 capitalize">{user.status}</span>
+                      <span className={`w-2 h-2 rounded-full ${user.active ? (user.status === 'online' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300') : 'bg-rose-500'}`}></span>
+                      <span className="text-sm text-slate-600 capitalize">{user.active ? user.status : 'Inativo'}</span>
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-right">
-                    <button className="p-2 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-colors">
+                  <td className="px-6 py-4 text-right relative">
+                    <button 
+                       onClick={() => setUserMenuOpen(userMenuOpen === user.id ? null : user.id)}
+                      className="p-2 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-colors"
+                    >
                       <MoreVertical size={18} />
                     </button>
+
+                    {userMenuOpen === user.id && (
+                      <div ref={userMenuRef} className={`absolute right-6 ${index === users.length - 1 && users.length > 1 ? 'bottom-full mb-1' : 'top-12'} z-20 w-48 bg-white border rounded-2xl shadow-xl py-2 animate-in fade-in zoom-in-95 duration-200`}>
+                        <button 
+                          onClick={() => handleOpenEditUser(user)}
+                          className="w-full px-4 py-2 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+                        >
+                          <Edit3 size={16} /> Editar Perfil
+                        </button>
+                        <button 
+                          onClick={() => setShowPresetsModal(user)}
+                          className="w-full px-4 py-2 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+                        >
+                          <Settings2 size={16} /> Presets do Usuário
+                        </button>
+                        <div className="h-px bg-slate-100 my-1" />
+                        <button 
+                          onClick={() => {
+                            const actionName = user.active ? 'inativar' : 'ativar';
+                            const title = user.active ? 'Inativar Usuário' : 'Ativar Usuário';
+                            const message = `Tem certeza de que deseja ${actionName} o acesso do usuário "${user.name}" ao sistema?`;
+                            const type = user.active ? 'danger' : 'info';
+                            
+                            confirmAction(title, message, () => {
+                              if (user.active) {
+                                onDeleteUser(user.id);
+                              } else {
+                                onUpdateUser(user.id, { active: true });
+                              }
+                            }, type);
+                            setUserMenuOpen(null);
+                          }}
+                          className={`w-full px-4 py-2 text-left text-sm font-bold flex items-center gap-2 ${user.active ? 'text-rose-600 hover:bg-rose-50' : 'text-emerald-600 hover:bg-emerald-50'}`}
+                        >
+                          {user.active ? <Lock size={16} /> : <Check size={16} />}
+                          {user.active ? 'Inativar Usuário' : 'Ativar Usuário'}
+                        </button>
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -277,7 +447,9 @@ const UsersPanel: React.FC<UsersPanelProps> = ({
         </div>
       ) : activeSubTab === 'roles' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in slide-in-from-bottom-4 duration-500">
-          {(['ADMIN', 'MANAGER', 'CHEF', 'CASHIER', 'WAITER'] as UserRole[]).map(role => (
+          {(Object.keys(ROLE_DETAILS) as UserRole[])
+            .filter(role => isSuperAdmin || role !== 'SAAS_ADMIN')
+            .map(role => (
             <div key={role} className="bg-white rounded-3xl border shadow-sm p-6 flex flex-col gap-4 group hover:shadow-md transition-shadow">
               <div className="flex justify-between items-start">
                 <div className="flex items-center gap-3">
@@ -286,7 +458,7 @@ const UsersPanel: React.FC<UsersPanelProps> = ({
                   </div>
                   <div>
                     <h3 className="font-bold text-slate-800">{role}</h3>
-                    <p className="text-xs text-slate-500">{rolePermissions[role].length} permissões padrão</p>
+                    <p className="text-xs text-slate-500">{(rolePermissions[role] || []).length} permissões padrão</p>
                   </div>
                 </div>
                 <button 
@@ -297,13 +469,13 @@ const UsersPanel: React.FC<UsersPanelProps> = ({
                 </button>
               </div>
               <div className="flex flex-wrap gap-1.5 mt-2">
-                {rolePermissions[role].slice(0, 6).map(p => (
-                  <span key={p} className="text-[10px] px-2 py-0.5 rounded-full border bg-slate-50 text-slate-600 font-semibold">
-                    {ALL_PERMISSIONS.find(ap => ap.id === p)?.label}
-                  </span>
+                {(rolePermissions[role] || []).slice(0, 6).map(p => (
+                   <span key={p} className="text-[10px] px-2 py-0.5 rounded-full border bg-slate-50 text-slate-600 font-semibold">
+                     {ALL_PERMISSIONS.find(ap => ap.id === p)?.label}
+                   </span>
                 ))}
-                {rolePermissions[role].length > 6 && (
-                  <span className="text-[10px] text-slate-400 font-bold self-center">+{rolePermissions[role].length - 6}</span>
+                {(rolePermissions[role] || []).length > 6 && (
+                  <span className="text-[10px] text-slate-400 font-bold self-center">+{(rolePermissions[role] || []).length - 6}</span>
                 )}
               </div>
               <div className="mt-auto pt-4 border-t flex justify-between items-center">
@@ -378,20 +550,37 @@ const UsersPanel: React.FC<UsersPanelProps> = ({
                   <UserPlus size={24} />
                 </div>
                 <div>
-                  <h2 className="text-2xl font-black text-slate-800">Novo Acesso à Equipe</h2>
+                  <h2 className="text-2xl font-black text-slate-800">{editingUser ? 'Editar Acesso' : 'Novo Acesso à Equipe'}</h2>
                   <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Configure permissões granulares</p>
                 </div>
               </div>
-              <button onClick={() => setShowModal(false)} className="p-3 hover:bg-white rounded-full transition-all text-slate-400 hover:text-rose-500">
+              <button onClick={() => { setShowModal(false); setEditingUser(null); }} className="p-3 hover:bg-white rounded-full transition-all text-slate-400 hover:text-rose-500">
                 <X size={24} />
               </button>
             </div>
 
             <div className="flex-1 overflow-y-auto p-8 space-y-10 custom-scrollbar">
+              {validationError && (
+                <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl text-rose-600 text-xs font-bold text-center flex items-center justify-center gap-2 animate-in fade-in slide-in-from-top-1 duration-200">
+                  <AlertTriangle size={16} className="shrink-0" />
+                  <span>{validationError}</span>
+                </div>
+              )}
               <div className="space-y-6">
-                <h3 className="text-sm font-black uppercase text-slate-400 flex items-center gap-2">
-                   Identificação Básica
-                </h3>
+                <div className="flex justify-between items-center">
+                  <h3 className="text-sm font-black uppercase text-slate-400 flex items-center gap-2">
+                    Identificação Básica
+                  </h3>
+                  {editingUser && (
+                    <button 
+                      onClick={() => setNewActive(!newActive)}
+                      className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-2 transition-all ${newActive ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' : 'bg-rose-100 text-rose-700 border border-rose-200'}`}
+                    >
+                      {newActive ? <Check size={12} strokeWidth={4} /> : <X size={12} strokeWidth={4} />}
+                      {newActive ? 'Ativo' : 'Inativo'}
+                    </button>
+                  )}
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
                     <label className="text-xs font-bold text-slate-700 ml-1">Nome Completo</label>
@@ -400,6 +589,22 @@ const UsersPanel: React.FC<UsersPanelProps> = ({
                   <div className="space-y-2">
                     <label className="text-xs font-bold text-slate-700 ml-1">E-mail Profissional</label>
                     <input type="email" placeholder="carlos@seunegocio.com" className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all font-medium" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-700 ml-1">
+                      {editingUser ? 'Alterar Senha de Acesso (Vazio para manter a atual)' : 'Senha de Acesso'}
+                    </label>
+                    <div className="relative">
+                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                      <input 
+                        type="password" 
+                        placeholder={editingUser ? "Deixe em branco para não alterar" : "••••••••"} 
+                        className="w-full pl-12 pr-5 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all font-medium" 
+                        value={newPassword} 
+                        onChange={(e) => setNewPassword(e.target.value)} 
+                      />
+                    </div>
+                    <p className="text-[10px] text-slate-400 font-medium ml-1">Mínimo 6 caracteres para o Firebase Auth</p>
                   </div>
                 </div>
               </div>
@@ -430,7 +635,9 @@ const UsersPanel: React.FC<UsersPanelProps> = ({
                   {isRoleDropdownOpen && (
                     <div className="absolute z-[60] top-full left-0 right-0 mt-3 bg-white border border-slate-100 rounded-[2rem] shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
                       <div className="p-2 max-h-[350px] overflow-y-auto custom-scrollbar">
-                        {(['ADMIN', 'MANAGER', 'CHEF', 'CASHIER', 'WAITER'] as UserRole[]).map(role => (
+                        {(Object.keys(ROLE_DETAILS) as UserRole[])
+                          .filter(role => isSuperAdmin || role !== 'SAAS_ADMIN')
+                          .map(role => (
                           <button 
                             key={role}
                             onClick={() => handleRoleTemplateSelect(role)}
@@ -509,9 +716,9 @@ const UsersPanel: React.FC<UsersPanelProps> = ({
             </div>
 
             <div className="p-8 border-t bg-slate-50/50 flex gap-4 justify-end">
-              <button onClick={() => setShowModal(false)} className="px-6 py-3 rounded-xl font-bold text-slate-500 hover:bg-white uppercase text-xs">Cancelar</button>
+              <button onClick={() => { setShowModal(false); setEditingUser(null); }} className="px-6 py-3 rounded-xl font-bold text-slate-500 hover:bg-white uppercase text-xs">Cancelar</button>
               <button onClick={handleSaveUser} disabled={!newName || !newEmail} className="bg-indigo-600 text-white px-8 py-3 rounded-xl font-black hover:bg-indigo-700 shadow-xl shadow-indigo-100 disabled:opacity-50 uppercase text-xs flex items-center gap-2">
-                <Check size={18} /> Criar Novo Acesso
+                <Check size={18} /> {editingUser ? 'Salvar Alterações' : 'Criar Novo Acesso'}
               </button>
             </div>
           </div>
@@ -579,8 +786,109 @@ const UsersPanel: React.FC<UsersPanelProps> = ({
           </div>
         </div>
       )}
+      {/* Modal: User Presets */}
+      {showPresetsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300 max-h-[90vh] flex flex-col">
+            <div className="p-8 border-b flex justify-between items-center bg-indigo-50/30">
+              <div className="flex items-center gap-4">
+                <div className="bg-indigo-600 p-3 rounded-2xl text-white shadow-lg shadow-indigo-100">
+                  <Sparkles size={24} />
+                </div>
+                <div>
+                  <h2 className="text-2xl font-black text-slate-800">Presets: {showPresetsModal.name}</h2>
+                  <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Gerencie configurações salvas do usuário</p>
+                </div>
+              </div>
+              <button onClick={() => setShowPresetsModal(null)} className="p-2 hover:bg-white rounded-full text-slate-400"><X size={24} /></button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-8 space-y-6 custom-scrollbar">
+              {(!showPresetsModal.presets || showPresetsModal.presets.length === 0) ? (
+                <div className="text-center py-12 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200">
+                  <Settings2 className="mx-auto text-slate-300 mb-4" size={48} />
+                  <p className="text-slate-500 font-bold">Nenhum preset salvo para este usuário.</p>
+                  <button 
+                    onClick={() => {
+                      const newPreset = { id: `pr-${Date.now()}`, name: 'Novo Preset', settings: { permissions: showPresetsModal.permissions || [] } };
+                      onSavePreset(showPresetsModal.id, newPreset);
+                      setShowPresetsModal({ ...showPresetsModal, presets: [newPreset] });
+                    }}
+                    className="mt-4 text-indigo-600 font-black text-xs uppercase hover:underline"
+                  >
+                    Criar primeiro preset
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {showPresetsModal.presets.map(preset => (
+                    <div key={preset.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 group hover:bg-white hover:border-indigo-200 transition-all">
+                      <div className="flex items-center gap-4">
+                        <div className="p-2 bg-indigo-100 text-indigo-600 rounded-xl">
+                          <FileText size={18} />
+                        </div>
+                        <div>
+                          <p className="font-bold text-slate-800">{preset.name}</p>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">Criado em {new Date().toLocaleDateString()}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button 
+                          onClick={() => {
+                            onUpdateUser(showPresetsModal.id, { permissions: preset.settings.permissions });
+                            setShowPresetsModal(null);
+                          }}
+                          className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-lg shadow-indigo-100"
+                        >
+                          Aplicar
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            
+            <div className="p-8 border-t bg-slate-50 flex justify-end">
+              <button onClick={() => setShowPresetsModal(null)} className="px-8 py-4 rounded-xl font-bold text-slate-500 hover:bg-white transition-all border border-transparent hover:border-slate-200 uppercase text-xs tracking-widest">Fechar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal */}
+      {showConfirmModal && confirmConfig && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="bg-white w-full max-w-sm rounded-[2rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
+            <div className={`p-6 text-center ${confirmConfig.type === 'danger' ? 'bg-rose-50' : confirmConfig.type === 'warning' ? 'bg-amber-50' : 'bg-indigo-50'}`}>
+              <div className={`w-16 h-16 mx-auto rounded-2xl flex items-center justify-center mb-4 ${confirmConfig.type === 'danger' ? 'bg-rose-500 text-white' : confirmConfig.type === 'warning' ? 'bg-amber-500 text-white' : 'bg-indigo-500 text-white'}`}>
+                <AlertTriangle size={32} />
+              </div>
+              <h3 className="text-xl font-black text-slate-800 tracking-tighter mb-2">{confirmConfig.title}</h3>
+              <p className="text-xs text-slate-500 font-medium leading-relaxed">{confirmConfig.message}</p>
+            </div>
+            <div className="p-4 flex gap-3">
+              <button 
+                onClick={() => setShowConfirmModal(false)}
+                className="flex-1 py-3 bg-slate-100 text-slate-500 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-all"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={() => {
+                  confirmConfig.onConfirm();
+                  setShowConfirmModal(false);
+                }}
+                className={`flex-1 py-3 text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-lg ${confirmConfig.type === 'danger' ? 'bg-rose-500 hover:bg-rose-600 shadow-rose-100' : confirmConfig.type === 'warning' ? 'bg-amber-500 hover:bg-amber-600 shadow-amber-100' : 'bg-indigo-500 hover:bg-indigo-600 shadow-indigo-100'}`}
+              >
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
-};
+});
 
 export default UsersPanel;
