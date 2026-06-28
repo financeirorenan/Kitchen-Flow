@@ -487,6 +487,59 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   );
   const [tempAddress, setTempAddress] = useState(currentAddress);
 
+  // CEP (postal code) search robust states
+  const [addressMode, setAddressMode] = useState<'cep' | 'manual'>('cep');
+  const [cepInput, setCepInput] = useState('');
+  const [cepNumber, setCepNumber] = useState('');
+  const [cepComplement, setCepComplement] = useState('');
+  const [isCepLoading, setIsCepLoading] = useState(false);
+  const [cepError, setCepError] = useState<string | null>(null);
+  const [cepData, setCepData] = useState<{ street?: string; neighborhood?: string; city?: string; state?: string } | null>(null);
+
+  // Sync CEP components into tempAddress
+  useEffect(() => {
+    if (addressMode === 'cep' && cepData) {
+      const { street = '', neighborhood = '', city = '', state = '' } = cepData;
+      const numPart = cepNumber ? `, Nº ${cepNumber}` : '';
+      const compPart = cepComplement ? ` - ${cepComplement}` : '';
+      const formattedCep = cepInput ? ` - CEP ${cepInput}` : '';
+      const fullAddress = `${street}${numPart}${compPart}, ${neighborhood}, ${city} - ${state}${formattedCep}`;
+      setTempAddress(fullAddress);
+    }
+  }, [cepNumber, cepComplement, cepData, addressMode, cepInput]);
+
+  const handleCepSearch = async (cep: string) => {
+    const cleanCEP = cep.replace(/\D/g, '');
+    if (cleanCEP.length !== 8) {
+      setCepError('O CEP deve conter 8 dígitos.');
+      return;
+    }
+    setIsCepLoading(true);
+    setCepError(null);
+    try {
+      const response = await fetch(`https://viacep.com.br/ws/${cleanCEP}/json/`);
+      const data = await response.json();
+      if (data.erro) {
+        setCepError('CEP não encontrado. Verifique os dígitos ou use o modo manual.');
+        setCepData(null);
+      } else {
+        setCepData({
+          street: data.logradouro || '',
+          neighborhood: data.bairro || '',
+          city: data.localidade || '',
+          state: data.uf || ''
+        });
+        setCepError(null);
+      }
+    } catch (err) {
+      console.error(err);
+      setCepError('Erro ao buscar o CEP. Digite o endereço manualmente.');
+      setCepData(null);
+    } finally {
+      setIsCepLoading(false);
+    }
+  };
+
   // Address matching helper
   const normalizeString = (str: string): string => {
     return str
@@ -1045,7 +1098,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
   if (selectedTenant && storeSettings) {
     return (
-      <div className="min-h-screen bg-white">
+      <div className="h-full overflow-y-auto bg-white w-full">
         <DigitalMenu
           settings={{
             ...storeSettings,
@@ -1105,9 +1158,8 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 return cleaned;
               };
 
-              const initialStatus = selectedTenant.autoAcceptOrders
-                ? "preparing"
-                : "pending";
+              const isAutoAccept = storeAdminSettings?.autoAcceptOrders === true;
+              const initialStatus = isAutoAccept ? "preparing" : "pending";
               const mFeePercent = marketplaceSettings?.serviceFee || 0;
               const marketplaceFeeAmount = (order.total * mFeePercent) / 100;
 
@@ -1118,9 +1170,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 source: "marketplace",
                 marketplaceFee: marketplaceFeeAmount,
                 createdAt: new Date(),
-                acceptedAt: selectedTenant.autoAcceptOrders
-                  ? new Date()
-                  : undefined,
+                acceptedAt: isAutoAccept ? new Date() : undefined,
               });
 
               // Salvar o pedido no Firestore
@@ -2158,19 +2208,110 @@ const Marketplace: React.FC<MarketplaceProps> = ({
               </div>
 
               <div className="space-y-5">
-                <div className="relative group">
-                  <input
-                    type="text"
-                    className="w-full px-5 py-4.5 bg-slate-100 border border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-brand-primary focus:bg-white transition-all pr-12"
-                    placeholder="Buscar por endereço e número..."
-                    value={tempAddress}
-                    onChange={(e) => setTempAddress(e.target.value)}
-                  />
-                  <Search
-                    size={18}
-                    className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-brand-primary transition-colors"
-                  />
+                {/* Toggle Mode */}
+                <div className="flex gap-2 p-1 bg-slate-100 rounded-xl mb-3">
+                <button
+                  type="button"
+                  onClick={() => setAddressMode('cep')}
+                  className={`flex-1 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all ${addressMode === 'cep' ? 'bg-white shadow text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
+                >
+                  🔍 Buscar CEP
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAddressMode('manual')}
+                  className={`flex-1 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all ${addressMode === 'manual' ? 'bg-white shadow text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
+                >
+                  ✍️ Endereço Manual
+                </button>
+              </div>
+
+              {addressMode === 'cep' ? (
+                <div className="space-y-3 p-4 bg-slate-50 border border-slate-100 rounded-2xl animate-in fade-in duration-200">
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <input
+                        type="text"
+                        placeholder="Digite seu CEP (Ex: 01310-100)"
+                        maxLength={9}
+                        value={cepInput}
+                        onChange={(e) => {
+                          const clean = e.target.value.replace(/\D/g, '');
+                          let formatted = clean;
+                          if (clean.length > 5) {
+                            formatted = `${clean.slice(0, 5)}-${clean.slice(5, 8)}`;
+                          }
+                          setCepInput(formatted);
+                          if (clean.length === 8) {
+                            handleCepSearch(clean);
+                          }
+                        }}
+                        className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold placeholder-slate-400 outline-none focus:border-brand-primary"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleCepSearch(cepInput)}
+                      disabled={isCepLoading}
+                      className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-black text-[10px] uppercase tracking-wider rounded-xl transition-all disabled:opacity-50"
+                    >
+                      {isCepLoading ? 'Buscando...' : 'Buscar'}
+                    </button>
+                  </div>
+
+                  {cepError && (
+                    <p className="text-[10px] text-red-600 font-bold uppercase tracking-tight">{cepError}</p>
+                  )}
+
+                  {cepData && (
+                    <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl">
+                      <p className="text-[11px] font-bold text-slate-700">
+                        📍 {cepData.street || 'Rua não definida (zona rural)'}, {cepData.neighborhood || 'Bairro não definido'}
+                      </p>
+                      <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">
+                        {cepData.city} - {cepData.state}
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <input
+                        type="text"
+                        placeholder="Número (Ex: 105)"
+                        value={cepNumber}
+                        onChange={(e) => setCepNumber(e.target.value)}
+                        className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-brand-primary"
+                      />
+                    </div>
+                    <div>
+                      <input
+                        type="text"
+                        placeholder="Complemento (Apto...)"
+                        value={cepComplement}
+                        onChange={(e) => setCepComplement(e.target.value)}
+                        className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-brand-primary"
+                      />
+                    </div>
+                  </div>
                 </div>
+              ) : (
+                <div className="space-y-5">
+                  <div className="relative group">
+                    <input
+                      type="text"
+                      className="w-full px-5 py-4.5 bg-slate-100 border border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-brand-primary focus:bg-white transition-all pr-12"
+                      placeholder="Buscar por endereço e número..."
+                      value={tempAddress}
+                      onChange={(e) => setTempAddress(e.target.value)}
+                    />
+                    <Search
+                      size={18}
+                      className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-brand-primary transition-colors"
+                    />
+                  </div>
+                </div>
+              )}
 
                 <button
                   onClick={() => {

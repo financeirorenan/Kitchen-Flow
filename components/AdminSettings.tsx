@@ -119,7 +119,7 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `gastroai-backup-${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `kitchenflow-backup-${new Date().toISOString().split('T')[0]}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -766,7 +766,7 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
                     <div className="p-2.5 bg-slate-900 rounded-lg text-slate-300 font-mono text-[7px] space-y-1 w-full text-left">
                       <div className="flex items-center justify-between text-slate-400 uppercase tracking-wider border-b border-slate-800 pb-1 font-bold text-[6px]">
                         <span>Script para a Ponte Local (Node.js)</span>
-                        <span className="text-indigo-400 font-sans">gastroai-print-server.js</span>
+                        <span className="text-indigo-400 font-sans">kitchenflow-print-server.js</span>
                       </div>
                       <pre className="overflow-x-auto max-h-24 p-1 leading-normal text-slate-400 select-all whitespace-pre-wrap font-mono">
 {`const WebSocket = require('ws');
@@ -774,7 +774,7 @@ const { exec } = require('child_process');
 const fs = require('fs');
 
 const wss = new WebSocket.Server({ port: 1221 });
-console.log('Spooler GastroAI pronto na porta ws://localhost:1221');
+console.log('Spooler KitchenFlow AI pronto na porta ws://localhost:1221');
 
 wss.on('connection', ws => {
   ws.on('message', message => {
@@ -808,7 +808,7 @@ wss.on('connection', ws => {
                  </div>
                  <div>
                     <h2 className="text-sm font-black text-slate-800">Integrações e APIs</h2>
-                    <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Conecte o GastroAI com serviços externos</p>
+                     <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Conecte o KitchenFlow AI com serviços externos</p>
                  </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">

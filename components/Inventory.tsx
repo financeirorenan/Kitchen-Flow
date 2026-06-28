@@ -310,7 +310,7 @@ const Inventory: React.FC<InventoryProps> = memo(({
         items
       });
       if (showWarning) {
-        alert("💡 Limite da IA em nuvem atingido (ERRO 429). O GastroAI ativou o Processamento Inteligente Local para ler o texto offline e extrair todos os itens com sucesso!");
+        alert("💡 Limite da IA em nuvem atingido (ERRO 429). O KitchenFlow AI ativou o Processamento Inteligente Local para ler o texto offline e extrair todos os itens com sucesso!");
       }
     } else {
       alert("Não conseguimos extrair nenhum item no modo offline automático. Por favor, verifique se o texto importado possui nomes de ingredientes e preços legíveis na mesma linha.");
@@ -353,7 +353,7 @@ const Inventory: React.FC<InventoryProps> = memo(({
       if (invoiceText) {
         runLocalInvoiceParser(invoiceText, true);
       } else {
-        alert('Erro ao conectar com o serviço de Inteligência Artificial do GastroAI. Tente copiar e colar o texto da nota fiscal para usar o extrator offline local!');
+        alert('Erro ao conectar com o serviço de Inteligência Artificial do KitchenFlow AI. Tente copiar e colar o texto da nota fiscal para usar o extrator offline local!');
       }
     } finally {
       setIsParsingInvoice(false);
@@ -1776,7 +1776,7 @@ const Inventory: React.FC<InventoryProps> = memo(({
                       <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 flex gap-3 mt-6">
                         <Info size={18} className="text-indigo-500 shrink-0 mt-0.5" />
                         <p className="text-[10px] text-slate-500 leading-relaxed font-semibold">
-                          A IA interpretará as quantidades originais (como caixas, fardos, latas) e as converterá automaticamente para as unidades métricas que você usa no GastroAI (como kg, litros ou unidades individuais).
+                          A IA interpretará as quantidades originais (como caixas, fardos, latas) e as converterá automaticamente para as unidades métricas que você usa no KitchenFlow AI (como kg, litros ou unidades individuais).
                         </p>
                       </div>
                     </div>
@@ -1810,7 +1810,7 @@ const Inventory: React.FC<InventoryProps> = memo(({
                           {isParsingInvoice ? (
                             <>
                               <Loader2 size={16} className="animate-spin" />
-                              Lendo com Inteligência GastroAI...
+                              Lendo com Inteligência KitchenFlow AI...
                             </>
                           ) : (
                             <>
@@ -1869,7 +1869,7 @@ const Inventory: React.FC<InventoryProps> = memo(({
                             ) : (
                               <>
                                 <span className="bg-emerald-100 text-emerald-800 border border-emerald-200 text-[9px] px-2.5 py-1 rounded-full font-black flex items-center gap-1">
-                                  <Sparkles size={11} className="fill-emerald-500 text-emerald-500 animate-pulse" /> IA GASTROAI NUVEM
+                                  <Sparkles size={11} className="fill-emerald-500 text-emerald-500 animate-pulse" /> IA KITCHENFLOW NUVEM
                                 </span>
                                 Insumos Mapeados Pela IA
                               </>
@@ -1905,7 +1905,7 @@ const Inventory: React.FC<InventoryProps> = memo(({
                               <th className="px-4 py-3 text-right">Compra</th>
                               <th className="px-4 py-3 text-right">Preço Total</th>
                               <th className="px-4 py-3 w-1/4">Estrutura de Conversão & Estoque</th>
-                              <th className="px-4 py-3 w-1/4">Mapeamento no GastroAI</th>
+                              <th className="px-4 py-3 w-1/4">Mapeamento no KitchenFlow AI</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100 font-medium text-xs">

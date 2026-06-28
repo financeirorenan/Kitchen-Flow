@@ -73,6 +73,38 @@ Abaixo, detalhamos os principais fatores de desempenho e oportunidades de melhor
 - **Apoio Constante**: Com a excelente estabilidade geral, sua operação é sustentável e resiliente, propiciando ótimas condições de modernização.`;
   };
 
+  // Helper de resiliência e retry para chamadas à API do Gemini
+  const callGeminiWithRetry = async (
+    client: any,
+    candidateModels: string[],
+    params: { contents: any; config?: any }
+  ) => {
+    let lastError: any = null;
+    for (const modelName of candidateModels) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          console.log(`[Gemini API] Trying model: ${modelName} (attempt ${attempt}/3)...`);
+          const resp = await client.models.generateContent({
+            model: modelName,
+            contents: params.contents,
+            config: params.config,
+          });
+          if (resp && resp.text) {
+            return resp;
+          }
+        } catch (err: any) {
+          console.warn(`[Gemini API] Model ${modelName} failed on attempt ${attempt}/3.`, err);
+          lastError = err;
+          if (attempt < 3) {
+            // Espera com backoff exponencial antes de tentar novamente o mesmo modelo
+            await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
+          }
+        }
+      }
+    }
+    throw lastError || new Error("All candidate models and retries failed.");
+  };
+
   // Inteligência do Módulo Lojista (Copiloto Financeiro)
   app.post("/api/gemini/explain-merchant", async (req, res) => {
     const { summaryData } = req.body;
@@ -130,10 +162,8 @@ REQUISITOS DA RESPOSTA:
 3. Seja objetivo, separe as ideias em tópicos simples e adicione um plano de ação de 2 a 3 pontos práticos.
 4. Utilize tom de Copiloto Financeiro que entende do dia a dia do lojista. Use formatação em Markdown elegível (negritos, listas, seções).`;
 
-      const aiResponse = await client.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: promptString,
-      });
+      const candidateModels = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
+      const aiResponse = await callGeminiWithRetry(client, candidateModels, { contents: promptString });
 
       res.json({
         success: true,
@@ -149,6 +179,223 @@ REQUISITOS DA RESPOSTA:
       res.json({
         success: true,
         insight: fallbackAnalysis,
+        source: 'local_copilot_service_fallback',
+        isFallback: true
+      });
+    }
+  });
+
+  // Chat Inteligente com o Copiloto Kai
+  app.post("/api/gemini/chat-copilot", async (req, res) => {
+    const { message, history, summaryData, kaiMetrics } = req.body;
+    
+    if (!message) {
+      return res.status(400).json({ error: "Mensagem vazia" });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    // Helper local heuristic for chat replies
+    const getLocalHeuristicChatReply = (msgText: string, metrics: any) => {
+      const lowercase = msgText.toLowerCase();
+      let text = "";
+      let pose = "tudo-sob-controle";
+      let expression = "feliz";
+
+      const hoje = metrics?.hoje || { faturamento: 0, lucroReal: 0, margem: 0, orderCount: 0, cmv: 0 };
+      const ontem = metrics?.ontem || { faturamento: 0, lucroReal: 0, margem: 0, orderCount: 0, cmv: 0 };
+      const mes = metrics?.mes || { faturamento: 0, lucroReal: 0, margem: 0, orderCount: 0, cmv: 0 };
+
+      if (lowercase.includes("hoje") || lowercase.includes("dia")) {
+        text = `### 📅 Relatório Operacional de Hoje:
+- **Faturamento Bruto**: R$ ${hoje.faturamento.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+- **Lucro Líquido Estimado**: R$ ${hoje.lucroReal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+- **Margem Líquida**: ${hoje.margem.toFixed(1)}%
+- **Pedidos Finalizados**: ${hoje.orderCount}
+
+${hoje.lucroReal >= 0 
+  ? `🟢 Excelente! Hoje sua operação está rodando **no azul** com uma retenção líquida de ${hoje.margem.toFixed(1)}%. Continue mantendo o foco nas porções e na agilidade da cozinha!` 
+  : `⚠️ Atenção: Hoje a operação está **no vermelho** devido à proporção de custos fixos diários. É necessário impulsionar mais vendas para superar o ponto de equilíbrio de hoje!`}
+`;
+        pose = "gestao-pedidos";
+        expression = hoje.lucroReal >= 0 ? "feliz" : "alerta";
+      } else if (lowercase.includes("ontem")) {
+        text = `### 📅 Fechamento de Ontem:
+- **Faturamento Bruto**: R$ ${ontem.faturamento.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+- **Lucro Líquido Estimado**: R$ ${ontem.lucroReal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+- **Margem Líquida**: ${ontem.margem.toFixed(1)}%
+- **Pedidos Finalizados**: ${ontem.orderCount}
+
+${ontem.lucroReal >= 0 
+  ? `🟢 Muito bom! Ontem a operação fechou positiva, rendendo R$ ${ontem.lucroReal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} limpos.` 
+  : `⚠️ Ontem a operação fechou com saldo negativo de R$ ${ontem.lucroReal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}. Vamos focar em reverter hoje!`}
+`;
+        pose = "planejamento";
+        expression = ontem.lucroReal >= 0 ? "feliz" : "concentrado";
+      } else if (lowercase.includes("mês") || lowercase.includes("mensal") || lowercase.includes("faturamento do mes")) {
+        text = `### 📊 Balanço Acumulado do Mês:
+- **Faturamento Bruto Total**: R$ ${mes.faturamento.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+- **Lucro Líquido Estimado**: R$ ${mes.lucroReal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+- **Margem Média Retida**: ${mes.margem.toFixed(1)}%
+
+Sua saúde financeira acumulada este mês está classificada como **${mes.margem >= 15 ? 'Excelente 🟢' : mes.margem >= 8 ? 'Estável ⚠️' : 'Crítica 🚨'}**. 
+O CMV médio do mês está sob controle. Continue monitorando as compras de ingredientes para manter a média de desperdício abaixo de 3.5%!`;
+        pose = "analisando-dados";
+        expression = mes.margem >= 10 ? "feliz" : "concentrado";
+      } else if (lowercase.includes("lucro") || lowercase.includes("lucro liquido")) {
+        text = `### 💰 Raio-X do Seu Lucro Líquido:
+- **Lucro Líquido de Hoje**: R$ ${hoje.lucroReal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${hoje.margem.toFixed(1)}%)
+- **Lucro Líquido de Ontem**: R$ ${ontem.lucroReal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${ontem.margem.toFixed(1)}%)
+- **Lucro Acumulado do Mês**: R$ ${mes.lucroReal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${mes.margem.toFixed(1)}%)
+
+O lucro líquido é o que sobra no seu bolso após deduzir o CMV, taxas de delivery, folha de funcionários proporcional e custos fixos como aluguel. Mantenha as vendas altas para que as despesas fixas diluam e sua margem cresça!`;
+        pose = "planejamento";
+        expression = "surpreso";
+      } else if (lowercase.includes("cmv") || lowercase.includes("custo")) {
+        text = `### 🥩 Custo de Mercadoria Vendida (CMV):
+- **CMV de Hoje**: R$ ${hoje.cmv.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+- **CMV Acumulado do Mês**: R$ ${mes.cmv.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+
+Para manter seu restaurante lucrativo, sua meta de CMV deve ser de **30%** do faturamento. Se o CMV estiver muito alto:
+1. Revise e padronize as porções usando balanças.
+2. Evite comprar em cima da hora com preços altos de varejo.
+3. Cadastre todas as notas de compras na aba de CMV para auditar desvios!`;
+        pose = "controle-estoque";
+        expression = "concentrado";
+      } else {
+        text = `### 🤖 Sou o Kai, seu analista de IA residente!
+Posso responder qualquer pergunta estratégica sobre as finanças, faturamento e cozinha da sua loja em tempo real.
+
+**Aqui estão alguns dados operacionais rápidos que acabei de auditar:**
+- **Faturamento de Hoje**: R$ ${hoje.faturamento.toLocaleString("pt-BR")} (${hoje.orderCount} pedidos)
+- **Faturamento do Mês**: R$ ${mes.faturamento.toLocaleString("pt-BR")}
+- **Lucro Líquido do Mês**: R$ ${mes.lucroReal.toLocaleString("pt-BR")} (${mes.margem.toFixed(1)}% de margem)
+
+*Como posso ajudar você a otimizar estes resultados hoje?*`;
+        pose = "tudo-sob-controle";
+        expression = "feliz";
+      }
+
+      return { text, pose, expression };
+    };
+
+    // If no apiKey, return local heuristic response
+    if (!apiKey || apiKey.trim() === '') {
+      const localResult = getLocalHeuristicChatReply(message, kaiMetrics);
+      return res.json({
+        success: true,
+        text: localResult.text,
+        pose: localResult.pose,
+        expression: localResult.expression,
+        source: 'local_copilot_service'
+      });
+    }
+
+    try {
+      const { GoogleGenAI, Type } = await import("@google/genai");
+      const client = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          }
+        }
+      });
+
+      const formattedHistory = (history || [])
+        .map((h: any) => `${h.sender === 'user' ? 'Lojista' : 'Kai'}: ${h.text}`)
+        .join("\n");
+
+      const hoje = kaiMetrics?.hoje || { faturamento: 0, lucroReal: 0, margem: 0, orderCount: 0, cmv: 0, despesas: 0, taxasDelivery: 0, folha: 0, despesasFixas: 0, outraDespesa: 0 };
+      const ontem = kaiMetrics?.ontem || { faturamento: 0, lucroReal: 0, margem: 0, orderCount: 0, cmv: 0, despesas: 0, taxasDelivery: 0, folha: 0, despesasFixas: 0, outraDespesa: 0 };
+      const mes = kaiMetrics?.mes || { faturamento: 0, lucroReal: 0, margem: 0, orderCount: 0, cmv: 0, despesas: 0, taxasDelivery: 0, folha: 0, despesasFixas: 0, outraDespesa: 0 };
+
+      const promptString = `Você é o Kai, um analista financeiro e operacional de inteligência artificial residente de um restaurante/cozinha. Você é amigável, direto, experiente e se comunica em Português do Brasil.
+Você possui acesso em tempo real aos números operacionais e financeiros precisos e reais do estabelecimento do lojista.
+
+Abaixo estão os dados reais auditados agora em tempo real do sistema:
+
+---
+DADOS DE HOJE:
+- Faturamento Bruto: R$ ${hoje.faturamento.toFixed(2)}
+- Lucro Líquido Estimado: R$ ${hoje.lucroReal.toFixed(2)}
+- Margem Líquida %: ${hoje.margem.toFixed(2)}%
+- Pedidos Finalizados: ${hoje.orderCount}
+- Custo de Insumos (CMV de hoje): R$ ${hoje.cmv.toFixed(2)}
+- Despesas Totais de Hoje: R$ ${hoje.despesas.toFixed(2)} (inclui aluguel diário R$ ${hoje.despesasFixas.toFixed(2)}, equipe diária R$ ${hoje.folha.toFixed(2)}, taxas de delivery R$ ${hoje.taxasDelivery.toFixed(2)} e outras despesas R$ ${hoje.outraDespesa.toFixed(2)})
+
+DADOS DE ONTEM:
+- Faturamento Bruto: R$ ${ontem.faturamento.toFixed(2)}
+- Lucro Líquido Estimado: R$ ${ontem.lucroReal.toFixed(2)}
+- Margem Líquida %: ${ontem.margem.toFixed(2)}%
+- Pedidos Finalizados: ${ontem.orderCount}
+
+DADOS DESTE MÊS (ACUMULADOS):
+- Faturamento Bruto Total: R$ ${mes.faturamento.toFixed(2)}
+- Lucro Líquido Estimado: R$ ${mes.lucroReal.toFixed(2)}
+- Margem Média Retida: ${mes.margem.toFixed(2)}%
+- Custo de Insumos (CMV acumulado): R$ ${mes.cmv.toFixed(2)}
+- Despesas do Mês: R$ ${mes.despesas.toFixed(2)} (aluguel proporcional R$ ${mes.despesasFixas.toFixed(2)}, equipe R$ ${mes.folha.toFixed(2)}, taxas de delivery R$ ${mes.taxasDelivery.toFixed(2)} e outras despesas R$ ${mes.outraDespesa.toFixed(2)})
+
+OUTRAS INFORMAÇÕES DE CONTEXTO:
+- Filtro Selecionado Atual: ${summaryData?.periodName || 'Este Mês'}
+- Faturamento do Período Filtrado: R$ ${summaryData?.faturamento?.toFixed(2) || '0.00'}
+- Lucro do Período Filtrado: R$ ${summaryData?.lucroReal?.toFixed(2) || '0.00'}
+- Margem do Período Filtrado: ${summaryData?.margem?.toFixed(2) || '0.00'}%
+- Ponto de Equilíbrio do Período: R$ ${summaryData?.pontoEquilibrio?.toFixed(2) || '0.00'}
+- Ticket Médio do Período: R$ ${summaryData?.ticketMedio?.toFixed(2) || '0.00'}
+---
+
+HISTÓRICO RECENTE DO CHAT:
+${formattedHistory}
+
+NOVA MENSAGEM DO LOJISTA:
+"${message}"
+
+Sua missão é responder à nova mensagem do lojista utilizando os números exatos fornecidos acima sempre que relevante (especialmente faturamento de hoje, faturamento do mês, margem líquida, lucro real diário ou mensal, CMV ou quantidade de pedidos). 
+- Seja extremamente empático e use uma linguagem que conecte com o dia a dia do dono do restaurante (falando de desperdícios, margens, motoboys, ingredientes, etc).
+- Apresente faturamento, lucro e margem de forma clara com bullet points organizados e de facílima leitura.
+- Ajude a planejar metas e comemore se a operação estiver positiva de verdade!
+- Escolha uma "pose" de trabalho e uma "expression" facial apropriada do Kai para acompanhar sua resposta.
+
+Você DEVE responder rigorosamente no formato JSON com as chaves:
+1. "text": a resposta em Markdown (Português do Brasil). Destaque os números com negrito (ex: **R$ 2.450,00**).
+2. "pose": uma string dentre: "analisando-dados", "gestao-pedidos", "controle-estoque", "planejamento", "na-cozinha", "tudo-sob-controle"
+3. "expression": uma string dentre: "neutro", "analisando", "alerta", "feliz", "concentrado", "surpreso"`;
+
+      const candidateModels = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
+      const aiResponse = await callGeminiWithRetry(client, candidateModels, {
+        contents: promptString,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              text: { type: Type.STRING, description: "Resposta em markdown" },
+              pose: { type: Type.STRING, description: "Pose do avatar" },
+              expression: { type: Type.STRING, description: "Expressão do avatar" }
+            },
+            required: ["text", "pose", "expression"]
+          }
+        }
+      });
+
+      const parsed = JSON.parse(aiResponse.text!.trim());
+      res.json({
+        success: true,
+        text: parsed.text,
+        pose: parsed.pose || "tudo-sob-controle",
+        expression: parsed.expression || "feliz",
+        source: 'gemini_api_service'
+      });
+    } catch (err: any) {
+      console.warn("Gemini Chat Copilot failed, falling back to local heuristics:", err);
+      const localResult = getLocalHeuristicChatReply(message, kaiMetrics);
+      res.json({
+        success: true,
+        text: localResult.text,
+        pose: localResult.pose,
+        expression: localResult.expression,
         source: 'local_copilot_service_fallback',
         isFallback: true
       });
@@ -207,8 +454,8 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
         contents.push(text);
       }
 
-      const aiResponse = await client.models.generateContent({
-        model: "gemini-3.5-flash",
+      const candidateModels = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
+      const aiResponse = await callGeminiWithRetry(client, candidateModels, {
         contents,
         config: {
           responseMimeType: "application/json",

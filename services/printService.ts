@@ -83,7 +83,8 @@ export const generateRawTextReceipt = (order: Partial<Order>, settings: AdminSet
   out += center(orderTypeLabel, lineCharLimit) + '\n';
   
   const createdAt = parseOrderDate(order.createdAt);
-  out += `PEDIDO: #${order.id ? order.id.slice(-6).toUpperCase() : 'NOVO'}\n`;
+  const orderNumStr = order.dailyNumber ? String(order.dailyNumber) : (order.id ? order.id.slice(-6).toUpperCase() : 'NOVO');
+  out += `PEDIDO: #${orderNumStr}\n`;
   out += `DATA  : ${createdAt.toLocaleDateString('pt-BR')} ${createdAt.toLocaleTimeString('pt-BR')}\n`;
   if (order.tableNumber) {
     out += `MESA/COMANDA: ${order.tableNumber}\n`;
@@ -445,7 +446,7 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
 
       <div style="font-size: ${fontSizeSmall}; margin-top: 4px; line-height: 1.35;">
         ${order.tableNumber ? `<div><strong>Mesa/Comanda:</strong> ${order.tableNumber}</div>` : ''}
-        <div><strong>Pedido:</strong> #${order.id ? order.id.slice(-6).toUpperCase() : 'NOVO'}</div>
+        <div><strong>Pedido:</strong> #${order.dailyNumber ? order.dailyNumber : (order.id ? order.id.slice(-6).toUpperCase() : 'NOVO')}</div>
         <div><strong>Data/Hora:</strong> ${createdAt.toLocaleDateString('pt-BR')} ${createdAt.toLocaleTimeString('pt-BR')}</div>
         <div><strong>Tempo de Casa:</strong> ${timeStr}</div>
       </div>
@@ -510,7 +511,7 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
       <div class="divider" style="margin-top: 15px;"></div>
 
       <div class="center bold" style="font-size: ${fontSizeSmall}; text-transform: uppercase;">
-        ${printing.headerText || 'GASTROAI APP'}
+        ${printing.headerText || 'KITCHENFLOW AI APP'}
       </div>
       <div class="center" style="font-size: ${fontSizeSmall}; margin-top: 3px; font-weight: normal; opacity: 0.9;">
         ${printing.footerText || 'Obrigado pela preferência!'}
@@ -711,7 +712,7 @@ const processNextPrintJob = async () => {
       setTimeout(finalize, 6000);
     });
 
-    window.dispatchEvent(new CustomEvent('gastroai-print-notifier', {
+    window.dispatchEvent(new CustomEvent('kitchenflow-print-notifier', {
       detail: {
         message: `Fila de Impressão: Pedido #${orderIdPart} enviado à impressora padrão com sucesso!`,
         type: 'success'
@@ -720,7 +721,7 @@ const processNextPrintJob = async () => {
 
   } catch (err: any) {
     console.error('Erro na fila de impressão:', err);
-    window.dispatchEvent(new CustomEvent('gastroai-print-notifier', {
+    window.dispatchEvent(new CustomEvent('kitchenflow-print-notifier', {
       detail: {
         message: `Erro ao processar trabalho na fila: ${err?.message || err}`,
         type: 'error'
@@ -746,7 +747,7 @@ export const enqueueBrowserPrint = (order: Partial<Order>, settings: AdminSettin
   printQueue.push({ order: printOrder, settings, options });
   
   const orderIdPart = order.id ? order.id.slice(-6).toUpperCase() : 'NOVO';
-  window.dispatchEvent(new CustomEvent('gastroai-print-notifier', {
+  window.dispatchEvent(new CustomEvent('kitchenflow-print-notifier', {
     detail: {
       message: `Cupom do pedido #${orderIdPart} adicionado à fila de impressão...`,
       type: 'info'
@@ -774,7 +775,7 @@ export const handlePrintOrder = async (order: Partial<Order>, settings: AdminSet
   const rawTextContent = generateRawTextReceipt(printOrder, settings);
 
   // Despachar evento para que a interface global do App exiba o modal interativo de impressão
-  window.dispatchEvent(new CustomEvent('gastroai-show-print-modal', {
+  window.dispatchEvent(new CustomEvent('kitchenflow-show-print-modal', {
     detail: {
       order: printOrder,
       settings,
@@ -900,7 +901,7 @@ export const handlePrintOrder = async (order: Partial<Order>, settings: AdminSet
 
       console.log(`Impressão silenciosa via WebUSB concluída para o pedido #${orderIdPart}`);
       
-      window.dispatchEvent(new CustomEvent('gastroai-print-notifier', {
+      window.dispatchEvent(new CustomEvent('kitchenflow-print-notifier', {
         detail: {
           message: `Cupom #${orderIdPart} impresso silenciosamente via USB!`,
           type: 'success'
@@ -910,7 +911,7 @@ export const handlePrintOrder = async (order: Partial<Order>, settings: AdminSet
     } catch (error: any) {
       console.warn("Falha física via WebUSB, revertendo para download spooled .print:", error);
       
-      window.dispatchEvent(new CustomEvent('gastroai-print-notifier', {
+      window.dispatchEvent(new CustomEvent('kitchenflow-print-notifier', {
         detail: {
           message: `USB Indisponível: ${error?.message || error}. Disparando download do arquivo temporário.`,
           type: 'info'
@@ -960,7 +961,7 @@ export const handlePrintOrder = async (order: Partial<Order>, settings: AdminSet
         // Fechar com graciosidade
         setTimeout(() => ws.close(), 500);
 
-        window.dispatchEvent(new CustomEvent('gastroai-print-notifier', {
+        window.dispatchEvent(new CustomEvent('kitchenflow-print-notifier', {
           detail: {
             message: `Impressão enviada com sucesso para o Spooler Local! Pedido #${orderIdPart}`,
             type: 'success'
@@ -975,7 +976,7 @@ export const handlePrintOrder = async (order: Partial<Order>, settings: AdminSet
       return;
     } catch (error: any) {
       console.warn("WebSocket Spooler falhou, revertendo para download:", error);
-      window.dispatchEvent(new CustomEvent('gastroai-print-notifier', {
+      window.dispatchEvent(new CustomEvent('kitchenflow-print-notifier', {
         detail: {
           message: error?.message || 'Erro na ponte de impressão.',
           type: 'info'
@@ -1017,7 +1018,7 @@ export const handlePrintOrder = async (order: Partial<Order>, settings: AdminSet
     console.log(`Arquivo spooled .print gerado com sucesso para o pedido ${orderIdPart}.`);
 
     // Disparar evento personalizado para que a aplicação mostre o feedback instantâneo sem abrir popup
-    window.dispatchEvent(new CustomEvent('gastroai-print-notifier', {
+    window.dispatchEvent(new CustomEvent('kitchenflow-print-notifier', {
       detail: {
         message: wantsFiscal 
           ? `Arquivo temporário NFCe #${orderIdPart} gerado com sucesso!` 
@@ -1028,7 +1029,7 @@ export const handlePrintOrder = async (order: Partial<Order>, settings: AdminSet
   } catch (error) {
     console.error("Falha ao exportar spooled file temporário de impressão:", error);
     
-    window.dispatchEvent(new CustomEvent('gastroai-print-notifier', {
+    window.dispatchEvent(new CustomEvent('kitchenflow-print-notifier', {
       detail: {
         message: 'Erro ao gerar arquivo temporário de impressão.',
         type: 'error'

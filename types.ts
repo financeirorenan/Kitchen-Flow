@@ -26,6 +26,7 @@ export type Permission =
   | 'pos_access' 
   | 'tables_manage' 
   | 'kds_view' 
+  | 'kds_kitchen_only_view' 
   | 'delivery_manage' 
   | 'inventory_edit' 
   | 'finance_view' 
@@ -178,6 +179,8 @@ export interface DigitalMenuSettings {
     imageUrl?: string;
     active: boolean;
   };
+  totemUpsellMode?: 'auto' | 'manual';
+  totemUpsellProducts?: string[]; // Lista de IDs de produtos selecionados manualmente para upsell
 }
 
 export type SubscriptionPlan = 'FREE' | 'BASIC' | 'PRO' | 'ENTERPRISE';
@@ -454,6 +457,7 @@ export interface Order {
   longitude?: number;
   routePosition?: number;
   courierEarnings?: number;
+  dailyNumber?: number;
 }
 
 export interface Table {
@@ -489,6 +493,7 @@ export interface Courier {
   currentLongitude?: number;
   active: boolean;
   createdAt: Date;
+  updatedAt?: Date;
 }
 
 export interface BankAccount {

@@ -14,8 +14,8 @@ interface UsersPanelProps {
   users: User[];
   auditLogs: AuditLog[];
   rolePermissions: Record<UserRole, Permission[]>;
-  onAddUser: (user: Partial<User>) => void;
-  onUpdateUser: (id: string, updates: Partial<User>) => void;
+  onAddUser: (user: Partial<User>) => Promise<void> | void;
+  onUpdateUser: (id: string, updates: Partial<User>) => Promise<void> | void;
   onDeleteUser: (id: string) => void;
   onUpdateRole: (id: string, role: UserRole) => void;
   onUpdateRolePermissions: (role: UserRole, permissions: Permission[]) => void;
@@ -31,10 +31,16 @@ const ALL_PERMISSIONS: { id: Permission; label: string; group: string; descripti
   { id: 'users_manage', label: 'Equipe', group: 'Administrativo', description: 'Gerencia membros e permissões' },
   { id: 'pos_access', label: 'Acesso PDV', group: 'Operacional', description: 'Realiza vendas no caixa' },
   { id: 'tables_manage', label: 'Mesas', group: 'Operacional', description: 'Abre e fecha mesas de atendimento' },
-  { id: 'kds_view', label: 'Cozinha (KDS)', group: 'Operacional', description: 'Monitora pedidos na cozinha' },
+  { id: 'kds_view', label: 'Cozinha (KDS)', group: 'Operacional', description: 'Monitora pedidos na cozinha e produção' },
+  { id: 'kds_kitchen_only_view', label: 'Apenas KDS Produção', group: 'Operacional', description: 'Acesso EXCLUSIVO ao KDS de Produção da Cozinha, ocultando logística' },
   { id: 'delivery_manage', label: 'Entregas', group: 'Operacional', description: 'Gerencia entregadores e logística' },
   { id: 'inventory_edit', label: 'Estoque', group: 'Operacional', description: 'Altera quantidades e custos de produtos' },
   { id: 'courier_app_access', label: 'Acesso App Entregador', group: 'Operacional', description: 'Permite que este usuário acesse o aplicativo mobile do entregador' },
+  { id: 'digital_menu_manage', label: 'Cardápio Digital', group: 'Operacional', description: 'Gerencia o cardápio digital de autoatendimento' },
+  { id: 'admin_settings_manage', label: 'Configurações', group: 'Administrativo', description: 'Acesso completo às configurações gerais e do lojista' },
+  { id: 'fiscal_manage', label: 'Módulo Fiscal', group: 'Administrativo', description: 'Acesso a configurações fiscais e emissão de notas' },
+  { id: 'customers_manage', label: 'Clientes & CRM', group: 'Gestão', description: 'Gerenciamento de base de clientes, fiado e fidelidade' },
+  { id: 'marketplace_manage', label: 'Marketplace', group: 'Gestão', description: 'Gerenciamento e configurações do canal de marketplace' },
 ];
 
 const ROLE_DETAILS: Record<UserRole, { label: string; description: string; color: string }> = {
@@ -84,6 +90,7 @@ const UsersPanel: React.FC<UsersPanelProps> = memo(({
   const [isRoleDropdownOpen, setIsRoleDropdownOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [confirmConfig, setConfirmConfig] = useState<{
@@ -183,7 +190,7 @@ const UsersPanel: React.FC<UsersPanelProps> = memo(({
     setUserMenuOpen(null);
   };
 
-  const handleSaveUser = () => {
+  const handleSaveUser = async () => {
     setValidationError(null);
 
     const nameVal = newName.trim();
@@ -241,15 +248,23 @@ const UsersPanel: React.FC<UsersPanelProps> = memo(({
       active: newActive
     };
 
-    if (editingUser) {
-      onUpdateUser(editingUser.id, userData);
-    } else {
-      onAddUser(userData);
+    setIsSaving(true);
+    try {
+      if (editingUser) {
+        await onUpdateUser(editingUser.id, userData);
+      } else {
+        await onAddUser(userData);
+      }
+      
+      setShowModal(false);
+      setEditingUser(null);
+      resetForm();
+    } catch (err: any) {
+      console.error(err);
+      setValidationError(err.message || "Ocorreu um erro ao salvar o usuário.");
+    } finally {
+      setIsSaving(false);
     }
-    
-    setShowModal(false);
-    setEditingUser(null);
-    resetForm();
   };
 
   const resetForm = () => {
@@ -716,9 +731,21 @@ const UsersPanel: React.FC<UsersPanelProps> = memo(({
             </div>
 
             <div className="p-8 border-t bg-slate-50/50 flex gap-4 justify-end">
-              <button onClick={() => { setShowModal(false); setEditingUser(null); }} className="px-6 py-3 rounded-xl font-bold text-slate-500 hover:bg-white uppercase text-xs">Cancelar</button>
-              <button onClick={handleSaveUser} disabled={!newName || !newEmail} className="bg-indigo-600 text-white px-8 py-3 rounded-xl font-black hover:bg-indigo-700 shadow-xl shadow-indigo-100 disabled:opacity-50 uppercase text-xs flex items-center gap-2">
-                <Check size={18} /> {editingUser ? 'Salvar Alterações' : 'Criar Novo Acesso'}
+              <button onClick={() => { setShowModal(false); setEditingUser(null); }} className="px-6 py-3 rounded-xl font-bold text-slate-500 hover:bg-white uppercase text-xs" disabled={isSaving}>Cancelar</button>
+              <button onClick={handleSaveUser} disabled={isSaving || !newName || !newEmail} className="bg-indigo-600 text-white px-8 py-3 rounded-xl font-black hover:bg-indigo-700 shadow-xl shadow-indigo-100 disabled:opacity-50 uppercase text-xs flex items-center gap-2">
+                {isSaving ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    <span>Salvando...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check size={18} /> {editingUser ? 'Salvar Alterações' : 'Criar Novo Acesso'}
+                  </>
+                )}
               </button>
             </div>
           </div>

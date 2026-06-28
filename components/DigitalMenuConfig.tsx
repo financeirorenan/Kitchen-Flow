@@ -52,11 +52,13 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
   estimatedDeliveryTime,
   estimatedPickupTime
 }) => {
-  const [activeTab, setActiveTab] = useState<'visual' | 'management' | 'qrcode' | 'promo'>('visual');
+  const [activeTab, setActiveTab] = useState<'visual' | 'management' | 'qrcode' | 'promo' | 'totem'>('visual');
   const [showTestMode, setShowTestMode] = useState(false);
   const [isLinkCopied, setIsLinkCopied] = useState(false);
   const [previewDevice, setPreviewDevice] = useState<'mobile' | 'desktop'>('mobile');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success'>('idle');
+  const [totemSearch, setTotemSearch] = useState('');
+  const [totemCategoryFilter, setTotemCategoryFilter] = useState<string>('all');
   
   const categories = useMemo(() => Array.from(new Set(products.map(p => p.category))), [products]);
   
@@ -205,6 +207,9 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
             </button>
             <button onClick={() => setActiveTab('qrcode')} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-black text-[9px] uppercase tracking-widest transition-all ${activeTab === 'qrcode' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:bg-white'}`}>
               <QrCode size={14} /> QR Codes
+            </button>
+            <button onClick={() => setActiveTab('totem')} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-black text-[9px] uppercase tracking-widest transition-all ${activeTab === 'totem' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:bg-white'}`}>
+              <Sparkles size={14} className="text-amber-500 animate-pulse" /> Método Totem (Upsell)
             </button>
           </div>
 
@@ -580,6 +585,171 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'totem' && (
+            <div className="space-y-6 animate-in slide-in-from-left-4">
+              {/* Header Box */}
+              <div className="bg-gradient-to-br from-amber-400 to-amber-500 p-6 rounded-[2.5rem] text-slate-950 shadow-md flex flex-col md:flex-row items-center justify-between gap-4 relative overflow-hidden">
+                <div className="absolute top-0 right-0 p-4 opacity-10"><Sparkles size={80} /></div>
+                <div className="relative z-10 space-y-1">
+                  <span className="bg-amber-950 text-amber-300 text-[8px] font-black uppercase tracking-[0.2em] px-3 py-1 rounded-full">
+                    AUMENTO DE TICKET MÉDIO
+                  </span>
+                  <h4 className="text-xl font-black italic uppercase tracking-tighter text-amber-950 mt-1">
+                    Método de Vendas Totem (McDonald's)
+                  </h4>
+                  <p className="text-amber-950/80 text-[10px] font-bold max-w-xl">
+                    Ofereça extras, bebidas geladas ou sobremesas irresistíveis no momento em que seu cliente clica em "Finalizar Pedido" para maximizar suas vendas de forma simples.
+                  </p>
+                </div>
+              </div>
+
+              {/* Mode Selection */}
+              <div className="p-5 bg-slate-50 rounded-[2rem] border border-slate-100 space-y-4">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-slate-200/60 pb-3">
+                  <div>
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Configuração de Sugestão</span>
+                    <h5 className="font-black text-slate-800 text-xs mt-0.5">Selecione o modo de geração das ofertas</h5>
+                  </div>
+                  <div className="flex bg-white p-1 rounded-xl border self-end sm:self-auto shadow-sm">
+                    <button
+                      onClick={() => onUpdateSettings({ ...settings, totemUpsellMode: 'auto' })}
+                      className={`px-4 py-2.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${
+                        (settings.totemUpsellMode || 'auto') === 'auto'
+                          ? 'bg-amber-400 text-slate-950 shadow-md font-black'
+                          : 'text-slate-500 hover:bg-slate-50'
+                      }`}
+                    >
+                      <Sparkles size={12} /> Inteligente (Auto)
+                    </button>
+                    <button
+                      onClick={() => onUpdateSettings({ ...settings, totemUpsellMode: 'manual' })}
+                      className={`px-4 py-2.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${
+                        settings.totemUpsellMode === 'manual'
+                          ? 'bg-amber-400 text-slate-950 shadow-md font-black'
+                          : 'text-slate-500 hover:bg-slate-50'
+                      }`}
+                    >
+                      <Palette size={12} /> Manual (Editável)
+                    </button>
+                  </div>
+                </div>
+
+                {(settings.totemUpsellMode || 'auto') === 'auto' ? (
+                  <div className="pt-2 text-slate-600 space-y-3">
+                    <p className="text-xs font-semibold leading-relaxed">
+                      💡 No <strong className="text-indigo-600">Modo Inteligente</strong>, nosso algoritmo heurístico mapeia as categorias de <span className="font-bold">Acompanhamentos, Bebidas e Sobremesas</span> e as exibe de forma rotativa e limpa no checkout. Você não precisa fazer nada!
+                    </p>
+                    <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 text-[10px] font-semibold text-amber-800">
+                      Ideal para quem busca facilidade e quer que o sistema faça o trabalho pesado sozinho usando as categorias cadastradas no estoque.
+                    </div>
+                  </div>
+                ) : (
+                  <div className="pt-2 space-y-4">
+                    <div className="space-y-1">
+                      <p className="text-xs font-semibold text-slate-600 leading-relaxed">
+                        ✏️ No <strong className="text-indigo-600">Modo Manual</strong>, você pode escolher exatamente quais produtos quer sugerir. Marque os itens abaixo para ativá-los no carrossel de sugestão do Totem.
+                      </p>
+                      <span className="text-[10px] font-black text-amber-600 uppercase tracking-widest bg-amber-50 px-2.5 py-1 rounded-md inline-block mt-1">
+                        {(settings.totemUpsellProducts || []).length} produtos selecionados para sugestão
+                      </span>
+                    </div>
+
+                    {/* Filters & Search */}
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <div className="flex-1 relative">
+                        <input
+                          type="text"
+                          placeholder="Buscar produtos para sugerir..."
+                          value={totemSearch}
+                          onChange={(e) => setTotemSearch(e.target.value)}
+                          className="w-full pl-10 pr-4 py-3 bg-white border rounded-xl outline-none text-xs font-bold focus:border-indigo-500 transition-all shadow-sm"
+                        />
+                        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                        {totemSearch && (
+                          <button
+                            onClick={() => setTotemSearch('')}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 font-bold text-xs"
+                          >
+                            Limpar
+                          </button>
+                        )}
+                      </div>
+                      <div className="relative shrink-0">
+                        <select
+                          value={totemCategoryFilter}
+                          onChange={(e) => setTotemCategoryFilter(e.target.value)}
+                          className="appearance-none bg-white border rounded-xl pl-4 pr-10 py-3 text-xs font-bold outline-none focus:border-indigo-500 transition-all shadow-sm"
+                        >
+                          <option value="all">Todas as Categorias</option>
+                          {categories.map(c => c && (
+                            <option key={c} value={c}>{c}</option>
+                          ))}
+                        </select>
+                        <Filter className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
+                      </div>
+                    </div>
+
+                    {/* Products Grid to select manual upsells */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[300px] overflow-y-auto pr-1 custom-scrollbar">
+                      {products
+                        .filter(p => {
+                          const matchesSearch = p.name.toLowerCase().includes(totemSearch.toLowerCase()) || 
+                                                (p.category || '').toLowerCase().includes(totemSearch.toLowerCase());
+                          const matchesCat = totemCategoryFilter === 'all' || p.category === totemCategoryFilter;
+                          return matchesSearch && matchesCat;
+                        })
+                        .map(p => {
+                          const isSelected = (settings.totemUpsellProducts || []).includes(p.id);
+                          return (
+                            <button
+                              key={p.id}
+                              onClick={() => {
+                                const currentProducts = settings.totemUpsellProducts || [];
+                                const newProducts = currentProducts.includes(p.id)
+                                  ? currentProducts.filter(id => id !== p.id)
+                                  : [...currentProducts, p.id];
+                                onUpdateSettings({
+                                  ...settings,
+                                  totemUpsellProducts: newProducts
+                                });
+                              }}
+                              className={`p-3 rounded-2xl border text-left flex items-center gap-3 transition-all ${
+                                isSelected
+                                  ? 'bg-amber-50/50 border-amber-400 shadow-md shadow-amber-400/5 ring-1 ring-amber-400'
+                                  : 'bg-white border-slate-100 hover:border-slate-200'
+                              }`}
+                            >
+                              <div className={`w-5 h-5 rounded-md flex items-center justify-center border transition-all shrink-0 ${
+                                isSelected ? 'bg-amber-400 border-amber-400 text-amber-950' : 'border-slate-300 bg-slate-50'
+                              }`}>
+                                {isSelected && <Check size={12} strokeWidth={3} />}
+                              </div>
+                              
+                              <div className="w-10 h-10 rounded-lg overflow-hidden shrink-0 bg-slate-50 border flex items-center justify-center">
+                                {p.image ? (
+                                  <img src={p.image} className="w-full h-full object-cover" />
+                                ) : (
+                                  <Package size={16} className="text-slate-300" />
+                                )}
+                              </div>
+
+                              <div className="flex-1 min-w-0">
+                                <p className="font-bold text-slate-800 text-xs truncate uppercase italic tracking-tight">{p.name}</p>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  <span className="text-[9px] font-black text-slate-400 uppercase">{p.category}</span>
+                                  <span className="text-[10px] font-bold text-slate-900">R$ {p.price.toFixed(2)}</span>
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

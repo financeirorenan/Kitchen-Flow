@@ -1,5 +1,6 @@
 
 import React, { memo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, 
   Grid, 
@@ -21,7 +22,10 @@ import {
   Shield,
   ExternalLink,
   LifeBuoy,
-  TrendingUp
+  TrendingUp,
+  Sparkles,
+  Monitor,
+  ChefHat
 } from 'lucide-react';
 import { User, Permission } from '../types';
 
@@ -54,10 +58,14 @@ const Sidebar: React.FC<SidebarProps> = memo(({
   logoUrl,
   onProfileClick
 }) => {
+  const navigate = useNavigate();
+
   const menuItems = [
     { id: 'merchant-copilot', label: 'Módulo Lojista', icon: TrendingUp, permission: 'finance_view' },
     { id: 'tables', label: 'Mesas / Comandas', icon: Grid, permission: 'tables_manage' },
-    { id: 'kds', label: 'Monitor de Pedidos', icon: Trello, permission: 'kds_view' },
+    { id: 'kds', label: 'Monitor KDS (Logística)', icon: Trello, permission: 'kds_view' },
+    { id: 'kds-kitchen-only', label: 'Cozinha (KDS Produção)', icon: ChefHat, permission: 'kds_view' },
+    { id: 'order-monitor', label: 'Monitor de Pedidos (TV)', icon: Monitor, permission: 'kds_view' },
     { id: 'delivery', label: 'Logística de Entregas', icon: Bike, permission: 'delivery_manage' },
     { id: 'digital-menu', label: 'Cardápio Digital', icon: Smartphone, permission: 'digital_menu_manage' },
     { id: 'customers', label: 'Clientes / Fiado', icon: UserCircle, permission: 'customers_manage' },
@@ -78,11 +86,27 @@ const Sidebar: React.FC<SidebarProps> = memo(({
 
   const filteredMenuItems = isSaaSMode 
     ? saasMenuItems 
-    : menuItems.filter(item => isSuperAdmin || allowedModules.includes(item.permission as Permission));
+    : menuItems.filter(item => {
+        if (isSuperAdmin) return true;
+        if (item.id === 'kds-kitchen-only') {
+          return allowedModules.includes('kds_view') || allowedModules.includes('kds_kitchen_only_view');
+        }
+        return allowedModules.includes(item.permission as Permission);
+      });
 
   const handleTabClick = (item: any) => {
     if (item.url) {
       window.open(item.url, '_blank');
+      return;
+    }
+    if (item.path) {
+      navigate(item.path);
+      if (item.targetTab) {
+        setActiveTab(item.targetTab);
+      }
+      if (window.innerWidth < 1024) {
+        onClose();
+      }
       return;
     }
     setActiveTab(item.id);
@@ -150,6 +174,45 @@ const Sidebar: React.FC<SidebarProps> = memo(({
             <X size={20} />
           </button>
         </div>
+
+        {/* Switcher para Administradores de Sistema */}
+        {isSuperAdmin && (
+          <div className={`p-3 mx-3 mt-3 rounded-2xl flex flex-col gap-1.5 ${isSaaSMode ? 'bg-slate-800/40 border border-slate-800/60' : 'bg-indigo-50/50 border border-indigo-100/50'}`}>
+            <span className={`text-[8px] font-black uppercase tracking-widest ${isSaaSMode ? 'text-slate-400' : 'text-indigo-600'} flex items-center gap-1.5`}>
+              <Sparkles size={10} className="text-amber-500 animate-pulse" />
+              Nível de Acesso
+            </span>
+            <div className="grid grid-cols-2 gap-1 bg-slate-900/10 p-1 rounded-xl">
+              <button
+                onClick={() => {
+                  navigate('/saas');
+                  setActiveTab('saas-admin');
+                }}
+                className={`py-1.5 text-[9px] font-black uppercase tracking-wider rounded-lg transition-all ${
+                  isSaaSMode 
+                    ? 'bg-emerald-500 text-white shadow-sm' 
+                    : 'text-slate-500 hover:bg-slate-100'
+                }`}
+              >
+                SaaS Admin
+              </button>
+              <button
+                onClick={() => {
+                  navigate('/lojista');
+                  setActiveTab('kds');
+                }}
+                className={`py-1.5 text-[9px] font-black uppercase tracking-wider rounded-lg transition-all ${
+                  !isSaaSMode 
+                    ? 'bg-indigo-600 text-white shadow-sm' 
+                    : 'text-slate-400 hover:bg-slate-800'
+                }`}
+              >
+                Restaurante
+              </button>
+            </div>
+          </div>
+        )}
+
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto custom-scrollbar">
           {filteredMenuItems.map((item) => (
             <button

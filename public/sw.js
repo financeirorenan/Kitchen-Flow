@@ -1,10 +1,10 @@
-/* GastroAI - Service Worker for Courier Notifications */
+/* KitchenFlow AI - Service Worker for Courier Notifications */
 
 // Import Firebase Compat in the background Service Worker
 importScripts('https://www.gstatic.com/firebasejs/10.10.0/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.10.0/firebase-firestore-compat.js');
 
-const CACHE_NAME = 'gastroai-courier-cache-v1';
+const CACHE_NAME = 'kitchenflow-courier-cache-v1';
 let firebaseApp = null;
 let firestoreDb = null;
 let ordersListener = null;
@@ -109,7 +109,7 @@ async function setupBackgroundFirestore(config) {
         authDomain: config.authDomain,
         projectId: config.projectId,
         appId: config.appId
-      }, 'gastroai-sw-app');
+      }, 'kitchenflow-sw-app');
       
       firestoreDb = firebaseApp.firestore();
     }
@@ -139,7 +139,7 @@ async function setupBackgroundFirestore(config) {
               // Only trigger notification if it's not the initial page loading of old orders
               if (!isFirstRun && data.status !== 'delivered' && data.status !== 'cancelled') {
                 showNotification(`Novo pedido atribuído! (#${docId.slice(-4)})`, {
-                  body: `Você tem uma nova entrega disponível! Clique para visualizar no GastroAI.`,
+                  body: `Você tem uma nova entrega disponível! Clique para visualizar no KitchenFlow AI.`,
                   tag: `order-${docId}`
                 });
               }
@@ -189,7 +189,7 @@ self.addEventListener('message', (event) => {
       break;
 
     case 'SEND_NOTIFICATION':
-      showNotification(data.title || 'Alerta GastroAI', {
+      showNotification(data.title || 'Alerta KitchenFlow AI', {
         body: data.body || 'Atualização no seu painel de entregas.'
       });
       break;
@@ -232,7 +232,7 @@ self.addEventListener('sync', (event) => {
 
 // Standby for push
 self.addEventListener('push', (event) => {
-  let title = 'Mensagem GastroAI';
+  let title = 'Mensagem KitchenFlow AI';
   let body = 'Novidades no seu painel de entregas.';
   
   if (event.data) {

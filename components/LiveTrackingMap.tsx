@@ -878,7 +878,7 @@ const LeafletMap: React.FC<MapContentProps> = ({
       {/* Banner informing Leaflet bypass */}
       <div className="absolute top-3 left-3 z-[1000] bg-slate-950/90 hover:bg-slate-950 backdrop-blur-md px-3 py-1.5 rounded-xl border border-indigo-500/20 shadow-lg text-[9px] text-indigo-300 font-bold flex items-center gap-1.5 transition-all">
         <span className="w-2 h-2 rounded-full bg-teal-500 animate-pulse shrink-0" />
-        <span>GastroAI Open-Map Ativo (Modo de Demonstração)</span>
+        <span>KitchenFlow AI Open-Map Ativo (Modo de Demonstração)</span>
       </div>
 
       {/* Dynamic Matriz address config panel */}
@@ -1097,7 +1097,7 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
         </div>
 
         <div className="text-[7px] font-extrabold text-slate-600 uppercase tracking-widest text-center mt-3 pt-3 border-t border-white/5">
-          GastroAI Real-Time Dispatch System
+          KitchenFlow AI Real-Time Dispatch System
         </div>
       </div>
 
@@ -1168,7 +1168,7 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
               <li>Cole a sua chave gerada do GCP e confirme.</li>
             </ol>
             <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-2.5 text-[9px] text-amber-400 leading-tight">
-              A GastroAI monitora de forma inteligente essa variável. Uma vez inserida, o sistema ativa imediatamente o mapeamento de produção sem precisar reiniciar.
+              A KitchenFlow AI monitora de forma inteligente essa variável. Uma vez inserida, o sistema ativa imediatamente o mapeamento de produção sem precisar reiniciar.
             </div>
           </div>
         </div>

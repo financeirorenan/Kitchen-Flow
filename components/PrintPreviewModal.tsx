@@ -31,7 +31,7 @@ export const PrintPreviewModal: React.FC<PrintPreviewModalProps> = ({ isOpen, on
   if (!printJob) return null;
 
   const { order, settings, html, rawText, isFiscal } = printJob;
-  const orderIdShort = order.id ? order.id.slice(-6).toUpperCase() : 'NOVO';
+  const orderIdShort = order.dailyNumber ? String(order.dailyNumber) : (order.id ? order.id.slice(-6).toUpperCase() : 'NOVO');
 
   const handleCopyText = async () => {
     try {
@@ -51,7 +51,7 @@ export const PrintPreviewModal: React.FC<PrintPreviewModalProps> = ({ isOpen, on
         newWin.document.write(html);
         newWin.document.close();
       } else {
-        alert('O bloqueador de popups do seu navegador impediu a abertura do recibo. Por favor, libere popups para o GastroAI neste navegador.');
+        alert('O bloqueador de popups do seu navegador impediu a abertura do recibo. Por favor, libere popups para o KitchenFlow AI neste navegador.');
       }
     } catch (err) {
       console.error('Falha ao abrir nova aba do recibo:', err);

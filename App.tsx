@@ -4,6 +4,8 @@ import { maskPhone, maskCPF, maskCEP } from './utils/masks';
 import Sidebar from './components/Sidebar';
 import Tables from './components/Tables';
 import KDS from './components/KDS';
+import { KDSKitchenOnly } from './components/KDSKitchenOnly';
+import { MonitorPedidos } from './components/MonitorPedidos';
 import AIInsights from './components/AIInsights';
 import UsersPanel from './components/UsersPanel';
 import Inventory from './components/Inventory';
@@ -25,7 +27,7 @@ import LojistaCopilot from './components/LojistaCopilot';
 import { db as localDb } from './services/db';
 import { auth, db } from './firebase';
 import { handlePrintOrder } from './services/printService';
-import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
+import { onAuthStateChanged, signOut, User as FirebaseUser, updateEmail, updatePassword } from 'firebase/auth';
 import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, onSnapshot, query, where, orderBy, limit, addDoc, writeBatch } from 'firebase/firestore';
 import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import Login from './components/Login';
@@ -194,8 +196,27 @@ const cleanObject = (obj: any): any => {
 };
 
 const App: React.FC = () => {
-  const [user, setUser] = useState<FirebaseUser | null>(null);
-  const [currentUserData, setCurrentUserData] = useState<User | null>(null);
+  const [user, setUser] = useState<any | null>(() => {
+    try {
+      const demoUser = localStorage.getItem('kitchenflow_demo_user');
+      if (demoUser) {
+        return JSON.parse(demoUser).firebaseUser;
+      }
+    } catch {}
+    return null;
+  });
+  const [currentUserData, setCurrentUserData] = useState<User | null>(() => {
+    try {
+      const demoUser = localStorage.getItem('kitchenflow_demo_user');
+      if (demoUser) {
+        return JSON.parse(demoUser).userData;
+      }
+      const cached = localStorage.getItem('kitchenflow_cached_user') || localStorage.getItem('gastroai_cached_user');
+      return cached ? JSON.parse(cached) : null;
+    } catch {
+      return null;
+    }
+  });
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   
   const [quotaExceeded, setQuotaExceeded] = useState(false);
@@ -238,12 +259,12 @@ const App: React.FC = () => {
       }
     };
 
-    window.addEventListener('gastroai-print-notifier', handlePrintNotification);
-    window.addEventListener('gastroai-show-print-modal', handleShowPrintModal);
+    window.addEventListener('kitchenflow-print-notifier', handlePrintNotification);
+    window.addEventListener('kitchenflow-show-print-modal', handleShowPrintModal);
     
     return () => {
-      window.removeEventListener('gastroai-print-notifier', handlePrintNotification);
-      window.removeEventListener('gastroai-show-print-modal', handleShowPrintModal);
+      window.removeEventListener('kitchenflow-print-notifier', handlePrintNotification);
+      window.removeEventListener('kitchenflow-show-print-modal', handleShowPrintModal);
     };
   }, []);
 
@@ -271,7 +292,18 @@ const App: React.FC = () => {
   const [rawMaterialCategories, setRawMaterialCategories] = useState<string[]>(['Proteínas', 'Hortifruti', 'Laticínios', 'Grãos', 'Bebidas', 'Embalagens', 'Limpeza', 'Outros']);
   const [cashSession, setCashSession] = useState<CashSession>({ isOpen: false, openingValue: 0, openedAt: null });
   const lastWriteTimeRef = useRef<number>(0);
-  const [tenantData, setTenantData] = useState<Tenant | null>(null);
+  const ordersRef = useRef<Order[]>([]);
+  useEffect(() => {
+    ordersRef.current = orders;
+  }, [orders]);
+  const [tenantData, setTenantData] = useState<Tenant | null>(() => {
+    try {
+      const cached = localStorage.getItem('kitchenflow_cached_tenant_data') || localStorage.getItem('gastroai_cached_tenant_data');
+      return cached ? JSON.parse(cached) : null;
+    } catch {
+      return null;
+    }
+  });
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [currentProject, setCurrentProject] = useState<'PLATFORM' | 'RESTAURANT' | 'MARKETPLACE' | 'COURIER' | 'WEBSITE'>('PLATFORM');
   const [viewingTenantId, setViewingTenantId] = useState<string | null>(null);
@@ -373,10 +405,13 @@ const App: React.FC = () => {
       setActiveTab('courier-app');
     } else if (path.startsWith('/marketplace') || path === '/') {
       if (path === '/') {
+        const lojistaRoles = ['OWNER', 'ADMIN', 'MANAGER', 'CHEF', 'CASHIER', 'WAITER', 'KDS', 'STOCK_ANALYST'];
         if (isSuperAdmin) {
           navigate('/saas', { replace: true });
         } else if (currentUserData?.role === 'COURIER') {
           navigate('/entregador', { replace: true });
+        } else if (currentUserData?.role && lojistaRoles.includes(currentUserData.role)) {
+          navigate('/lojista', { replace: true });
         } else {
           navigate('/marketplace', { replace: true });
         }
@@ -404,15 +439,24 @@ const App: React.FC = () => {
     setCurrentProject('RESTAURANT');
     setActiveTab('merchant-copilot');
     navigate('/lojista');
+    
+    if (currentUserData) {
+      addLog(currentUserData.id, 'SAAS_AUDIT', `Super Admin iniciou suporte/visualização do parceiro: ${name || tenantId}`);
+    }
   };
 
   const handleStopViewingTenant = () => {
+    const backupName = viewingTenantName || viewingTenantId || 'Parceiro';
     setViewingTenantId(null);
     setViewingTenantName(null);
     setViewingTenantLogo(null);
     setCurrentProject('PLATFORM');
     setActiveTab('saas-admin');
     navigate('/saas');
+    
+    if (currentUserData) {
+      addLog(currentUserData.id, 'SAAS_AUDIT', `Super Admin encerrou suporte/visualização do parceiro: ${backupName}`);
+    }
   };
 
   const [digitalMenuSettings, setDigitalMenuSettings] = useState<DigitalMenuSettings>({
@@ -438,11 +482,13 @@ const App: React.FC = () => {
       price: 34.90,
       originalPrice: 49.90,
       active: true
-    }
+    },
+    totemUpsellMode: 'auto',
+    totemUpsellProducts: []
   });
 
   const [adminSettings, setAdminSettings] = useState<AdminSettings>({
-    companyName: 'GastroAI Soluções Alimentares LTDA',
+    companyName: 'Viva Lá Fome!',
     cnpj: '12.345.678/0001-90',
     address: 'Av. Paulista, 1000 - Bela Vista, São Paulo - SP',
     phone: '(11) 4002-8922',
@@ -470,7 +516,7 @@ const App: React.FC = () => {
       series: 1, 
       taxRegime: 'simples_nacional',
       cnpj: '12.345.678/0001-90',
-      razaoSocial: 'GastroAI Soluções Alimentares LTDA',
+      razaoSocial: 'Viva Lá Fome!',
       inscricaoEstadual: '123.456.789.110',
       address: {
         logradouro: 'Av. Paulista',
@@ -482,7 +528,7 @@ const App: React.FC = () => {
         codigoMunicipio: '3550308'
       }
     } as any,
-    printing: { paperWidth: '80mm', autoPrintOrder: false, headerText: 'BEM VINDO AO GASTROAI', footerText: 'Obrigado!', showLogo: true },
+    printing: { paperWidth: '80mm', autoPrintOrder: false, headerText: 'BEM VINDO AO VIVA LÁ FOME!', footerText: 'Obrigado!', showLogo: true },
     apis: { googleMapsKey: '', whatsappToken: '', ifoodWebhook: '', integrationActive: false },
     deliveryFee: 7.00,
     isDeliveryEnabled: true,
@@ -656,17 +702,18 @@ const App: React.FC = () => {
     setCashSession({ isOpen: false, openingValue: 0, openedAt: null });
 
     // PRIORIDADE: Primeiro o ID que estamos visualizando (Suporte), depois o ID do próprio usuário logado
-    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    // Se for Super Admin, o padrão é a loja "Viva la fome" (ID: HCL1177LRQVPEKCTYRAHU7IGBQ42) para evitar o painel vazio/placeholder "GastroAI".
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || (isSuperAdmin ? 'HCL1177LRQVPEKCTYRAHU7IGBQ42' : '');
     if (!effectiveTenantId) {
       setTenantData(null);
       setAdminSettings(prev => ({
         ...prev,
-        companyName: 'GastroAI',
+        companyName: 'Viva Lá Fome!',
         logoUrl: ''
       }));
       setDigitalMenuSettings(prev => ({
         ...prev,
-        restaurantName: 'GastroAI',
+        restaurantName: 'Viva Lá Fome!',
         logoUrl: ''
       }));
       return;
@@ -690,38 +737,8 @@ const App: React.FC = () => {
     ];
 
     const unsubscribes = collectionsToSync.map(col => {
-      let q = query(collection(db, col.name), where('tenantId', '==', effectiveTenantId));
-      
-      // Otimização agressiva de READS/Quota
-      if (col.recentOnly) {
-         if (col.name === 'orders') {
-            const yesterday = new Date();
-            yesterday.setHours(yesterday.getHours() - 36); // 36 horas para cobrir turnos longos
-            q = query(q, where('createdAt', '>=', yesterday));
-         } else if (col.name === 'financialRecords') {
-            const thirtyDaysAgo = new Date();
-            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-            q = query(q, where('date', '>=', thirtyDaysAgo));
-         } else if (col.name === 'cashClosings') {
-            const thirtyDaysAgo = new Date();
-            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-            // Cash closings use closedAt instead of date
-            q = query(q, where('closedAt', '>=', thirtyDaysAgo));
-         }
-      }
-
-      if (col.limit) {
-         const sortField = col.name === 'orders' ? 'createdAt' : 
-                          (col.name === 'auditLogs' || col.name === 'inventoryLogs' ? 'timestamp' : 
-                          (col.name === 'financialRecords' ? 'date' : 
-                          (col.name === 'cashClosings' ? 'closedAt' : null)));
-         
-         if (sortField) {
-            q = query(q, orderBy(sortField, 'desc'), limit(col.limit));
-         } else {
-            q = query(q, limit(col.limit));
-         }
-      }
+      // Usar uma query simples de igualdade por tenantId para evitar dependência de índices compostos no Firestore
+      const q = query(collection(db, col.name), where('tenantId', '==', effectiveTenantId));
 
       return onSnapshot(q, (snapshot) => {
         let items = snapshot.docs.map(doc => {
@@ -737,17 +754,46 @@ const App: React.FC = () => {
           return item;
         });
 
-        // Cleanup items even if query filters are used (redundancy for safety)
-        if (col.name === 'orders') {
-          const yesterday = new Date();
-          yesterday.setHours(yesterday.getHours() - 24);
-          items = items.filter(o => {
-            const createdAt = o.createdAt instanceof Date ? o.createdAt : new Date(o.createdAt);
-            // Always keep active orders, even if older (shouldn't happen with correct query but for safety)
-            if (['pending', 'preparing', 'ready', 'delivering'].includes(o.status)) return true;
-            return createdAt >= yesterday;
-          });
+        // Ordenação client-side para evitar a necessidade de índices compostos
+        const sortField = col.name === 'orders' ? 'createdAt' : 
+                          (col.name === 'auditLogs' || col.name === 'inventoryLogs' ? 'timestamp' : 
+                          (col.name === 'financialRecords' ? 'date' : 
+                          (col.name === 'cashClosings' ? 'closedAt' : null)));
 
+        if (sortField) {
+          items.sort((a, b) => {
+            const timeA = a[sortField] instanceof Date ? a[sortField].getTime() : (a[sortField] ? new Date(a[sortField]).getTime() : 0);
+            const timeB = b[sortField] instanceof Date ? b[sortField].getTime() : (b[sortField] ? new Date(b[sortField]).getTime() : 0);
+            return timeB - timeA;
+          });
+        }
+
+        // Filtros client-side para substituir filtros de desigualdade do Firestore
+        if (col.recentOnly) {
+          if (col.name === 'orders') {
+            const yesterday = new Date();
+            yesterday.setHours(yesterday.getHours() - 36); // 36 horas
+            items = items.filter(o => {
+              const createdAt = o.createdAt instanceof Date ? o.createdAt : new Date(o.createdAt);
+              if (['pending', 'preparing', 'ready', 'delivering'].includes(o.status)) return true;
+              return createdAt >= yesterday;
+            });
+          } else if (col.name === 'financialRecords') {
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+            items = items.filter(f => {
+              const dateVal = f.date instanceof Date ? f.date : new Date(f.date);
+              return dateVal >= thirtyDaysAgo;
+            });
+          }
+        }
+
+        // Limitação client-side
+        if (col.limit) {
+          items = items.slice(0, col.limit);
+        }
+
+        if (col.name === 'orders') {
           // Proteção contra status repetidos e notificações (Sync Resiliency)
           const newOrders = items.filter((o: any) => 
             (o.status === 'preparing' || o.status === 'pending') && 
@@ -786,6 +832,21 @@ const App: React.FC = () => {
             });
             return updated;
           });
+        } else if (col.name === 'users') {
+          const seenEmails = new Set<string>();
+          const seenIds = new Set<string>();
+          const uniqueUsers = items.filter((u: any) => {
+            const emailKey = String(u.email || '').toLowerCase().trim();
+            const idKey = String(u.id || '').trim();
+            if (!emailKey || !idKey) return false;
+            if (seenEmails.has(emailKey) || seenIds.has(idKey)) {
+              return false;
+            }
+            seenEmails.add(emailKey);
+            seenIds.add(idKey);
+            return true;
+          });
+          col.setter(uniqueUsers);
         } else {
           col.setter(items);
         }
@@ -912,6 +973,10 @@ const App: React.FC = () => {
 
   // Monitorar estado de autenticação
   useEffect(() => {
+    if (localStorage.getItem('kitchenflow_demo_user')) {
+      setAuthLoading(false);
+      return;
+    }
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
       if (firebaseUser) {
@@ -925,12 +990,18 @@ const App: React.FC = () => {
           // Usuário já vinculado via UID
           finalUserData = convertTimestamps(userDoc.data()) as User;
         } else if (firebaseUser.email) {
-          // 2. Se não encontrou pelo UID, tentar encontrar por EMAIL (Pré-cadastro)
-          const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', firebaseUser.email), limit(1));
-          const usersByEmailSnap = await getDocs(usersByEmailQuery);
+          // 2. Se não encontrou pelo UID, tentar encontrar por EMAIL (Pré-cadastro ou alterado)
+          const searchEmail = firebaseUser.email.toLowerCase().trim();
+          const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', searchEmail), limit(1));
+          let usersByEmailSnap = await getDocs(usersByEmailQuery);
+          
+          if (usersByEmailSnap.empty && searchEmail !== firebaseUser.email) {
+            const exactQuery = query(collection(db, 'users'), where('email', '==', firebaseUser.email), limit(1));
+            usersByEmailSnap = await getDocs(exactQuery);
+          }
           
           if (!usersByEmailSnap.empty) {
-            // Encontrou um pré-cadastro por email
+            // Encontrou um pré-cadastro ou cadastro coincidente por email
             const existingUserDoc = usersByEmailSnap.docs[0];
             const existingUserData = existingUserDoc.data() as User;
             
@@ -941,7 +1012,7 @@ const App: React.FC = () => {
               updatedAt: new Date()
             } as any;
 
-            // Criar novo documento com UID e remover o antigo (ou apenas merge se o ID era igual, mas addDoc gera random)
+            // Criar novo documento com UID e remover o antigo
             await setDoc(userDocRef, finalUserData);
             if (existingUserDoc.id !== firebaseUser.uid) {
               await deleteDoc(existingUserDoc.ref);
@@ -949,104 +1020,108 @@ const App: React.FC = () => {
           }
         }
 
+        // Se após as buscas o usuário ainda não possuir perfil no Firestore, nós auto-criamos
+        // um perfil padrão de OWNER associado ao tenant principal "Viva la fome" (HCL1177LRQVPEKCTYRAHU7IGBQ42)
+        // para garantir acesso e evitar que vejam telas de erro ou bloqueio de acesso desnecessários.
+        if (!finalUserData && firebaseUser.email) {
+          const isMaster = firebaseUser.email === 'financeirorenanuk@gmail.com';
+          const isMarketplaceRoute = window.location.pathname.startsWith('/marketplace');
+          
+          let role: UserRole = isMaster ? 'SAAS_ADMIN' : 'OWNER';
+          let tenantId = isMaster ? '' : 'HCL1177LRQVPEKCTYRAHU7IGBQ42';
+          let defaultName = firebaseUser.displayName || firebaseUser.email.split('@')[0] || 'Lojista';
+
+          // Verificar se é entregador cadastrado na coleção de couriers
+          const courierQuery = query(collection(db, 'couriers'), where('email', '==', firebaseUser.email.toLowerCase().trim()), limit(1));
+          const courierSnap = await getDocs(courierQuery);
+          if (!courierSnap.empty) {
+            role = 'COURIER';
+            tenantId = courierSnap.docs[0].data().tenantId || 'HCL1177LRQVPEKCTYRAHU7IGBQ42';
+            defaultName = courierSnap.docs[0].data().name || defaultName;
+          }
+
+          const newUser: User = {
+            id: firebaseUser.uid,
+            name: defaultName,
+            email: firebaseUser.email,
+            role: role,
+            tenantId: tenantId,
+            permissions: isMaster 
+              ? ALL_MODULES.map(m => m.id) 
+              : ['dashboard_view', 'orders_view', 'menu_view', 'stock_view', 'finance_view', 'couriers_view', 'users_view', 'integrations_view', 'marketing_view', 'reports_view'] as any,
+            status: 'online',
+            active: true,
+            createdAt: new Date()
+          };
+
+          await setDoc(userDocRef, newUser);
+          finalUserData = newUser;
+        }
+
         if (finalUserData) {
+          // Se for o gestor/admin principal (financeirorenanuk@gmail.com ou SAAS_ADMIN), garante vínculo a 'HCL1177LRQVPEKCTYRAHU7IGBQ42' (Viva la fome) e o cargo SAAS_ADMIN
+          const isMasterUser = firebaseUser.email === 'financeirorenanuk@gmail.com' || finalUserData.role === 'SAAS_ADMIN';
+          if (isMasterUser) {
+            let needsUpdate = false;
+            const updatePayload: any = {};
+            
+            if (finalUserData.role !== 'SAAS_ADMIN') {
+              finalUserData.role = 'SAAS_ADMIN';
+              updatePayload.role = 'SAAS_ADMIN';
+              needsUpdate = true;
+            }
+            if (finalUserData.tenantId !== 'HCL1177LRQVPEKCTYRAHU7IGBQ42') {
+              finalUserData.tenantId = 'HCL1177LRQVPEKCTYRAHU7IGBQ42';
+              updatePayload.tenantId = 'HCL1177LRQVPEKCTYRAHU7IGBQ42';
+              needsUpdate = true;
+            }
+            
+            if (needsUpdate) {
+              try {
+                await setDoc(userDocRef, updatePayload, { merge: true });
+              } catch (fsErr) {
+                console.error("Erro ao sincronizar perfil do master no Firestore:", fsErr);
+              }
+            }
+          }
+
           setCurrentUserData(finalUserData);
+          try {
+            localStorage.setItem('kitchenflow_cached_user', JSON.stringify(finalUserData));
+          } catch (e) {
+            console.warn(e);
+          }
           
           // Se o usuário pertence a um tenant, buscar dados do tenant
           if (finalUserData.tenantId && finalUserData.tenantId !== 'GLOBAL') {
             try {
               const tenantDoc = await getDoc(doc(db, 'tenants', finalUserData.tenantId));
               if (tenantDoc.exists()) {
-                setTenantData(convertTimestamps(tenantDoc.data()) as Tenant);
+                const tData = convertTimestamps(tenantDoc.data()) as Tenant;
+                setTenantData(tData);
+                try {
+                  localStorage.setItem('kitchenflow_cached_tenant_data', JSON.stringify(tData));
+                } catch (e) {
+                  console.warn(e);
+                }
               }
             } catch (err: any) {
               if (err.message?.includes("Quota exceeded")) {
                 console.warn("Cota do Firebase atingida. Usando dados básicos do tenant.");
-                setTenantData({ id: finalUserData.tenantId, name: 'Restaurante (Modo Offline)', plan: 'free' } as any);
+                const offlineTenant = { id: finalUserData.tenantId, name: 'Restaurante (Modo Offline)', plan: 'free' } as any;
+                setTenantData(offlineTenant);
+                try {
+                  localStorage.setItem('kitchenflow_cached_tenant_data', JSON.stringify(offlineTenant));
+                } catch (e) {
+                  console.warn(e);
+                }
               }
             }
-          }
-        } else {
-          // 3. Criar novo usuário do zero se nada foi encontrado (Apenas permitido no Marketplace ou se for Master)
-          const isMaster = firebaseUser.email === 'financeirorenanuk@gmail.com';
-          const isMarketplaceRoute = window.location.pathname.startsWith('/marketplace');
-
-          if (!isMaster && !isMarketplaceRoute) {
-            // Verificar especificamente se este email foi pré-cadastrado como entregador por algum lojista
-            let isCourier = false;
-            let courierDataToLink: any = null;
-            let courierDocRef: any = null;
-
-            if (firebaseUser.email) {
-              const courierQuery = query(collection(db, 'couriers'), where('email', '==', firebaseUser.email), limit(1));
-              const courierSnap = await getDocs(courierQuery);
-              if (!courierSnap.empty) {
-                isCourier = true;
-                courierDocRef = courierSnap.docs[0].ref;
-                courierDataToLink = courierSnap.docs[0].data();
-              }
-            }
-
-            if (!isCourier) {
-              // Não possui cadastro de lojista ou entregador - desconectar imediatamente!
-              await auth.signOut();
-              setUser(null);
-              setCurrentUserData(null);
-              setAuthLoading(false);
-              return;
-            } else if (courierDataToLink) {
-              // Vincular entregador pré-cadastrado
-              const role = 'COURIER';
-              const tenantId = courierDataToLink.tenantId;
-              const name = courierDataToLink.name || firebaseUser.displayName || 'Novo Entregador';
-
-              await setDoc(doc(db, 'couriers', firebaseUser.uid), { ...courierDataToLink, id: firebaseUser.uid }, { merge: true });
-              if (courierDocRef.id !== firebaseUser.uid) {
-                await deleteDoc(courierDocRef);
-              }
-
-              const newUser: User = {
-                id: firebaseUser.uid,
-                name: name,
-                email: firebaseUser.email || '',
-                role: role as UserRole,
-                tenantId: tenantId,
-                permissions: ['dashboard_view' as Permission],
-                status: 'online',
-                active: true,
-                createdAt: new Date()
-              };
-
-              await setDoc(userDocRef, newUser);
-              setCurrentUserData(newUser);
-              finalUserData = newUser;
-            }
-          } else {
-            // Se for master ou se estiver no marketplace, permite o auto-cadastro
-            let role: UserRole = isMaster ? 'SAAS_ADMIN' : 'CUSTOMER';
-            let tenantId = isMaster ? '' : 'GLOBAL';
-            let name = firebaseUser.displayName || 'Novo Usuário';
-
-            const newUser: User = {
-              id: firebaseUser.uid,
-              name: name,
-              email: firebaseUser.email || '',
-              role: role as UserRole,
-              tenantId: tenantId,
-              permissions: isMaster ? ALL_MODULES.map(m => m.id) : [],
-              status: 'online',
-              active: true,
-              createdAt: new Date()
-            };
-
-            await setDoc(userDocRef, newUser);
-            setCurrentUserData(newUser);
-            finalUserData = newUser;
           }
         }
-
+        
         // Auto-redirect for specific roles if on a neutral path
-        const isNeutralPath = location.pathname === '/' || location.pathname === '/marketplace';
+        const isNeutralPath = location.pathname === '/';
         if (finalUserData?.role === 'COURIER' && isNeutralPath) {
           setActiveTab('courier-app');
         } else if (finalUserData?.role === 'SAAS_ADMIN' && isNeutralPath) {
@@ -1054,6 +1129,15 @@ const App: React.FC = () => {
         }
       } else {
         setCurrentUserData(null);
+        setTenantData(null);
+        try {
+          localStorage.removeItem('kitchenflow_cached_user');
+          localStorage.removeItem('kitchenflow_cached_tenant_data');
+          localStorage.removeItem('gastroai_cached_user');
+          localStorage.removeItem('gastroai_cached_tenant_data');
+        } catch (e) {
+          console.warn(e);
+        }
       }
       setAuthLoading(false);
     });
@@ -1165,6 +1249,16 @@ const App: React.FC = () => {
 
   const handleLogout = () => {
     signOut(auth);
+    try {
+      localStorage.removeItem('kitchenflow_demo_user');
+      localStorage.removeItem('kitchenflow_cached_user');
+      localStorage.removeItem('kitchenflow_cached_tenant_data');
+      localStorage.removeItem('gastroai_cached_user');
+      localStorage.removeItem('gastroai_cached_tenant_data');
+      window.location.reload();
+    } catch (e) {
+      console.warn(e);
+    }
   };
 
   const handleSaveSettings = async () => {
@@ -1404,67 +1498,87 @@ const App: React.FC = () => {
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
     
     if (effectiveTenantId) {
+      // Usar query simples por tenantId para evitar dependência de índices compostos
       const q = query(
         collection(db, 'orders'),
-        where('tenantId', '==', effectiveTenantId),
-        where('status', '==', 'pending')
+        where('tenantId', '==', effectiveTenantId)
       );
 
       const unsubscribe = onSnapshot(q, (snapshot) => {
         snapshot.docChanges().forEach(async (change) => {
-          if (change.type === 'added') {
-            const cloudOrder = { ...change.doc.data(), id: change.doc.id } as Order;
-            
-            try {
-              const localOrder = await localDb.orders.get(cloudOrder.id);
-              // Ignore if already processed or in a final state locally
-              if (localOrder && (['preparing', 'ready', 'delivering', 'delivered', 'cancelled', 'finished'].includes(localOrder.status))) {
-                console.log(`Sync: Order ${cloudOrder.id} already in state ${localOrder.status}, ignoring duplicate notify.`);
-                return;
-              }
+          const docData = change.doc.data();
+          const isPending = docData.status === 'pending';
 
-              // Double check if it's already in the main state to prevent UI flickers
-              if (orders.some(o => o.id === cloudOrder.id && (['preparing', 'ready', 'delivering', 'delivered', 'cancelled', 'finished'].includes(o.status)))) {
-                return;
-              }
-
-              if ((cloudOrder.createdAt as any)?.toDate) {
-                cloudOrder.createdAt = (cloudOrder.createdAt as any).toDate();
-              } else if (cloudOrder.createdAt) {
-                cloudOrder.createdAt = new Date(cloudOrder.createdAt);
-              }
+          if (change.type === 'added' || change.type === 'modified') {
+            if (isPending) {
+              const cloudOrder = { ...docData, id: change.doc.id } as Order;
               
-              // Notify about new marketplace/digital order
-              triggerWhatsAppMock("🛒 Novo Pedido!", `Olá! Você recebeu um novo pedido de ${cloudOrder.customerName} via ${cloudOrder.source === 'marketplace' ? 'Marketplace' : 'Cardápio Digital'}.`);
-
-              if (adminSettings.autoAcceptOrders) {
-                 const acceptedOrder: Order = { 
-                   ...cloudOrder, 
-                   source: cloudOrder.source || 'whatsapp',
-                   status: 'preparing' as const, 
-                   deliveryFee: cloudOrder.type === 'delivery' ? globalDeliveryFee : 0 
-                 };
-                 await localDb.orders.put(acceptedOrder);
-                 setOrders(prev => [acceptedOrder, ...prev.filter(o => o.id !== acceptedOrder.id)]);
-                 
-                 await updateDoc(doc(db, 'orders', cloudOrder.id), { 
-                   status: 'preparing', 
-                   updatedAt: new Date(),
-                   acceptedAt: new Date()
-                 });
-                 
-                 triggerWhatsAppMock("✅ Pedido Aceito!", `Olá ${cloudOrder.customerName}, pedido #${cloudOrder.id.slice(-4)} em produção!`);
-                 addLog('u1', 'DIGITAL', `Pedido #${cloudOrder.id.slice(-4)} ACEITO AUTOMATICAMENTE`);
-                 return;
+              const createdAt = cloudOrder.createdAt instanceof Date 
+                ? cloudOrder.createdAt 
+                : (cloudOrder.createdAt ? new Date((cloudOrder.createdAt as any).toDate ? (cloudOrder.createdAt as any).toDate() : cloudOrder.createdAt) : null);
+              
+              const yesterday = new Date();
+              yesterday.setHours(yesterday.getHours() - 36);
+              if (createdAt && createdAt < yesterday) {
+                return;
               }
 
-              setIncomingDigitalOrders(prev => {
-                if (prev.some(o => o.id === cloudOrder.id)) return prev;
-                return [cloudOrder, ...prev];
-              });
-              addLog('u1', 'DIGITAL', `Novo pedido digital: #${cloudOrder.id.slice(-4)}`);
-            } catch (err) {
-              console.error("Error processing cloud order:", err);
+              try {
+                const localOrder = await localDb.orders.get(cloudOrder.id);
+                // Ignore if already processed or in a final state locally
+                if (localOrder && (['preparing', 'ready', 'delivering', 'delivered', 'cancelled', 'finished'].includes(localOrder.status))) {
+                  console.log(`Sync: Order ${cloudOrder.id} already in state ${localOrder.status}, ignoring duplicate notify.`);
+                  return;
+                }
+
+                // Double check if it's already in the main state to prevent UI flickers
+                if (ordersRef.current.some(o => o.id === cloudOrder.id && (['preparing', 'ready', 'delivering', 'delivered', 'cancelled', 'finished'].includes(o.status)))) {
+                  return;
+                }
+
+                if ((cloudOrder.createdAt as any)?.toDate) {
+                  cloudOrder.createdAt = (cloudOrder.createdAt as any).toDate();
+                } else if (cloudOrder.createdAt) {
+                  cloudOrder.createdAt = new Date(cloudOrder.createdAt);
+                }
+                
+                // Notify about new marketplace/digital order
+                triggerWhatsAppMock("🛒 Novo Pedido!", `Olá! Você recebeu um novo pedido de ${cloudOrder.customerName} via ${cloudOrder.source === 'marketplace' ? 'Marketplace' : 'Cardápio Digital'}.`);
+
+                if (adminSettings.autoAcceptOrders) {
+                   const rawAcceptedOrder: Order = { 
+                     ...cloudOrder, 
+                     source: cloudOrder.source || 'whatsapp',
+                     status: 'preparing' as const, 
+                     deliveryFee: cloudOrder.type === 'delivery' ? globalDeliveryFee : 0 
+                   };
+                   const acceptedOrder = assignDailyNumberToOrder(rawAcceptedOrder);
+                   await localDb.orders.put(acceptedOrder);
+                   setOrders(prev => [acceptedOrder, ...prev.filter(o => o.id !== acceptedOrder.id)]);
+                   
+                   await updateDoc(doc(db, 'orders', cloudOrder.id), { 
+                     status: 'preparing', 
+                     updatedAt: new Date(),
+                     acceptedAt: new Date(),
+                     dailyNumber: acceptedOrder.dailyNumber
+                   });
+                   
+                   triggerWhatsAppMock("✅ Pedido Aceito!", `Olá ${cloudOrder.customerName}, pedido #${cloudOrder.id.slice(-4)} em produção!`);
+                   addLog('u1', 'DIGITAL', `Pedido #${cloudOrder.id.slice(-4)} ACEITO AUTOMATICAMENTE`);
+                   return;
+                }
+
+                setIncomingDigitalOrders(prev => {
+                  if (prev.some(o => o.id === cloudOrder.id)) return prev;
+                  return [cloudOrder, ...prev];
+                });
+                addLog('u1', 'DIGITAL', `Novo pedido digital: #${cloudOrder.id.slice(-4)}`);
+              } catch (err) {
+                console.error("Error processing cloud order:", err);
+              }
+            } else {
+              // Se foi modificado e não é mais pending, removemos da fila de pendentes (foi aceito ou recusado)
+              setIncomingDigitalOrders(prev => prev.filter(o => o.id !== change.doc.id));
             }
           } else if (change.type === 'removed') {
             setIncomingDigitalOrders(prev => prev.filter(o => o.id !== change.doc.id));
@@ -1972,7 +2086,7 @@ const App: React.FC = () => {
       return;
     }
 
-    const kitchenOrder: Order = {
+    const rawKitchenOrder: Order = {
       id: `KDS-${Math.random().toString(36).substr(2, 4).toUpperCase()}`,
       tableNumber: displayTableNumber, 
       type: isCounter ? 'takeout' : 'table',
@@ -1982,6 +2096,7 @@ const App: React.FC = () => {
       createdAt: new Date(),
       tenantId: effectiveTenantId || 't1'
     };
+    const kitchenOrder = assignDailyNumberToOrder(rawKitchenOrder);
 
     if (effectiveTenantId) {
        await setDoc(doc(db, 'orders', kitchenOrder.id), cleanObject({
@@ -2231,6 +2346,24 @@ const App: React.FC = () => {
     };
     
     if (effectiveTenantId) {
+       if (newCourier.email) {
+         const trimmedEmail = newCourier.email.trim().toLowerCase();
+         // Validação ativa de duplicidade de e-mail na plataforma
+         const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', trimmedEmail));
+         const usersByEmailSnap = await getDocs(usersByEmailQuery);
+         if (!usersByEmailSnap.empty) {
+           showToast(`Erro: O e-mail de acesso "${trimmedEmail}" já está cadastrado em nossa plataforma!`, "error");
+           return;
+         }
+
+         const couriersQuery = query(collection(db, 'couriers'), where('email', '==', trimmedEmail));
+         const couriersSnap = await getDocs(couriersQuery);
+         if (!couriersSnap.empty) {
+           showToast(`Erro: O e-mail de acesso "${trimmedEmail}" já está cadastrado como entregador em nossa plataforma!`, "error");
+           return;
+         }
+       }
+
        await setDoc(doc(db, 'couriers', newCourier.id), {
          ...newCourier,
          createdAt: new Date()
@@ -2761,6 +2894,40 @@ const App: React.FC = () => {
     }
   };
 
+  const assignDailyNumberToOrder = (order: Order, currentOrdersList?: Order[]): Order => {
+    if (order.dailyNumber) return order;
+
+    const ordersList = currentOrdersList || orders || [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const todayOrders = ordersList.filter(o => {
+      if (!o.createdAt) return false;
+      let d: Date;
+      if (o.createdAt instanceof Date) {
+        d = o.createdAt;
+      } else if (typeof o.createdAt === 'object' && (o.createdAt as any).seconds !== undefined) {
+        d = new Date((o.createdAt as any).seconds * 1000);
+      } else if (typeof (o.createdAt as any)?.toDate === 'function') {
+        d = (o.createdAt as any).toDate();
+      } else {
+        d = new Date(o.createdAt as any);
+      }
+      if (isNaN(d.getTime())) return false;
+      return d >= today;
+    });
+
+    const maxNum = todayOrders.reduce((max, o) => {
+      const num = o.dailyNumber || 0;
+      return num > max ? num : max;
+    }, 0);
+
+    return {
+      ...order,
+      dailyNumber: maxNum + 1
+    };
+  };
+
   const handleCloseTable = async (
     tableId: number, 
     method: PaymentMethod, 
@@ -2804,7 +2971,7 @@ const App: React.FC = () => {
 
     const isRealDelivery = !!(deliveryInfo && (deliveryInfo.address || (deliveryInfo.fee && deliveryInfo.fee > 0)));
 
-    const newOrder: Order = {
+    const rawOrder: Order = {
       id: existingOrderId || Math.random().toString(36).substr(2, 6).toUpperCase(),
       tableNumber: isCounter ? undefined : tableNumber,
       items: table.items,
@@ -2837,6 +3004,7 @@ const App: React.FC = () => {
       finishedAt: new Date(),
       updatedAt: new Date()
     };
+    const newOrder = assignDailyNumberToOrder(rawOrder);
 
     // NFC-e Emission Logic
     if (fiscal) {
@@ -3182,19 +3350,42 @@ const App: React.FC = () => {
   };
 
   const addLog = async (userId: string, action: string, description: string) => {
-    const user = users.find(u => u.id === userId);
-    if (!user) return;
+    // Resilient fallback logic for tenant resolution
+    const userObj = users.find(u => u.id === userId) || currentUserData || { 
+      id: userId || 'system', 
+      name: 'Sistema / Admin', 
+      role: 'SAAS_ADMIN', 
+      tenantId: viewingTenantId || currentUserData?.tenantId || 't1' 
+    };
+    
+    const resolvedTenantId = viewingTenantId || currentUserData?.tenantId || (userObj as any).tenantId || 't1';
+
     const newLog: AuditLog = {
       id: Math.random().toString(36).substr(2, 9),
-      tenantId: user.tenantId,
-      userId: user.id,
-      userName: user.name,
-      userRole: user.role,
+      tenantId: resolvedTenantId,
+      userId: (userObj as any).id || userId || 'system',
+      userName: (userObj as any).name || 'Sistema / Admin',
+      userRole: (userObj as any).role || 'SAAS_ADMIN',
       action,
       description,
       timestamp: new Date()
     };
-    await localDb.auditLogs.add(newLog);
+
+    try {
+      // Prioritize IndexedDB save
+      await localDb.auditLogs.add(newLog);
+      
+      // If we are operating under an active cloud tenant, sync to firebase
+      if (resolvedTenantId && resolvedTenantId !== 'GLOBAL' && resolvedTenantId !== 't1') {
+        await setDoc(doc(db, 'auditLogs', newLog.id), {
+          ...newLog,
+          updatedAt: new Date()
+        });
+      }
+    } catch (err) {
+      console.warn("Unable to fully persist or sync audit log:", err);
+    }
+
     setAuditLogs(prev => [newLog, ...prev]);
   };
 
@@ -3220,6 +3411,21 @@ const App: React.FC = () => {
 
     if (effectiveTenantId) {
       try {
+        // Validação ativa de duplicidade de e-mail na plataforma
+        const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', trimmedEmail));
+        const usersByEmailSnap = await getDocs(usersByEmailQuery);
+        if (!usersByEmailSnap.empty) {
+          showToast(`Erro: O e-mail "${trimmedEmail}" já está cadastrado em nossa plataforma!`, "error");
+          throw new Error(`O e-mail "${trimmedEmail}" já está cadastrado em nossa plataforma.`);
+        }
+
+        const couriersQuery = query(collection(db, 'couriers'), where('email', '==', trimmedEmail));
+        const couriersSnap = await getDocs(couriersQuery);
+        if (!couriersSnap.empty) {
+          showToast(`Erro: O e-mail "${trimmedEmail}" já está cadastrado como entregador em nossa plataforma!`, "error");
+          throw new Error(`O e-mail "${trimmedEmail}" já está cadastrado como entregador.`);
+        }
+
         await setDoc(doc(db, 'users', newUser.id), {
           ...newUser,
           updatedAt: new Date()
@@ -3267,6 +3473,25 @@ const App: React.FC = () => {
     }
 
     if (effectiveTenantId) {
+      // Dobra check se alterou e-mail para um duplicado de outra pessoa
+      if (finalUpdates.email) {
+        const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', finalUpdates.email));
+        const usersByEmailSnap = await getDocs(usersByEmailQuery);
+        const duplicate = usersByEmailSnap.docs.some(doc => doc.id !== id);
+        if (duplicate) {
+          showToast(`Erro: O e-mail "${finalUpdates.email}" já está cadastrado em nossa plataforma!`, "error");
+          throw new Error(`O e-mail "${finalUpdates.email}" já está cadastrado.`);
+        }
+
+        const couriersQuery = query(collection(db, 'couriers'), where('email', '==', finalUpdates.email));
+        const couriersSnap = await getDocs(couriersQuery);
+        const courierDuplicate = couriersSnap.docs.some(doc => doc.id !== id);
+        if (courierDuplicate) {
+          showToast(`Erro: O e-mail "${finalUpdates.email}" já está cadastrado como entregador!`, "error");
+          throw new Error(`O e-mail "${finalUpdates.email}" já está cadastrado como entregador.`);
+        }
+      }
+
       await updateDoc(doc(db, 'users', id), cleanObject({
         ...finalUpdates,
         updatedAt: new Date()
@@ -3282,6 +3507,20 @@ const App: React.FC = () => {
           };
           if (updates.active !== undefined) courierUpdate.active = updates.active;
           await setDoc(doc(db, 'couriers', id), courierUpdate, { merge: true });
+        }
+      }
+
+      // Se for o próprio usuário logado, tentar atualizar também no Firebase Auth diretamente
+      if (id === auth.currentUser?.uid) {
+        try {
+          if (finalUpdates.email && finalUpdates.email !== auth.currentUser.email) {
+            await updateEmail(auth.currentUser, finalUpdates.email);
+          }
+          if (finalUpdates.password) {
+            await updatePassword(auth.currentUser, finalUpdates.password);
+          }
+        } catch (authErr) {
+          console.warn("Could not sync current user auth credentials directly:", authErr);
         }
       }
     } else {
@@ -3712,15 +3951,19 @@ const App: React.FC = () => {
       if (effectiveTenantId) {
         try {
           const [ordersSnapshot, recordsSnapshot] = await Promise.all([
-             getDocs(query(collection(db, 'orders'), where('tenantId', '==', effectiveTenantId), where('createdAt', '>=', openedDate))),
-             getDocs(query(collection(db, 'financialRecords'), where('tenantId', '==', effectiveTenantId), where('date', '>=', openedDate), where('status', '==', 'paid')))
+             getDocs(query(collection(db, 'orders'), where('tenantId', '==', effectiveTenantId))),
+             getDocs(query(collection(db, 'financialRecords'), where('tenantId', '==', effectiveTenantId)))
           ]);
           
           if (!ordersSnapshot.empty) {
-            salesSinceOpen = ordersSnapshot.docs.map(d => ({ ...d.data(), id: d.id, createdAt: (d.data().createdAt as any)?.toDate ? (d.data().createdAt as any).toDate() : new Date(d.data().createdAt) } as Order));
+            const fetchedOrders = ordersSnapshot.docs.map(d => ({ ...d.data(), id: d.id, createdAt: (d.data().createdAt as any)?.toDate ? (d.data().createdAt as any).toDate() : new Date(d.data().createdAt) } as Order));
+            salesSinceOpen = fetchedOrders.filter(o => {
+              const createdAt = parseToDate(o.createdAt);
+              return createdAt >= openedDate;
+            });
           }
           if (!recordsSnapshot.empty) {
-            recordsDuringSession = recordsSnapshot.docs.map(d => {
+            const fetchedRecords = recordsSnapshot.docs.map(d => {
               const data = d.data() as any;
               return {
                 ...data,
@@ -3728,6 +3971,14 @@ const App: React.FC = () => {
                 date: data.date?.toDate ? data.date.toDate() : new Date(data.date),
                 shiftOpenedAt: data.shiftOpenedAt?.toDate ? data.shiftOpenedAt.toDate() : (data.shiftOpenedAt ? new Date(data.shiftOpenedAt) : undefined)
               } as FinancialRecord;
+            });
+            recordsDuringSession = fetchedRecords.filter(r => {
+              if (r.shiftOpenedAt) {
+                const shiftDate = parseToDate(r.shiftOpenedAt);
+                return Math.abs(shiftDate.getTime() - openedDate.getTime()) < 5000 && r.status === 'paid';
+              }
+              const date = parseToDate(r.date);
+              return date >= openedDate && r.status === 'paid';
             });
           }
         } catch (err) {
@@ -3897,16 +4148,18 @@ const App: React.FC = () => {
           // Finalize pending orders - Better: query for ALL pending orders to be sure
           const ordersToCloseSnapshot = await getDocs(query(
             collection(db, 'orders'), 
-            where('tenantId', '==', effectiveTenantId),
-            where('status', 'in', ['pending', 'preparing', 'ready', 'delivered'])
+            where('tenantId', '==', effectiveTenantId)
           ));
           
           ordersToCloseSnapshot.docs.forEach(oDoc => {
-            batch.update(oDoc.ref, { 
-              status: 'finished', 
-              finishedAt: new Date(), 
-              updatedAt: new Date() 
-            });
+            const data = oDoc.data();
+            if (data && ['pending', 'preparing', 'ready', 'delivered'].includes(data.status)) {
+              batch.update(oDoc.ref, { 
+                status: 'finished', 
+                finishedAt: new Date(), 
+                updatedAt: new Date() 
+              });
+            }
           });
 
           await batch.commit();
@@ -3937,7 +4190,7 @@ const App: React.FC = () => {
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-slate-400 font-black text-[10px] uppercase tracking-widest animate-pulse">Carregando GastroAI...</p>
+          <p className="text-slate-400 font-black text-[10px] uppercase tracking-widest animate-pulse">Carregando Viva Lá Fome...</p>
         </div>
       </div>
     );
@@ -3994,27 +4247,14 @@ const App: React.FC = () => {
     );
   }
 
-  // 3. Se já carregou o login (authLoading é falso), mas o usuário logado NÃO possui cadastro correspondente (currentUserData é null)
-  // e tenta acessar roteamento privado, bloqueamos e mostramos tela amigável explicativa, permitindo logout.
+  // 3. Se já carregou o login (authLoading é falso), mas o usuário logado NÃO possui cadastro correspondente (currentUserData é null) ainda:
+  // Carrega em segundo plano ou aguarda a conclusão da sincronização do auto-cadastro.
   if (user && !currentUserData && !authLoading && !isPublicRoute && location.pathname !== '/') {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <div className="bg-white p-8 sm:p-10 rounded-[2.5rem] border border-slate-100 shadow-2xl max-w-sm w-full text-center space-y-6">
-          <div className="w-20 h-20 bg-rose-50 border border-rose-100 text-rose-600 rounded-3xl flex items-center justify-center mx-auto">
-            <XCircle size={40} />
-          </div>
-          <div>
-            <h2 className="text-2xl font-black text-slate-800 tracking-tighter">Acesso Não Autorizado</h2>
-            <p className="text-slate-500 font-bold text-sm mt-3 leading-relaxed">
-              O e-mail <span className="text-slate-700 underline">{user.email}</span> não está associado a nenhuma conta registrada neste sistema.
-            </p>
-          </div>
-          <button 
-            onClick={handleLogout}
-            className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-opacity-90 transition-all shadow-xl shadow-indigo-100"
-          >
-            Sair e Mudar de Conta
-          </button>
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-slate-400 font-black text-[10px] uppercase tracking-widest animate-pulse">Sincronizando perfil de acesso...</p>
         </div>
       </div>
     );
@@ -4129,7 +4369,7 @@ const App: React.FC = () => {
           allowedModules={isSuperAdmin ? undefined : tenantData?.subscription.allowedModules}
           isSuperAdmin={isSuperAdmin}
           isSaaSMode={currentProject === 'PLATFORM'}
-          restaurantName={currentProject === 'PLATFORM' ? 'KitchenFlow AI' : (viewingTenantName || tenantData?.name || adminSettings.companyName || 'GastroAI')}
+          restaurantName={currentProject === 'PLATFORM' ? 'KitchenFlow AI' : (viewingTenantName || tenantData?.name || adminSettings.companyName || 'Viva Lá Fome!')}
           logoUrl={currentProject === 'PLATFORM' ? undefined : (viewingTenantLogo || tenantData?.logoUrl || adminSettings.logoUrl)}
           onProfileClick={() => setIsProfileOpen(true)}
         />
@@ -4237,7 +4477,7 @@ const App: React.FC = () => {
           <div className="w-10" /> {/* Spacer */}
         </header>
 
-        <div className={`flex-1 p-1 custom-scrollbar ${activeTab === 'kds' ? 'h-[calc(100vh-64px)] lg:h-[calc(100vh-20px)] overflow-hidden flex flex-col' : 'overflow-y-auto max-h-screen'}`}>
+        <div className={`flex-1 p-1 custom-scrollbar ${(activeTab === 'kds' || activeTab === 'kds-kitchen-only' || activeTab === 'order-monitor') ? 'h-[calc(100vh-64px)] lg:h-[calc(100vh-20px)] overflow-hidden flex flex-col' : 'overflow-y-auto max-h-screen'}`}>
           {currentProject === 'PLATFORM' ? (
             <SaaSAdmin 
               activeTab={activeTab}
@@ -4262,7 +4502,9 @@ const App: React.FC = () => {
                   <span className="text-slate-600">
                     {activeTab === 'dashboard' ? 'Painel de Controle' : 
                      activeTab === 'tables' ? 'Mesas e Comandas' :
-                     activeTab === 'kds' ? 'Monitor de Pedidos' :
+                     activeTab === 'kds' ? 'Monitor KDS (Logística)' :
+                     activeTab === 'kds-kitchen-only' ? 'Cozinha (KDS Produção)' :
+                     activeTab === 'order-monitor' ? 'Monitor de Pedidos (TV)' :
                      activeTab === 'delivery' ? 'Painel de Entregas' :
                      activeTab === 'digital-menu' ? 'Cardápio Digital' :
                      activeTab === 'customers' ? 'Gestão de Clientes' :
@@ -4296,7 +4538,7 @@ const App: React.FC = () => {
                  {currentUserData?.avatar ? (
                    <img src={currentUserData.avatar} alt={currentUserData.name} className="w-full h-full object-cover animate-fade-in" referrerPolicy="no-referrer" />
                  ) : (
-                   (viewingTenantName || tenantData?.name || adminSettings.companyName || 'GastroAI').substring(0, 2).toUpperCase()
+                   (viewingTenantName || tenantData?.name || adminSettings.companyName || 'Viva Lá Fome!').substring(0, 2).toUpperCase()
                  )}
                </div>
             </div>
@@ -4329,7 +4571,7 @@ const App: React.FC = () => {
             </div>
           )}
 
-          <div className={`p-4 md:p-6 custom-scrollbar flex-1 flex flex-col ${activeTab === 'kds' ? 'min-h-0 overflow-hidden pb-4' : 'pb-20'}`}>
+          <div className={`p-4 md:p-6 custom-scrollbar flex-1 flex flex-col ${(activeTab === 'kds' || activeTab === 'kds-kitchen-only' || activeTab === 'order-monitor') ? 'min-h-0 overflow-hidden pb-4' : 'pb-20'}`}>
             <AnimatePresence mode="wait">
               <motion.div
                 key={activeTab}
@@ -4337,7 +4579,7 @@ const App: React.FC = () => {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
                 transition={{ duration: 0.2 }}
-                className={`flex-1 flex flex-col ${activeTab === 'kds' ? 'min-h-0 overflow-hidden h-full' : ''}`}
+                className={`flex-1 flex flex-col ${(activeTab === 'kds' || activeTab === 'kds-kitchen-only' || activeTab === 'order-monitor') ? 'min-h-0 overflow-hidden h-full' : ''}`}
               >
                 {activeTab === 'dashboard-obsolete' && hasPermission('dashboard_view') && (
           <div className="space-y-4 animate-in fade-in duration-500 max-w-7xl mx-auto w-full">
@@ -4748,6 +4990,17 @@ const App: React.FC = () => {
             onNavigate={setActiveTab}
           />
         )}
+        {activeTab === 'kds-kitchen-only' && (hasPermission('kds_view') || hasPermission('kds_kitchen_only_view')) && (
+          <KDSKitchenOnly 
+            orders={orders}
+            products={products}
+            tables={tables}
+            onUpdateStatus={handleUpdateOrderStatus}
+          />
+        )}
+        {activeTab === 'order-monitor' && hasPermission('kds_view') && (
+          <MonitorPedidos orders={orders} />
+        )}
         {activeTab === 'digital-menu' && hasPermission('digital_menu_manage') && (
           <DigitalMenuConfig 
             settings={digitalMenuSettings} 
@@ -4915,12 +5168,13 @@ const App: React.FC = () => {
                        }
                      }
 
-                     const acceptedOrder: Order = { 
+                     const rawAcceptedOrder: Order = { 
                        ...order, 
                        source: order.source || 'whatsapp',
                        status: 'preparing',
                        deliveryFee: order.type === 'delivery' ? globalDeliveryFee : 0 
                      };
+                     const acceptedOrder = assignDailyNumberToOrder(rawAcceptedOrder);
                      await localDb.orders.put(acceptedOrder);
                      setOrders(prev => {
                        const exists = prev.some(o => o.id === acceptedOrder.id);
@@ -4938,7 +5192,8 @@ const App: React.FC = () => {
                          await setDoc(doc(db, 'orders', order.id), { 
                            status: 'preparing', 
                            updatedAt: new Date(),
-                           acceptedAt: new Date()
+                           acceptedAt: new Date(),
+                           dailyNumber: acceptedOrder.dailyNumber
                          }, { merge: true });
                        } catch (e) {
                          console.error("Error accepting cloud order:", e);
@@ -4966,6 +5221,11 @@ const App: React.FC = () => {
             currentUserData={currentUserData}
             onUpdateUser={(updatedData) => {
               setCurrentUserData(updatedData);
+              try {
+                localStorage.setItem('kitchenflow_cached_user', JSON.stringify(updatedData));
+              } catch (e) {
+                console.warn(e);
+              }
             }}
             showToast={(msg, typ) => showToast(msg, typ)}
           />

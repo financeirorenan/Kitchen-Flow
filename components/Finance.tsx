@@ -4538,7 +4538,7 @@ const Finance: React.FC<FinanceProps> = memo(
                             </table>
 
                             <div class="footer">
-                              Documento gerado em ${new Date().toLocaleString("pt-BR")} • GastroAI POS
+                              Documento gerado em ${new Date().toLocaleString("pt-BR")} • KitchenFlow AI POS
                             </div>
                             <script>window.print();</script>
                           </body>

@@ -215,7 +215,7 @@ const Delivery: React.FC<DeliveryProps> = memo(({
         totalFees, 
         cashCollected,
         dailyFee,
-        balance: (totalFees + dailyFee) - cashCollected
+        balance: Math.max(0, (totalFees + dailyFee) - cashCollected)
       };
     });
   }, [couriers, deliveryOrders]);
@@ -286,7 +286,7 @@ const Delivery: React.FC<DeliveryProps> = memo(({
         discounts,
         valorAPagar,
         valorPago,
-        balance: valorAPagar - cashCollected // Total a pagar - dinheiro coletado na rua = saldo final
+        balance: Math.max(0, valorAPagar - cashCollected) // Total a pagar - dinheiro coletado na rua = saldo final (não-negativo)
       };
     });
   }, [couriers, deliveryOrders, settlementStartDate, settlementEndDate, settlementStatus]);
@@ -867,10 +867,10 @@ const Delivery: React.FC<DeliveryProps> = memo(({
             selectedCourierIds.forEach(id => {
               const data = displayedSettlementData.find(d => d.courier.id === id);
               if (data && (data.orderCount > 0 || data.dailyFeeValue > 0)) {
-                if (data.balance !== 0) {
+                if (data.balance > 0) {
                   onAddFinancialRecord({
-                    type: data.balance >= 0 ? 'expense' : 'income',
-                    amount: Math.abs(data.balance),
+                    type: 'expense',
+                    amount: data.balance,
                     category: 'Acerto Motoboy',
                     description: `Acerto em Lote com ${data.courier.name}. Taxas: R$${data.totalFees.toFixed(2)} | Diária: R$${data.dailyFeeValue.toFixed(2)} | Dinheiro rua: R$${data.cashCollected.toFixed(2)}`,
                     date: new Date()
@@ -927,7 +927,7 @@ const Delivery: React.FC<DeliveryProps> = memo(({
           const html = `
             <html>
               <head>
-                <title>Acerto de Entregadores - GastroAI</title>
+                <title>Acerto de Entregadores - KitchenFlow AI</title>
                 <style>
                   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 11px; margin: 30px; color: #333; }
                   .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 20px; }
@@ -942,7 +942,7 @@ const Delivery: React.FC<DeliveryProps> = memo(({
                 <div class="header">
                   <div>
                     <h1>Acerto de Entregadores</h1>
-                    <span style="font-size: 10px; font-weight: bold; color: #666;">GASTROAI - GESTÃO INTELIGENTE DE ENTREGAS</span>
+                    <span style="font-size: 10px; font-weight: bold; color: #666;">KITCHENFLOW AI - GESTÃO INTELIGENTE DE ENTREGAS</span>
                   </div>
                   <div class="meta">
                     Período: ${settlementStartDate.split('-').reverse().join('/')} até ${settlementEndDate.split('-').reverse().join('/')}<br/>

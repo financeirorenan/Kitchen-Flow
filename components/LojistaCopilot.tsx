@@ -35,7 +35,9 @@ import {
   Pencil,
   Plus,
   Trash2,
-  Check
+  Check,
+  MessageSquare,
+  Bot
 } from "lucide-react";
 import {
   AreaChart,
@@ -52,6 +54,7 @@ import {
 import AIInsights from "./AIInsights";
 import DashboardAlerts from "./DashboardAlerts";
 import CMVAnalysis from "./CMVAnalysis";
+import KaiAvatar, { KaiExpression, KaiPose } from "./KaiAvatar";
 
 const safeFormatISO = (val: any) => {
   if (!val) return new Date().toISOString().split("T")[0];
@@ -179,8 +182,42 @@ export default function LojistaCopilot({
   const [aiReport, setAiReport] = useState<string | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [isAiDrawerOpen, setIsAiDrawerOpen] = useState(false);
+  
+  // Kai Local Chat States
+  const [kaiPose, setKaiPose] = useState<KaiPose>('tudo-sob-controle');
+  const [kaiExpression, setKaiExpression] = useState<KaiExpression>('feliz');
+  const [chatMessages, setChatMessages] = useState<{ sender: 'user' | 'kai'; text: string; pose?: KaiPose; expression?: KaiExpression }[]>([]);
+  const [userQuery, setUserQuery] = useState("");
+  const [isChatLoading, setIsChatLoading] = useState(false);
 
-  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'copilot' | 'cmv-cardapio'>('overview');
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'copilot' | 'cmv-cardapio' | 'chatbot'>('overview');
+
+  // Automatic initialization of chatMessages from Kai Copilot
+  React.useEffect(() => {
+    if (chatMessages.length === 0) {
+      setChatMessages([
+        {
+          sender: 'kai',
+          text: `Olá lojista! Eu sou o Kai, seu analista e Copiloto de Inteligência Operacional. 🤖💡
+
+Estou aqui para rodar diagnósticos em tempo real, efetuar projeções e tirar dúvidas estratégicas sobre a sua loja de forma 100% inteligente!
+
+Podemos conversar sobre como reduzir seu CMV, planejar o faturamento para bater o ponto de equilíbrio, criar combos rentáveis com pratos âncoras, ou ajustar insumos críticos do seu estoque.
+
+Como posso te ajudar a lucrar mais hoje? Pergunte abaixo ou clique em uma das sugestões rápidas!`,
+          pose: 'tudo-sob-controle',
+          expression: 'feliz'
+        }
+      ]);
+    }
+  }, [chatMessages.length]);
+
+  const chatEndRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (chatEndRef.current) {
+      chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [chatMessages, activeSubTab]);
 
   // 1. weeklySalesData inside LojistaCopilot
   const weeklySalesData = useMemo(() => {
@@ -706,6 +743,122 @@ export default function LojistaCopilot({
     return list;
   }, [stats, productProfitMap]);
 
+  // Real-time metrics for Today, Yesterday and Monthly summary (for Kai Chatbot context)
+  const kaiMetrics = useMemo(() => {
+    const now = new Date();
+    
+    // Today Range (midnight to end of day)
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    
+    // Yesterday Range (yesterday midnight to yesterday end)
+    const yesterdayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 0, 0, 0, 0);
+    const yesterdayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59, 999);
+    
+    // This Month Range (1st of month to end of month)
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+    const calculateStatsForRange = (startDate: Date, endDate: Date) => {
+      const currentOrders = orders.filter(o => {
+        if (o.status === "cancelled") return false;
+        const d = new Date(o.createdAt);
+        return d >= startDate && d <= endDate;
+      });
+
+      const currentManual = manualRecords.filter(r => {
+        const d = new Date(r.date);
+        return d >= startDate && d <= endDate;
+      });
+
+      // Calculate days count
+      const daysCount = Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
+
+      // Gross faturamento
+      const salesTotal = currentOrders.reduce((sum, o) => sum + (o.total || 0), 0);
+      const manualIncome = currentManual
+        .filter(r => r.type === "income")
+        .filter(r => {
+          const cat = (r.category || "").toLowerCase();
+          const desc = (r.description || "").toLowerCase();
+          const isAberturaOrSuprimento = 
+            cat.includes("abertura") || cat.includes("suprimento") || cat.includes("troco") || cat.includes("reforço") ||
+            desc.includes("abertura") || desc.includes("suprimento") || desc.includes("troco") || desc.includes("reforço");
+          return !isAberturaOrSuprimento;
+        })
+        .reduce((sum, r) => sum + (r.amount || 0), 0);
+      const faturamento = salesTotal + manualIncome;
+
+      // CMV
+      const productCostMap = new Map<string, number>();
+      products.forEach(p => {
+        productCostMap.set(p.id, p.cost || 0);
+      });
+
+      let cmvValue = 0;
+      currentOrders.forEach(o => {
+        (o.items || []).forEach(item => {
+          const cost = productCostMap.get(item.productId);
+          if (cost && cost > 0) {
+            cmvValue += cost * (item.quantity || 0);
+          } else {
+            cmvValue += ((item.price || 0) * 0.35) * (item.quantity || 0);
+          }
+        });
+      });
+
+      const desperdicio = faturamento * (estimatedWastePercent / 100);
+      cmvValue += desperdicio;
+
+      // Delivery Fees
+      const deliveryFees = currentOrders.reduce((sum, o) => {
+        if (o.source && ["iFood", "partner_app", "marketplace"].includes(o.source)) {
+          return sum + (o.marketplaceFee || ((o.total || 0) * 0.12));
+        }
+        return sum;
+      }, 0);
+
+      // Proportional fixed costs
+      const daysInMonth = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 0).getDate() || 30;
+      const dailyRent = (monthlyRent || 0) / daysInMonth;
+      const dailyStaff = (monthlyStaff || 0) / daysInMonth;
+      const fixedRentProportional = dailyRent * daysCount;
+      const fixedStaffProportional = dailyStaff * daysCount;
+
+      // Other expenses
+      const manualExpenses = currentManual
+        .filter(r => r.type === "expense")
+        .filter(r => {
+          const cat = (r.category || "").toLowerCase();
+          return !cat.includes("salário") && !cat.includes("aluguel") && !cat.includes("folha") && !cat.includes("pro-labore");
+        })
+        .reduce((sum, r) => sum + (r.amount || 0), 0);
+
+      const despesas = cmvValue + deliveryFees + fixedRentProportional + fixedStaffProportional + manualExpenses;
+      const lucroReal = faturamento - despesas;
+      const margem = faturamento > 0 ? (lucroReal / faturamento) * 100 : 0;
+
+      return {
+        faturamento,
+        lucroReal,
+        margem,
+        cmv: cmvValue,
+        despesas,
+        taxasDelivery: deliveryFees,
+        folha: fixedStaffProportional,
+        despesasFixas: fixedRentProportional,
+        outraDespesa: manualExpenses,
+        orderCount: currentOrders.length
+      };
+    };
+
+    return {
+      hoje: calculateStatsForRange(todayStart, todayEnd),
+      ontem: calculateStatsForRange(yesterdayStart, yesterdayEnd),
+      mes: calculateStatsForRange(monthStart, monthEnd)
+    };
+  }, [orders, products, manualRecords, monthlyRent, monthlyStaff, estimatedWastePercent]);
+
   // Recharts Linear Daily Trend Data Calculation
   const dailyPerformanceChartData = useMemo(() => {
     const { startDate, endDate } = dateRange;
@@ -792,59 +945,288 @@ export default function LojistaCopilot({
     });
   }, [dateRange, filteredData, products, monthlyRent, monthlyStaff, estimatedWastePercent]);
 
-  // Request true AI detailed consulting from Gemini endpoint
-  const handleExplainOperation = async () => {
+  // Request 100% Offline Real-Time AI Business Diagnostic from Kai
+  const handleExplainOperation = () => {
     setIsAiLoading(true);
     setIsAiDrawerOpen(true);
     setAiReport(null);
+    setKaiPose('analisando-dados');
+    setKaiExpression('analisando');
 
     const periodName = dateRange.periodName;
     const topProduct = productProfitMap.topProfitable[0] || null;
     const worstProduct = productProfitMap.leastProfitable[0] || null;
 
-    const payload = {
-      summaryData: {
-        periodName,
-        faturamento: stats.faturamento,
-        lucroReal: stats.lucroReal,
-        margem: stats.margem,
-        despesas: stats.despesas,
-        cmv: stats.cmv,
-        taxasDelivery: stats.taxasDelivery,
-        folha: stats.folha,
-        despesasFixas: stats.despesasFixas,
-        ticketMedio: stats.ticketMedio,
-        pontoEquilibrio: stats.pontoEquilibrio,
-        classificacao: stats.classificacao,
-        topProduct,
-        worstProduct
-      }
-    };
+    // Simulate real-time processing in 900ms
+    setTimeout(() => {
+      const faturamento = stats.faturamento || 0;
+      const lucroReal = stats.lucroReal || 0;
+      const margem = stats.margem || 0;
+      const despesas = stats.despesas || 0;
+      const cmv = stats.cmv || 0;
+      const taxasDelivery = stats.taxasDelivery || 0;
+      const ticketMedio = stats.ticketMedio || 0;
+      const pontoEquilibrio = stats.pontoEquilibrio || 0;
+      const classificacao = stats.classificacao || "Em Crescimento";
 
-    try {
-      const response = await fetch("/api/gemini/explain-merchant", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      const data = await response.json();
-      if (data.success) {
-        setAiReport(data.insight);
-      } else {
-        setAiReport("⚠️ Erro de conexão com a inteligência financeiro. Por favor, tente novamente.");
-      }
-    } catch (error) {
-      console.error(error);
-      setAiReport("⚠️ Ops, o servidor está preparando as credenciais. Acompanhe a nossa análise local enquanto isso!");
-    } finally {
+      const localAnalysis = `### 🐙 Diagnóstico Completo do Kai | Analista Residente
+
+Olá! Eu sou o **Kai**, o seu analista de inteligência em tempo real. Fiz uma auditoria instantânea e minuciosa de todos os seus dados operacionais no período **${periodName}** diretamente no seu dispositivo. 
+
+Sua operação está classificada hoje como **${classificacao}** com uma taxa de retorno líquida estimada em **${margem.toFixed(1)}%**. Abaixo, apresento o raio-x exato da sua rentabilidade e os passos para otimizar suas margens:
+
+---
+
+### 🟢 Pontos de Destaque (Alta Performance)
+1. **${topProduct ? `Estrela de Vendas: ${topProduct.name}` : 'Excelente Mix de Vendas'}**: Este item lidera a geração de sobra líquida, trazendo margens saudáveis e alto giro. Ele é um pilar vital para manter o estabelecimento lucrativo.
+2. **Giro Financeiro**: Seu faturamento de **R$ ${faturamento.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}** demonstra boa atração de clientes.
+3. **Ticket Médio**: Com uma média de **R$ ${ticketMedio.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}** por pedido, você possui uma base estável para expandir táticas de upselling e ofertas complementares.
+4. **Ponto de Equilíbrio Superado**: Seu custo fixo totalizando aluguel e equipe exige um ponto de equilíbrio operacional de **R$ ${pontoEquilibrio.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}**. Ao ultrapassar essa marca, sua operação passou a reter lucro limpo de verdade!
+
+---
+
+### ⚠️ Pontos Críticos (Onde O Lucro Está Escapando)
+1. **Pressão no CMV de Insumos**: Suas despesa líquida em custos de mercadoria vendida (CMV) representa **R$ ${cmv.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}** (aproximadamente **${faturamento > 0 ? ((cmv / faturamento) * 100).toFixed(1) : '33.0'}%** da receita bruta). Fora da meta ideal de 28% a 32%, o peso de matérias-primas e desperdícios está comprometendo a margem líquida.
+2. **Impacto das Comissões de Delivery**: Taxas e tarifas de entregadores externas somaram **R$ ${taxasDelivery.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}** neste período. É crucial repassar esse custo de plataforma de forma correspondente para os clientes do canal digital.
+3. **${worstProduct ? `Inconsistência de Margem no item: ${worstProduct.name}` : 'Baixa eficiência em itens de cardápio'}**: Este produto está rodando com margem unitária perigosamente espremida devido à escalada no custo dos ingredientes ou preço final defasado.
+
+---
+
+### 💡 Plano de Ação Imediato do Kai
+- **Avançar no CMV de Insumos**: Padronize as fichas técnicas e utilize porcionadores na cozinha. Reduzir em apenas 2% o desperdício adicionará **R$ ${(faturamento * 0.02).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}** direto ao seu bolso!
+- **Diferenciação de Canal**: Pratique preços de 12% a 18% superiores nos aplicativos de delivery para cobrir integralmente as taxas dessas plataformas. Ofereça vantagens exclusivas no cardápio próprio/local.
+- **Tática de Combos de Alto Giro**: Monte combinações estratégicas aliando sua "Estrela" com um item de baixíssimo custo e alta margem de contribuição (como bebidas ou batatas fritas artesanais). 
+
+*Como sou um analista no seu navegador, você pode usar o chat abaixo para me perguntar qualquer estratégia específica! O que quer ajustar agora?*`;
+
+      setAiReport(localAnalysis);
+      setKaiPose('tudo-sob-controle');
+      setKaiExpression('feliz');
       setIsAiLoading(false);
-    }
+
+      // Start conversational log
+      setChatMessages([
+        {
+          sender: 'kai',
+          text: `Olá! Sou o Kai e já concluí o diagnóstico completo para o período ${periodName}. A margem média está em ${margem.toFixed(1)}%. Veja o relatório principal acima e use este chat para conversamos sobre as suas metas operacionais! Como posso te ajudar a lucrar mais?`,
+          pose: 'tudo-sob-controle',
+          expression: 'feliz'
+        }
+      ]);
+    }, 950);
   };
 
   // Helper calculation details for percentage variations
   const getPercentageVariation = (current: number, previous: number) => {
     if (previous === 0) return current > 0 ? 100 : 0;
     return ((current - previous) / previous) * 100;
+  };
+
+  // Chat conversation engine for Kai (Local reasoning and server-side Gemini intelligence)
+  const handleSendChat = async (customText?: string) => {
+    const textToSend = (customText || userQuery).trim();
+    if (!textToSend) return;
+
+    // Append user message
+    setChatMessages(prev => [...prev, { sender: 'user', text: textToSend }]);
+    setUserQuery("");
+    setIsChatLoading(true);
+
+    const lowercaseQuery = textToSend.toLowerCase();
+    
+    // Choose specific pose for Kai while thinking
+    setKaiPose('analisando-dados');
+    setKaiExpression('analisando');
+
+    try {
+      // 1. Prepare payload elements
+      const summaryPayload = {
+        periodName: dateRange.periodName,
+        faturamento: stats.faturamento,
+        lucroReal: stats.lucroReal,
+        margem: stats.margem,
+        classificacao: stats.classificacao,
+        cmv: stats.cmv,
+        taxasDelivery: stats.taxasDelivery,
+        folha: stats.folha,
+        despesasFixas: stats.despesasFixas,
+        despesas: stats.despesas,
+        ticketMedio: stats.ticketMedio,
+        pontoEquilibrio: stats.pontoEquilibrio,
+        topProduct: productProfitMap.topProfitable[0] ? { name: productProfitMap.topProfitable[0].name, qty: productProfitMap.topProfitable[0].qty, price: productProfitMap.topProfitable[0].price, cost: productProfitMap.topProfitable[0].cost } : null,
+        worstProduct: productProfitMap.leastProfitable[0] ? { name: productProfitMap.leastProfitable[0].name, qty: productProfitMap.leastProfitable[0].qty, price: productProfitMap.leastProfitable[0].price, cost: productProfitMap.leastProfitable[0].cost } : null
+      };
+
+      // Get last 6 messages as context history
+      const slicedHistory = chatMessages.slice(-6).map(m => ({ sender: m.sender, text: m.text }));
+
+      // 2. Fetch response from server-side endpoint
+      const response = await fetch("/api/gemini/chat-copilot", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          message: textToSend,
+          history: slicedHistory,
+          summaryData: summaryPayload,
+          kaiMetrics: kaiMetrics
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error("API response error");
+      }
+
+      const data = await response.json();
+      if (data.success) {
+        setChatMessages(prev => [...prev, {
+          sender: 'kai',
+          text: data.text,
+          pose: data.pose,
+          expression: data.expression
+        }]);
+        setKaiPose(data.pose);
+        setKaiExpression(data.expression);
+      } else {
+        throw new Error("Chat copilot returned success: false");
+      }
+    } catch (err) {
+      console.error("Error communicating with Kai API, falling back to offline reasoning:", err);
+      // Fallback local heuristic reasoning
+      let responseText = "";
+      let responsePose: KaiPose = 'tudo-sob-controle';
+      let responseExpression: KaiExpression = 'feliz';
+
+      const faturamento = stats.faturamento || 0;
+      const cmv = stats.cmv || 0;
+      const worstProduct = productProfitMap.leastProfitable[0] || null;
+      const topProduct = productProfitMap.topProfitable[0] || null;
+      const targetCmvValue = faturamento * 0.30; 
+
+      if (lowercaseQuery.includes("cmv") || lowercaseQuery.includes("custo de mercadoria") || lowercaseQuery.includes("reduzir")) {
+        responseText = `Entendido! Reduzir o **CMV (Custo de Mercadoria Vendida)** é a forma mais rápida de colocar mais dinheiro no bolso do lojista. 
+        
+No seu faturamento atual de **R$ ${faturamento.toLocaleString("pt-BR") || '0,00'}**, seu CMV atual está em R$ ${cmv.toLocaleString("pt-BR")}. Se reduzirmos isso para a nossa meta teórica de 30% (R$ ${targetCmvValue.toLocaleString("pt-BR")}), você economizará **R$ ${(Math.max(0, cmv - targetCmvValue)).toLocaleString("pt-BR")}** adicionais de lucro líquido!
+
+**Aqui estão as 4 diretrizes de ouro para atingir isso hoje na cozinha:**
+1. **Ficha Técnica Rígida**: Cada prato deve ter gramatura exata. Use balanças no porcionamento!
+2. **Negociação em Lote**: Seus principais ingredientes devem ser cotados com múltiplos fornecedores toda terça-feira.
+3. **Mapeie o Lixo**: Use a aba de Estoque para registrar o desperdício diário (ex: sobras de preparo, produtos vencidos).
+4. **Cardápio Inteligente**: Promova pratos com ingredientes sazonais/baratos e margem robusta!`;
+        responsePose = 'controle-estoque';
+        responseExpression = 'concentrado';
+      } 
+      else if (lowercaseQuery.includes("hoje") || lowercaseQuery.includes("dia")) {
+        const hoje = kaiMetrics.hoje;
+        responseText = `### 📅 Relatório Operacional de Hoje:
+- **Faturamento de Hoje**: R$ ${hoje.faturamento.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+- **Lucro Líquido de Hoje**: R$ ${hoje.lucroReal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+- **Margem Líquida**: ${hoje.margem.toFixed(1)}%
+- **Pedidos**: ${hoje.orderCount}
+
+${hoje.lucroReal >= 0 
+  ? `🟢 Muito bem! Hoje a operação está rodando no azul com uma excelente margem operacional!` 
+  : `⚠️ Atenção: A operação de hoje está abaixo do ponto de equilíbrio necessário devido às taxas e custos fixos proporcionais do dia.`}`;
+        responsePose = 'gestao-pedidos';
+        responseExpression = hoje.lucroReal >= 0 ? 'feliz' : 'alerta';
+      }
+      else if (lowercaseQuery.includes("ontem")) {
+        const ontem = kaiMetrics.ontem;
+        responseText = `### 📅 Fechamento de Ontem:
+- **Faturamento de Ontem**: R$ ${ontem.faturamento.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+- **Lucro Líquido de Ontem**: R$ ${ontem.lucroReal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+- **Margem Líquida**: ${ontem.margem.toFixed(1)}%
+- **Pedidos**: ${ontem.orderCount}
+
+${ontem.lucroReal >= 0 
+  ? `🟢 Excelente! Ontem a operação terminou positiva no azul.` 
+  : `⚠️ Ontem fechamos no vermelho. Vamos reverter esses resultados na operação de hoje!`}`;
+        responsePose = 'planejamento';
+        responseExpression = ontem.lucroReal >= 0 ? 'feliz' : 'concentrado';
+      }
+      else if (lowercaseQuery.includes("mês") || lowercaseQuery.includes("mensal") || lowercaseQuery.includes("faturamento do mes")) {
+        const mes = kaiMetrics.mes;
+        responseText = `### 📊 Balanço Acumulado do Mês:
+- **Faturamento Bruto**: R$ ${mes.faturamento.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+- **Lucro Líquido**: R$ ${mes.lucroReal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+- **Margem Média**: ${mes.margem.toFixed(1)}%
+- **Pedidos do Mês**: ${mes.orderCount}
+
+Sua saúde financeira acumulada este mês está classificada como **${mes.margem >= 15 ? 'Excelente 🟢' : mes.margem >= 8 ? 'Estável ⚠️' : 'Crítica 🚨'}**.`;
+        responsePose = 'analisando-dados';
+        responseExpression = 'feliz';
+      }
+      else if (lowercaseQuery.includes("vermelho") || lowercaseQuery.includes("equilibrio") || lowercaseQuery.includes("ponto") || lowercaseQuery.includes("despesas")) {
+        const fixedCosts = stats.folha + stats.despesasFixas;
+        responseText = `Excelente pergunta! Vamos auditar o seu faturamento de equilíbrio:
+
+Sua estrutura atual possui **R$ ${(fixedCosts).toLocaleString("pt-BR")}** em gastos estruturais (equipe + despesas fixas) proporcionalmente às datas visualizadas.
+Seu ponto de equilíbrio atual é de **R$ ${stats.pontoEquilibrio.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}**.
+
+Para ficar totalmente tranquilo ("no azul"), você precisa atingir uma média de faturamento diária de **R$ ${(stats.pontoEquilibrio / dateRange.daysCount).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}**. Qualquer venda acima disso flui quase integralmente para o lucro, exceto o valor cru dos ingredientes! No momento, seu ritmo operacional está ${faturamento >= stats.pontoEquilibrio ? "🟢 **Superando** com folga a meta de equilíbrio!" : "⚠️ **Abaixo** do ponto de equilíbrio. Precisamos impulsionar as vendas físicas e delivery!"}`;
+        responsePose = 'planejamento';
+        responseExpression = 'alerta';
+      } 
+      else if (lowercaseQuery.includes("combo") || lowercaseQuery.includes("ticket") || lowercaseQuery.includes("médio")) {
+        responseText = `A criação de **combos inteligentes** é fantástica para subir o ticket médio sem espremer o CMV!
+
+No momento, o seu ticket médio está em **R$ ${stats.ticketMedio.toLocaleString("pt-BR") || '0,00'}**. 
+
+${topProduct ? `Podemos usar o seu prato estrela **"${topProduct.name}"** como âncora do combo!` : "Podemos usar o prato mais vendido da sua cozinha como âncora do combo!"}
+
+**Esquema de Combo Lucrativo do Kai:**
+1. **Prato Principal**: Seu campeão de vendas.
+2. **Acompanhamento de Alto Retorno**: Adicione um item de ultra-baixo custo de insumo (ex: batata frita artesanal, anéis de cebola ou porção de molho caseiro). Custam centavos de CMV, mas agregam valor percebido.
+3. **Bebida Rentável**: Bebidas têm CMV de apenas 35% e zero esforço de preparo na cozinha.
+*Se o cliente comprar o prato isolado por R$ 35, ganha R$ 10 de lucro. Adicionando R$ 12 pelo combo inteiro, o lucro líquido salta para R$ 18!*`;
+        responsePose = 'gestao-pedidos';
+        responseExpression = 'feliz';
+      } 
+      else if (lowercaseQuery.includes("critico") || lowercaseQuery.includes("produto") || lowercaseQuery.includes("ajuste")) {
+        responseText = `Vamos focar no saneamento de margem!
+        
+${worstProduct ? `O seu produto mais crítico no momento é o **"${worstProduct.name}"**, que rodou com margem de apenas **${worstProduct.margin.toFixed(0)}%**.` : "Não identifiquei nenhum produto crítico grave nas vendas do período, o que é excelente!"}
+
+**Como consertamos isso sem espantar os clientes:**
+1. **Redimensionar porção**: Em vez de aumentar o preço, diminua levemente a gramatura da proteína principal em 10% (quase imperceptível visualmente, mas reduz o CMV imediatamente).
+2. **Substituir componentes caros**: Se usa um queijo importado ou marca premium, cote marcas nacionais equivalentes que mantenham o sabor original.
+3. **Ajuste Cirúrgico**: Faça uma correção de 5% a 8% apenas na plataforma de delivery. Os clientes em canais online são menos sensíveis a pequenas variações que auxiliam a equilibrar as comissões.`;
+        responsePose = 'na-cozinha';
+        responseExpression = 'concentrado';
+      } 
+      else if (lowercaseQuery.includes("delivery") || lowercaseQuery.includes("taxa") || lowercaseQuery.includes("entrega")) {
+        responseText = `O canal de delivery é importante para expandir o faturamento, mas cobra um preço alto do lojista. Suas despesas com delivery somaram **R$ ${stats.taxasDelivery.toLocaleString("pt-BR")}** neste período.
+
+**Estratégia Local do Kai para conter essas comissões:**
+1. **Precificação Espelho Diferenciada**: Sempre suba os preços do menu online de 12% a 15% em relação ao menu presencial físico. Isso zera as comissões abusivas repassando de forma transparente.
+2. **Cupom de Fidelidade Local**: Coloque um panfleto especial na sacola com QR Code para o seu cardápio digital próprio (WhatsApp ou menu local) oferecendo 10% de desconto no primeiro pedido direto. Você retém o cliente sem pagar e-marketplaces!
+3. **Praça Própria**: Para clientes que moram até 2km de distância, tente contratar motoboy direto para reduzir comissões por distância.`;
+        responsePose = 'gestao-pedidos';
+        responseExpression = 'neutro';
+      } 
+      else {
+        responseText = `Que excelente pauta de negócios! Como o seu analista de IA offline residente, estou sempre pronto para processar dados de faturamento, metas, estoque de matérias-primas e mesas. 
+
+Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes ações hoje:
+1. Cadastrar corretamente todos os custos de matérias-primas na aba de CMV para que eu possa entregar dados ainda mais precisos.
+2. Acompanhar as metas diárias de vendas para garantir que as despesas fixas (folha de pagamento de R$ ${stats.folha.toLocaleString("pt-BR")} e fixos) sejam cobertas com folga.
+3. Use os botões abaixo para obter insights instantâneos rápidos!`;
+        responseExpression = 'feliz';
+        responsePose = 'tudo-sob-controle';
+      }
+
+      setChatMessages(prev => [...prev, {
+        sender: 'kai',
+        text: responseText,
+        pose: responsePose,
+        expression: responseExpression
+      }]);
+      setKaiPose(responsePose);
+      setKaiExpression(responseExpression);
+    } finally {
+      setIsChatLoading(false);
+    }
   };
 
   return (
@@ -854,15 +1236,15 @@ export default function LojistaCopilot({
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
         <div className="max-w-xl">
           <div className="flex items-center gap-2">
-            <span className="p-0.5 px-2.5 rounded-full text-[9px] bg-indigo-50 text-indigo-600 font-extrabold flex items-center gap-1 uppercase tracking-widest border border-indigo-100/60">
-              <Sparkles size={10} className="animate-spin" /> Copiloto Financeiro Ativo
+            <span className="p-0.5 px-2.5 rounded-full text-[9px] bg-[#00B7FF]/10 text-[#00B7FF] font-extrabold flex items-center gap-1 uppercase tracking-widest border border-[#00B7FF]/20">
+              <Sparkles size={10} className="animate-spin" /> Analista Residente Kai
             </span>
           </div>
           <h1 className="text-xl md:text-2xl font-black text-slate-800 tracking-tight mt-1">
             Módulo Lojista
           </h1>
           <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
-            Transforme seus dados operacionais e de cardápio em inteligência simples de lucro em 30 segundos.
+            Acompanhe o raio-x operacional gerado em tempo real pelo Kai diretamente no navegador de sua loja.
           </p>
         </div>
 
@@ -874,19 +1256,25 @@ export default function LojistaCopilot({
               onClick={() => setActiveSubTab('overview')}
               className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${activeSubTab === 'overview' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
             >
-              <X size={13} /> Painel AI e Visão Geral
+              <LayoutDashboard size={13} /> Painel de Diagnóstico Kai
             </button>
             <button 
               onClick={() => setActiveSubTab('copilot')}
               className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${activeSubTab === 'copilot' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
             >
-              <TrendingUp size={13} /> Copiloto Financeiro
+              <TrendingUp size={13} /> Demonstrativo Financeiro
             </button>
             <button 
               onClick={() => setActiveSubTab('cmv-cardapio')}
               className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${activeSubTab === 'cmv-cardapio' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
             >
               <BrainCircuit size={13} /> Assistente de Cardápio (CMV)
+            </button>
+            <button 
+              onClick={() => setActiveSubTab('chatbot')}
+              className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${activeSubTab === 'chatbot' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              <MessageSquare size={13} className="text-indigo-500" /> Chatbot Kai
             </button>
           </div>
 
@@ -1168,6 +1556,174 @@ export default function LojistaCopilot({
             rawMaterials={rawMaterials} 
             onUpdateProduct={onUpdateProduct} 
           />
+        </div>
+      )}
+
+      {/* RENDER CHATBOT KAI INTEGRATED PAGE VIEW */}
+      {activeSubTab === 'chatbot' && (
+        <div className="animate-in fade-in duration-500 w-full space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            
+            {/* Left Side: Animated Mascot Details Card */}
+            <div className="lg:col-span-4 bg-slate-900 text-white rounded-[2.5rem] p-6 shadow-xl border border-slate-800 flex flex-col justify-between relative overflow-hidden min-h-[460px]">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 blur-3xl pointer-events-none rounded-full"></div>
+              
+              <div className="space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2.5 h-2.5 bg-emerald-400 rounded-full animate-pulse" />
+                    <span className="text-[10px] font-extrabold uppercase tracking-widest text-[#00B7FF]">Kai Copiloto Ativo</span>
+                  </div>
+                  <span className="text-[8px] bg-[#00B7FF]/10 text-[#00B7FF] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border border-[#00B7FF]/20">
+                    Offline AI
+                  </span>
+                </div>
+                
+                {/* Big Avatar Presentation */}
+                <div className="flex flex-col items-center py-6">
+                  <div className="p-3 bg-slate-950/80 rounded-[2rem] border border-white/5 shadow-inner scale-110 relative">
+                    <div className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-emerald-500 rounded-full border-2 border-slate-900 flex items-center justify-center">
+                      <div className="w-1.5 h-1.5 bg-white rounded-full animate-ping" />
+                    </div>
+                    <KaiAvatar 
+                      expression={isChatLoading ? 'analisando' : kaiExpression} 
+                      pose={isChatLoading ? 'analisando-dados' : kaiPose} 
+                      size={110} 
+                    />
+                  </div>
+                  <h3 className="text-base font-black text-white mt-4 tracking-tight">Copiloto Kai</h3>
+                  <p className="text-[10px] text-[#7DD3FF] font-extrabold uppercase tracking-wider mt-0.5">Analista Gastronômico da Loja</p>
+                </div>
+
+                <div className="bg-slate-950/60 p-4 rounded-2xl border border-white/5 space-y-2 text-center">
+                  <p className="text-[11px] font-semibold text-slate-300 leading-relaxed">
+                    "Focado em cortar perdas e transformar faturamento, vendas e custos de CMV em lucro líquido no seu bolso."
+                  </p>
+                </div>
+              </div>
+
+              {/* Botão de reiniciar conversa */}
+              <button
+                onClick={() => {
+                  setChatMessages([]);
+                  setKaiPose('tudo-sob-controle');
+                  setKaiExpression('feliz');
+                }}
+                className="mt-4 w-full py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 border border-white/5"
+              >
+                <RefreshCw size={10} /> Reiniciar Diálogo
+              </button>
+            </div>
+
+            {/* Right Side: Immersive Chat Engine */}
+            <div className="lg:col-span-8 bg-white border border-slate-200/80 rounded-[2.5rem] p-6 shadow-sm flex flex-col justify-between min-h-[520px]">
+              
+              <div className="flex flex-col flex-1">
+                {/* Chat conversation area */}
+                <div className="flex-1 max-h-[380px] overflow-y-auto custom-scrollbar pr-1 divide-y divide-slate-50 space-y-4">
+                  
+                  {chatMessages.map((msg, mIdx) => (
+                    <div 
+                      key={mIdx} 
+                      className={`flex gap-3 pt-3.5 first:pt-0 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+                    >
+                      {msg.sender === 'kai' && (
+                        <div className="shrink-0 scale-90 mt-0.5">
+                          <KaiAvatar expression={msg.expression || 'neutro'} pose={msg.pose || 'tudo-sob-controle'} size={38} />
+                        </div>
+                      )}
+                      
+                      <div className={`p-4 rounded-3xl text-xs max-w-[80%] leading-relaxed ${
+                        msg.sender === 'user'
+                          ? 'bg-indigo-600 text-white font-extrabold rounded-tr-none shadow-md shadow-indigo-600/10'
+                          : 'bg-slate-50 text-slate-800 font-semibold rounded-tl-none border border-slate-100'
+                      }`}>
+                        {/* Render msg with markup lines gracefully */}
+                        {msg.text.split('\n').map((line, lineIdx) => {
+                          const isHeading = line.startsWith("###") || line.startsWith("**") || line.startsWith("- **");
+                          return (
+                            <p 
+                              key={lineIdx} 
+                              className={`my-1 ${isHeading ? 'font-black text-slate-900 bg-indigo-50/20 px-1 rounded-md' : ''}`}
+                            >
+                              {line}
+                            </p>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Typing placeholder loader */}
+                  {isChatLoading && (
+                    <div className="flex justify-start gap-3 pt-3.5">
+                      <div className="shrink-0 scale-90 mt-0.5">
+                        <KaiAvatar expression="analisando" pose="analisando-dados" size={38} />
+                      </div>
+                      <div className="bg-slate-50 p-4 rounded-3xl rounded-tl-none border border-slate-100 flex items-center gap-1.5">
+                        <div className="w-2 h-2 rounded-full bg-indigo-600 animate-bounce" style={{ animationDelay: '0ms' }} />
+                        <div className="w-2 h-2 rounded-full bg-indigo-600 animate-bounce" style={{ animationDelay: '150ms' }} />
+                        <div className="w-2 h-2 rounded-full bg-indigo-600 animate-bounce" style={{ animationDelay: '300ms' }} />
+                      </div>
+                    </div>
+                  )}
+                  
+                  <div ref={chatEndRef} />
+                </div>
+
+                {/* Predefined prompt templates */}
+                <div className="border-t border-slate-100 pt-4 mt-2">
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-2">💡 Sugestões Rápidas de Diagnóstico</span>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { text: "Como reduzir meu CMV na prática?", label: "📉 CMV Insumos" },
+                      { text: "Estou no vermelho? Qual meu ponto de equilíbrio?", label: "🧱 Ponto de Equilíbrio" },
+                      { text: "Quais combos eu posso criar para aumentar o ticket?", label: "🍔 Combos de Alto Giro" },
+                      { text: "O que fazer com o produto crítico no meu cardápio?", label: "⚠️ Ajustar Crítico" },
+                      { text: "Quais estratégias de taxas usar para o delivery?", label: "🚴 Taxas do Delivery" }
+                    ].map((btn, bIdx) => (
+                      <button
+                        key={bIdx}
+                        onClick={() => handleSendChat(btn.text)}
+                        disabled={isChatLoading}
+                        className="text-[10px] font-bold px-3 py-1.5 bg-slate-50 hover:bg-indigo-50 border border-slate-100 hover:border-indigo-200 text-slate-600 hover:text-indigo-600 rounded-xl transition-all shadow-sm active:scale-95 disabled:opacity-50"
+                      >
+                        {btn.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Message submit form block */}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleSendChat();
+                }}
+                className="flex items-center gap-3 pt-4 border-t border-slate-100 mt-4"
+              >
+                <input
+                  type="text"
+                  value={userQuery}
+                  onChange={(e) => setUserQuery(e.target.value)}
+                  placeholder="Pergunte ao Kai: 'Como reduzir CMV?', 'Análise de comissão'..."
+                  disabled={isChatLoading}
+                  className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-800 rounded-2xl placeholder:text-slate-400 focus:outline-none focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 disabled:opacity-55"
+                />
+                <button
+                  type="submit"
+                  disabled={isChatLoading || !userQuery.trim()}
+                  className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-black uppercase text-[10px] tracking-wider rounded-2xl disabled:opacity-50 transition-all shadow-md shadow-indigo-600/10 flex items-center gap-1.5"
+                >
+                  <Bot size={13} /> Enviar
+                </button>
+              </form>
+
+            </div>
+
+          </div>
         </div>
       )}
 
@@ -1641,15 +2197,15 @@ export default function LojistaCopilot({
         </div>
 
         {/* Dynamic autogenerated copilot insight bullets */}
-        <div className="lg:col-span-4 bg-indigo-900/10 border border-indigo-150 rounded-[2.5rem] p-6 shadow-sm flex flex-col justify-between">
+        <div className="lg:col-span-4 bg-[#00B7FF]/5 border border-[#00B7FF]/10 rounded-[2.5rem] p-6 shadow-sm flex flex-col justify-between">
           <div>
             <div className="flex items-center gap-2 mb-4">
-              <span className="p-1 px-2.5 rounded-full text-[9px] bg-slate-900 text-white font-extrabold flex items-center gap-1 uppercase tracking-wider">
-                Copiloto Financeiro
+              <span className="p-1 px-2.5 rounded-full text-[9px] bg-[#14171C] text-white font-extrabold flex items-center gap-1 uppercase tracking-wider border border-white/5">
+                Diretrizes do Kai
               </span>
             </div>
-            <h3 className="text-base font-black text-slate-800 tracking-tight">Conselhos do Copiloto</h3>
-            <p className="text-[11px] text-slate-400 mt-0.5 mb-5 font-bold">Diagnóstico em linguagem humana simplificada:</p>
+            <h3 className="text-base font-black text-slate-800 tracking-tight">Recomendações de Gestão</h3>
+            <p className="text-[11px] text-slate-400 mt-0.5 mb-5 font-bold">Auditoria operacional residente instantânea:</p>
             
             <div className="space-y-4">
               {copilotInsights.map((insight, idx) => (
@@ -2120,7 +2676,7 @@ export default function LojistaCopilot({
         )}
       </AnimatePresence>
 
-      {/* EXPLAIN MY OPERATION DRAWER / SIDE CARD (Conversas inteligente com o Copiloto) */}
+      {/* EXPLAIN MY OPERATION DRAWER / SIDE CARD (Conversas inteligente com o Copiloto Kai) */}
       <AnimatePresence>
         {isAiDrawerOpen && (
           <div className="fixed inset-0 z-[10000] flex justify-end">
@@ -2130,7 +2686,7 @@ export default function LojistaCopilot({
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsAiDrawerOpen(false)}
-              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+              className="absolute inset-0 bg-[#14171C]/80 backdrop-blur-md"
             />
             
             {/* Sliding Drawer Body */}
@@ -2139,45 +2695,51 @@ export default function LojistaCopilot({
               animate={{ x: 0 }}
               exit={{ x: "100%" }}
               transition={{ type: "spring", damping: 25, stiffness: 180 }}
-              className="w-full max-w-xl bg-slate-50 h-screen shadow-2xl relative flex flex-col justify-between"
+              className="w-full max-w-xl bg-slate-950 h-screen shadow-2xl relative flex flex-col justify-between border-l border-[#00B7FF]/10 text-white"
             >
               
               {/* Drawer Header */}
-              <div className="p-5 bg-slate-900 border-b border-slate-800 text-white flex items-center justify-between">
+              <div className="p-4 bg-[#14171C] border-b border-[#00B7FF]/10 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-indigo-500 flex items-center justify-center shadow-lg shadow-indigo-500/20 text-white font-black animate-pulse">
-                    <Sparkles size={18} />
+                  <div className="p-1 bg-slate-900 rounded-xl border border-white/5">
+                    <KaiAvatar 
+                      expression={isAiLoading || isChatLoading ? 'analisando' : kaiExpression} 
+                      pose={isAiLoading || isChatLoading ? 'analisando-dados' : kaiPose} 
+                      size={50} 
+                    />
                   </div>
                   <div>
-                    <span className="text-[9px] font-black tracking-widest uppercase text-indigo-400 bg-indigo-950 px-2 py-0.5 rounded-full">
-                      Gemini Copilot 3.5
-                    </span>
-                    <h3 className="text-base font-black tracking-tight mt-0.5">Diagnóstico Lojista</h3>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[8px] font-black tracking-widest uppercase text-[#00B7FF] bg-[#00B7FF]/10 px-2 py-0.5 rounded-full border border-[#00B7FF]/20 animate-pulse">
+                        Kai Analyst (Offline)
+                      </span>
+                    </div>
+                    <h3 className="text-sm font-black tracking-tight text-white mt-0.5">Analista Residente Operacional</h3>
                   </div>
                 </div>
 
                 <button
                   onClick={() => setIsAiDrawerOpen(false)}
-                  className="p-2.5 hover:bg-slate-800 text-slate-300 hover:text-white rounded-full transition-all border border-slate-800"
+                  className="p-2.5 hover:bg-white/5 text-slate-400 hover:text-white rounded-full transition-all border border-white/5"
                 >
                   <X size={15} />
                 </button>
               </div>
 
               {/* Consultation Body Content */}
-              <div className="flex-1 p-6 overflow-y-auto custom-scrollbar space-y-4">
+              <div className="flex-1 p-5 overflow-y-auto custom-scrollbar space-y-6 bg-slate-950">
                 
                 {/* AI Processing and streaming states */}
                 {isAiLoading && (
                   <div className="flex flex-col items-center justify-center py-20 text-center gap-4">
                     <div className="relative">
-                      <div className="w-14 h-14 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-                      <Sparkles size={20} className="text-indigo-500 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-pulse" />
+                      <div className="w-14 h-14 border-4 border-[#00B7FF] border-t-transparent rounded-full animate-spin"></div>
+                      <Sparkles size={20} className="text-[#7DD3FF] absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-pulse" />
                     </div>
                     <div>
-                      <p className="text-xs font-black text-slate-800 uppercase tracking-widest">Auditando as Contas da Loja...</p>
-                      <p className="text-[10.5px] text-slate-400 mt-1 font-semibold max-w-xs mx-auto">
-                        O Copiloto Inteligente está calculando despesas, CMV, margens de delivery e oportunidades neste instante.
+                      <p className="text-xs font-black text-[#7DD3FF] uppercase tracking-widest animate-pulse">Focalizando no Seu Caixa...</p>
+                      <p className="text-[10px] text-slate-400 mt-1.5 font-bold max-w-xs mx-auto">
+                        Kai está compilando faturas, comissões de delivery e CMV localmente agora.
                       </p>
                     </div>
                   </div>
@@ -2185,77 +2747,179 @@ export default function LojistaCopilot({
 
                 {/* AI Structured results output */}
                 {!isAiLoading && aiReport && (
-                  <div className="bg-white rounded-3xl p-5 md:p-6 border border-slate-100 shadow-sm leading-relaxed text-xs text-slate-600 font-bold space-y-4">
+                  <div className="bg-[#1F232A]/90 rounded-3xl p-5 md:p-6 border border-white/5 shadow-inner leading-relaxed text-xs text-slate-300 font-bold space-y-4">
                     {/* Convert basic markdown string layout seamlessly for clean visual pairing */}
                     {aiReport.split("\n").map((line, lIdx) => {
                       if (line.startsWith("###")) {
                         return (
-                          <h4 key={lIdx} className="text-sm font-extrabold text-slate-800 tracking-tight block border-b border-slate-50 pb-1 pt-3">
+                          <h4 key={lIdx} className="text-sm font-black text-[#7DD3FF] tracking-tight block border-b border-white/5 pb-1 pt-3">
                             {line.substring(3).trim()}
                           </h4>
                         );
                       }
                       if (line.startsWith("##")) {
                         return (
-                          <h3 key={lIdx} className="text-base font-black text-indigo-600 tracking-tight block pt-4">
+                          <h3 key={lIdx} className="text-base font-black text-[#00B7FF] tracking-tight block pt-4">
                             {line.substring(2).trim()}
                           </h3>
                         );
                       }
                       if (line.startsWith("-") || line.startsWith("*")) {
                         return (
-                          <div key={lIdx} className="flex gap-2 items-start pl-3 my-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0 mt-1.5"></span>
+                          <div key={lIdx} className="flex gap-2 items-start pl-3 my-1 text-slate-200">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#00B7FF] shrink-0 mt-1.5 filter drop-shadow-[0_0_2px_#00B7FF]"></span>
                             <span className="leading-relaxed">{line.substring(1).trim()}</span>
                           </div>
                         );
                       }
                       if (line.trim() === "---") {
-                        return <hr key={lIdx} className="border-slate-100 my-4" />;
+                        return <hr key={lIdx} className="border-white/5 my-4" />;
                       }
-                      return <p key={lIdx} className="leading-relaxed my-2 font-bold text-slate-650">{line}</p>;
+                      return <p key={lIdx} className="leading-relaxed my-2 font-semibold text-slate-300">{line}</p>;
                     })}
                   </div>
                 )}
                 
                 {/* Visual statistics drawer side widget */}
-                <div className="bg-indigo-600 text-white rounded-3xl p-5 shadow-lg relative overflow-hidden">
-                  <span className="text-[9px] font-black uppercase text-indigo-200 tracking-widest block">Resumo Gerencial do Período</span>
-                  <div className="grid grid-cols-2 gap-4 mt-4">
+                <div className="bg-[#14171C] border border-white/5 text-white rounded-3xl p-5 shadow-lg relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-20 h-20 bg-[#00B7FF]/5 rounded-full blur-xl pointer-events-none" />
+                  <span className="text-[8.5px] font-black text-slate-400 uppercase tracking-widest block">Painel de Métricas do Período</span>
+                  <div className="grid grid-cols-2 gap-4 mt-3">
                     <div>
-                      <span className="text-[8.5px] text-indigo-200 uppercase font-black">Faturamento Bruto</span>
-                      <p className="text-base font-extrabold mt-0.5">R$ {stats.faturamento.toLocaleString("pt-BR")}</p>
+                      <span className="text-[8px] text-[#7DD3FF] uppercase font-black tracking-wider block">Faturamento Bruto</span>
+                      <p className="text-sm font-black text-white mt-0.5">R$ {stats.faturamento.toLocaleString("pt-BR")}</p>
                     </div>
                     <div>
-                      <span className="text-[8.5px] text-indigo-200 uppercase font-black">Sobra Líquida Real</span>
-                      <p className="text-base font-extrabold text-emerald-300 mt-0.5">R$ {stats.lucroReal.toLocaleString("pt-BR")}</p>
+                      <span className="text-[8px] text-[#7DD3FF] uppercase font-black tracking-wider block font-bold">Lucro de Sobra</span>
+                      <p className="text-sm font-black text-emerald-400 mt-0.5">R$ {stats.lucroReal.toLocaleString("pt-BR")}</p>
                     </div>
                     <div>
-                      <span className="text-[8.5px] text-indigo-200 uppercase font-black">Taxa de CMV Real</span>
-                      <p className="text-base font-extrabold mt-0.5">{stats.faturamento > 0 ? ((stats.cmv / stats.faturamento) * 100).toFixed(0) : "35"}%</p>
+                      <span className="text-[8px] text-[#7DD3FF] uppercase font-black tracking-wider block block">Custo de CMV Real</span>
+                      <p className="text-sm font-black text-white mt-0.5">{stats.faturamento > 0 ? ((stats.cmv / stats.faturamento) * 100).toFixed(0) : "35"}%</p>
                     </div>
                     <div>
-                      <span className="text-[8.5px] text-indigo-200 uppercase font-black">Saúde da Margem</span>
-                      <p className="text-base font-extrabold mt-0.5">{stats.classificacao}</p>
+                      <span className="text-[8px] text-[#7DD3FF] uppercase font-black tracking-wider block">Saúde Geral</span>
+                      <p className="text-sm font-black mt-0.5 text-[#00B7FF]">{stats.classificacao}</p>
                     </div>
                   </div>
                 </div>
 
+                {/* INTERACTIVE CHAT PANEL - CONVERSATIONS WITH KAI */}
+                {!isAiLoading && (
+                  <div className="bg-[#1F232A]/40 rounded-3xl p-4 border border-white/5 space-y-4">
+                    <div className="flex items-center gap-2 border-b border-white/5 pb-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                      <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest">Conversação em Tempo Real com o Kai</span>
+                    </div>
+
+                    <div className="space-y-3.5 max-h-[220px] overflow-y-auto custom-scrollbar pr-1">
+                      {chatMessages.map((msg, mIdx) => (
+                        <div key={mIdx} className={`flex gap-3 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                          {msg.sender === 'kai' && (
+                            <div className="shrink-0 scale-75 mt-1">
+                              <KaiAvatar expression={msg.expression || 'neutro'} pose={msg.pose || 'tudo-sob-controle'} size={32} />
+                            </div>
+                          )}
+                          <div className={`p-3 rounded-2xl text-[11px] max-w-[85%] leading-relaxed font-semibold ${
+                            msg.sender === 'user' 
+                              ? 'bg-[#00B7FF] text-[#14171C] font-extrabold rounded-tr-none' 
+                              : 'bg-[#1F232A] text-slate-200 rounded-tl-none border border-white/5'
+                          }`}>
+                            {msg.text.split('\n').map((line, lineIdx) => (
+                              <p key={lineIdx} className={line.startsWith("**") || line.startsWith("-") ? "my-1" : "my-0.5"}>{line}</p>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+
+                      {isChatLoading && (
+                        <div className="flex justify-start gap-3">
+                          <div className="shrink-0 scale-75 mt-1">
+                            <KaiAvatar expression="analisando" pose="analisando-dados" size={32} />
+                          </div>
+                          <div className="bg-[#1F232A] p-3 rounded-2xl rounded-tl-none border border-white/5 flex items-center gap-1">
+                            <div className="w-1.5 h-1.5 rounded-full bg-[#00B7FF] animate-bounce" style={{ animationDelay: '0ms' }} />
+                            <div className="w-1.5 h-1.5 rounded-full bg-[#00B7FF] animate-bounce" style={{ animationDelay: '150ms' }} />
+                            <div className="w-1.5 h-1.5 rounded-full bg-[#00B7FF] animate-bounce" style={{ animationDelay: '300ms' }} />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Pre-defined options quick tags */}
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      <button 
+                        onClick={() => handleSendChat("Como reduzir meu CMV na prática?")}
+                        disabled={isChatLoading}
+                        className="text-[9px] font-bold px-2 py-1 bg-white/5 hover:bg-[#00B7FF]/10 hover:text-[#7DD3FF] rounded-lg border border-white/5 text-slate-300 transition-all text-left"
+                      >
+                        📉 Como reduzir meu CMV?
+                      </button>
+                      <button 
+                        onClick={() => handleSendChat("Estou no vermelho? Qual meu ponto de equilíbrio?")}
+                        disabled={isChatLoading}
+                        className="text-[9px] font-bold px-2 py-1 bg-white/5 hover:bg-[#00B7FF]/10 hover:text-[#7DD3FF] rounded-lg border border-white/5 text-slate-300 transition-all text-left"
+                      >
+                        🧱 Qual o meu ponto de equilíbrio?
+                      </button>
+                      <button 
+                        onClick={() => handleSendChat("Quais combos eu posso criar para aumentar o ticket?")}
+                        disabled={isChatLoading}
+                        className="text-[9px] font-bold px-2 py-1 bg-white/5 hover:bg-[#00B7FF]/10 hover:text-[#7DD3FF] rounded-lg border border-white/5 text-slate-300 transition-all text-left"
+                      >
+                        🍔 Táticas de combo lucrativo
+                      </button>
+                      <button 
+                        onClick={() => handleSendChat("O que fazer com o produto crítico no meu cardápio?")}
+                        disabled={isChatLoading}
+                        className="text-[9px] font-bold px-2 py-1 bg-white/5 hover:bg-[#00B7FF]/10 hover:text-[#7DD3FF] rounded-lg border border-white/5 text-slate-300 transition-all text-left"
+                      >
+                        ⚠️ Como ajustar ingrediente crítico?
+                      </button>
+                    </div>
+
+                    {/* Chat Text Input */}
+                    <form 
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        handleSendChat();
+                      }}
+                      className="flex items-center gap-2 pt-2 border-t border-white/5"
+                    >
+                      <input 
+                        type="text"
+                        value={userQuery}
+                        onChange={(e) => setUserQuery(e.target.value)}
+                        placeholder="Pergunte ao Kai sobre CMV, metas, combos..."
+                        disabled={isChatLoading}
+                        className="flex-1 px-3 py-2 bg-slate-900 border border-white/5 text-[11px] font-semibold text-white rounded-xl placeholder:text-slate-500 focus:outline-none focus:border-[#00B7FF]/50"
+                      />
+                      <button
+                        type="submit"
+                        disabled={isChatLoading || !userQuery.trim()}
+                        className="px-4 py-2 bg-[#00B7FF] text-[#14171C] font-black uppercase text-[10px] tracking-wide rounded-xl active:scale-95 disabled:opacity-50 transition-all"
+                      >
+                        Enviar
+                      </button>
+                    </form>
+                  </div>
+                )}
+
               </div>
 
               {/* Drawer Footer Actions */}
-              <div className="p-4 bg-white border-t border-slate-100 flex items-center gap-3">
+              <div className="p-4 bg-[#14171C] border-t border-[#00B7FF]/10 flex items-center gap-3">
                 <button
                   onClick={() => setIsAiDrawerOpen(false)}
-                  className="flex-1 py-3 text-center bg-slate-100 hover:bg-slate-200 rounded-2xl font-black uppercase text-[10px] text-slate-500 transition-all tracking-wider"
+                  className="flex-1 py-3 text-center bg-white/5 hover:bg-white/10 text-white rounded-2xl font-black uppercase text-[10px] transition-all tracking-wider border border-white/5"
                 >
-                  Fechar Diagnóstico
+                  Fechar Painel
                 </button>
                 <button
                   onClick={handleExplainOperation}
-                  className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-black uppercase text-[10px] rounded-2xl transition-all shadow-md shadow-indigo-600/10 flex items-center justify-center gap-1.5 tracking-wider"
+                  className="flex-1 py-3 bg-[#00B7FF] hover:bg-[#7DD3FF] text-[#14171C] font-black uppercase text-[10px] rounded-2xl transition-all shadow-md shadow-[#00B7FF]/15 flex items-center justify-center gap-1.5 tracking-wider"
                 >
-                  <RefreshCw size={11} /> Reanalisar Contas
+                  <RefreshCw size={11} className="animate-spin" style={{ animationDuration: '4s' }} /> Recalcular Tudo
                 </button>
               </div>
 

@@ -33,6 +33,20 @@ interface UserProfileModalProps {
   showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
+const getDeterministicPassword = (emailStr: string) => {
+  try {
+    return `kitchenflow_secure_${btoa(emailStr.toLowerCase().trim()).replace(/=/g, '')}_2026`;
+  } catch (e) {
+    let hash = 0;
+    const str = emailStr.toLowerCase().trim();
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash << 5) - hash + str.charCodeAt(i);
+      hash |= 0;
+    }
+    return `kitchenflow_secure_${Math.abs(hash)}_2100_2026`;
+  }
+};
+
 // Collection of elegant preselected avatars (with colors & emojis)
 const PRESET_AVATARS = [
   { url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&h=256&q=80', label: 'Pro 1' },
@@ -114,8 +128,30 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         throw new Error('Nenhum usuário autenticado encontrado');
       }
 
-      const credential = EmailAuthProvider.credential(fbUser.email, currentPasswordForReauth);
-      await reauthenticateWithCredential(fbUser, credential);
+      // If user is staff, validate current password locally against Firestore first
+      const isStaff = currentUserData && currentUserData.role !== 'CUSTOMER';
+      if (isStaff && currentUserData && currentUserData.password && currentUserData.password !== currentPasswordForReauth) {
+        throw { code: 'auth/invalid-credential', message: 'Senha atual incorreta.' };
+      }
+
+      // Tenta reautenticar com a senha real digitada, e caso falhe tenta a determinística legado (fallback)
+      try {
+        const credential = EmailAuthProvider.credential(fbUser.email, currentPasswordForReauth);
+        await reauthenticateWithCredential(fbUser, credential);
+      } catch (err: any) {
+        if (isStaff) {
+          try {
+            const legacyPass = getDeterministicPassword(fbUser.email);
+            const credential = EmailAuthProvider.credential(fbUser.email, legacyPass);
+            await reauthenticateWithCredential(fbUser, credential);
+          } catch (legacyErr) {
+            throw err;
+          }
+        } else {
+          throw err;
+        }
+      }
+
       setReauthSuccess(true);
       setReauthRequired(false);
       showToast('Segurança confirmada! Prossiga com o salvamento.', 'success');
@@ -167,9 +203,10 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
       // 2. Update Email locally if changed
       let emailChanged = false;
-      if (email.trim() !== fbUser.email) {
+      const cleanEmail = email.trim().toLowerCase();
+      if (cleanEmail !== fbUser.email) {
         try {
-          await updateEmail(fbUser, email.trim());
+          await updateEmail(fbUser, cleanEmail);
           emailChanged = true;
         } catch (err: any) {
           if (err.code === 'auth/requires-recent-login') {
@@ -186,7 +223,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
       let passwordChanged = false;
       if (password) {
         try {
-          await updatePassword(fbUser, password);
+          const authPassword = password;
+          await updatePassword(fbUser, authPassword);
           passwordChanged = true;
         } catch (err: any) {
           if (err.code === 'auth/requires-recent-login') {
@@ -204,11 +242,15 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         const userDocRef = doc(db, 'users', fbUser.uid);
         const updatedData: any = {
           name,
-          email: email.trim(),
+          email: cleanEmail,
           avatar: selectedAvatar || '',
           photoURL: selectedAvatar || '',
           updatedAt: new Date()
         };
+
+        if (password) {
+          updatedData.password = password;
+        }
 
         await updateDoc(userDocRef, updatedData);
         onUpdateUser({

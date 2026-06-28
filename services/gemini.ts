@@ -41,6 +41,30 @@ const withRetry = async <T>(fn: () => Promise<T>, maxRetries = 3, initialDelay =
   }
 };
 
+const generateContentWithFallback = async (
+  ai: GoogleGenAI,
+  config: {
+    contents: any;
+    config?: any;
+  }
+) => {
+  const models = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
+  let lastErr = null;
+  for (const model of models) {
+    try {
+      return await withRetry(() => ai.models.generateContent({
+        model,
+        contents: config.contents,
+        config: config.config
+      }));
+    } catch (error) {
+      console.warn(`[Gemini AI] Model ${model} failed, trying next...`, error);
+      lastErr = error;
+    }
+  }
+  throw lastErr || new Error("All models failed to generate content");
+};
+
 let insightsCache: { data: string; timestamp: number } | null = null;
 const CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
 
@@ -81,12 +105,11 @@ export const getManagerInsights = async (salesData: any[], inventoryData: any[])
   Considere CMV, lucro e eficiência operacional.`;
 
   try {
-    const response = await withRetry(() => ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+    const response = await generateContentWithFallback(ai, {
       contents: prompt
-    }));
+    });
     
-    const result = response.text;
+    const result = response.text || "";
     insightsCache = { data: result, timestamp: Date.now() };
     return result;
   } catch (error: any) {
@@ -118,13 +141,12 @@ export const getObservationSuggestions = async (productName: string): Promise<st
   Retorne APENAS um array JSON de strings.`;
 
   try {
-    const response = await withRetry(() => ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+    const response = await generateContentWithFallback(ai, {
       contents: prompt,
       config: { 
         responseMimeType: "application/json" 
       }
-    }));
+    });
     return JSON.parse(response.text || '[]');
   } catch (error) {
     console.error("AI Suggestions Error:", error);
@@ -180,15 +202,14 @@ export const analyzeCMV = async (
     .slice(0, 50);
 
   try {
-    const response = await withRetry(() => ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+    const response = await generateContentWithFallback(ai, {
       contents: `Analise o CMV real destes produtos considerando o custo real e a Margem de Lucro Desejada configurada pelo lojista (indicada em cada produto como "targetMarginPercent", o que equivale a um percentual de CMV Alvo de "targetCmvPercent"). 
 
       A Margem de Lucro Desejada foi personalizada para categorias como Bebidas para ser menor (como 40%) e maior em pratos normais (como 60%).
       
       Instruções para o retorno:
       1. Calcule o Preço Sugerido Ideal de forma matemática baseado na margem desejada de cada produto: Preço Ideal = Custo / (1 - Margem Desejada / 100).
-      2. No retorno, arredonde o "newPrice" resultante para valores comerciais atraentes em real (R$) (ex: se der 19.82, sugira 19.90 ou 19.99; se der 24.15, sugira 24.00, 24.50 ou 24.90).
+      2. No retorno, arredonde o "newPrice" resulting para valores comerciais atraentes em real (R$) (ex: se der 19.82, sugira 19.90 ou 19.99; se der 24.15, sugira 24.00, 24.50 ou 24.90).
       3. Na "suggestion" (em português do Brasil e bem amigável):
          - Se o preço atual for saudável (CMV real menor ou igual ao CMV alvo, ou seja, margem real é satisfatória), parabenize o lojista e sugira manter ou dar uma pequena dica operacional para aumentar o giro.
          - Se o preço atual for crítico (CMV real maior que o CMV alvo, ou seja, margem real menor do que a desejada), explique de forma transparente o problema e como as matérias-primas pesaram, sugerindo que o novo preço ajudará a alcançar a margem de ${defaultTarget}% (ou a margem específica daquela categoria). Forneça dicas sobre como justificar ou compensar esse aumento aos clientes no cardápio de forma inteligente (por exemplo, enfatizando tamanho da porção, combos ou qualidade).
@@ -210,7 +231,7 @@ export const analyzeCMV = async (
           }
         }
       }
-    }));
+    });
 
     const result = JSON.parse(response.text || '[]');
     cmvCache = { data: result, timestamp: Date.now() };

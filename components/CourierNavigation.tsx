@@ -481,21 +481,21 @@ export const CourierNavigation: React.FC<CourierNavigationProps> = ({
   };
 
   return (
-    <div className="border border-slate-100 bg-slate-50/50 rounded-3xl overflow-hidden mt-3 shadow-inner">
+    <div className="border border-slate-850 bg-slate-950/50 rounded-3xl overflow-hidden mt-3 shadow-inner">
       {/* Heading trigger */}
       <button 
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="w-full p-4 flex items-center justify-between hover:bg-slate-50 transition-colors cursor-pointer text-left focus:outline-none"
+        className="w-full p-4 flex items-center justify-between hover:bg-slate-900 transition-colors cursor-pointer text-left focus:outline-none"
       >
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-teal-500/10 text-teal-600 flex items-center justify-center border border-teal-500/20 shadow-sm shrink-0">
+          <div className="w-8 h-8 rounded-xl bg-teal-500/10 text-teal-400 flex items-center justify-center border border-teal-500/20 shadow-sm shrink-0">
             <Navigation size={15} className={`animate-pulse ${expanded ? 'rotate-90' : ''} transition-transform`} />
           </div>
           <div>
-            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Passo a Passo GPS</h4>
+            <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest leading-none mb-1">Passo a Passo GPS</h4>
             <div className="flex items-center gap-1.5 leading-none">
-              <span className="text-xs font-extrabold text-slate-800">
+              <span className="text-xs font-extrabold text-slate-200">
                 {steps.length > 0 
                   ? `${formatDistance(totalDistance)} • ${formatDuration(totalDuration)}` 
                   : 'Navegação em Tempo Real'}
@@ -506,11 +506,11 @@ export const CourierNavigation: React.FC<CourierNavigationProps> = ({
         </div>
         <div className="flex items-center gap-2">
           {voiceEnabled ? (
-            <Volume2 size={15} className="text-teal-600" />
+            <Volume2 size={15} className="text-teal-400" />
           ) : (
-            <VolumeX size={15} className="text-slate-400" />
+            <VolumeX size={15} className="text-slate-500" />
           )}
-          {expanded ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
+          {expanded ? <ChevronUp size={16} className="text-slate-500" /> : <ChevronDown size={16} className="text-slate-500" />}
         </div>
       </button>
 

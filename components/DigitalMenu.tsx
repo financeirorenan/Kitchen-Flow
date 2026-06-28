@@ -74,6 +74,9 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
   const [selectedProductForModal, setSelectedProductForModal] = useState<Product | null>(null);
   const [checkoutStep, setCheckoutStep] = useState<'cart' | 'details' | 'payment' | 'success'>('cart');
   const [currentOrderId, setCurrentOrderId] = useState<string | null>(null);
+  const [showTotemUpsell, setShowTotemUpsell] = useState(false);
+  const [totemUpsellViewed, setTotemUpsellViewed] = useState(false);
+  const [totemActiveTab, setTotemActiveTab] = useState<'sides' | 'drinks' | 'desserts'>('sides');
 
   const hasExternalFavorite = isFavorite !== undefined && onToggleFavorite !== undefined;
   const [internalFavorite, setInternalFavorite] = useState<boolean>(() => {
@@ -125,18 +128,101 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
     if (isPickupEnabled) return 'takeout';
     return null;
   });
-  const [customerName, setCustomerName] = useState('');
-  const [customerPhone, setCustomerPhone] = useState('');
-  const [customerAddress, setCustomerAddress] = useState(initialAddress || 'Av. Central, 123');
+  const [customerName, setCustomerName] = useState(() => {
+    try {
+      const saved = localStorage.getItem('marketplace_profile');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return parsed.name || '';
+      }
+    } catch {}
+    return '';
+  });
+  const [customerPhone, setCustomerPhone] = useState(() => {
+    try {
+      const saved = localStorage.getItem('marketplace_profile');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return parsed.phone || '';
+      }
+    } catch {}
+    return '';
+  });
+  const [customerAddress, setCustomerAddress] = useState(() => {
+    if (initialAddress) return initialAddress;
+    try {
+      const saved = localStorage.getItem('marketplace_customer_address');
+      if (saved) return saved;
+    } catch {}
+    return 'Av. Central, 123';
+  });
   const [tableNumber, setTableNumber] = useState(initialTable || '');
   const [paymentMethod, setPaymentMethod] = useState('');
   const [changeFor, setChangeFor] = useState('');
+
+  // States for enhanced selection fluid process
+  const [modalQuantity, setModalQuantity] = useState(1);
+  const [optionsModalQuantity, setOptionsModalQuantity] = useState(1);
+  const [notes, setNotes] = useState('');
 
   // Geolocation and City Validation state
   const [isValidatingCity, setIsValidatingCity] = useState(false);
   const [validatedCity, setValidatedCity] = useState<string | null>(null);
   const [cityMatchError, setCityMatchError] = useState<string | null>(null);
   const [isLocatingUser, setIsLocatingUser] = useState(false);
+
+  // CEP (postal code) search robust states
+  const [addressMode, setAddressMode] = useState<'cep' | 'manual'>('cep');
+  const [cepInput, setCepInput] = useState('');
+  const [cepNumber, setCepNumber] = useState('');
+  const [cepComplement, setCepComplement] = useState('');
+  const [isCepLoading, setIsCepLoading] = useState(false);
+  const [cepError, setCepError] = useState<string | null>(null);
+  const [cepData, setCepData] = useState<{ street?: string; neighborhood?: string; city?: string; state?: string } | null>(null);
+
+  // Sync CEP components into customerAddress
+  React.useEffect(() => {
+    if (addressMode === 'cep' && cepData) {
+      const { street = '', neighborhood = '', city = '', state = '' } = cepData;
+      const numPart = cepNumber ? `, Nº ${cepNumber}` : '';
+      const compPart = cepComplement ? ` - ${cepComplement}` : '';
+      const formattedCep = cepInput ? ` - CEP ${cepInput}` : '';
+      const fullAddress = `${street}${numPart}${compPart}, ${neighborhood}, ${city} - ${state}${formattedCep}`;
+      setCustomerAddress(fullAddress);
+    }
+  }, [cepNumber, cepComplement, cepData, addressMode, cepInput]);
+
+  const handleCepSearch = async (cep: string) => {
+    const cleanCEP = cep.replace(/\D/g, '');
+    if (cleanCEP.length !== 8) {
+      setCepError('O CEP deve conter 8 dígitos.');
+      return;
+    }
+    setIsCepLoading(true);
+    setCepError(null);
+    try {
+      const response = await fetch(`https://viacep.com.br/ws/${cleanCEP}/json/`);
+      const data = await response.json();
+      if (data.erro) {
+        setCepError('CEP não encontrado. Verifique os dígitos ou use o modo manual.');
+        setCepData(null);
+      } else {
+        setCepData({
+          street: data.logradouro || '',
+          neighborhood: data.bairro || '',
+          city: data.localidade || '',
+          state: data.uf || ''
+        });
+        setCepError(null);
+      }
+    } catch (err) {
+      console.error(err);
+      setCepError('Erro de conexão ao buscar o CEP. Digite o endereço manualmente.');
+      setCepData(null);
+    } finally {
+      setIsCepLoading(false);
+    }
+  };
 
   const normalizeText = (str: string): string => {
     return str
@@ -323,6 +409,51 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
       .sort((a, b) => (a.displayOrder ?? 999) - (b.displayOrder ?? 999));
   }, [products, orderType]);
 
+  const availableUpsells = useMemo(() => {
+    const isManual = settings.totemUpsellMode === 'manual';
+    const manualIds = settings.totemUpsellProducts || [];
+    
+    const candidates = isManual 
+      ? availableProducts.filter(p => manualIds.includes(p.id))
+      : availableProducts;
+
+    const drinks: Product[] = [];
+    const desserts: Product[] = [];
+    const sides: Product[] = [];
+
+    candidates.forEach(p => {
+      const cat = (p.category || '').toLowerCase();
+      const name = (p.name || '').toLowerCase();
+      
+      const isDrink = cat.includes('bebida') || cat.includes('suco') || cat.includes('refri') ||
+                      name.includes('coca') || name.includes('guaran') || name.includes('suco') || 
+                      name.includes('água') || name.includes('agua') || name.includes('fanta') || 
+                      name.includes('refrigerante') || name.includes('refrigerantes');
+                      
+      const isDessert = cat.includes('sobremesa') || cat.includes('doce') || cat.includes('sorvete') || cat.includes('milk') ||
+                        name.includes('doce') || name.includes('sorvete') || name.includes('torta') || 
+                        name.includes('brownie') || name.includes('pudim') || name.includes('casquinha') || 
+                        name.includes('sundae') || name.includes('petit') || name.includes('shake') || 
+                        name.includes('sobremesa') || name.includes('mousse');
+                        
+      const isSide = cat.includes('acompanhamento') || cat.includes('porção') || cat.includes('porcao') || cat.includes('entrada') ||
+                     name.includes('frita') || name.includes('batata') || name.includes('onion') || 
+                     name.includes('anéis') || name.includes('nuggets') || name.includes('bacon') || 
+                     name.includes('molho') || name.includes('pão de alho') || name.includes('pao de alho');
+
+      if (isDrink) drinks.push(p);
+      else if (isDessert) desserts.push(p);
+      else if (isSide) sides.push(p);
+      else {
+        if (isManual) {
+          sides.push(p);
+        }
+      }
+    });
+
+    return { drinks: drinks.slice(0, 4), desserts: desserts.slice(0, 4), sides: sides.slice(0, 4) };
+  }, [availableProducts, settings.totemUpsellMode, settings.totemUpsellProducts]);
+
   const categories = useMemo(() => {
     const cats = Array.from(new Set(availableProducts.map(p => p.category || 'Geral')));
     const order = settings.categoryOrder || [];
@@ -362,12 +493,13 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
   }, 0);
   const cartCount = cart.reduce((acc, item) => acc + item.quantity, 0);
 
-  const addToCart = (product: Product, options?: ProductOption[]) => {
+  const addToCart = (product: Product, options?: ProductOption[], customQuantity = 1) => {
     const hasOptions = (product.optionCategories && product.optionCategories.length > 0) || (product.options && product.options.length > 0);
     
     if (hasOptions && !options) {
       setSelectedProductForOptions(product);
       setSelectedOptionsInModal([]);
+      setOptionsModalQuantity(customQuantity);
       setShowOptionsModal(true);
       return;
     }
@@ -383,18 +515,18 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
           return prev.map(item => 
             (item.product.id === product.id && 
              JSON.stringify(item.selectedOptions?.map(o => o.id).sort()) === JSON.stringify(options.map(o => o.id).sort())) 
-            ? { ...item, quantity: item.quantity + 1 } 
+            ? { ...item, quantity: item.quantity + customQuantity } 
             : item
           );
         }
-        return [...prev, { product, quantity: 1, selectedOptions: options }];
+        return [...prev, { product, quantity: customQuantity, selectedOptions: options }];
       }
 
       const existing = prev.find(item => item.product.id === product.id && (!item.selectedOptions || item.selectedOptions.length === 0));
       if (existing) {
-        return prev.map(item => (item.product.id === product.id && (!item.selectedOptions || item.selectedOptions.length === 0)) ? { ...item, quantity: item.quantity + 1 } : item);
+        return prev.map(item => (item.product.id === product.id && (!item.selectedOptions || item.selectedOptions.length === 0)) ? { ...item, quantity: item.quantity + customQuantity } : item);
       }
-      return [...prev, { product, quantity: 1 }];
+      return [...prev, { product, quantity: customQuantity }];
     });
     
     if (showOptionsModal) {
@@ -448,7 +580,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
       }
     }
 
-    addToCart(selectedProductForOptions, selectedOptionsInModal);
+    addToCart(selectedProductForOptions, selectedOptionsInModal, optionsModalQuantity);
   };
 
   const removeFromCart = (productId: string, options?: ProductOption[]) => {
@@ -482,12 +614,23 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
       paymentMethod,
       changeFor: paymentMethod === 'dinheiro' ? parseFloat(changeFor) || undefined : undefined,
       type: orderType,
+      notes: notes || undefined,
       status: 'pending',
       createdAt: new Date()
     };
 
     if (onPlaceOrder) {
       onPlaceOrder(orderData);
+    }
+
+    // Save profile and latest address to localStorage for effortless future checkouts
+    try {
+      localStorage.setItem('marketplace_profile', JSON.stringify({ name: customerName, phone: customerPhone }));
+      if (orderType === 'delivery' && customerAddress) {
+        localStorage.setItem('marketplace_customer_address', customerAddress);
+      }
+    } catch (err) {
+      console.warn("Could not save profile details to localStorage", err);
     }
 
     localStorage.setItem(`last_order_${settings.restaurantName}`, JSON.stringify({
@@ -504,8 +647,10 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
         `📞 *Telefone:* ${customerPhone}\n` +
         `📍 *Tipo:* ${orderType === 'delivery' ? 'Entrega' : 'Retirada'}\n` +
         (orderType === 'delivery' ? `🏠 *Endereço:* ${customerAddress}\n` : '') +
-        `💳 *Pagamento:* ${paymentMethod.toUpperCase()}\n\n` +
-        `🛒 *ITENS:*\n` +
+        (notes ? `📝 *Observação:* ${notes}\n` : '') +
+        `💳 *Pagamento:* ${paymentMethod.toUpperCase()}\n` +
+        (paymentMethod === 'dinheiro' && changeFor ? `💵 *Troco para:* R$ ${parseFloat(changeFor).toFixed(2)}\n` : '') +
+        `\n🛒 *ITENS:*\n` +
         cart.map(item => 
           `- ${item.quantity}x ${item.product.name} (R$ ${(item.product.price + (item.selectedOptions?.reduce((sum, opt) => sum + (opt.price || 0), 0) || 0)).toFixed(2)})\n` +
           (item.selectedOptions?.length ? `  _Adicionais: ${item.selectedOptions.map(o => o.name).join(', ')}_\n` : '')
@@ -515,6 +660,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
       window.open(`https://wa.me/55${whatsappNumber.replace(/\D/g, '')}?text=${message}`, '_blank');
     }
 
+    setCart([]); // Clear the cart so the bottom bar disappears immediately
     setCheckoutStep('success');
   };
 
@@ -523,13 +669,10 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
     setShowCart(false);
     setMenuStep('menu');
     setCheckoutStep('cart');
-    setCustomerName('');
-    setCustomerPhone('');
-    setCustomerAddress('Av. Central, 123');
-    setTableNumber(initialTable || '');
-    setPaymentMethod('');
+    setTotemUpsellViewed(false);
+    // Clear notes & change for next order, but DO NOT wipe saved name/phone/address so repeat order is super easy!
+    setNotes('');
     setChangeFor('');
-    setOrderType('delivery');
   };
 
   if (menuStep === 'welcome' && !initialTable) {
@@ -762,6 +905,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
             layout
             key={product.id} 
             onClick={() => {
+              setModalQuantity(1);
               setSelectedProductForModal(product);
               setShowProductModal(true);
             }}
@@ -811,17 +955,50 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                   </span>
                 </div>
                 
-                <button 
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedProductForModal(product);
-                    setShowProductModal(true);
-                  }}
-                  className="w-12 h-12 rounded-[1.3rem] flex items-center justify-center shadow-[0_8px_20px_rgba(0,0,0,0.08)] active:scale-90 transition-all border-none"
-                  style={{ backgroundColor: effectivePrimaryColor }}
-                >
-                  <Plus size={24} className="text-white" strokeWidth={3} />
-                </button>
+                {(() => {
+                  const hasOptions = (product.optionCategories && product.optionCategories.length > 0) || (product.options && product.options.length > 0);
+                  const itemInCartNoOptions = !hasOptions && cart.find(item => item.product.id === product.id && (!item.selectedOptions || item.selectedOptions.length === 0));
+
+                  if (itemInCartNoOptions) {
+                    return (
+                      <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-2xl border border-slate-100/60 shadow-inner" onClick={(e) => e.stopPropagation()}>
+                        <button 
+                          onClick={() => removeFromCart(product.id)}
+                          className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-slate-400 hover:text-rose-500 hover:border-rose-100 border border-slate-100/60 transition-all shadow-sm"
+                        >
+                          <Minus size={14} strokeWidth={2.5} />
+                        </button>
+                        <span className="font-black text-sm w-5 text-center text-slate-800">{itemInCartNoOptions.quantity}</span>
+                        <button 
+                          onClick={() => addToCart(product)}
+                          className="w-10 h-10 bg-white rounded-xl flex items-center justify-center border border-slate-100/60 hover:scale-105 transition-all shadow-sm"
+                          style={{ color: effectivePrimaryColor }}
+                        >
+                          <Plus size={14} strokeWidth={2.5} />
+                        </button>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (hasOptions) {
+                          setModalQuantity(1);
+                          setSelectedProductForModal(product);
+                          setShowProductModal(true);
+                        } else {
+                          addToCart(product);
+                        }
+                      }}
+                      className="w-12 h-12 rounded-[1.3rem] flex items-center justify-center shadow-[0_8px_20px_rgba(0,0,0,0.08)] active:scale-95 transition-all border-none"
+                      style={{ backgroundColor: effectivePrimaryColor }}
+                    >
+                      <Plus size={24} className="text-white" strokeWidth={3} />
+                    </button>
+                  );
+                })()}
               </div>
             </div>
           </motion.div>
@@ -840,7 +1017,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
       )}
 
       {/* BOTTOM NAV / CART BUTTON */}
-      {cartCount > 0 && (
+      {cartCount > 0 && checkoutStep !== 'success' && (
         <div className="fixed bottom-0 inset-x-0 bg-white border-t p-4 z-50 flex items-center justify-between shadow-[0_-10px_20px_rgba(0,0,0,0.05)]">
           <div className="flex items-center gap-4">
             <div className="relative">
@@ -885,13 +1062,61 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
               {/* CART HEADER */}
               <div className="p-6 flex items-center justify-between" style={{ backgroundColor: effectivePrimaryColor }}>
                 <div className="flex items-center gap-4">
-                  <button onClick={() => setShowCart(false)} className="text-white"><ArrowLeft size={24} /></button>
+                  <button onClick={() => checkoutStep === 'details' ? setCheckoutStep('cart' as const) : setShowCart(false)} className="text-white select-none active:scale-90 transition-transform"><ArrowLeft size={24} /></button>
                   <h3 className="text-xl font-black text-white tracking-tight">
                     {checkoutStep === 'cart' ? 'Seu Carrinho' : checkoutStep === 'details' ? 'Finalizar Pedido' : 'Pedido Confirmado'}
                   </h3>
                 </div>
                 <button onClick={() => setShowCart(false)} className="text-white"><ShoppingCart size={24} /></button>
               </div>
+
+              {/* STEPPER INDICATOR */}
+              {checkoutStep !== 'success' && (
+                <div className="bg-white border-b border-slate-100 px-6 py-4 flex items-center justify-evenly font-sans shrink-0 shadow-sm z-10">
+                  <button 
+                    onClick={() => setCheckoutStep('cart' as const)}
+                    className="flex items-center gap-2 select-none"
+                  >
+                    <span 
+                      className="w-6 h-6 rounded-full flex items-center justify-center font-black text-xs transition-colors"
+                      style={{ 
+                        backgroundColor: checkoutStep === 'cart' ? effectivePrimaryColor : '#F1F5F9',
+                        color: checkoutStep === 'cart' ? '#FFFFFF' : '#64748B'
+                      }}
+                    >
+                      1
+                    </span>
+                    <span className={`text-[10px] font-black uppercase tracking-wider transition-colors ${checkoutStep === 'cart' ? 'text-slate-900' : 'text-slate-400'}`}>Sacola</span>
+                  </button>
+
+                  <div className="w-12 h-1 bg-slate-100 rounded-full overflow-hidden relative">
+                    <div 
+                      className="absolute left-0 top-0 bottom-0 transition-all duration-300" 
+                      style={{ 
+                        backgroundColor: effectivePrimaryColor,
+                        width: checkoutStep === 'details' ? '100%' : '0%' 
+                      }} 
+                    />
+                  </div>
+
+                  <button 
+                    disabled={cart.length === 0 || cartTotal < minOrderValue}
+                    onClick={() => setCheckoutStep('details' as const)}
+                    className="flex items-center gap-2 select-none disabled:opacity-50"
+                  >
+                    <span 
+                      className="w-6 h-6 rounded-full flex items-center justify-center font-black text-xs transition-colors"
+                      style={{ 
+                        backgroundColor: checkoutStep === 'details' ? effectivePrimaryColor : '#F1F5F9',
+                        color: checkoutStep === 'details' ? '#FFFFFF' : '#64748B'
+                      }}
+                    >
+                      2
+                    </span>
+                    <span className={`text-[10px] font-black uppercase tracking-wider transition-colors ${checkoutStep === 'details' ? 'text-slate-900' : 'text-slate-400'}`}>Dados</span>
+                  </button>
+                </div>
+              )}
 
               <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar bg-slate-50/50">
                 {checkoutStep === 'cart' && (
@@ -970,11 +1195,13 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                     </div>
 
                     {/* OBSERVATIONS */}
-                    <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-50 space-y-2">
+                    <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100/50 space-y-2">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Observações</label>
                       <textarea 
-                        placeholder="Alguma observação no pedido?"
-                        className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-medium outline-none transition-all resize-none"
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                        placeholder="Alguma observação para o preparo? Ex: Sem cebola, sachês extras, etc."
+                        className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-semibold outline-none transition-all resize-none focus:bg-white"
                         rows={2}
                       />
                     </div>
@@ -1065,13 +1292,102 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                               </button>
                             </div>
                             
-                            <textarea 
-                              placeholder="Rua, número, bairro, complemento, cidade e estado..."
-                              className="w-full p-4 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold outline-none resize-none"
-                              rows={3}
-                              value={customerAddress}
-                              onChange={(e) => setCustomerAddress(e.target.value)}
-                            />
+                            {/* Toggle Mode */}
+                            <div className="flex gap-2 p-1 bg-slate-100 rounded-xl">
+                              <button
+                                type="button"
+                                onClick={() => setAddressMode('cep')}
+                                className={`flex-1 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all ${addressMode === 'cep' ? 'bg-white shadow text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
+                              >
+                                🔍 Buscar CEP
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setAddressMode('manual')}
+                                className={`flex-1 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all ${addressMode === 'manual' ? 'bg-white shadow text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
+                              >
+                                ✍️ Endereço Manual
+                              </button>
+                            </div>
+
+                            {addressMode === 'cep' ? (
+                              <div className="space-y-3 p-4 bg-slate-50 border border-slate-100 rounded-2xl animate-in fade-in duration-200">
+                                <div className="flex gap-2">
+                                  <div className="flex-1">
+                                    <input
+                                      type="text"
+                                      placeholder="Digite seu CEP (Ex: 01310-100)"
+                                      maxLength={9}
+                                      value={cepInput}
+                                      onChange={(e) => {
+                                        const clean = e.target.value.replace(/\D/g, '');
+                                        let formatted = clean;
+                                        if (clean.length > 5) {
+                                          formatted = `${clean.slice(0, 5)}-${clean.slice(5, 8)}`;
+                                        }
+                                        setCepInput(formatted);
+                                        if (clean.length === 8) {
+                                          handleCepSearch(clean);
+                                        }
+                                      }}
+                                      className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold placeholder-slate-400 outline-none focus:border-brand-primary"
+                                    />
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCepSearch(cepInput)}
+                                    disabled={isCepLoading}
+                                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-black text-[10px] uppercase tracking-wider rounded-xl transition-all disabled:opacity-50"
+                                  >
+                                    {isCepLoading ? 'Buscando...' : 'Buscar'}
+                                  </button>
+                                </div>
+
+                                {cepError && (
+                                  <p className="text-[10px] text-red-600 font-bold uppercase tracking-tight">{cepError}</p>
+                                )}
+
+                                {cepData && (
+                                  <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl">
+                                    <p className="text-[11px] font-bold text-slate-700">
+                                      📍 {cepData.street || 'Rua não definida (zona rural)'}, {cepData.neighborhood || 'Bairro não definido'}
+                                    </p>
+                                    <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">
+                                      {cepData.city} - {cepData.state}
+                                    </p>
+                                  </div>
+                                )}
+
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <input
+                                      type="text"
+                                      placeholder="Número (Ex: 105)"
+                                      value={cepNumber}
+                                      onChange={(e) => setCepNumber(e.target.value)}
+                                      className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-brand-primary"
+                                    />
+                                  </div>
+                                  <div>
+                                    <input
+                                      type="text"
+                                      placeholder="Complemento (Apto, bloco...)"
+                                      value={cepComplement}
+                                      onChange={(e) => setCepComplement(e.target.value)}
+                                      className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-brand-primary"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <textarea 
+                                placeholder="Rua, número, bairro, complemento, cidade e estado..."
+                                className="w-full p-4 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold outline-none resize-none"
+                                rows={3}
+                                value={customerAddress}
+                                onChange={(e) => setCustomerAddress(e.target.value)}
+                              />
+                            )}
 
                             {/* City Match Feedback Block */}
                             {isMarketplace && restaurantCity && (
@@ -1217,18 +1533,26 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
 
                     <div className="w-full space-y-3 pt-4">
                       <button 
-                        onClick={resetOrder}
+                        onClick={() => {
+                          setShowCart(false);
+                          if (isMarketplace && onBack) {
+                            onBack(); // Takes customer back to Marketplace main screen with tracking
+                          } else {
+                            resetOrder();
+                          }
+                        }}
                         className="w-full py-4 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl hover:opacity-90 transition-all flex items-center justify-center gap-2"
                         style={{ backgroundColor: effectivePrimaryColor }}
                       >
-                        <ShoppingBag size={18} />
-                        Fazer novo pedido
+                        <Clock size={18} />
+                        {isMarketplace ? 'Acompanhar Pedido' : 'Ir para o Cardápio'}
                       </button>
                       <button 
-                        onClick={() => setCheckoutStep('cart')}
-                        className="w-full py-4 text-slate-400 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 transition-all"
+                        onClick={resetOrder}
+                        className="w-full py-4 text-slate-500 hover:text-slate-700 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 transition-all flex items-center justify-center gap-1.5"
                       >
-                        Ver detalhes do pedido
+                        <ShoppingBag size={14} />
+                        Fazer novo pedido
                       </button>
                     </div>
                   </div>
@@ -1252,8 +1576,22 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                       (checkoutStep === 'details' && orderType === 'delivery' && (!customerAddress || !!cityMatchError || isValidatingCity))
                     }
                     onClick={() => {
-                      if (checkoutStep === 'cart') setCheckoutStep('details');
-                      else handleFinishOrder();
+                      if (checkoutStep === 'cart') {
+                        const hasSides = availableUpsells.sides.length > 0;
+                        const hasDrinks = availableUpsells.drinks.length > 0;
+                        const hasDesserts = availableUpsells.desserts.length > 0;
+                        if (!totemUpsellViewed && (hasSides || hasDrinks || hasDesserts)) {
+                          if (hasSides) setTotemActiveTab('sides');
+                          else if (hasDrinks) setTotemActiveTab('drinks');
+                          else if (hasDesserts) setTotemActiveTab('desserts');
+                          setShowTotemUpsell(true);
+                          setTotemUpsellViewed(true);
+                        } else {
+                          setCheckoutStep('details');
+                        }
+                      } else {
+                        handleFinishOrder();
+                      }
                     }}
                     className="w-full py-5 text-slate-900 rounded-2xl font-black text-xs uppercase tracking-[0.2em] shadow-xl active:scale-95 transition-all disabled:opacity-50"
                     style={{ backgroundColor: accentColor, boxShadow: `0 20px 25px -5px ${accentColor}33` }}
@@ -1262,6 +1600,205 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                   </button>
                 </div>
               )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MCDONALD'S TOTEM UP-SELLING MODAL */}
+      <AnimatePresence>
+        {showTotemUpsell && (
+          <div className="fixed inset-0 z-[150] flex items-center justify-center p-0 sm:p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                setShowTotemUpsell(false);
+                setCheckoutStep('details');
+              }}
+              className="absolute inset-0 bg-slate-950/85 backdrop-blur-md"
+            />
+            
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 50 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 50 }}
+              className="relative w-full max-w-3xl bg-white rounded-t-[3rem] sm:rounded-[3rem] overflow-hidden shadow-2xl flex flex-col h-[100vh] sm:h-[85vh] z-10"
+            >
+              {/* Gold/Yellow Theme Totem Header */}
+              <div className="p-6 bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-amber-950 flex flex-col items-center justify-center text-center relative shadow-md shrink-0">
+                <button 
+                  onClick={() => {
+                    setShowTotemUpsell(false);
+                    setCheckoutStep('details');
+                  }}
+                  className="absolute top-4 right-4 w-10 h-10 bg-white/30 hover:bg-white/50 backdrop-blur-md rounded-2xl flex items-center justify-center text-amber-950 transition-all active:scale-95"
+                >
+                  <X size={20} strokeWidth={2.5} />
+                </button>
+                <div className="inline-flex items-center gap-2 bg-amber-950 text-amber-300 text-[10px] font-black uppercase tracking-[0.2em] px-4 py-1.5 rounded-full mb-3 shadow-lg shadow-amber-950/20">
+                  <Sparkles size={12} className="text-amber-300 animate-pulse" />
+                  MÉTODO TOTEM SUGERIDO
+                </div>
+                <h3 className="text-2xl sm:text-3xl font-black italic uppercase tracking-tighter text-amber-950">
+                  Que tal um acompanhamento especial?
+                </h3>
+                <p className="text-xs text-amber-900 font-bold mt-1.5 max-w-md">
+                  Complete seu pedido com nossas opções mais queridas com descontos exclusivos e garanta a melhor experiência!
+                </p>
+              </div>
+
+              {/* TABS SELECTOR */}
+              <div className="bg-slate-50 border-b border-slate-100 p-4 flex items-center justify-center gap-3 shrink-0">
+                {availableUpsells.sides.length > 0 && (
+                  <button
+                    onClick={() => setTotemActiveTab('sides')}
+                    className={`px-5 py-3 rounded-2xl font-black text-xs uppercase tracking-wider transition-all duration-300 flex items-center gap-2 ${
+                      totemActiveTab === 'sides' 
+                        ? 'bg-amber-400 text-amber-950 shadow-md shadow-amber-400/20 scale-105' 
+                        : 'bg-white text-slate-500 border border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <span>🍟</span> Acompanhamentos
+                  </button>
+                )}
+                {availableUpsells.drinks.length > 0 && (
+                  <button
+                    onClick={() => setTotemActiveTab('drinks')}
+                    className={`px-5 py-3 rounded-2xl font-black text-xs uppercase tracking-wider transition-all duration-300 flex items-center gap-2 ${
+                      totemActiveTab === 'drinks' 
+                        ? 'bg-amber-400 text-amber-950 shadow-md shadow-amber-400/20 scale-105' 
+                        : 'bg-white text-slate-500 border border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <span>🥤</span> Bebidas Geladas
+                  </button>
+                )}
+                {availableUpsells.desserts.length > 0 && (
+                  <button
+                    onClick={() => setTotemActiveTab('desserts')}
+                    className={`px-5 py-3 rounded-2xl font-black text-xs uppercase tracking-wider transition-all duration-300 flex items-center gap-2 ${
+                      totemActiveTab === 'desserts' 
+                        ? 'bg-amber-400 text-amber-950 shadow-md shadow-amber-400/20 scale-105' 
+                        : 'bg-white text-slate-500 border border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <span>🍨</span> Sobremesas
+                  </button>
+                )}
+              </div>
+
+              {/* PRODUCT CARDS LIST */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-50/50 custom-scrollbar">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {availableUpsells[totemActiveTab].map((p: Product) => {
+                    const countInCart = cart.filter(item => item.product.id === p.id).reduce((sum, item) => sum + item.quantity, 0);
+                    return (
+                      <motion.div
+                        layout
+                        key={p.id}
+                        className="bg-white rounded-[2.5rem] p-5 border border-slate-100 shadow-sm flex gap-4 items-center relative hover:shadow-md transition-all duration-300 group"
+                      >
+                        {/* Image / Icon container */}
+                        <div className="w-20 h-20 bg-slate-50 rounded-3xl overflow-hidden shrink-0 flex items-center justify-center border border-slate-100 relative shadow-inner">
+                          {p.image ? (
+                            <img src={p.image} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" referrerPolicy="no-referrer" />
+                          ) : (
+                            <UtensilsCrossed size={28} className="text-slate-300" />
+                          )}
+                          {countInCart > 0 && (
+                            <div className="absolute -bottom-1 -right-1 w-7 h-7 bg-emerald-500 text-white rounded-xl flex items-center justify-center font-black text-xs shadow-lg border-2 border-white animate-scale-up">
+                              {countInCart}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Details */}
+                        <div className="flex-1 min-w-0">
+                          <span className="text-[8px] font-black uppercase text-amber-500 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded-md inline-block mb-1">
+                            {totemActiveTab === 'sides' ? 'Crocante & Quentinho' : totemActiveTab === 'drinks' ? 'Refrescante' : 'Irresistível'}
+                          </span>
+                          <h4 className="font-black text-slate-800 text-sm truncate uppercase italic tracking-tight block">
+                            {p.name}
+                          </h4>
+                          {p.description && (
+                            <p className="text-[10px] text-slate-400 font-medium line-clamp-1 mt-0.5">
+                              {p.description}
+                            </p>
+                          )}
+                          <div className="flex items-center gap-2 mt-2">
+                            <span className="font-black text-slate-900 text-sm">
+                              R$ {p.price.toFixed(2)}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Add/Remove Actions inside Totem Kiosk */}
+                        <div className="shrink-0">
+                          {countInCart > 0 ? (
+                            <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-2xl border border-slate-100 shadow-inner">
+                              <button 
+                                onClick={() => removeFromCart(p.id)} 
+                                className="w-8 h-8 bg-white text-slate-400 hover:text-rose-500 rounded-xl flex items-center justify-center transition-colors shadow-sm active:scale-90"
+                              >
+                                <Minus size={14} />
+                              </button>
+                              <span className="font-black text-xs w-4 text-center text-slate-700">{countInCart}</span>
+                              <button 
+                                onClick={() => addToCart(p)} 
+                                className="w-8 h-8 bg-white text-brand-primary rounded-xl flex items-center justify-center transition-all shadow-sm active:scale-90"
+                              >
+                                <Plus size={14} />
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => addToCart(p)}
+                              className="px-4 py-2.5 bg-slate-900 text-white hover:bg-amber-400 hover:text-amber-950 font-black text-[10px] uppercase tracking-widest rounded-2xl transition-all duration-300 active:scale-95 shadow-md flex items-center gap-1"
+                            >
+                              <Plus size={12} strokeWidth={3} /> Adicionar
+                            </button>
+                          )}
+                        </div>
+                      </motion.div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Totem Footer with Total and Confirm buttons */}
+              <div className="p-6 pb-8 bg-white border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">
+                <div className="text-center sm:text-left">
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em]">Resumo com adicionais</p>
+                  <div className="flex items-baseline gap-2 justify-center sm:justify-start">
+                    <span className="text-2xl font-black text-slate-900">R$ {cartTotal.toFixed(2)}</span>
+                    <span className="text-xs text-slate-400 font-bold">({cartCount} {cartCount === 1 ? 'item' : 'itens'})</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 w-full sm:w-auto">
+                  <button
+                    onClick={() => {
+                      setShowTotemUpsell(false);
+                      setCheckoutStep('details');
+                    }}
+                    className="flex-1 sm:flex-initial px-6 py-4 border border-slate-200 hover:border-slate-300 rounded-2xl font-black text-[10px] uppercase tracking-widest text-slate-500 bg-white transition-all active:scale-95"
+                  >
+                    Não, obrigado
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowTotemUpsell(false);
+                      setCheckoutStep('details');
+                    }}
+                    className="flex-1 sm:flex-initial px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest text-slate-900 active:scale-95 transition-all shadow-xl shadow-amber-400/20"
+                    style={{ backgroundColor: accentColor }}
+                  >
+                    Confirmar e Avançar ✨
+                  </button>
+                </div>
+              </div>
             </motion.div>
           </div>
         )}
@@ -1345,7 +1882,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                          <button 
                            onClick={() => {
                              setSelectedProductForOptions(selectedProductForModal);
-                             setSelectedOptionsInModal([]);
+                             setSelectedOptionsInModal([]); setOptionsModalQuantity(modalQuantity);
                              setShowOptionsModal(true);
                            }}
                            className="bg-brand-primary text-white p-2.5 rounded-xl shadow-lg shadow-brand-primary/20 active:scale-90 transition-all font-black text-[10px] uppercase"
@@ -1359,9 +1896,9 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                     <div className="flex items-center justify-between bg-slate-50 p-4 rounded-3xl">
                        <span className="text-xs font-black text-slate-800 uppercase tracking-widest">Quantidade</span>
                        <div className="flex items-center gap-6">
-                         <button className="w-10 h-10 rounded-xl bg-white shadow-sm flex items-center justify-center text-slate-400 border border-slate-100"><Minus size={18} /></button>
-                         <span className="text-lg font-black">1</span>
-                         <button className="w-10 h-10 rounded-xl bg-white shadow-sm flex items-center justify-center text-brand-primary border border-slate-100"><Plus size={18} /></button>
+                         <button className="w-10 h-10 rounded-xl bg-white shadow-sm flex items-center justify-center text-slate-400 border border-slate-100" onClick={() => setModalQuantity(prev => Math.max(1, prev - 1))}><Minus size={18} /></button>
+                         <span className="text-lg font-black">{modalQuantity}</span>
+                         <button className="w-10 h-10 rounded-xl bg-white shadow-sm flex items-center justify-center text-brand-primary border border-slate-100" onClick={() => setModalQuantity(prev => prev + 1)}><Plus size={18} /></button>
                        </div>
                     </div>
                   </div>
@@ -1493,13 +2030,13 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                      </div>
                      <div>
                         <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Preço Individual</p>
-                        <p className="text-lg font-black text-slate-900">R$ {(selectedProductForOptions.price + selectedOptionsInModal.reduce((sum, o) => sum + (o.price || 0), 0)).toFixed(2)}</p>
+                        <p className="text-lg font-black text-slate-900">R$ {((selectedProductForOptions.price + selectedOptionsInModal.reduce((sum, o) => sum + (o.price || 0), 0)) * optionsModalQuantity).toFixed(2)}</p>
                      </div>
                   </div>
                   <div className="flex items-center gap-5">
-                    <button className="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center text-slate-300"><Minus size={18} /></button>
-                    <span className="text-lg font-black">1</span>
-                    <button className="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center text-brand-primary"><Plus size={18} /></button>
+                    <button className="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center text-slate-300" onClick={() => setOptionsModalQuantity(prev => Math.max(1, prev - 1))}><Minus size={18} /></button>
+                    <span className="text-lg font-black">{optionsModalQuantity}</span>
+                    <button className="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center text-brand-primary" onClick={() => setOptionsModalQuantity(prev => prev + 1)}><Plus size={18} /></button>
                   </div>
                 </div>
                 <button 

@@ -231,7 +231,7 @@ const KDS: React.FC<KDSProps> = memo(({
 
       const tableRef = tables.find(t => t.id === order.tableNumber || (t as any).docId === order.tableNumber);
       return tableRef ? String(tableRef.number) : tNum.slice(-4);
-    }, [order.tableNumber, order.type]);
+    }, [order.tableNumber, order.type, tables]);
 
     return (
       <div className="bg-white border border-slate-200 rounded-lg shadow-sm hover:ring-2 hover:ring-brand-primary/20 transition-all group animate-in fade-in duration-300">
@@ -246,7 +246,7 @@ const KDS: React.FC<KDSProps> = memo(({
                 className="w-4 h-4 rounded border-slate-300 text-brand-primary focus:ring-brand-primary cursor-pointer transition-all active:scale-95" 
               />
               <div className="flex flex-col">
-                 <span className="font-bold text-slate-700 text-sm">{String(order?.id || '').slice(-2)} - {order.customerName || 'Consumidor não identificado'}</span>
+                 <span className="font-bold text-slate-700 text-sm">#{order.dailyNumber || String(order?.id || '').slice(-4).toUpperCase()} - {order.customerName || 'Consumidor não identificado'}</span>
                  <span className="text-[10px] text-slate-400 font-medium">Desde {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} ({timeElapsed}m)</span>
               </div>
             </div>

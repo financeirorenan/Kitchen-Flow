@@ -436,7 +436,7 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                   <div className="bg-white/10 p-1.5 rounded-lg backdrop-blur-md border border-white/20">
                     <Sparkles size={18} className="text-amber-300" />
                   </div>
-                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-300">GastroAI Intelligence</span>
+                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-300">KitchenFlow AI Intelligence</span>
                 </div>
                 <h2 className="text-2xl font-black mb-1.5 tracking-tighter">Otimização de CMV & Margens</h2>
                 <p className="text-indigo-100 text-xs leading-relaxed font-semibold max-w-xl">

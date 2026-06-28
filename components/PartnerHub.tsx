@@ -364,7 +364,7 @@ const PartnerHub: React.FC<PartnerHubProps> = memo(({
                   <span className="text-[9px] font-black uppercase tracking-widest">Segurança & API</span>
                </div>
                <div className="bg-black/30 p-3 rounded-xl border border-white/5">
-                  <p className="text-[8px] font-mono text-white/40 break-all">ID RESTAURANTE: {localStorage.getItem('tenant_id') || 'GastroAI-MASTER-001'}</p>
+                  <p className="text-[8px] font-mono text-white/40 break-all">ID RESTAURANTE: {localStorage.getItem('tenant_id') || 'KitchenFlow-MASTER-001'}</p>
                   <p className="text-[8px] font-mono text-white/40 mt-1">STATUS: ENCRYPTED_TUNNEL_ACTIVE</p>
                </div>
             </div>

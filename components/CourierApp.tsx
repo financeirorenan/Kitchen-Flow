@@ -12,6 +12,13 @@ import {
   Timestamp,
   addDoc
 } from 'firebase/firestore';
+import {
+  saveCourierProfileLocally,
+  getCourierProfileLocally,
+  addSyncQueueItem,
+  getSyncQueueItems,
+  syncCourierOfflineData
+} from '../utils/courierDB';
 import { Order, Courier, User, AdminSettings } from '../types';
 import { 
   Bike, 
@@ -36,6 +43,7 @@ import {
   Camera,
   X,
   Check,
+  Compass,
   Copy,
   Calendar,
   History,
@@ -43,7 +51,6 @@ import {
   User as UserIcon,
   ChevronDown,
   Info,
-  Compass,
   CreditCard,
   ShieldAlert,
   Star
@@ -164,6 +171,75 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
   const prevOrderIdsRef = useRef<string[]>([]);
   const isFirstLoadRef = useRef<boolean>(true);
 
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
+
+  const refreshSyncCount = async () => {
+    try {
+      const items = await getSyncQueueItems();
+      setPendingSyncCount(items.length);
+    } catch (e) {
+      console.warn("Could not get sync queue items count:", e);
+    }
+  };
+
+  const triggerIndexedDBSync = async () => {
+    if (!navigator.onLine) return;
+    try {
+      const { successCount } = await syncCourierOfflineData(currentUser.id);
+      if (successCount > 0) {
+        setToast({
+          message: `${successCount} dados salvos offline foram sincronizados com sucesso!`,
+          type: 'success'
+        });
+      }
+      refreshSyncCount();
+    } catch (e) {
+      console.warn("Error running auto-sync:", e);
+    }
+  };
+
+  useEffect(() => {
+    refreshSyncCount();
+    const interval = setInterval(refreshSyncCount, 12000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const loadCached = async () => {
+      try {
+        const cached = await getCourierProfileLocally(currentUser.id);
+        if (cached && !courierData) {
+          setCourierData(cached);
+          setLoading(false);
+        }
+      } catch (err) {
+        console.warn("Error loading offline profile data from IndexedDB:", err);
+      }
+    };
+    loadCached();
+  }, [currentUser.id]);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      triggerIndexedDBSync();
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      setToast({
+        message: 'Você está desconectado. Status e localização serão salvos e sincronizados assim que a conexão retornar.',
+        type: 'info'
+      });
+    };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [currentUser.id]);
+
   const [adminSettings, setAdminSettings] = useState<AdminSettings | null>(null);
   const [storeCoords, setStoreCoords] = useState<{ lat: number; lng: number }>({ lat: -21.3558, lng: -48.0642 }); // Default: Pradópolis
 
@@ -266,7 +342,7 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js')
         .then(reg => {
-          console.log('[GastroAI] Service Worker registrado:', reg);
+          console.log('[KitchenFlow AI] Service Worker registrado:', reg);
           if (currentUser) {
             setTimeout(() => {
               if (navigator.serviceWorker.controller) {
@@ -285,7 +361,7 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
           }
         })
         .catch(err => {
-          console.error('[GastroAI] Erro ao registrar Service Worker:', err);
+          console.error('[KitchenFlow AI] Erro ao registrar Service Worker:', err);
         });
     }
   }, [currentUser]);
@@ -340,18 +416,21 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
 
   // Pull courier data & subscribe to past 30 days orders
   useEffect(() => {
-    if (!currentUser.tenantId) return;
+    if (!currentUser.id) return;
 
     const courierDocRef = doc(db, 'couriers', currentUser.id);
     const unsubscribeCourier = onSnapshot(courierDocRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.data();
-        setCourierData({ 
+        const fullCourier = { 
           ...data, 
           id: snapshot.id,
           createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : data.createdAt,
           lastDailyFeeDate: data.lastDailyFeeDate instanceof Timestamp ? data.lastDailyFeeDate.toDate() : data.lastDailyFeeDate 
-        } as Courier);
+        } as Courier;
+
+        setCourierData(fullCourier);
+        saveCourierProfileLocally(fullCourier);
         setLoading(false);
       } else {
         const fixCourier = async () => {
@@ -368,21 +447,26 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
           };
           try {
             await setDoc(doc(db, 'couriers', currentUser.id), newCourier);
+            saveCourierProfileLocally(newCourier);
           } catch (err) {
             setLoading(false);
           }
         };
         fixCourier();
       }
+    }, (error) => {
+      console.error("Error subscribing to courier data Firestore:", error);
+      setLoading(false);
     });
 
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     thirtyDaysAgo.setHours(0, 0, 0, 0);
     
+    const tId = currentUser.tenantId || '';
     const q = query(
       collection(db, 'orders'),
-      where('tenantId', '==', currentUser.tenantId),
+      where('tenantId', '==', tId),
       where('courierId', '==', currentUser.id),
       where('createdAt', '>=', Timestamp.fromDate(thirtyDaysAgo))
     );
@@ -410,18 +494,55 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
       });
       
       setAssignedOrders(sorted);
+    }, (error) => {
+      console.error("Error subscribing to orders Firestore:", error);
     });
 
     // GPS location tracker
     let watchId: number;
     if ("geolocation" in navigator && courierData?.status !== 'offline') {
       watchId = navigator.geolocation.watchPosition(
-        (position) => {
-          updateDoc(doc(db, 'couriers', currentUser.id), {
-            currentLatitude: position.coords.latitude,
-            currentLongitude: position.coords.longitude,
-            updatedAt: new Date()
-          }).catch(console.error);
+        async (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+
+          // Atualiza dados no estado e no cache IDB de forma otimista para fluidez total
+          setCourierData(prev => {
+            if (!prev) return null;
+            const updated = {
+              ...prev,
+              currentLatitude: lat,
+              currentLongitude: lng,
+              updatedAt: new Date()
+            };
+            saveCourierProfileLocally(updated);
+            return updated;
+          });
+
+          if (!navigator.onLine) {
+            // Se estiver desconectado, enfileira
+            await addSyncQueueItem('location', {
+              currentLatitude: lat,
+              currentLongitude: lng
+            });
+            refreshSyncCount();
+          } else {
+            // Se estiver conectado, tenta atualizar Firestore diretamente
+            try {
+              await updateDoc(doc(db, 'couriers', currentUser.id), {
+                currentLatitude: lat,
+                currentLongitude: lng,
+                updatedAt: new Date()
+              });
+            } catch (fsErr) {
+              console.warn("[GPS Firebase Error] Erro ao sincronizar. Salvando no IndexedDB offline:", fsErr);
+              await addSyncQueueItem('location', {
+                currentLatitude: lat,
+                currentLongitude: lng
+              });
+              refreshSyncCount();
+            }
+          }
         },
         (error) => {
           console.warn("Geolocation error:", error);
@@ -436,7 +557,7 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
       unsubscribeOrders();
       if (watchId) navigator.geolocation.clearWatch(watchId);
     };
-  }, [currentUser.id, currentUser.tenantId, courierData?.status]);
+  }, [currentUser.id, currentUser.tenantId, courierData?.status, isOnline]);
 
   // Synchronise edits when db document is loaded
   useEffect(() => {
@@ -457,17 +578,47 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
   const toggleStatus = async () => {
     if (!courierData) return;
     const newStatus = courierData.status === 'offline' ? 'available' : 'offline';
+    
+    // Atualiza estado local de forma otimista
+    setCourierData(prev => prev ? { ...prev, status: newStatus } : null);
+
+    if (!navigator.onLine) {
+      // Offline: salva no perfil local no IDB e enfileira na fila de sincronização
+      const updated = { ...courierData, status: newStatus, updatedAt: new Date() } as Courier;
+      await saveCourierProfileLocally(updated);
+      await addSyncQueueItem('status', { status: newStatus });
+      refreshSyncCount();
+
+      setToast({
+        message: `Offline: Você ficou ${newStatus === 'available' ? 'disponível' : 'offline'} localmente. Será sincronizado ao reconectar!`,
+        type: 'info'
+      });
+      return;
+    }
+
+    // Online
     try {
       await updateDoc(doc(db, 'couriers', currentUser.id), {
         status: newStatus,
         updatedAt: new Date()
       });
+      
+      const updated = { ...courierData, status: newStatus, updatedAt: new Date() } as Courier;
+      await saveCourierProfileLocally(updated);
+
       setToast({
         message: newStatus === 'available' ? 'Você está online para receber entregas!' : 'Você está offline.',
         type: 'info'
       });
     } catch (err) {
       console.error("Error updating status:", err);
+      // Fallback em caso de falha de conexão provisória no Firestore
+      await addSyncQueueItem('status', { status: newStatus });
+      refreshSyncCount();
+      setToast({
+        message: 'Status atualizado com instabilidade. Salvo para sincronização em plano de fundo.',
+        type: 'info'
+      });
     }
   };
 
@@ -672,7 +823,7 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
   }
 
   return (
-    <div className="h-full w-full overflow-y-auto bg-[#f8fafb] pb-32">
+    <div className="h-full w-full overflow-y-auto bg-slate-950 text-slate-100 pb-32">
       {/* Toast Messages */}
       <AnimatePresence>
         {toast && (
@@ -709,8 +860,8 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
       />
 
       {/* Hero background banner */}
-      <div className="fixed top-0 left-0 right-0 h-64 bg-gradient-to-b from-brand-primary to-[#E03D0C] -z-10 rounded-b-[3.5rem] shadow-2xl shadow-orange-100/50 overflow-hidden">
-         <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full translate-x-1/2 -translate-y-1/2 blur-3xl" />
+      <div className="fixed top-0 left-0 right-0 h-64 bg-gradient-to-b from-slate-900 to-slate-950 -z-10 rounded-b-[3.5rem] border-b border-slate-800/50 shadow-2xl shadow-slate-950/80 overflow-hidden">
+         <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full translate-x-1/2 -translate-y-1/2 blur-3xl" />
       </div>
 
       {/* Unified Screen Header */}
@@ -735,6 +886,22 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                 {editingData.name.split(' ')[0]}
                 <ChevronRight size={14} className="opacity-50" />
               </h1>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <span className={`inline-flex items-center gap-1 text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full backdrop-blur-md ${
+                  isOnline 
+                    ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-500/30' 
+                    : 'bg-rose-500/20 text-rose-200 border border-rose-500/30 animate-pulse'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
+                  {isOnline ? 'Conectado' : 'Sem Conexão'}
+                </span>
+                
+                {pendingSyncCount > 0 && (
+                  <span className="inline-flex items-center gap-1 text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-200 border border-amber-500/30">
+                    {pendingSyncCount} {pendingSyncCount === 1 ? 'pendente' : 'pendentes'}
+                  </span>
+                )}
+              </div>
            </div>
         </div>
         <div>
@@ -760,13 +927,13 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
               className="space-y-6"
             >
               {/* Status Toggle Card */}
-              <div className="bg-white rounded-[2.5rem] p-6 shadow-xl shadow-slate-200/80 border border-slate-50">
+              <div className="bg-slate-900 rounded-[2.5rem] p-6 shadow-2xl shadow-slate-950/40 border border-slate-800/60">
                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex items-center gap-4">
-                       <div className={`w-4.5 h-4.5 rounded-full ${courierData?.status === 'offline' ? 'bg-slate-300' : 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.8)] animate-pulse'}`} />
+                       <div className={`w-4.5 h-4.5 rounded-full ${courierData?.status === 'offline' ? 'bg-slate-700' : 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.8)] animate-pulse'}`} />
                        <div className="flex flex-col">
-                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Status para entregas</span>
-                          <span className="text-lg font-black text-slate-800 tracking-tight mt-1">
+                          <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest leading-none">Status para entregas</span>
+                          <span className="text-lg font-black text-slate-100 tracking-tight mt-1">
                              {courierData?.status === 'offline' ? 'Desconectado' : 'Online & Ativo'}
                           </span>
                        </div>
@@ -775,8 +942,8 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                        onClick={toggleStatus}
                        className={`w-full sm:w-auto px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 shadow-lg ${
                           courierData?.status === 'offline' 
-                          ? 'bg-brand-primary text-white shadow-orange-100 hover:bg-[#E03D0C]' 
-                          : 'bg-rose-600 text-white shadow-rose-200 hover:bg-rose-700'
+                          ? 'bg-brand-primary text-white shadow-orange-950/20 hover:bg-[#E03D0C]' 
+                          : 'bg-rose-600 text-white shadow-rose-950/20 hover:bg-rose-700'
                        }`}
                     >
                        {courierData?.status === 'offline' ? 'Entrega Online' : 'Ficar Off-line'}
@@ -784,23 +951,42 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                  </div>
                  
                  {showLocationError && (
-                   <div className="mt-4 p-3.5 bg-amber-50 rounded-2xl flex items-center gap-3 text-amber-700 border border-amber-100">
+                   <div className="mt-4 p-3.5 bg-amber-950/20 rounded-2xl flex items-center gap-3 text-amber-400 border border-amber-900/30">
                       <AlertCircle size={16} />
                       <p className="text-[10px] font-black uppercase tracking-wider">Habilite seu GPS para que o lojista veja seu percurso.</p>
+                   </div>
+                 )}
+
+                 {pendingSyncCount > 0 && (
+                   <div className="mt-4 pt-4 border-t border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 animate-in fade-in duration-300">
+                     <div className="flex items-center gap-2 text-slate-400">
+                       <Compass size={14} className="text-amber-500 animate-spin" />
+                       <span className="text-[9px] font-black uppercase tracking-wider">
+                         {pendingSyncCount} {pendingSyncCount === 1 ? 'Atualização offline salva no IndexedDB' : 'Atualizações offline salvas no IndexedDB'}
+                       </span>
+                     </div>
+                     {isOnline && (
+                       <button
+                         onClick={triggerIndexedDBSync}
+                         className="px-3.5 py-2 bg-brand-primary hover:bg-[#E03D0C] text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-colors cursor-pointer active:scale-95 text-center shadow-md shadow-orange-950/30"
+                       >
+                         Sincronizar Agora
+                       </button>
+                     )}
                    </div>
                  )}
               </div>
 
               {/* Ready Deliveries alert lists as Notifications */}
               {readyDeliveries.length > 0 && (
-                <div className="bg-rose-50 border-2 border-rose-100/60 rounded-[2.5rem] p-6 space-y-4 animate-in slide-in-from-top-4 duration-300">
+                <div className="bg-rose-950/10 border-2 border-rose-900/30 rounded-[2.5rem] p-6 space-y-4 animate-in slide-in-from-top-4 duration-300">
                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-rose-500 text-white rounded-2xl flex items-center justify-center shadow-lg shadow-rose-200">
+                      <div className="w-10 h-10 bg-rose-500 text-white rounded-2xl flex items-center justify-center shadow-lg shadow-rose-950/20">
                          <Bell size={20} className="animate-bounce" />
                       </div>
                       <div>
-                         <span className="text-[10px] font-black text-rose-500 uppercase tracking-widest leading-none">Novas Corridas Prontas</span>
-                         <h3 className="text-base font-black text-slate-800 tracking-tight mt-1">
+                         <span className="text-[10px] font-black text-rose-400 uppercase tracking-widest leading-none">Novas Corridas Prontas</span>
+                         <h3 className="text-base font-black text-slate-200 tracking-tight mt-1">
                            Você tem {readyDeliveries.length} {readyDeliveries.length === 1 ? 'rota disponível' : 'rotas disponíveis'}!
                          </h3>
                       </div>
@@ -808,13 +994,13 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
 
                    <div className="space-y-3.5">
                       {readyDeliveries.map((order, idx) => (
-                         <div key={order.id} className="bg-white p-4.5 rounded-2xl border border-rose-100 flex flex-col md:flex-row justify-between gap-4 shadow-sm">
+                         <div key={order.id} className="bg-slate-900 p-4.5 rounded-2xl border border-rose-950/50 flex flex-col md:flex-row justify-between gap-4 shadow-sm">
                             <div className="min-w-0 flex-1">
                                <div className="flex items-center gap-2 mb-1.5">
-                                 <span className="text-[8px] font-black text-rose-500 uppercase tracking-widest bg-rose-50 px-2 py-0.5 rounded">Pedido #{String(order.id).slice(-4)}</span>
-                                 <span className="text-[9px] font-semibold text-slate-700 font-mono italic">({order.paymentMethod === 'dinheiro' ? 'Dinheiro' : 'Digital'})</span>
+                                 <span className="text-[8px] font-black text-rose-400 uppercase tracking-widest bg-rose-950/30 px-2 py-0.5 rounded border border-rose-900/20">Pedido #{String(order.id).slice(-4)}</span>
+                                 <span className="text-[9px] font-semibold text-slate-400 font-mono italic">({order.paymentMethod === 'dinheiro' ? 'Dinheiro' : 'Digital'})</span>
                                </div>
-                               <p className="text-xs font-bold text-slate-800 leading-normal mb-1">{order.customerAddress}</p>
+                               <p className="text-xs font-bold text-slate-300 leading-normal mb-1">{order.customerAddress}</p>
                                <span className="text-[10px] font-bold text-brand-primary">
                                   Ganhos: R$ {(order.courierEarnings || 0).toFixed(2)}
                                </span>
@@ -824,7 +1010,7 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                                   updateOrderStatus(order, 'delivering');
                                   setActiveTab('deliveries');
                                }}
-                               className="shrink-0 py-3 px-5 bg-brand-primary hover:bg-[#E03D0C] text-white rounded-xl text-[9px] font-black uppercase tracking-widest active:scale-95 transition-all text-center flex items-center justify-center gap-2 shadow-md shadow-orange-100"
+                               className="shrink-0 py-3 px-5 bg-brand-primary hover:bg-[#E03D0C] text-white rounded-xl text-[9px] font-black uppercase tracking-widest active:scale-95 transition-all text-center flex items-center justify-center gap-2 shadow-md shadow-orange-950/30"
                             >
                                <Bike size={14} /> Aceitar e Entregar
                             </button>
@@ -835,21 +1021,21 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
               )}
 
               {/* City Mini-Map View card as requested */}
-              <div className="bg-white rounded-[2.5rem] p-6 shadow-xl shadow-slate-100 border border-slate-50 space-y-4">
+              <div className="bg-slate-900 rounded-[2.5rem] p-6 shadow-xl shadow-slate-950/30 border border-slate-800/60 space-y-4">
                  <div className="flex items-center justify-between">
                     <div>
-                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Acompanhamento</span>
-                       <h3 className="text-lg font-black text-slate-800 tracking-tight mt-1">Miniatura do Mapa</h3>
+                       <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Acompanhamento</span>
+                       <h3 className="text-lg font-black text-slate-100 tracking-tight mt-1">Miniatura do Mapa</h3>
                     </div>
-                    <div className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1 rounded-full border border-slate-100">
+                    <div className="flex items-center gap-1.5 bg-slate-950 px-2.5 py-1 rounded-full border border-slate-850">
                       <div className="w-2 h-2 rounded-full bg-brand-primary animate-pulse" />
-                      <span className="text-[9px] font-black uppercase text-slate-500 tracking-wider">{adminSettings?.fiscal?.address?.municipio || 'Pradópolis'}</span>
+                      <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider">{adminSettings?.fiscal?.address?.municipio || 'Pradópolis'}</span>
                     </div>
                  </div>
 
                  {hasValidKey ? (
                    <APIProvider apiKey={MAPS_API_KEY} version="weekly">
-                     <div className="w-full h-60 rounded-[2rem] overflow-hidden border border-slate-100 relative">
+                     <div className="w-full h-60 rounded-[2rem] overflow-hidden border border-slate-850 relative">
                        <Map
                          defaultCenter={{ 
                            lat: courierData?.currentLatitude || storeCoords.lat, 
@@ -881,7 +1067,7 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                                   <div className="relative flex items-center justify-center">
                                     <div className="absolute w-7 h-7 bg-emerald-500/30 rounded-full animate-ping" />
                                     <div className="absolute w-4 h-4 bg-emerald-500/50 rounded-full animate-pulse" />
-                                    <div className="w-7 h-7 bg-emerald-600 rounded-full border-2 border-white flex items-center justify-center text-white shadow-xl relative z-10 animate-in zoom-in-50 duration-300">
+                                    <div className="w-7 h-7 bg-emerald-600 rounded-full border-2 border-slate-900 flex items-center justify-center text-white shadow-xl relative z-10 animate-in zoom-in-50 duration-300">
                                       <MapPin size={12} />
                                     </div>
                                     <div className="absolute -bottom-8 bg-slate-950 border border-white/10 text-white text-[7px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow-lg whitespace-nowrap opacity-90 z-20">
@@ -899,7 +1085,7 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                              lng: courierData?.currentLongitude || storeCoords.lng 
                            }}
                          >
-                           <div className="w-10 h-10 bg-brand-primary rounded-full border-4 border-white flex items-center justify-center text-white shadow-xl">
+                           <div className="w-10 h-10 bg-brand-primary rounded-full border-4 border-slate-900 flex items-center justify-center text-white shadow-xl">
                              <Bike size={18} />
                            </div>
                          </AdvancedMarker>
@@ -911,14 +1097,14 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                      </div>
                    </APIProvider>
                  ) : (
-                   <div className="w-full h-60 rounded-[2rem] overflow-hidden border border-slate-100 relative bg-slate-950 flex flex-col items-center justify-center p-6 text-center shadow-inner">
+                   <div className="w-full h-60 rounded-[2rem] overflow-hidden border border-slate-850 relative bg-slate-950 flex flex-col items-center justify-center p-6 text-center shadow-inner">
                      <div className="absolute inset-0 bg-[radial-gradient(#ffffff0a_1px,transparent_1px)] [background-size:16px_16px] opacity-60" />
                      
                      <div className="absolute w-[210px] h-[210px] rounded-full border-2 border-brand-primary/10 flex items-center justify-center">
                        <div className="absolute inset-0 rounded-full border-t border-brand-primary/30 animate-spin [animation-duration:5s]" />
                        <div className="absolute inset-8 rounded-full border border-dashed border-brand-primary/10" />
                        <div className="absolute w-12 h-12 bg-brand-primary/10 rounded-full flex items-center justify-center animate-pulse">
-                         <div className="w-6 h-6 bg-brand-primary rounded-full border-2 border-white flex items-center justify-center text-white shadow-lg">
+                         <div className="w-6 h-6 bg-brand-primary rounded-full border-2 border-slate-900 flex items-center justify-center text-white shadow-lg">
                            <Bike size={12} />
                          </div>
                        </div>
@@ -981,12 +1167,12 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
               )}
 
               {activeDeliveries.length === 0 ? (
-                <div className="bg-white rounded-[2.5rem] p-12 text-center border-2 border-dashed border-slate-100 shadow-md">
-                   <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6 border border-slate-100">
+                <div className="bg-slate-900 rounded-[2.5rem] p-12 text-center border-2 border-dashed border-slate-800 shadow-2xl shadow-slate-950/40">
+                   <div className="w-20 h-20 bg-slate-950 rounded-full flex items-center justify-center mx-auto mb-6 border border-slate-850">
                       <ShoppingBag size={32} className="text-slate-200" />
                    </div>
-                   <h3 className="text-lg font-black text-slate-800 tracking-tight mb-2">Sem Entregas no Momento</h3>
-                   <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Nenhuma entrega em rota ou pendente de início.</p>
+                   <h3 className="text-lg font-black text-slate-200 tracking-tight mb-2">Sem Entregas no Momento</h3>
+                   <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Nenhuma entrega em rota ou pendente de início.</p>
                 </div>
               ) : (
                 activeDeliveries.map((order, index) => (
@@ -995,29 +1181,29 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: index * 0.1 }}
-                    className="bg-white rounded-[2.5rem] overflow-hidden shadow-lg shadow-slate-250/70 border border-slate-50"
+                    className="bg-slate-900 rounded-[2.5rem] overflow-hidden shadow-2xl shadow-slate-950/40 border border-slate-800/60"
                   >
-                     <div className="p-6 border-b border-slate-50 flex justify-between items-start">
+                     <div className="p-6 border-b border-slate-800 flex justify-between items-start">
                         <div>
                            <div className="flex items-center gap-2 mb-1">
-                              <span className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black ${order.status === 'delivering' ? 'bg-brand-primary text-white font-black' : 'bg-[#FFF0EB] text-brand-primary'}`}>
+                              <span className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black ${order.status === 'delivering' ? 'bg-brand-primary text-white font-black' : 'bg-orange-950/20 text-brand-primary'}`}>
                                  {index + 1}
                               </span>
-                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Pedido #{String(order?.id || '').slice(-4)}</span>
+                              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Pedido #{String(order?.id || '').slice(-4)}</span>
                            </div>
-                           <h3 className="text-lg font-black text-slate-800 tracking-tighter mt-1">{order.customerName}</h3>
+                           <h3 className="text-lg font-black text-slate-100 tracking-tighter mt-1">{order.customerName}</h3>
                         </div>
-                        <div className={`px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest ${order.status === 'ready' ? 'bg-amber-100 text-amber-700' : 'bg-orange-100 text-[#FF4F18] animate-pulse'}`}>
+                        <div className={`px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest ${order.status === 'ready' ? 'bg-amber-950/30 text-amber-400 border border-amber-900/20' : 'bg-orange-950/30 text-[#FF4F18] animate-pulse border border-orange-900/20'}`}>
                            {order.status === 'ready' ? 'Aguardando' : 'Em Rota'}
                         </div>
                      </div>
 
-                     <div className="p-6 bg-slate-50/50 space-y-4">
+                     <div className="p-6 bg-slate-950/50 space-y-4">
                         <div className="flex items-start gap-3">
                            <MapPin size={20} className="text-rose-500 shrink-0 mt-0.5" />
                            <div className="flex-1 min-w-0">
-                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Endereço de Entrega</p>
-                              <p className="text-xs font-bold text-slate-700 leading-normal font-mono">{order.customerAddress}</p>
+                              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-0.5">Endereço de Entrega</p>
+                              <p className="text-xs font-bold text-slate-300 leading-normal font-mono">{order.customerAddress}</p>
                                {order.status === 'delivering' && (
                                  <CourierNavigation 
                                    order={order}
@@ -1028,25 +1214,25 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                            </div>
                         </div>
                         
-                        <div className="flex items-center justify-between pt-4 border-t border-slate-200/50">
+                        <div className="flex items-center justify-between pt-4 border-t border-slate-800">
                            <div className="flex items-center gap-2">
                               <Wallet size={14} className="text-[#FF4F18]" />
-                              <span className="text-xs font-black text-slate-800">R$ {order.total.toFixed(2)}</span>
-                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest truncate max-w-44">
+                              <span className="text-xs font-black text-slate-200">R$ {order.total.toFixed(2)}</span>
+                              <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest truncate max-w-44">
                                 ({order.paymentMethod === 'dinheiro' ? 'Dinheiro' + (order.changeFor ? ' (troco p/ R$ ' + order.changeFor.toFixed(2) + ')' : '') : 'Pago Online'})
                               </span>
                            </div>
                            <div className="flex items-center gap-2">
                               <Clock size={14} className="text-slate-400" />
-                              <span className="text-[10px] font-black text-slate-400 uppercase">30 Minutos</span>
+                              <span className="text-[10px] font-black text-slate-500 uppercase">30 Minutos</span>
                            </div>
                         </div>
                      </div>
 
-                     <div className="p-4 bg-white flex gap-3">
+                     <div className="p-4 bg-slate-900 flex gap-3">
                         <button 
                            onClick={() => openRoute(order.customerAddress || '')}
-                           className="flex-1 py-4 bg-slate-800 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 active:scale-95 transition-all shadow-md"
+                           className="flex-1 py-4 bg-slate-950 border border-slate-800/80 hover:bg-slate-900 text-slate-100 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 active:scale-95 transition-all shadow-lg shadow-slate-950/40"
                         >
                            <Navigation size={14} /> GPS
                         </button>
@@ -1054,14 +1240,14 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                         {order.status === 'ready' ? (
                           <button 
                              onClick={() => updateOrderStatus(order, 'delivering')}
-                             className="flex-[1.5] py-4 bg-brand-primary text-white rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg shadow-orange-100 active:scale-95 hover:bg-[#E03D0C] transition-all"
+                             className="flex-[1.5] py-4 bg-brand-primary text-white rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 shadow-orange-950/30 active:scale-95 hover:bg-[#E03D0C] transition-all"
                           >
                              <Bike size={16} /> Iniciar Entrega
                           </button>
                         ) : (
                           <button 
                              onClick={() => updateOrderStatus(order, 'delivered')}
-                             className="flex-[1.5] py-4 bg-emerald-500 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg shadow-emerald-100 active:scale-95 hover:bg-emerald-600 transition-all"
+                             className="flex-[1.5] py-4 bg-emerald-500 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 shadow-emerald-950/30 active:scale-95 hover:bg-emerald-600 transition-all"
                           >
                              <CheckCircle2 size={16} /> Entregue & Pago
                           </button>
@@ -1083,31 +1269,31 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
               className="space-y-6"
             >
               {/* Earnings Overview card */}
-              <div className="bg-white p-6 rounded-[2.5rem] shadow-xl shadow-slate-100 border border-slate-50 flex items-center justify-between">
+              <div className="bg-slate-900 p-6 rounded-[2.5rem] shadow-2xl shadow-slate-950/40 border border-slate-800/60 flex items-center justify-between">
                 <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-orange-50 text-brand-primary rounded-2xl flex items-center justify-center shadow-inner">
+                  <div className="w-12 h-12 bg-orange-950/20 text-brand-primary rounded-2xl flex items-center justify-center shadow-inner">
                     <TrendingUp size={24} />
                   </div>
                   <div>
-                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Ganhos Acumulados</span>
-                    <h3 className="text-2xl font-black text-slate-800 tracking-tight mt-1">R$ {courierData?.earnings?.toFixed(2) || '0,00'}</h3>
+                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest leading-none">Ganhos Acumulados</span>
+                    <h3 className="text-2xl font-black text-slate-100 tracking-tight mt-1">R$ {courierData?.earnings?.toFixed(2) || '0,00'}</h3>
                   </div>
                 </div>
                 
                 <div className="text-right">
-                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Registros</span>
-                  <span className="text-xs font-black text-slate-700 bg-slate-100 px-2 py-1 rounded-full">{earningsByDay.length} dias</span>
+                  <span className="text-[9px] font-black text-slate-500 uppercase tracking-wider block">Registros</span>
+                  <span className="text-xs font-black text-slate-300 bg-slate-950 px-2 py-1 rounded-full">{earningsByDay.length} dias</span>
                 </div>
               </div>
 
               {/* Day-by-day Breakdown List */}
               <div className="space-y-4">
-                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Valores a receber por dia</h3>
+                <h3 className="text-xs font-black text-slate-500 uppercase tracking-widest ml-1">Valores a receber por dia</h3>
                 
                 {earningsByDay.length === 0 ? (
-                  <div className="bg-white rounded-[2.5rem] p-12 text-center border-2 border-dashed border-slate-100">
-                    <Calendar size={32} className="text-slate-200 mx-auto mb-4" />
-                    <p className="text-xs font-heavy text-slate-400 uppercase tracking-widest font-black">Nenhuma entrega consolidada nos últimos 30 dias</p>
+                  <div className="bg-slate-900 rounded-[2.5rem] p-12 text-center border-2 border-dashed border-slate-800">
+                    <Calendar size={32} className="text-slate-700 mx-auto mb-4" />
+                    <p className="text-xs font-heavy text-slate-500 uppercase tracking-widest font-black">Nenhuma entrega consolidada nos últimos 30 dias</p>
                   </div>
                 ) : (
                   earningsByDay.map((dayGroup) => {
@@ -1115,14 +1301,14 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                     const isExpanded = expandedDay === dateStr;
 
                     return (
-                      <div key={dateStr} className="bg-white rounded-[2rem] p-5 border border-slate-100 shadow-sm space-y-4 overflow-hidden transition-all duration-300">
+                      <div key={dateStr} className="bg-slate-900 rounded-[2rem] p-5 border border-slate-800/60 shadow-sm space-y-4 overflow-hidden transition-all duration-300">
                         {/* Day Card Summary */}
                         <div 
                           onClick={() => setExpandedDay(isExpanded ? null : dateStr)}
                           className="flex items-center justify-between group cursor-pointer"
                         >
                           <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-slate-50 rounded-xl flex flex-col items-center justify-center border border-slate-100 text-slate-500">
+                            <div className="w-10 h-10 bg-slate-950 rounded-xl flex flex-col items-center justify-center border border-slate-800/80 text-slate-400">
                               <span className="text-[9px] font-black uppercase text-brand-primary leading-none">
                                 {dayGroup.date.getDate()}
                               </span>
@@ -1131,8 +1317,8 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                               </span>
                             </div>
                             <div>
-                              <h4 className="text-sm font-black text-slate-800 tracking-tight capitalize">{dayGroup.dateFormatted}</h4>
-                              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest leading-none mt-1">
+                              <h4 className="text-sm font-black text-slate-100 tracking-tight capitalize">{dayGroup.dateFormatted}</h4>
+                              <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest leading-none mt-1">
                                 {dayGroup.count} {dayGroup.count === 1 ? 'entrega' : 'entregas'} realizada
                               </p>
                             </div>
@@ -1141,7 +1327,7 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                           <div className="flex items-center gap-3">
                             <div className="text-right">
                               <span className="text-xs font-black text-brand-primary">R$ {dayGroup.totalCommission.toFixed(2)}</span>
-                              <span className="text-[8px] font-black uppercase tracking-wider block text-slate-400 mt-0.5">A Receber</span>
+                              <span className="text-[8px] font-black uppercase tracking-wider block text-slate-500 mt-0.5">A Receber</span>
                             </div>
                             <ChevronDown size={16} className={`text-slate-400 transform transition-transform duration-300 ${isExpanded ? 'rotate-180 text-brand-primary' : ''}`} />
                           </div>
@@ -1153,24 +1339,24 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                             initial={{ opacity: 0, height: 0 }}
                             animate={{ opacity: 1, height: 'auto' }}
                             exit={{ opacity: 0, height: 0 }}
-                            className="pt-4 border-t border-slate-100 space-y-3"
+                            className="pt-4 border-t border-slate-800 space-y-3"
                           >
-                            <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1">Relação de Entregas</span>
+                            <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest block mb-1">Relação de Entregas</span>
                             {dayGroup.orders.map((order) => (
                               <div 
                                 key={order.id} 
                                 onClick={() => setSelectedOrderSummary(order)}
-                                className="bg-slate-50 hover:bg-orange-50/30 p-3 rounded-2xl flex items-center justify-between gap-4 border border-slate-100 cursor-pointer transition-colors"
+                                className="bg-slate-950 hover:bg-slate-850/40 p-3 rounded-2xl flex items-center justify-between gap-4 border border-slate-850 cursor-pointer transition-colors"
                               >
                                 <div>
                                   <div className="flex items-center gap-1.5">
-                                    <span className="text-[9px] font-black text-slate-700">Pedido #{String(order.id).slice(-4)}</span>
-                                    <span className="text-[8px] font-bold text-slate-400 italic">({order.deliveredAt ? order.deliveredAt.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--'})</span>
+                                    <span className="text-[9px] font-black text-slate-300">Pedido #{String(order.id).slice(-4)}</span>
+                                    <span className="text-[8px] font-bold text-slate-500 italic">({order.deliveredAt ? order.deliveredAt.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--'})</span>
                                   </div>
-                                  <p className="text-[10px] text-slate-500 font-medium truncate max-w-[200px] mt-0.5">{order.customerAddress}</p>
+                                  <p className="text-[10px] text-slate-400 font-medium truncate max-w-[200px] mt-0.5">{order.customerAddress}</p>
                                 </div>
                                 <div className="text-right shrink-0">
-                                  <span className="text-xs font-black text-slate-800">+ R$ {(order.courierEarnings || 0).toFixed(2)}</span>
+                                  <span className="text-xs font-black text-slate-100">+ R$ {(order.courierEarnings || 0).toFixed(2)}</span>
                                   <span className="text-[7px] font-bold uppercase tracking-widest text-[#FF4F18] block">Comissão</span>
                                 </div>
                               </div>
@@ -1184,7 +1370,7 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
               </div>
 
               {/* Ledger notice */}
-              <div className="bg-[#111111] rounded-[2.5rem] p-8 text-white relative overflow-hidden shadow-lg shadow-slate-200">
+              <div className="bg-[#111111] rounded-[2.5rem] p-8 text-white relative overflow-hidden shadow-lg shadow-slate-950/40">
                  <div className="relative z-10">
                     <h3 className="text-xl font-black tracking-tighter mb-2">Resumo da Carteira</h3>
                     <p className="text-xs text-orange-200/80 font-medium">Todos os repasses e cobranças em dinheiro em mãos são calculados em tempo real.</p>
@@ -1204,9 +1390,9 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
               className="space-y-6"
             >
               {/* Top Avatar & Basic Bio Card */}
-              <div className="bg-white rounded-[2.5rem] p-6 shadow-xl shadow-slate-100 border border-slate-50 flex flex-col items-center text-center">
+              <div className="bg-slate-900 rounded-[2.5rem] p-6 shadow-2xl shadow-slate-950/40 border border-slate-800/60 flex flex-col items-center text-center">
                 <div className="relative group">
-                  <div className="w-24 h-24 bg-slate-100 rounded-[2.5rem] flex items-center justify-center overflow-hidden border-4 border-slate-50 shadow-inner relative">
+                  <div className="w-24 h-24 bg-slate-950 rounded-[2.5rem] flex items-center justify-center overflow-hidden border-4 border-slate-800 shadow-inner relative">
                     {editingData.photoURL ? (
                       <img src={editingData.photoURL} className="w-full h-full object-cover" alt="Perfil" />
                     ) : (
@@ -1215,29 +1401,29 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                   </div>
                   <button 
                     onClick={handlePhotoUpload}
-                    className="absolute -bottom-2 -right-2 w-10 h-10 bg-brand-primary text-white rounded-2xl shadow-lg flex items-center justify-center border-4 border-white active:scale-90 transition-all cursor-pointer"
+                    className="absolute -bottom-2 -right-2 w-10 h-10 bg-brand-primary text-white rounded-2xl shadow-lg flex items-center justify-center border-4 border-slate-900 active:scale-90 transition-all cursor-pointer"
                   >
                     <Camera size={16} />
                   </button>
                 </div>
-                <h3 className="text-xl font-black text-slate-800 tracking-tight mt-4">{courierData?.name || currentUser.name}</h3>
+                <h3 className="text-xl font-black text-slate-100 tracking-tight mt-4">{courierData?.name || currentUser.name}</h3>
                 
-                <div className="flex items-center gap-1 bg-amber-50 text-amber-600 border border-amber-100 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider mt-2">
+                <div className="flex items-center gap-1 bg-amber-950/20 text-amber-400 border border-amber-900/30 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider mt-2">
                   <Star size={12} className="fill-current" />
                   <span>Pontuação: 4.9 Estrelas</span>
                 </div>
               </div>
 
               {/* Financial Box moved to Profile Tab */}
-              <div className="bg-white rounded-[2.5rem] p-6 shadow-xl shadow-slate-150 border border-slate-50 space-y-5">
+              <div className="bg-slate-900 rounded-[2.5rem] p-6 shadow-2xl shadow-slate-950/40 border border-slate-800/60 space-y-5">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Resumo Financeiro</h3>
+                  <h3 className="text-xs font-black text-slate-500 uppercase tracking-widest">Resumo Financeiro</h3>
                   {courierData?.dailyFee && (
                     <div className="flex flex-col items-end">
-                      <span className={`px-2 py-0.5 rounded-full text-[7px] font-black uppercase tracking-widest ${courierData.lastDailyFeeDate?.toDateString() === new Date().toDateString() ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
+                      <span className={`px-2 py-0.5 rounded-full text-[7px] font-black uppercase tracking-widest ${courierData.lastDailyFeeDate?.toDateString() === new Date().toDateString() ? 'bg-emerald-950/25 text-emerald-400 border border-emerald-900/20' : 'bg-slate-950 text-slate-500'}`}>
                         {courierData.lastDailyFeeDate?.toDateString() === new Date().toDateString() ? 'Diária Hoje Aplicada' : 'Sem Diária Hoje'}
                       </span>
-                      <span className="text-[9px] font-black text-slate-500 mt-1">
+                      <span className="text-[9px] font-black text-slate-400 mt-1">
                         Valor base: R$ {courierData.dailyFee.toFixed(2)}
                       </span>
                     </div>
@@ -1247,16 +1433,16 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                 <div className="space-y-4">
                    <div className="flex justify-between items-center py-2 border-b border-slate-50">
                       <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tight">Total Comissões + Diárias</span>
-                      <span className="text-xs font-black text-slate-800">R$ {(courierData?.earnings || 0).toFixed(2)}</span>
+                      <span className="text-xs font-black text-slate-200">R$ {(courierData?.earnings || 0).toFixed(2)}</span>
                    </div>
                    <div className="flex justify-between items-center py-2 border-b border-slate-50">
                       <span className="text-[10px] font-bold text-amber-500 uppercase tracking-tight">Total Dinheiro em Mãos</span>
-                      <span className="text-xs font-black text-amber-600">R$ {(courierData?.cashHeld || 0).toFixed(2)}</span>
+                      <span className="text-xs font-black text-amber-400">R$ {(courierData?.cashHeld || 0).toFixed(2)}</span>
                    </div>
                    <div className="flex justify-between items-center pt-2">
                       <div className="flex flex-col">
-                        <span className="text-[10px] font-black text-slate-800 uppercase tracking-widest">A Receber Líquido</span>
-                        <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tighter">Ganhos - Dinheiro físico em mãos</span>
+                        <span className="text-[10px] font-black text-slate-200 uppercase tracking-widest">A Receber Líquido</span>
+                        <span className="text-[8px] font-bold text-slate-500 uppercase tracking-tighter">Ganhos - Dinheiro físico em mãos</span>
                       </div>
                       <span className={`text-base font-black ${(courierData?.earnings || 0) >= (courierData?.cashHeld || 0) ? 'text-[#FF4F18]' : 'text-rose-600'}`}>
                          R$ {((courierData?.earnings || 0) - (courierData?.cashHeld || 0)).toFixed(2)}
@@ -1292,7 +1478,7 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                            setToast({ message: 'Erro ao processar acerto de dinheiro.', type: 'error' });
                          }
                        }}
-                       className="w-full mt-4 py-3 bg-slate-900 border border-slate-800 hover:bg-slate-800 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-lg"
+                       className="w-full mt-4 py-3 bg-slate-950 border border-slate-800/80 hover:bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-lg"
                      >
                        <DollarSign size={14} className="text-brand-primary" />
                        Acertar conta com o Caixa
@@ -1302,51 +1488,51 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
               </div>
 
               {/* Dados Pessoais Inputs */}
-              <div className="bg-white rounded-[2.5rem] p-6 shadow-xl shadow-slate-100 border border-slate-50 space-y-4">
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 block mb-2">Dados Individuais de Cadastro</span>
+              <div className="bg-slate-900 rounded-[2.5rem] p-6 shadow-2xl shadow-slate-950/40 border border-slate-800/60 space-y-4">
+                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1 block mb-2">Dados Individuais de Cadastro</span>
                 
                 <div className="space-y-4">
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome Completo</label>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Nome Completo</label>
                     <input 
                       type="text" 
                       value={editingData.name}
                       onChange={(e) => setEditingData(prev => ({ ...prev, name: e.target.value }))}
-                      className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-2 focus:ring-[#FF4F18]/20 focus:border-[#FF4F18] transition-all"
+                      className="w-full p-4 bg-slate-950 border border-slate-800 rounded-2xl text-sm font-bold text-slate-200 outline-none focus:ring-2 focus:ring-[#FF4F18]/20 focus:border-[#FF4F18] transition-all"
                     />
                   </div>
 
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">WhatsApp</label>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">WhatsApp</label>
                     <input 
                       type="tel" 
                       value={editingData.phone}
                       onChange={(e) => setEditingData(prev => ({ ...prev, phone: maskPhone(e.target.value) }))}
-                      className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-2 focus:ring-[#FF4F18]/20 focus:border-[#FF4F18] transition-all"
+                      className="w-full p-4 bg-slate-950 border border-slate-800 rounded-2xl text-sm font-bold text-slate-200 outline-none focus:ring-2 focus:ring-[#FF4F18]/20 focus:border-[#FF4F18] transition-all"
                     />
                   </div>
 
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Chave Pix para repasses</label>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Chave Pix para repasses</label>
                     <div className="relative">
                       <input 
                         type="text" 
                         placeholder="CPF, E-mail, Celular ou Aleatória"
                         value={editingData.pixKey}
                         onChange={(e) => setEditingData(prev => ({ ...prev, pixKey: e.target.value }))}
-                        className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-2 focus:ring-[#FF4F18]/20 focus:border-[#FF4F18] pr-12 transition-all"
+                        className="w-full p-4 bg-slate-950 border border-slate-800 rounded-2xl text-sm font-bold text-slate-200 outline-none focus:ring-2 focus:ring-[#FF4F18]/20 focus:border-[#FF4F18] pr-12 transition-all"
                       />
-                      <CreditCard size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <CreditCard size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500" />
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tipo de Veículo</label>
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Tipo de Veículo</label>
                       <select
                         value={editingData.vehicleType}
                         onChange={(e) => setEditingData(prev => ({ ...prev, vehicleType: e.target.value as any }))}
-                        className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-2 focus:ring-[#FF4F18]/20 focus:border-[#FF4F18] transition-all"
+                        className="w-full p-4 bg-slate-950 border border-slate-800 rounded-2xl text-sm font-bold text-slate-200 outline-none focus:ring-2 focus:ring-[#FF4F18]/20 focus:border-[#FF4F18] transition-all"
                       >
                         <option value="bike">Bicicleta</option>
                         <option value="moto">Motocicleta</option>
@@ -1355,37 +1541,37 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                     </div>
 
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Placa do Veículo</label>
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Placa do Veículo</label>
                       <input 
                         type="text" 
                         placeholder="Ex: ABC1D23"
                         value={editingData.vehiclePlate}
                         onChange={(e) => setEditingData(prev => ({ ...prev, vehiclePlate: e.target.value.toUpperCase() }))}
-                        className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-2 focus:ring-[#FF4F18]/20 focus:border-[#FF4F18] transition-all"
+                        className="w-full p-4 bg-slate-950 border border-slate-800 rounded-2xl text-sm font-bold text-slate-200 outline-none focus:ring-2 focus:ring-[#FF4F18]/20 focus:border-[#FF4F18] transition-all"
                       />
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Documento CPF</label>
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Documento CPF</label>
                       <input 
                         type="text" 
                         placeholder="Apenas números"
                         value={editingData.document}
                         onChange={(e) => setEditingData(prev => ({ ...prev, document: e.target.value }))}
-                        className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-2 focus:ring-[#FF4F18]/20 focus:border-[#FF4F18] transition-all"
+                        className="w-full p-4 bg-slate-950 border border-slate-800 rounded-2xl text-sm font-bold text-slate-200 outline-none focus:ring-2 focus:ring-[#FF4F18]/20 focus:border-[#FF4F18] transition-all"
                       />
                     </div>
 
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Sua CNH</label>
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Sua CNH</label>
                       <input 
                         type="text" 
                         placeholder="Registro da CNH"
                         value={editingData.cnh}
                         onChange={(e) => setEditingData(prev => ({ ...prev, cnh: e.target.value }))}
-                        className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-2 focus:ring-[#FF4F18]/20 focus:border-[#FF4F18] transition-all"
+                        className="w-full p-4 bg-slate-950 border border-slate-800 rounded-2xl text-sm font-bold text-slate-200 outline-none focus:ring-2 focus:ring-[#FF4F18]/20 focus:border-[#FF4F18] transition-all"
                       />
                     </div>
                   </div>
@@ -1395,7 +1581,7 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                   <button 
                     onClick={handleSaveProfile}
                     disabled={saving}
-                    className="w-full py-4 bg-brand-primary hover:bg-[#E03D0C] text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-orange-100 flex items-center justify-center gap-2 disabled:opacity-50 transition-all active:scale-95 cursor-pointer"
+                    className="w-full py-4 bg-brand-primary hover:bg-[#E03D0C] text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-orange-950/20 flex items-center justify-center gap-2 disabled:opacity-50 transition-all active:scale-95 cursor-pointer"
                   >
                     {saving ? (
                       <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -1413,10 +1599,10 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
       </main>
 
       {/* Floating Bottom Nav - Elegant tab switcher with 4 tabs spacing */}
-      <nav className="fixed bottom-6 left-6 right-6 h-20 bg-white/95 backdrop-blur-md rounded-[2.2rem] shadow-[0_15px_30px_rgba(0,0,0,0.08)] border border-white/50 flex items-center justify-around px-2 z-50">
+      <nav className="fixed bottom-6 left-6 right-6 h-20 bg-slate-900/95 backdrop-blur-md rounded-[2.2rem] shadow-[0_15px_30px_rgba(0,0,0,0.5)] border border-slate-800/80 flex items-center justify-around px-2 z-50">
          <button 
            onClick={() => setActiveTab('home')}
-           className={`flex flex-col items-center justify-center w-14 h-14 rounded-2xl gap-1 transition-all ${activeTab === 'home' ? 'text-brand-primary scale-110 font-bold bg-orange-50/40' : 'text-slate-300 hover:text-slate-400'}`}
+           className={`flex flex-col items-center justify-center w-14 h-14 rounded-2xl gap-1 transition-all ${activeTab === 'home' ? 'text-brand-primary scale-110 font-bold bg-orange-950/25' : 'text-slate-500 hover:text-slate-400'}`}
            title="Início"
          >
             <Compass size={22} strokeWidth={activeTab === 'home' ? 3 : 2} />
@@ -1425,13 +1611,13 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
 
          <button 
            onClick={() => setActiveTab('deliveries')}
-           className={`flex flex-col items-center justify-center w-14 h-14 rounded-2xl gap-1 transition-all relative ${activeTab === 'deliveries' ? 'text-brand-primary scale-110 font-bold bg-orange-50/40' : 'text-slate-300 hover:text-slate-400'}`}
+           className={`flex flex-col items-center justify-center w-14 h-14 rounded-2xl gap-1 transition-all relative ${activeTab === 'deliveries' ? 'text-brand-primary scale-110 font-bold bg-orange-950/25' : 'text-slate-500 hover:text-slate-400'}`}
            title="Corridas"
          >
             <Bike size={22} strokeWidth={activeTab === 'deliveries' ? 3 : 2} />
             <span className="text-[7.5px] font-black uppercase tracking-widest">Rotas</span>
             {activeDeliveries.length > 0 && (
-              <span className="absolute top-1 right-1 w-4 h-4 bg-rose-500 rounded-full border border-white flex items-center justify-center text-[8px] font-black text-white">
+              <span className="absolute top-1 right-1 w-4 h-4 bg-rose-500 rounded-full border border-slate-900 flex items-center justify-center text-[8px] font-black text-white">
                  {activeDeliveries.length}
               </span>
             )}
@@ -1439,7 +1625,7 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
 
          <button 
            onClick={() => setActiveTab('earnings')}
-           className={`flex flex-col items-center justify-center w-14 h-14 rounded-2xl gap-1 transition-all ${activeTab === 'earnings' ? 'text-brand-primary scale-110 font-bold bg-orange-50/40' : 'text-slate-300 hover:text-slate-400'}`}
+           className={`flex flex-col items-center justify-center w-14 h-14 rounded-2xl gap-1 transition-all ${activeTab === 'earnings' ? 'text-brand-primary scale-110 font-bold bg-orange-950/25' : 'text-slate-500 hover:text-slate-400'}`}
            title="Valores por dia"
          >
             <Calendar size={22} strokeWidth={activeTab === 'earnings' ? 3 : 2} />
@@ -1448,7 +1634,7 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
 
          <button 
            onClick={() => setActiveTab('profile')}
-           className={`flex flex-col items-center justify-center w-14 h-14 rounded-2xl gap-1 transition-all ${activeTab === 'profile' ? 'text-brand-primary scale-110 font-bold bg-orange-50/40' : 'text-slate-300 hover:text-slate-400'}`}
+           className={`flex flex-col items-center justify-center w-14 h-14 rounded-2xl gap-1 transition-all ${activeTab === 'profile' ? 'text-brand-primary scale-110 font-bold bg-orange-950/25' : 'text-slate-500 hover:text-slate-400'}`}
            title="Meu Perfil"
          >
             <UserIcon size={22} strokeWidth={activeTab === 'profile' ? 3 : 2} />
@@ -1471,34 +1657,34 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="w-full max-w-md bg-white rounded-[3rem] shadow-2xl relative z-10 overflow-hidden max-h-[90vh] flex flex-col"
+              className="w-full max-w-md bg-slate-900 rounded-[3rem] shadow-2xl relative z-10 overflow-hidden max-h-[90vh] flex flex-col border border-slate-800/80"
             >
-              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-orange-50/50">
+              <div className="p-6 border-b border-slate-800 flex items-center justify-between bg-orange-950/10">
                 <div>
-                  <span className="text-[8px] font-black uppercase tracking-widest text-[#FF4F18] bg-orange-100 px-2.5 py-1 rounded-full border border-orange-200/50">
+                  <span className="text-[8px] font-black uppercase tracking-widest text-[#FF4F18] bg-orange-950/30 px-2.5 py-1 rounded-full border border-orange-900/20">
                     Entrega Concluída
                   </span>
-                  <h2 className="text-lg font-black text-slate-800 tracking-tight mt-2">
+                  <h2 className="text-lg font-black text-slate-100 tracking-tight mt-2">
                     Resumo de Entrega
                   </h2>
                 </div>
                 <button 
                   onClick={() => setSelectedOrderSummary(null)} 
-                  className="p-2 bg-white hover:bg-slate-50 text-slate-400 rounded-xl transition-all shadow-sm border border-slate-100 cursor-pointer"
+                  className="p-2 bg-slate-950 hover:bg-slate-900 text-slate-400 rounded-xl transition-all shadow-sm border border-slate-800/80 cursor-pointer"
                 >
                   <X size={16} />
                 </button>
               </div>
 
               <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
-                <div className="flex justify-between items-center bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                <div className="flex justify-between items-center bg-slate-950 p-4 rounded-2xl border border-slate-800">
                   <div>
-                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Pedido ID</p>
-                    <p className="font-mono text-xs font-bold text-slate-700">#{selectedOrderSummary.id.slice(-6).toUpperCase()}</p>
+                    <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Pedido ID</p>
+                    <p className="font-mono text-xs font-bold text-slate-300">#{selectedOrderSummary.id.slice(-6).toUpperCase()}</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Entregue Em</p>
-                    <p className="text-xs font-bold text-slate-700">
+                    <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Entregue Em</p>
+                    <p className="text-xs font-bold text-slate-300">
                       {selectedOrderSummary.deliveredAt 
                         ? selectedOrderSummary.deliveredAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
                         : '--:--'}
@@ -1507,30 +1693,30 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                 </div>
 
                 <div className="space-y-2">
-                  <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Dados do Cliente</h4>
-                  <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
+                  <h4 className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Dados do Cliente</h4>
+                  <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3">
                     <div className="flex items-start gap-2.5">
                       <UserCircle size={16} className="text-brand-primary mt-0.5" />
                       <div>
-                        <p className="text-xs font-bold text-slate-800">{selectedOrderSummary.customerName || 'Não Informado'}</p>
+                        <p className="text-xs font-bold text-slate-200">{selectedOrderSummary.customerName || 'Não Informado'}</p>
                         {selectedOrderSummary.customerPhone && (
-                          <p className="text-[10px] text-slate-400 font-medium">{maskPhone(selectedOrderSummary.customerPhone)}</p>
+                          <p className="text-[10px] text-slate-500 font-medium">{maskPhone(selectedOrderSummary.customerPhone)}</p>
                         )}
                       </div>
                     </div>
                     {selectedOrderSummary.customerAddress && (
-                      <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-100/50">
+                      <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-800/60">
                         <div className="flex items-start gap-2.5 flex-1 min-w-0">
                           <MapPin size={16} className="text-brand-primary mt-0.5 shrink-0" />
                           <div className="min-w-0">
-                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Endereço de Entrega</p>
-                            <p className="text-[11px] font-medium text-slate-600 leading-normal">{selectedOrderSummary.customerAddress}</p>
+                            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-0.5">Endereço de Entrega</p>
+                            <p className="text-[11px] font-medium text-slate-400 leading-normal">{selectedOrderSummary.customerAddress}</p>
                           </div>
                         </div>
                         <button
                           type="button"
                           onClick={() => copyToClipboard(selectedOrderSummary.customerAddress || '')}
-                          className="shrink-0 flex items-center gap-1.5 bg-slate-50 hover:bg-orange-50 text-slate-500 hover:text-brand-primary p-2 px-3 rounded-xl border border-slate-100 hover:border-orange-150 transition-all cursor-pointer font-bold active:scale-95 text-[9px] font-black uppercase tracking-wider"
+                          className="shrink-0 flex items-center gap-1.5 bg-slate-900 hover:bg-slate-950 text-slate-400 hover:text-brand-primary p-2 px-3 rounded-xl border border-slate-800 hover:border-brand-primary/40 transition-all cursor-pointer font-bold active:scale-95 text-[9px] font-black uppercase tracking-wider"
                         >
                           {copiedAddress ? (
                             <Check size={12} className="text-brand-primary" />
@@ -1547,34 +1733,34 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                 {/* Items Box */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Itens do Pedido</h4>
-                    <span className="text-[9px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                    <h4 className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Itens do Pedido</h4>
+                    <span className="text-[9px] font-bold text-slate-400 bg-slate-950 px-2 py-0.5 rounded-full border border-slate-800">
                       {(selectedOrderSummary.items || []).reduce((sum, item) => sum + item.quantity, 0)} {(selectedOrderSummary.items || []).reduce((sum, item) => sum + item.quantity, 0) === 1 ? 'item' : 'itens'}
                     </span>
                   </div>
                   
-                  <div className="border border-slate-100 rounded-2xl overflow-hidden divide-y divide-slate-100 bg-white">
+                  <div className="border border-slate-800 rounded-2xl overflow-hidden divide-y divide-slate-800/60 bg-slate-950">
                     {(selectedOrderSummary.items || []).map((item, idx) => (
-                      <div key={idx} className="p-3.5 flex items-start justify-between gap-4 hover:bg-slate-50/50 transition-colors">
+                      <div key={idx} className="p-3.5 flex items-start justify-between gap-4 hover:bg-slate-900/40 transition-colors">
                         <div className="flex-1">
                           <div className="flex items-center gap-1.5">
-                            <span className="text-xs font-black text-brand-primary bg-orange-50 px-1.5 py-0.5 rounded uppercase font-sans border border-orange-100">
+                            <span className="text-xs font-black text-brand-primary bg-orange-950/30 px-1.5 py-0.5 rounded uppercase font-sans border border-orange-900/20">
                               {item.quantity}x
                             </span>
-                            <span className="text-xs font-bold text-slate-800">{item.name}</span>
+                            <span className="text-xs font-bold text-slate-200">{item.name}</span>
                           </div>
                           
                           {item.selectedOptions && item.selectedOptions.length > 0 && (
                             <div className="mt-1 pl-8 flex flex-wrap gap-1">
                               {item.selectedOptions.map((opt, oIdx) => (
-                                <span key={oIdx} className="text-[8px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-md uppercase tracking-tight">
+                                <span key={oIdx} className="text-[8px] font-bold bg-slate-900 text-slate-400 px-1.5 py-0.5 rounded-md uppercase tracking-tight border border-slate-800/40">
                                   {opt.name} ({opt.price > 0 ? `+ R$ ${opt.price.toFixed(2)}` : 'Grátis'})
                                 </span>
                               ))}
                             </div>
                           )}
                         </div>
-                        <span className="text-xs font-bold text-slate-600 text-right shrink-0">
+                        <span className="text-xs font-bold text-slate-400 text-right shrink-0">
                           R$ {((item.price) * item.quantity).toFixed(2)}
                         </span>
                       </div>
@@ -1582,11 +1768,11 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                   </div>
                 </div>
 
-                <div className="bg-orange-50/50 border-2 border-brand-primary/10 p-5 rounded-3xl flex flex-col items-center text-center relative overflow-hidden shadow-sm">
-                  <div className="w-10 h-10 bg-brand-primary text-white rounded-2xl flex items-center justify-center mb-2 shadow-lg shadow-orange-250">
+                <div className="bg-orange-950/10 border-2 border-brand-primary/20 p-5 rounded-3xl flex flex-col items-center text-center relative overflow-hidden shadow-sm">
+                  <div className="w-10 h-10 bg-brand-primary text-white rounded-2xl flex items-center justify-center mb-2 shadow-lg shadow-orange-950/45">
                     <DollarSign size={20} />
                   </div>
-                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Sua Comissão de Entrega</p>
+                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Sua Comissão de Entrega</p>
                   <h3 className="text-3xl font-black text-brand-primary tracking-tight mt-1">
                     + R$ {(selectedOrderSummary.courierEarnings || 0).toFixed(2)}
                   </h3>
@@ -1597,36 +1783,36 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
 
                 {/* Economic Summary */}
                 <div className="space-y-2 pt-2">
-                  <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Resumo Financeiro do Pedido</h4>
-                  <div className="bg-slate-50/50 p-4 rounded-2xl border border-slate-100 space-y-2.5">
-                    <div className="flex justify-between items-center text-xs font-semibold text-slate-700">
+                  <h4 className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Resumo Financeiro do Pedido</h4>
+                  <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800 space-y-2.5">
+                    <div className="flex justify-between items-center text-xs font-semibold text-slate-400">
                       <span>Subtotal Itens</span>
-                      <span className="font-bold text-slate-800">
+                      <span className="font-bold text-slate-200">
                         R$ {(selectedOrderSummary.items || []).reduce((sum, item) => sum + item.price * item.quantity, 0).toFixed(2)}
                       </span>
                     </div>
                     {selectedOrderSummary.deliveryFee !== undefined && selectedOrderSummary.deliveryFee > 0 && (
-                      <div className="flex justify-between items-center text-xs font-semibold text-slate-700">
+                      <div className="flex justify-between items-center text-xs font-semibold text-slate-400">
                         <span>Taxa de Entrega</span>
-                        <span className="font-bold text-slate-800">
+                        <span className="font-bold text-slate-200">
                           R$ {selectedOrderSummary.deliveryFee.toFixed(2)}
                         </span>
                       </div>
                     )}
-                    <div className="border-t border-slate-100 pt-2.5 flex justify-between items-center text-sm">
-                      <span className="font-black text-slate-700 uppercase tracking-tight">Valor Total Pago</span>
-                      <span className="font-black text-slate-800">
+                    <div className="border-t border-slate-800 pt-2.5 flex justify-between items-center text-sm">
+                      <span className="font-black text-slate-300 uppercase tracking-tight">Valor Total Pago</span>
+                      <span className="font-black text-slate-100">
                         R$ {selectedOrderSummary.total.toFixed(2)}
                       </span>
                     </div>
 
-                    <div className="border-t border-slate-150 pt-2.5 flex justify-between items-center">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Meio de Pagamento</span>
+                    <div className="border-t border-slate-800 pt-2.5 flex justify-between items-center">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Meio de Pagamento</span>
                       <div className="flex items-center gap-1.5">
                         <span className={`px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-wider ${
                           selectedOrderSummary.paymentMethod === 'dinheiro' 
-                            ? 'bg-amber-100 text-amber-700 border border-amber-200' 
-                            : 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                            ? 'bg-amber-950/30 text-amber-400 border border-amber-900/30' 
+                            : 'bg-indigo-950/30 text-indigo-400 border border-indigo-900/30'
                         }`}>
                           {selectedOrderSummary.paymentMethod === 'dinheiro' ? 'Dinheiro' : selectedOrderSummary.paymentMethod?.toUpperCase() || 'Digital'}
                         </span>
@@ -1636,10 +1822,10 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                 </div>
               </div>
 
-              <div className="p-6 bg-slate-50/50 border-t border-slate-100">
+              <div className="p-6 bg-slate-900 border-t border-slate-800">
                 <button 
                   onClick={() => setSelectedOrderSummary(null)}
-                  className="w-full py-4 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl pointer duration-200"
+                  className="w-full py-4 bg-slate-950 border border-slate-800/80 hover:bg-slate-900 text-slate-200 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl pointer duration-200"
                 >
                   Fechar Detalhes
                 </button>

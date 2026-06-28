@@ -1,7 +1,7 @@
 import React, { useState, useEffect, memo } from 'react';
 import { motion } from 'framer-motion';
 import { db } from '../firebase';
-import { collection, onSnapshot, doc, setDoc, updateDoc, query, orderBy, deleteDoc, addDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, updateDoc, query, orderBy, deleteDoc, addDoc, where, getDocs } from 'firebase/firestore';
 import { compressImage } from '../lib/imageUtils';
 import { Tenant, Plan, Permission, User, MarketplaceInvoice, MarketplaceSettings } from '../types';
 import { maskPhone } from '../utils/masks';
@@ -344,7 +344,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                 createdAt: new Date()
               },
               {
-                description: 'Anuidade do Domínio GastroAI.com.br (Registro.br)',
+                description: 'Anuidade do Domínio KitchenFlowAI.com.br (Registro.br)',
                 type: 'pagar',
                 amount: 40.00,
                 dueDate: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 2).toISOString().slice(0, 10),
@@ -477,7 +477,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         id: invoiceId,
         tenantName: tenant.name,
         amount: totalAmount,
-        pixCode: `00020101021126580014br.gov.bcb.pix0136${Math.random().toString(36).slice(-10)}@gastroai.com5204000053039865405${totalAmount.toFixed(2)}5802BR5911GastroAI6009SaoPaulo62070503***6304${Math.random().toString(16).slice(-4)}`
+        pixCode: `00020101021126580014br.gov.bcb.pix0136${Math.random().toString(36).slice(-10)}@kitchenflowai.com5204000053039865405${totalAmount.toFixed(2)}5802BR5914KitchenFlow AI6009SaoPaulo62070503***6304${Math.random().toString(16).slice(-4)}`
       });
       
       setShowBillingModal(true);
@@ -590,12 +590,25 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     if (!selectedTenantForUser) return;
     
     const formData = new FormData(e.currentTarget as HTMLFormElement);
-    const email = formData.get('email') as string;
+    const email = (formData.get('email') as string).trim().toLowerCase();
     const name = formData.get('name') as string;
     const role = formData.get('role') as string;
     const password = Math.random().toString(36).slice(-8);
 
+    setEmailError(null);
+
     try {
+      const q = query(collection(db, 'users'), where('email', '==', email));
+      const snap = await getDocs(q);
+      
+      const qCourier = query(collection(db, 'couriers'), where('email', '==', email));
+      const snapCourier = await getDocs(qCourier);
+      
+      if (!snap.empty || !snapCourier.empty) {
+        setEmailError("Este e-mail de acesso já está cadastrado no sistema!");
+        return;
+      }
+
       await addDoc(collection(db, 'users'), {
         email,
         name,
@@ -615,11 +628,24 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   const handleCreateSaaSUser = async (e: React.FormEvent) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget as HTMLFormElement);
-    const email = formData.get('email') as string;
+    const email = (formData.get('email') as string).trim().toLowerCase();
     const name = formData.get('name') as string;
     const password = Math.random().toString(36).slice(-8);
 
+    setEmailError(null);
+
     try {
+      const q = query(collection(db, 'users'), where('email', '==', email));
+      const snap = await getDocs(q);
+      
+      const qCourier = query(collection(db, 'couriers'), where('email', '==', email));
+      const snapCourier = await getDocs(qCourier);
+      
+      if (!snap.empty || !snapCourier.empty) {
+        setEmailError("Este e-mail de acesso já está cadastrado no sistema!");
+        return;
+      }
+
       await addDoc(collection(db, 'users'), {
         email,
         name,
@@ -730,9 +756,16 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   const [description, setDescription] = useState('');
   const [autoAcceptOrders, setAutoAcceptOrders] = useState(false);
   const [tenantModules, setTenantModules] = useState<Permission[]>([]);
+  const [emailError, setEmailError] = useState<string | null>(null);
 
   useEffect(() => {
-    const q = query(collection(db, 'tenants'), orderBy('createdAt', 'desc'));
+    if (!showSaaSUserModal && !showTenantUserModal) {
+      setEmailError(null);
+    }
+  }, [showSaaSUserModal, showTenantUserModal]);
+
+  useEffect(() => {
+    const q = query(collection(db, 'tenants'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({
         ...doc.data(),
@@ -744,6 +777,14 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
           expiryDate: doc.data().subscription?.expiryDate?.toDate(),
         }
       })) as Tenant[];
+      
+      // Sort client-side by createdAt desc to allow tenants with missing createdAt to also show up
+      data.sort((a, b) => {
+        const timeA = a.createdAt ? a.createdAt.getTime() : 0;
+        const timeB = b.createdAt ? b.createdAt.getTime() : 0;
+        return timeB - timeA;
+      });
+
       setTenants(data);
       setLoading(false);
     }, (error) => {
@@ -900,7 +941,23 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
       
       // Se for um novo tenant, criar o primeiro usuário (Admin do Cliente)
       if (!editingTenant) {
-        const email = `${name.toLowerCase().replace(/\s+/g, '')}@admin.com`;
+        let email = `${name.toLowerCase().replace(/\s+/g, '')}@admin.com`.trim().toLowerCase();
+        
+        // Evitar duplicidade de e-mail ao criar o primeiro usuário do tenant
+        try {
+          const q = query(collection(db, 'users'), where('email', '==', email));
+          const snap = await getDocs(q);
+          const qCourier = query(collection(db, 'couriers'), where('email', '==', email));
+          const snapCourier = await getDocs(qCourier);
+          
+          if (!snap.empty || !snapCourier.empty) {
+            const suffix = Math.floor(100 + Math.random() * 900);
+            email = `${name.toLowerCase().replace(/\s+/g, '')}${suffix}@admin.com`.trim().toLowerCase();
+          }
+        } catch (e) {
+          console.warn("Could not check email uniqueness:", e);
+        }
+
         const password = Math.random().toString(36).slice(-8);
         
         const firstUser: Partial<User> = {
@@ -912,6 +969,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
           permissions: selectedPlan.modules,
           status: 'offline',
           active: true,
+          password: password,
           createdAt: new Date()
         };
         await setDoc(doc(db, 'users', ownerId), firstUser, { merge: true });
@@ -1010,11 +1068,73 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     );
   };
 
-  const handleGenerateAccess = (tenant: Tenant) => {
-    const email = `${tenant.name.toLowerCase().replace(/\s+/g, '')}@sistema.com`;
+  const handleGenerateAccess = async (tenant: Tenant) => {
+    let email = `${tenant.name.toLowerCase().replace(/\s+/g, '')}@sistema.com`.trim().toLowerCase();
     const password = Math.random().toString(36).slice(-8);
-    setGeneratedUser({ email, password });
-    setShowUserGenModal(true);
+
+    try {
+      // Garantir e-mail absolutamente único na plataforma
+      let attempts = 0;
+      let emailExists = true;
+      while (emailExists && attempts < 10) {
+        const qUser = query(collection(db, 'users'), where('email', '==', email));
+        const snapUser = await getDocs(qUser);
+        
+        const qCourier = query(collection(db, 'couriers'), where('email', '==', email));
+        const snapCourier = await getDocs(qCourier);
+        
+        let foundConflict = false;
+        if (!snapUser.empty) {
+          const existingUser = snapUser.docs[0].data();
+          if (existingUser.tenantId !== tenant.id) {
+            foundConflict = true;
+          }
+        }
+        if (!snapCourier.empty) {
+          foundConflict = true;
+        }
+
+        if (foundConflict) {
+          attempts++;
+          const suffix = Math.floor(100 + Math.random() * 900);
+          email = `${tenant.name.toLowerCase().replace(/\s+/g, '')}${suffix}@sistema.com`.trim().toLowerCase();
+        } else {
+          emailExists = false;
+        }
+      }
+
+      const q = query(collection(db, 'users'), where('email', '==', email));
+      const snap = await getDocs(q);
+      
+      let userId = tenant.ownerId || `user_${Date.now()}`;
+      if (!snap.empty) {
+        userId = snap.docs[0].id;
+      }
+
+      const permissions = tenant.customModules || tenant.subscription?.allowedModules || ['dashboard_view'];
+
+      const tenantUser = {
+        id: userId,
+        tenantId: tenant.id,
+        name: `Admin ${tenant.name}`,
+        email: email,
+        role: 'ADMIN',
+        permissions: permissions,
+        status: 'offline',
+        active: true,
+        password: password,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+
+      await setDoc(doc(db, 'users', userId), tenantUser, { merge: true });
+
+      setGeneratedUser({ email, password });
+      setShowUserGenModal(true);
+    } catch (err: any) {
+      console.error("Error generating master access:", err);
+      alert("Erro ao salvar acesso no Firestore: " + err.message);
+    }
   };
 
   const handleAccessSystem = (tenant: Tenant) => {
@@ -2850,7 +2970,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                   <p className="text-2xl font-sans font-black text-indigo-600 block">
                     R$ {saasLedger.filter(i => i.type === 'receber' && i.status === 'paid').reduce((acc, i) => acc + (i.amount || 0), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </p>
-                  <div className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mt-1">GastroAI compensado</div>
+                  <div className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mt-1">KitchenFlow AI compensado</div>
                 </div>
 
                 <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm text-slate-800 relative overflow-hidden hover:scale-[1.02] hover:shadow-md hover:border-slate-200 transition-all duration-300">
@@ -3167,7 +3287,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                         : 'Sem data';
                       
                       const cleanPhone = tenant.phone ? tenant.phone.replace(/\D/g, '') : '';
-                      const whatsappText = encodeURIComponent(`Olá, ${tenant.name}! Equipe financeira GastroAI por aqui. Passando apenas para lembrar que a assinatura do seu plano GastroAI (${tenant.subscription?.plan || 'BASIC'}) venceu em ${formattedDate}.\n\nPara facilitar a regularização, você pode pagar via Pix. Caso necessite da chave Pix ou já tenha efetuado o pagamento, por favor nos responda aqui para darmos a baixa. Obrigado!`);
+                      const whatsappText = encodeURIComponent(`Olá, ${tenant.name}! Equipe financeira KitchenFlow AI por aqui. Passando apenas para lembrar que a assinatura do seu plano KitchenFlow AI (${tenant.subscription?.plan || 'BASIC'}) venceu em ${formattedDate}.\n\nPara facilitar a regularização, você pode pagar via Pix. Caso necessite da chave Pix ou já tenha efetuado o pagamento, por favor nos responda aqui para darmos a baixa. Obrigado!`);
                       const whatsappUrl = `https://api.whatsapp.com/send?phone=55${cleanPhone}&text=${whatsappText}`;
 
                       return (
@@ -3667,14 +3787,19 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                 <button onClick={() => setShowSaaSUserModal(false)} className="p-2 text-white/50 hover:text-white transition-all"><X size={20} /></button>
              </div>
              <form onSubmit={handleCreateSaaSUser} className="p-8 space-y-6">
+                {emailError && (
+                   <div className="bg-rose-50 border-2 border-rose-100 text-rose-600 p-4 rounded-xl text-xs font-bold text-center">
+                      {emailError}
+                   </div>
+                )}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome Completo</label>
-                     <input required name="name" type="text" className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-500 transition-all" placeholder="Ex: Admin GastroAI" />
+                     <input required name="name" type="text" className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-500 transition-all" placeholder="Ex: Admin KitchenFlow AI" />
                   </div>
                   <div className="space-y-1">
                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">E-mail de Acesso</label>
-                     <input required name="email" type="email" className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-600 transition-all" placeholder="admin@gastroai.com" />
+                     <input required name="email" type="email" className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-600 transition-all" placeholder="admin@kitchenflowai.com" />
                   </div>
                 </div>
 
@@ -3724,6 +3849,11 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                 <button onClick={() => setShowTenantUserModal(false)} className="p-2 text-white/50 hover:text-white transition-all"><X size={20} /></button>
              </div>
              <form onSubmit={handleCreateTenantUser} className="p-8 space-y-4">
+                {emailError && (
+                   <div className="bg-rose-50 border-2 border-rose-100 text-rose-600 p-4 rounded-xl text-xs font-bold text-center">
+                      {emailError}
+                   </div>
+                )}
                 <div className="space-y-1">
                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome Completo</label>
                    <input required name="name" type="text" className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-500 transition-all" placeholder="Ex: João da Silva" />
