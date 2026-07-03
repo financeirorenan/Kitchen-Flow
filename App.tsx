@@ -488,7 +488,7 @@ const App: React.FC = () => {
         } else if (currentUserData?.role && lojistaRoles.includes(currentUserData.role)) {
           navigate('/lojista', { replace: true });
         } else {
-          navigate('/marketplace', { replace: true });
+          if (currentProject !== 'WEBSITE') setCurrentProject('WEBSITE');
         }
       } else {
         if (currentProject !== 'MARKETPLACE') setCurrentProject('MARKETPLACE');
@@ -4328,7 +4328,7 @@ const App: React.FC = () => {
   }
 
   const isMarketplaceRoute = location.pathname.startsWith('/marketplace');
-  const isWebsiteRoute = location.pathname.startsWith('/site') || location.pathname.startsWith('/kitchenflow');
+  const isWebsiteRoute = location.pathname.startsWith('/site') || location.pathname.startsWith('/kitchenflow') || location.pathname === '/';
   const isPublicRoute = isMarketplaceRoute || isWebsiteRoute;
 
   // 1. Se o usuário NÃO está autenticado no Firebase Auth
