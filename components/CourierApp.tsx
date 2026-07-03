@@ -56,6 +56,7 @@ import {
   Star
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import { maskPhone } from '../utils/masks';
 import { CourierNavigation } from './CourierNavigation';
 import { APIProvider, Map, AdvancedMarker, useMap } from '@vis.gl/react-google-maps';
@@ -168,6 +169,8 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
   });
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
+  const [testNotificationTimer, setTestNotificationTimer] = useState<number | null>(null);
   const prevOrderIdsRef = useRef<string[]>([]);
   const isFirstLoadRef = useRef<boolean>(true);
 
@@ -333,31 +336,115 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
     }, 2000);
   };
 
+  // Synchronize state with current permission status on mount
+  useEffect(() => {
+    if ('Notification' in window) {
+      setNotificationPermission(Notification.permission);
+    }
+  }, []);
+
+  // Sync config with service worker helper
+  const syncServiceWorkerConfig = () => {
+    if ('serviceWorker' in navigator && currentUser) {
+      navigator.serviceWorker.ready.then((reg) => {
+        const sw = reg.active || navigator.serviceWorker.controller;
+        if (sw) {
+          sw.postMessage({
+            type: 'INIT_COURIER_CONFIG',
+            userId: currentUser.id,
+            tenantId: currentUser.tenantId,
+            apiKey: firebaseConfig.apiKey,
+            authDomain: firebaseConfig.authDomain,
+            projectId: firebaseConfig.projectId,
+            appId: firebaseConfig.appId,
+            firestoreDatabaseId: firebaseConfig.firestoreDatabaseId
+          });
+          console.log('[KitchenFlow AI] Configuração enviada para o Service Worker ativo via sync.');
+        }
+      });
+    }
+  };
+
+  // Request notifications permission helper
+  const requestNotificationPermission = async () => {
+    if (!('Notification' in window)) {
+      setToast({ message: 'Seu navegador não suporta notificações.', type: 'error' });
+      return;
+    }
+    try {
+      const permission = await Notification.requestPermission();
+      setNotificationPermission(permission);
+      if (permission === 'granted') {
+        setToast({ message: 'Notificações ativadas com sucesso!', type: 'success' });
+        syncServiceWorkerConfig();
+      } else if (permission === 'denied') {
+        setToast({ message: 'As notificações foram bloqueadas. Ative-as nas configurações do navegador.', type: 'error' });
+      }
+    } catch (err) {
+      console.error('Erro ao solicitar permissão de notificação:', err);
+    }
+  };
+
+  // Test background notifications by scheduling inside SW
+  const handleTestBackgroundNotification = () => {
+    if (!('serviceWorker' in navigator)) {
+      setToast({ message: 'Service worker não suportado neste dispositivo.', type: 'error' });
+      return;
+    }
+
+    if (Notification.permission !== 'granted') {
+      setToast({ message: 'Por favor, conceda permissão de notificação primeiro.', type: 'error' });
+      return;
+    }
+
+    navigator.serviceWorker.ready.then((reg) => {
+      const sw = reg.active || navigator.serviceWorker.controller;
+      if (sw) {
+        sw.postMessage({
+          type: 'SCHEDULE_TEST_NOTIFICATION',
+          delayMs: 5000,
+          title: 'Notificação de Teste 🛵',
+          body: 'As notificações em segundo plano do CourierApp estão 100% ativas!'
+        });
+        
+        setToast({ 
+          message: 'Agendado! Minimize o app ou bloqueie a tela imediatamente para ver o alerta de segundo plano.', 
+          type: 'success' 
+        });
+
+        let countdown = 5;
+        setTestNotificationTimer(countdown);
+        const interval = setInterval(() => {
+          countdown -= 1;
+          if (countdown <= 0) {
+            clearInterval(interval);
+            setTestNotificationTimer(null);
+          } else {
+            setTestNotificationTimer(countdown);
+          }
+        }, 1000);
+      } else {
+        setToast({ message: 'Service worker ativo não encontrado. Tente recarregar a página.', type: 'error' });
+      }
+    });
+  };
+
   // Service Worker and Notification setup
   useEffect(() => {
     if ('Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission();
+      Notification.requestPermission().then(perm => {
+        setNotificationPermission(perm);
+      });
     }
 
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js')
-        .then(reg => {
+        .then(async (reg) => {
           console.log('[KitchenFlow AI] Service Worker registrado:', reg);
+          // Wait for service worker to be fully ready before sending config
+          await navigator.serviceWorker.ready;
           if (currentUser) {
-            setTimeout(() => {
-              if (navigator.serviceWorker.controller) {
-                navigator.serviceWorker.controller.postMessage({
-                  type: 'INIT_COURIER_CONFIG',
-                  userId: currentUser.id,
-                  tenantId: currentUser.tenantId,
-                  apiKey: firebaseConfig.apiKey,
-                  authDomain: firebaseConfig.authDomain,
-                  projectId: firebaseConfig.projectId,
-                  appId: firebaseConfig.appId,
-                  firestoreDatabaseId: firebaseConfig.firestoreDatabaseId
-                });
-              }
-            }, 1200);
+            syncServiceWorkerConfig();
           }
         })
         .catch(err => {
@@ -779,6 +866,18 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
 
     return Object.values(daysMap).sort((a, b) => b.date.getTime() - a.date.getTime());
   }, [assignedOrders]);
+
+  const chartData = useMemo(() => {
+    // Get the 30 most recent days and reverse to sort chronologically (past to present)
+    return [...earningsByDay]
+      .slice(0, 30)
+      .reverse()
+      .map(item => ({
+        dateFormatted: item.dateFormatted,
+        dateStr: item.date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
+        ganhos: Number(item.totalCommission.toFixed(2))
+      }));
+  }, [earningsByDay]);
 
   // Filtering lists
   const activeDeliveries = useMemo(() => assignedOrders.filter(o => ['ready', 'delivering'].includes(o.status)), [assignedOrders]);
@@ -1286,6 +1385,75 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                 </div>
               </div>
 
+              {/* Line Chart of Daily Earnings */}
+              <div className="bg-slate-900 p-6 rounded-[2.5rem] shadow-2xl shadow-slate-950/40 border border-slate-800/60 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-black text-slate-100 tracking-tight">Evolução de Ganhos</h3>
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-0.5">Últimos 30 dias de atividades</p>
+                  </div>
+                  {chartData.length > 0 && (
+                    <span className="text-[9px] font-black text-brand-primary bg-orange-950/30 border border-orange-900/20 px-2 py-0.5 rounded-full uppercase">
+                      Desempenho Ativo
+                    </span>
+                  )}
+                </div>
+
+                {chartData.length === 0 ? (
+                  <div className="h-40 flex flex-col items-center justify-center text-center bg-slate-950/35 rounded-[1.5rem] border border-dashed border-slate-800/80 p-4">
+                    <TrendingUp className="text-slate-700 mb-2 animate-pulse" size={24} />
+                    <p className="text-[10px] text-slate-400 font-black uppercase tracking-wider">Histórico Gráfico Indisponível</p>
+                    <p className="text-[9px] text-slate-600 font-medium mt-1">Conclua sua primeira entrega para iniciar o gráfico.</p>
+                  </div>
+                ) : (
+                  <div className="h-48 w-full bg-slate-950/30 p-3 rounded-[1.5rem] border border-slate-800/50">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" opacity={0.3} />
+                        <XAxis 
+                          dataKey="dateStr" 
+                          stroke="#64748b" 
+                          fontSize={9} 
+                          tickLine={false} 
+                          axisLine={false} 
+                          dy={10}
+                        />
+                        <YAxis 
+                          stroke="#64748b" 
+                          fontSize={9} 
+                          tickLine={false} 
+                          axisLine={false} 
+                          tickFormatter={(val) => `R$${val}`}
+                        />
+                        <Tooltip 
+                          contentStyle={{ 
+                            backgroundColor: '#0f172a', 
+                            border: '1px solid #334155', 
+                            borderRadius: '16px',
+                            boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)'
+                          }} 
+                          labelStyle={{ color: '#94a3b8', fontSize: '10px', fontWeight: 'bold' }} 
+                          itemStyle={{ color: '#FF4F18', fontSize: '11px', fontWeight: 'black' }} 
+                          formatter={(value: any) => [`R$ ${Number(value).toFixed(2)}`, 'Ganhos']}
+                          labelFormatter={(label, items) => {
+                            const item = items[0]?.payload;
+                            return item ? item.dateFormatted : label;
+                          }}
+                        />
+                        <Line 
+                          type="monotone" 
+                          dataKey="ganhos" 
+                          stroke="#FF4F18" 
+                          strokeWidth={3} 
+                          dot={{ r: 4, fill: '#FF4F18', stroke: '#0f172a', strokeWidth: 1.5 }} 
+                          activeDot={{ r: 6, fill: '#FF4F18', stroke: '#ffffff', strokeWidth: 1.5 }} 
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </div>
+
               {/* Day-by-day Breakdown List */}
               <div className="space-y-4">
                 <h3 className="text-xs font-black text-slate-500 uppercase tracking-widest ml-1">Valores a receber por dia</h3>
@@ -1457,22 +1625,57 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                          
                          try {
                            const cashToSettle = courierData.cashHeld;
+                           const unsettledOrders = assignedOrders.filter(o => o.status === 'delivered' && !o.isSettled);
+                           const totalEarningsToSettle = unsettledOrders.reduce((sum, o) => sum + (o.courierEarnings || 0), 0);
+                           
+                           // Mark all delivered, unsettled orders of this courier as settled and finished in Firestore
+                           for (const order of unsettledOrders) {
+                             try {
+                               const targetDocId = order.docId || order.id;
+                               if (targetDocId) {
+                                 await updateDoc(doc(db, 'orders', targetDocId), { 
+                                   isSettled: true, 
+                                   status: 'finished',
+                                   updatedAt: new Date() 
+                                 });
+                               }
+                             } catch (e) {
+                               console.error(`Erro ao atualizar pedido ${order.id} no acerto de caixa:`, e);
+                             }
+                           }
+
+                           // Update the courier document: reset cashHeld to 0, subtract settled earnings
                            await updateDoc(doc(db, 'couriers', courierData.id), {
                              cashHeld: 0,
+                             earnings: Math.max(0, (courierData.earnings || 0) - totalEarningsToSettle),
                              updatedAt: new Date()
                            });
 
+                           // Add financial income record (money returned by courier to register)
                            await addDoc(collection(db, 'financialRecords'), {
                              tenantId: courierData.tenantId,
-                             type: 'revenue',
+                             type: 'income',
                              amount: cashToSettle,
-                             category: 'Repasse Entregador',
-                             description: `Devolução de dinheiro em mãos: ${courierData.name}`,
+                             category: 'Recebimento Motoboy',
+                             description: `Repasse Entregador (Dinheiro): ${courierData.name}`,
                              date: new Date(),
-                             status: 'confirmed'
+                             status: 'paid'
                            });
+
+                           // If there were commissions/earnings settled, record as expense in the financial logs
+                           if (totalEarningsToSettle > 0) {
+                             await addDoc(collection(db, 'financialRecords'), {
+                               tenantId: courierData.tenantId,
+                               type: 'expense',
+                               amount: totalEarningsToSettle,
+                               category: 'Entregadores',
+                               description: `Comissões pagas no acerto: ${courierData.name}`,
+                               date: new Date(),
+                               status: 'paid'
+                             });
+                           }
                            
-                           setToast({ message: 'Acerto de caixa efetuado com sucesso!', type: 'success' });
+                           setToast({ message: 'Acerto de caixa efetuado com sucesso e integrado ao sistema!', type: 'success' });
                          } catch (err) {
                            console.error('Erro ao fazer acerto:', err);
                            setToast({ message: 'Erro ao processar acerto de dinheiro.', type: 'error' });
@@ -1591,6 +1794,81 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
                       </>
                     )}
                   </button>
+                </div>
+              </div>
+
+              {/* Painel de Notificações em Segundo Plano */}
+              <div className="bg-slate-900 rounded-[2.5rem] p-6 shadow-2xl shadow-slate-950/40 border border-slate-800/60 space-y-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Bell size={20} className="text-brand-primary animate-pulse" />
+                  <span className="text-xs font-black text-slate-100 uppercase tracking-widest">Notificações em Segundo Plano</span>
+                </div>
+                
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Receba alertas instantâneos de novos pedidos mesmo com a tela bloqueada ou com o aplicativo minimizado. Nosso Service Worker gerencia a conexão em segundo plano para você não perder nenhuma entrega.
+                </p>
+
+                <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800/80 flex flex-col gap-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Status da Permissão</span>
+                    {notificationPermission === 'granted' ? (
+                      <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-950/20 text-emerald-400 border border-emerald-900/30">
+                        <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-ping" />
+                        Concedida
+                      </span>
+                    ) : notificationPermission === 'denied' ? (
+                      <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider bg-rose-950/20 text-rose-400 border border-rose-900/30">
+                        <span className="w-2.5 h-2.5 bg-rose-500 rounded-full" />
+                        Bloqueada
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider bg-amber-950/20 text-amber-400 border border-amber-900/30">
+                        <span className="w-2.5 h-2.5 bg-amber-500 rounded-full animate-pulse" />
+                        Não Solicitada
+                      </span>
+                    )}
+                  </div>
+
+                  {notificationPermission !== 'granted' && (
+                    <button
+                      type="button"
+                      onClick={requestNotificationPermission}
+                      className="w-full mt-1 py-3 bg-brand-primary hover:bg-[#E03D0C] text-white rounded-xl font-black text-[9px] uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg"
+                    >
+                      <Bell size={14} /> Ativar Notificações no Navegador
+                    </button>
+                  )}
+
+                  {notificationPermission === 'granted' && (
+                    <div className="pt-2 border-t border-slate-900 space-y-2">
+                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">Simular Alerta de Segundo Plano</span>
+                      <p className="text-[10px] text-slate-400 leading-normal">
+                        Clique no botão abaixo e minimize o aplicativo ou bloqueie a tela do seu celular em até 5 segundos para testar o alerta de novas entregas!
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleTestBackgroundNotification}
+                        disabled={testNotificationTimer !== null}
+                        className="w-full py-3 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-200 rounded-xl font-black text-[9px] uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {testNotificationTimer !== null ? (
+                          <span>Aguarde {testNotificationTimer}s... Minimize o App!</span>
+                        ) : (
+                          <>
+                            <Activity size={14} className="text-brand-primary" /> Testar Alerta em 5 Segundos
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-2.5 items-start bg-slate-950/50 p-4.5 rounded-2xl border border-slate-800/40 text-[10px] text-slate-500 leading-normal">
+                  <Info size={16} className="text-slate-400 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold text-slate-400 block mb-0.5">Sincronização e Economia de Bateria</span>
+                    Nosso sistema utiliza sincronização PWA otimizada. Caso seu dispositivo restrinja o consumo em segundo plano, certifique-se de desabilitar a otimização de bateria para este PWA para garantir notificações imediatas de pedidos atribuídos.
+                  </div>
                 </div>
               </div>
             </motion.div>

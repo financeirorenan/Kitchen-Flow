@@ -44,6 +44,7 @@ export type Permission =
   | 'saas_finance_view'
   | 'saas_plans_manage'
   | 'saas_team_manage'
+  | 'saas_suppliers_manage'
   | 'saas_dashboard_view'
   | 'courier_app_access';
 
@@ -154,6 +155,13 @@ export interface AdminSettings {
     appFeePerOrder: number; // R$ 1,50 por pedido
     lastMenuSync?: Date;
     billingAccumulated: number; // Valor total acumulado em taxas do app
+  };
+  lgpdSettings?: {
+    maskSensitiveData?: boolean;
+    cookieBannerEnabled?: boolean;
+    dpoName?: string;
+    dpoEmail?: string;
+    consentText?: string;
   };
 }
 
@@ -277,6 +285,18 @@ export interface User {
   lastAccess?: Date;
   observations?: string;
   createdAt: Date;
+  
+  // Dados de Folha e Contratos (Toast style)
+  contractType?: 'CLT' | 'PJ' | 'Diarista' | 'Horista';
+  baseSalary?: number;
+  commissionRate?: number; // % comissão sobre vendas, ex: 5%
+  hourlyRate?: number;
+  dailyRate?: number;
+  benefits?: number; // VT, VR, plano de saúde, etc.
+  discounts?: number; // Adiantamentos, faltas, etc.
+  bankInfo?: string; // Dados bancários ou chave Pix
+  workingHoursSimulated?: number; // horas no mês
+  workingDaysSimulated?: number; // diárias no mês
 }
 
 export interface UserPreset {
@@ -294,6 +314,9 @@ export interface AuditLog {
   action: string;
   description: string;
   timestamp: Date;
+  level?: 'INFO' | 'WARNING' | 'ERROR' | 'SYSTEM';
+  details?: string;
+  stackTrace?: string;
 }
 
 export interface PriceHistory {

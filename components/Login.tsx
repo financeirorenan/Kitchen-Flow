@@ -1,6 +1,6 @@
 import React, { useState, memo } from 'react';
 import { auth, db } from '../firebase';
-import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword, updateProfile, updatePassword, sendPasswordResetEmail } from 'firebase/auth';
+import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword, updateProfile, updatePassword, sendPasswordResetEmail, signInWithCustomToken } from 'firebase/auth';
 import { doc, setDoc, getDoc, collection, query, where, getDocs, limit, deleteDoc } from 'firebase/firestore';
 import { LogIn, Mail, Lock, Sparkles, Loader2, UserPlus, Phone, User, Store, Bike, Shield, Check, Eye, EyeOff } from 'lucide-react';
 import { maskPhone } from '../utils/masks';
@@ -300,140 +300,55 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
       }
 
       if (mode === 'login') {
-        // Enforce maximum security login validations
-        const isMaster = trimmedEmail === 'financeirorenanuk@gmail.com';
-        let isRegistered = isMaster;
-        let userData: any = null;
-        let userDocId: string | null = null;
-
-        if (!isMaster) {
-          // Buscar em users do Firestore
-          const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', trimmedEmail), limit(1));
-          const usersByEmailSnap = await getDocs(usersByEmailQuery);
-          
-          if (!usersByEmailSnap.empty) {
-            isRegistered = true;
-            userData = usersByEmailSnap.docs[0].data();
-            userDocId = usersByEmailSnap.docs[0].id;
-          } else {
-            // Se não encontrou, buscar em couriers
-            const couriersQuery = query(collection(db, 'couriers'), where('email', '==', trimmedEmail), limit(1));
-            const couriersSnap = await getDocs(couriersQuery);
-            if (!couriersSnap.empty) {
-              isRegistered = true;
-            }
-          }
-        }
-
-        if (!isRegistered) {
-          setError('Acesso negado. Este e-mail não pertence a nenhuma das plataformas dos nossos parceiros.');
-          setLoading(false);
-          return;
-        }
-
-        // Usuários com senha no Firestore (exceto clientes finais do marketplace)
-        const isStaff = userData && userData.password && userData.role !== 'CUSTOMER';
-
-        // MULTI-PASSWORD TRIAL LOGIC (Super powerful self-healing)
-        const isOwner = trimmedEmail === 'vivalafome@gmail.com' || trimmedEmail === 'financeirorenanuk@gmail.com';
-        const candidatePasswords: string[] = [];
-
-        // 1. A senha real digitada pelo usuário (Tenta sempre a real primeiro)
-        candidatePasswords.push(trimmedPassword);
-
-        // 2. A senha determinística legado (Para upgrade/self-healing automático na primeira vez)
-        if (isStaff) {
-          candidatePasswords.push(getDeterministicPassword(trimmedEmail));
-        }
-
-        // 3. Senhas históricas de backup se for o dono
-        if (isOwner) {
-          if (!candidatePasswords.includes('Ch@pola07')) candidatePasswords.push('Ch@pola07');
-          if (!candidatePasswords.includes('123456789gg')) candidatePasswords.push('123456789gg');
-          if (!candidatePasswords.includes('123456v')) candidatePasswords.push('123456v');
-        }
-
         let signedInUser = null;
         let loginSuccess = false;
-        let usedLegacyPass = false;
 
-        for (const pass of candidatePasswords) {
+        // 1. Primeiro tenta o login direto padrão via Firebase Auth (rápido, direto na máquina do cliente)
+        try {
+          console.log(`Tentando login client-side padrão para ${trimmedEmail}...`);
+          const loginCred = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
+          signedInUser = loginCred.user;
+          loginSuccess = true;
+          console.log(`Login client-side bem-sucedido.`);
+        } catch (clientErr: any) {
+          console.log(`Login client-side falhou: ${clientErr.code || clientErr.message}. Acionando sincronização via servidor...`);
+        }
+
+        // 2. Se falhar por qualquer desalinhamento, aciona a sincronização inteligente com o banco de dados via API
+        if (!loginSuccess) {
           try {
-            console.log(`Trying Firebase Auth login for ${trimmedEmail}...`);
-            const loginCred = await signInWithEmailAndPassword(auth, trimmedEmail, pass);
-            signedInUser = loginCred.user;
-            loginSuccess = true;
-            if (pass !== trimmedPassword) {
-              usedLegacyPass = true;
+            const response = await fetch('/api/auth/login', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ email: trimmedEmail, password: trimmedPassword }),
+            });
+
+            if (!response.ok) {
+              const errData = await response.json();
+              throw new Error(errData.error || 'Credenciais inválidas. Verifique seu e-mail e senha.');
             }
-            console.log(`Login successful.`);
-            break;
-          } catch (err) {
-            // Continuar tentando as outras candidatas
+
+            const data = await response.json();
+            if (data.success && data.customToken) {
+              console.log("Token de acesso recebido do servidor. Autenticando na sessão local...");
+              const loginCred = await signInWithCustomToken(auth, data.customToken);
+              signedInUser = loginCred.user;
+              loginSuccess = true;
+              console.log("Sessão autenticada via Token Customizado com sucesso!");
+            }
+          } catch (serverErr: any) {
+            console.error("Erro na sincronização segura do servidor:", serverErr);
+            throw new Error(serverErr.message || 'Credenciais inválidas. Verifique seu e-mail e senha.');
           }
         }
 
         if (loginSuccess && signedInUser) {
-          // SE USOU SENHA LEGADA, FAZ O UPGRADE IMEDIATO NO AUTH PARA A SENHA REAL DIGITADA
-          if (usedLegacyPass) {
-            try {
-              await updatePassword(signedInUser, trimmedPassword);
-              console.log("Successfully upgraded legacy password to typed real password in Firebase Auth.");
-            } catch (updateErr) {
-              console.warn("Could not align Firebase Auth password on login, proceeding anyway:", updateErr);
-            }
-          }
-
-          // Sincronizar a senha no Firestore
-          if (userData && userDocId) {
-            try {
-              const userDocRef = doc(db, 'users', userDocId);
-              await setDoc(userDocRef, { password: trimmedPassword }, { merge: true });
-            } catch (fsErr) {
-              console.warn("Could not sync Firestore password field, proceeding anyway:", fsErr);
-            }
-          }
-
           onLoginSuccess();
           return;
-        }
-
-        // Se falhou todos os logins (usuário não existe no Auth ou senha é totalmente diferente)
-        if (!loginSuccess) {
-          // Tentar criar o usuário no Firebase Auth
-          const canCreate = (userData && userData.password === trimmedPassword) || isOwner;
-          if (canCreate) {
-            try {
-              console.log("Attempting to auto-create missing Firebase Auth user...");
-              const userCredential = await createUserWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
-              const user = userCredential.user;
-              await updateProfile(user, { displayName: userData?.name || 'Lojista' });
-
-              const userDocRef = doc(db, 'users', user.uid);
-              await setDoc(userDocRef, {
-                ...userData,
-                id: user.uid,
-                password: trimmedPassword,
-                updatedAt: new Date()
-              }, { merge: true });
-
-              if (userDocId && userDocId !== user.uid) {
-                try {
-                  await deleteDoc(doc(db, 'users', userDocId));
-                } catch (delErr) {
-                  console.warn("Could not delete legacy user doc:", delErr);
-                }
-              }
-
-              onLoginSuccess();
-              return;
-            } catch (createErr: any) {
-              console.error("Auto create failed:", createErr);
-              throw createErr;
-            }
-          } else {
-            throw new Error("Credenciais inválidas. Verifique seu e-mail e senha.");
-          }
+        } else {
+          throw new Error('Não foi possível realizar a autenticação. Verifique os dados fornecidos.');
         }
       } else {
         // Mode is Sign-Up (Criação de Conta com área de segurança máxima)
@@ -575,7 +490,7 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
       } else if (isInvalidCreds) {
         setError('Credenciais inválidas. Verifique seu e-mail e senha.');
       } else {
-        setError(mode === 'login' ? 'E-mail ou senha inválidos.' : 'Erro ao criar conta no Firebase.');
+        setError(mode === 'login' ? (err.message || 'E-mail ou senha inválidos.') : 'Erro ao criar conta no Firebase.');
       }
       console.error(err);
     } finally {
@@ -594,35 +509,6 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
       const provider = new GoogleAuthProvider();
       const result = await signInWithPopup(auth, provider);
       const firebaseUser = result.user;
-
-      if (firebaseUser && firebaseUser.email) {
-        const trimmedEmail = firebaseUser.email.trim().toLowerCase();
-        const isMaster = trimmedEmail === 'financeirorenanuk@gmail.com';
-        let isRegistered = isMaster;
-
-        if (!isMaster) {
-          // Buscar em users
-          const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', trimmedEmail), limit(1));
-          const usersByEmailSnap = await getDocs(usersByEmailQuery);
-          if (!usersByEmailSnap.empty) {
-            isRegistered = true;
-          } else {
-            // Buscar em couriers
-            const couriersQuery = query(collection(db, 'couriers'), where('email', '==', trimmedEmail), limit(1));
-            const couriersSnap = await getDocs(couriersQuery);
-            if (!couriersSnap.empty) {
-              isRegistered = true;
-            }
-          }
-        }
-
-        if (!isRegistered) {
-          await auth.signOut();
-          setError('Acesso negado. A sua conta Google não está cadastrada em nenhuma das plataformas dos nossos lojistas.');
-          setLoading(false);
-          return;
-        }
-      }
 
       onLoginSuccess();
     } catch (err: any) {

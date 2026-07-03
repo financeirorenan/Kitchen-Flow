@@ -193,6 +193,16 @@ self.addEventListener('message', (event) => {
         body: data.body || 'Atualização no seu painel de entregas.'
       });
       break;
+
+    case 'SCHEDULE_TEST_NOTIFICATION':
+      const delay = data.delayMs || 5000;
+      setTimeout(() => {
+        showNotification(data.title || 'Alerta KitchenFlow AI 🛵', {
+          body: data.body || 'As notificações em segundo plano estão funcionando perfeitamente!',
+          tag: 'test-notification'
+        });
+      }, delay);
+      break;
       
     case 'CLEAR_NOTIFIED_HISTORY':
       notifiedOrderIds.clear();

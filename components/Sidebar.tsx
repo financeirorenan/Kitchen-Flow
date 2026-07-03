@@ -175,43 +175,7 @@ const Sidebar: React.FC<SidebarProps> = memo(({
           </button>
         </div>
 
-        {/* Switcher para Administradores de Sistema */}
-        {isSuperAdmin && (
-          <div className={`p-3 mx-3 mt-3 rounded-2xl flex flex-col gap-1.5 ${isSaaSMode ? 'bg-slate-800/40 border border-slate-800/60' : 'bg-indigo-50/50 border border-indigo-100/50'}`}>
-            <span className={`text-[8px] font-black uppercase tracking-widest ${isSaaSMode ? 'text-slate-400' : 'text-indigo-600'} flex items-center gap-1.5`}>
-              <Sparkles size={10} className="text-amber-500 animate-pulse" />
-              Nível de Acesso
-            </span>
-            <div className="grid grid-cols-2 gap-1 bg-slate-900/10 p-1 rounded-xl">
-              <button
-                onClick={() => {
-                  navigate('/saas');
-                  setActiveTab('saas-admin');
-                }}
-                className={`py-1.5 text-[9px] font-black uppercase tracking-wider rounded-lg transition-all ${
-                  isSaaSMode 
-                    ? 'bg-emerald-500 text-white shadow-sm' 
-                    : 'text-slate-500 hover:bg-slate-100'
-                }`}
-              >
-                SaaS Admin
-              </button>
-              <button
-                onClick={() => {
-                  navigate('/lojista');
-                  setActiveTab('kds');
-                }}
-                className={`py-1.5 text-[9px] font-black uppercase tracking-wider rounded-lg transition-all ${
-                  !isSaaSMode 
-                    ? 'bg-indigo-600 text-white shadow-sm' 
-                    : 'text-slate-400 hover:bg-slate-800'
-                }`}
-              >
-                Restaurante
-              </button>
-            </div>
-          </div>
-        )}
+
 
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto custom-scrollbar">
           {filteredMenuItems.map((item) => (

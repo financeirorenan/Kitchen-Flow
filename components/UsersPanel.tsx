@@ -1,14 +1,16 @@
 
 import React, { useState, useMemo, useRef, useEffect, memo } from 'react';
 import { motion } from 'framer-motion';
-import { User, UserRole, UserPreset, AuditLog, Permission } from '../types';
+import { User, UserRole, UserPreset, AuditLog, Permission, Order, FinancialRecord } from '../types';
 import { 
   UserPlus, Shield, Mail, MoreVertical, ShieldCheck, UserCog, 
   ChefHat, Wallet, Utensils, History, Users, Search, Activity,
   X, Check, Lock, Settings2, Edit3, Briefcase, FileText, Calendar,
   Filter, CheckSquare, Square, ChevronDown, Sparkles, Save, User as UserIcon,
-  LayoutDashboard, AlertTriangle
+  LayoutDashboard, AlertTriangle, Coins, TrendingUp, Calculator, Percent, PiggyBank, FileCheck, CheckCircle,
+  AlertCircle, Info, Terminal, Copy
 } from 'lucide-react';
+import { PayrollSimulator } from './PayrollSimulator';
 
 interface UsersPanelProps {
   users: User[];
@@ -22,6 +24,8 @@ interface UsersPanelProps {
   onSavePreset: (userId: string, preset: UserPreset) => void;
   allowedModules?: Permission[];
   isSuperAdmin?: boolean;
+  orders?: Order[];
+  onAddFinancialRecord?: (record: Partial<FinancialRecord>) => Promise<void> | void;
 }
 
 const ALL_PERMISSIONS: { id: Permission; label: string; group: string; description: string }[] = [
@@ -68,10 +72,14 @@ const UsersPanel: React.FC<UsersPanelProps> = memo(({
   onUpdateRolePermissions,
   onSavePreset,
   allowedModules = [],
-  isSuperAdmin = false
+  isSuperAdmin = false,
+  orders = [],
+  onAddFinancialRecord
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'team' | 'roles' | 'audit'>('team');
+  const [activeSubTab, setActiveSubTab] = useState<'team' | 'roles' | 'audit' | 'payroll'>('team');
   const [searchTerm, setSearchTerm] = useState('');
+  const [logLevelFilter, setLogLevelFilter] = useState<'ALL' | 'INFO' | 'WARNING' | 'ERROR' | 'SYSTEM'>('ALL');
+  const [selectedDetailLog, setSelectedDetailLog] = useState<AuditLog | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [editingRole, setEditingRole] = useState<UserRole | null>(null);
@@ -295,11 +303,27 @@ const UsersPanel: React.FC<UsersPanelProps> = memo(({
     }
   };
 
-  const filteredLogs = auditLogs.filter(log => 
-    log.userName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    log.action.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    log.description.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredLogs = useMemo(() => {
+    const seen = new Set<string>();
+    const uniqueLogs = auditLogs.filter(log => {
+      if (!log.id) return true;
+      if (seen.has(log.id)) return false;
+      seen.add(log.id);
+      return true;
+    });
+
+    return uniqueLogs.filter(log => {
+      const matchesSearch = 
+        log.userName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        log.action.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        log.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (log.details || '').toLowerCase().includes(searchTerm.toLowerCase());
+      
+      const matchesLevel = logLevelFilter === 'ALL' || (log.level || 'INFO') === logLevelFilter;
+      
+      return matchesSearch && matchesLevel;
+    });
+  }, [auditLogs, searchTerm, logLevelFilter]);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -307,6 +331,7 @@ const UsersPanel: React.FC<UsersPanelProps> = memo(({
         <div className="flex bg-slate-50 p-1 rounded-2xl border border-slate-200 shadow-inner">
           {[
             { id: 'team', label: 'Equipe', icon: Users },
+            { id: 'payroll', label: 'Folha & Simulador', icon: Wallet },
             { id: 'roles', label: 'Cargos', icon: Briefcase },
             { id: 'audit', label: 'Auditoria', icon: History },
           ].map(tab => (
@@ -342,15 +367,44 @@ const UsersPanel: React.FC<UsersPanelProps> = memo(({
           </button>
         ) : (
           activeSubTab === 'audit' && (
-            <div className="relative w-full md:w-64">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              <input 
-                type="text" 
-                placeholder="Filtrar logs..." 
-                className="w-full pl-10 pr-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
+            <div className="flex flex-col md:flex-row items-stretch md:items-center gap-3 w-full md:w-auto">
+              {/* Filtro de Nível de Log */}
+              <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 gap-1 overflow-x-auto shadow-inner">
+                {[
+                  { id: 'ALL', label: 'Todos', color: 'bg-white text-slate-700 border border-slate-200' },
+                  { id: 'INFO', label: 'Info', color: 'bg-blue-600 text-white' },
+                  { id: 'WARNING', label: 'Aviso', color: 'bg-amber-500 text-white' },
+                  { id: 'ERROR', label: 'Erro', color: 'bg-rose-600 text-white' },
+                  { id: 'SYSTEM', label: 'Sistema', color: 'bg-purple-600 text-white' },
+                ].map(level => {
+                  const isActive = logLevelFilter === level.id;
+                  return (
+                    <button
+                      key={level.id}
+                      onClick={() => setLogLevelFilter(level.id as any)}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap ${
+                        isActive 
+                          ? level.color + ' shadow-sm' 
+                          : 'text-slate-500 hover:bg-slate-200/50 hover:text-slate-700'
+                      }`}
+                    >
+                      {level.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Caixa de Pesquisa */}
+              <div className="relative w-full md:w-64">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input 
+                  type="text" 
+                  placeholder="Buscar logs/erros..." 
+                  className="w-full pl-10 pr-4 py-2.5 text-sm border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all font-medium bg-white shadow-sm"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </div>
             </div>
           )
         )}
@@ -460,6 +514,13 @@ const UsersPanel: React.FC<UsersPanelProps> = memo(({
             </tbody>
           </table>
         </div>
+      ) : activeSubTab === 'payroll' ? (
+        <PayrollSimulator 
+          users={users} 
+          orders={orders} 
+          onUpdateUser={onUpdateUser} 
+          onAddFinancialRecord={onAddFinancialRecord} 
+        />
       ) : activeSubTab === 'roles' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in slide-in-from-bottom-4 duration-500">
           {(Object.keys(ROLE_DETAILS) as UserRole[])
@@ -510,47 +571,204 @@ const UsersPanel: React.FC<UsersPanelProps> = memo(({
           <div className="p-6 border-b flex items-center justify-between bg-slate-50/50">
             <div className="flex items-center gap-2">
               <Activity className="text-indigo-600" size={20} />
-              <h3 className="font-bold text-slate-800">Log de Atividades</h3>
+              <div>
+                <h3 className="font-bold text-slate-800">Mapeamento de Logs e Erros</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Diagnósticos em tempo real do sistema. Clique em qualquer registro para visualizar detalhes cirúrgicos de execução.</p>
+              </div>
             </div>
+            {filteredLogs.length > 0 && (
+              <span className="text-xs font-bold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full border">
+                {filteredLogs.length} logs encontrados
+              </span>
+            )}
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead className="bg-slate-50 border-b">
-                <tr>
-                  <th className="px-6 py-4 font-bold text-slate-500 text-sm">Horário</th>
-                  <th className="px-6 py-4 font-bold text-slate-500 text-sm">Usuário</th>
-                  <th className="px-6 py-4 font-bold text-slate-500 text-sm">Ação</th>
-                  <th className="px-6 py-4 font-bold text-slate-500 text-sm">Descrição</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {filteredLogs.map(log => (
-                  <tr key={log.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-6 py-4">
-                      <p className="text-sm font-medium text-slate-800">{log.timestamp.toLocaleTimeString('pt-BR')}</p>
-                      <p className="text-xs text-slate-400">{log.timestamp.toLocaleDateString('pt-BR')}</p>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-xs text-slate-500 border font-bold">
-                          {log.userName.charAt(0)}
-                        </div>
-                        <div>
-                          <p className="text-sm font-bold text-slate-800">{log.userName}</p>
-                          <p className="text-[10px] uppercase font-black text-slate-400 tracking-tighter">{log.userRole}</p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className="px-2 py-1 rounded-md bg-slate-100 border text-[10px] font-black tracking-wider uppercase text-slate-600">{log.action}</span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <p className="text-sm text-slate-600 font-medium">{log.description}</p>
-                    </td>
+            {filteredLogs.length === 0 ? (
+              <div className="text-center py-16 bg-slate-50/30">
+                <Terminal className="mx-auto text-slate-300 mb-4" size={48} />
+                <p className="text-slate-500 font-bold text-sm">Nenhum log encontrado para os filtros selecionados.</p>
+                <p className="text-xs text-slate-400 mt-1">Experimente alterar a busca ou alternar para a aba "Todos".</p>
+              </div>
+            ) : (
+              <table className="w-full text-left">
+                <thead className="bg-slate-50 border-b">
+                  <tr>
+                    <th className="px-6 py-4 font-bold text-slate-500 text-xs uppercase tracking-wider">Nível</th>
+                    <th className="px-6 py-4 font-bold text-slate-500 text-xs uppercase tracking-wider">Horário</th>
+                    <th className="px-6 py-4 font-bold text-slate-500 text-xs uppercase tracking-wider">Usuário</th>
+                    <th className="px-6 py-4 font-bold text-slate-500 text-xs uppercase tracking-wider">Ação</th>
+                    <th className="px-6 py-4 font-bold text-slate-500 text-xs uppercase tracking-wider">Descrição</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y">
+                  {filteredLogs.map(log => {
+                    const level = log.level || 'INFO';
+                    let levelBadge = '';
+                    let levelIcon = null;
+                    if (level === 'ERROR') {
+                      levelBadge = 'bg-rose-50 border-rose-100 text-rose-700';
+                      levelIcon = <AlertCircle size={12} strokeWidth={3} />;
+                    } else if (level === 'WARNING') {
+                      levelBadge = 'bg-amber-50 border-amber-100 text-amber-700';
+                      levelIcon = <AlertTriangle size={12} strokeWidth={3} />;
+                    } else if (level === 'SYSTEM') {
+                      levelBadge = 'bg-purple-50 border-purple-100 text-purple-700';
+                      levelIcon = <Terminal size={12} strokeWidth={3} />;
+                    } else {
+                      levelBadge = 'bg-blue-50 border-blue-100 text-blue-700';
+                      levelIcon = <Info size={12} strokeWidth={3} />;
+                    }
+
+                    return (
+                      <tr 
+                        key={log.id} 
+                        onClick={() => setSelectedDetailLog(log)}
+                        className="hover:bg-slate-50 cursor-pointer transition-all duration-150 group"
+                      >
+                        <td className="px-6 py-4">
+                          <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[10px] font-black uppercase tracking-wider ${levelBadge}`}>
+                            {levelIcon}
+                            {level}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <p className="text-sm font-semibold text-slate-800">{log.timestamp.toLocaleTimeString('pt-BR')}</p>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tight mt-0.5">{log.timestamp.toLocaleDateString('pt-BR')}</p>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-xs text-slate-500 border font-bold">
+                              {log.userName.charAt(0)}
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold text-slate-800">{log.userName}</p>
+                              <p className="text-[10px] uppercase font-black text-slate-400 tracking-tighter">{log.userRole}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="px-2 py-1 rounded-md bg-slate-100 border text-[10px] font-black tracking-wider uppercase text-slate-600 transition-colors group-hover:bg-indigo-50 group-hover:text-indigo-700 group-hover:border-indigo-100">{log.action}</span>
+                        </td>
+                        <td className="px-6 py-4 max-w-md">
+                          <p className="text-sm text-slate-600 font-medium truncate group-hover:text-slate-900 transition-colors">{log.description}</p>
+                          {log.details && (
+                            <p className="text-[10px] text-slate-400 truncate mt-0.5">{log.details}</p>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Detalhes Cirúrgicos do Log */}
+      {selectedDetailLog && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="bg-white w-full max-w-2xl rounded-[2rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300 max-h-[90vh] flex flex-col">
+            <div className={`p-8 border-b flex justify-between items-center ${
+              (selectedDetailLog.level || 'INFO') === 'ERROR' ? 'bg-rose-50/50' :
+              (selectedDetailLog.level || 'INFO') === 'WARNING' ? 'bg-amber-50/50' :
+              (selectedDetailLog.level || 'INFO') === 'SYSTEM' ? 'bg-purple-50/50' : 'bg-blue-50/50'
+            }`}>
+              <div className="flex items-center gap-4">
+                <div className={`p-3.5 rounded-2xl text-white shadow-lg ${
+                  (selectedDetailLog.level || 'INFO') === 'ERROR' ? 'bg-rose-500 shadow-rose-100' :
+                  (selectedDetailLog.level || 'INFO') === 'WARNING' ? 'bg-amber-500 shadow-amber-100' :
+                  (selectedDetailLog.level || 'INFO') === 'SYSTEM' ? 'bg-purple-500 shadow-purple-100' : 'bg-blue-500 shadow-blue-100'
+                }`}>
+                  {(selectedDetailLog.level || 'INFO') === 'ERROR' ? <AlertCircle size={24} /> :
+                   (selectedDetailLog.level || 'INFO') === 'WARNING' ? <AlertTriangle size={24} /> :
+                   (selectedDetailLog.level || 'INFO') === 'SYSTEM' ? <Terminal size={24} /> : <Info size={24} />}
+                </div>
+                <div>
+                  <h2 className="text-2xl font-black text-slate-800 tracking-tight">Detalhes do Registro</h2>
+                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-0.5">Diagnóstico Cirúrgico de Atividade</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setSelectedDetailLog(null)} 
+                className="p-2 hover:bg-white rounded-full transition-all text-slate-400 hover:text-rose-500"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-8 space-y-6 custom-scrollbar">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                  <p className="text-[10px] font-black uppercase text-slate-400">Horário do Evento</p>
+                  <p className="text-sm font-bold text-slate-800 mt-1">
+                    {selectedDetailLog.timestamp.toLocaleDateString('pt-BR')} às {selectedDetailLog.timestamp.toLocaleTimeString('pt-BR')}
+                  </p>
+                </div>
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                  <p className="text-[10px] font-black uppercase text-slate-400">Identificação (ID)</p>
+                  <p className="text-sm font-mono font-bold text-slate-800 mt-1">{selectedDetailLog.id}</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                  <p className="text-[10px] font-black uppercase text-slate-400">Usuário Responsável</p>
+                  <p className="text-sm font-bold text-slate-800 mt-1">{selectedDetailLog.userName}</p>
+                  <p className="text-[10px] font-bold uppercase text-indigo-600 mt-0.5">{selectedDetailLog.userRole}</p>
+                </div>
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                  <p className="text-[10px] font-black uppercase text-slate-400">Escopo da Tenant</p>
+                  <p className="text-sm font-mono font-bold text-slate-800 mt-1">{selectedDetailLog.tenantId}</p>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-2">
+                <div className="flex justify-between items-center">
+                  <p className="text-[10px] font-black uppercase text-slate-400">Ação / Gatilho</p>
+                  <span className="px-2.5 py-0.5 rounded-lg bg-indigo-50 border border-indigo-100 text-[10px] font-black text-indigo-700 uppercase tracking-wider">{selectedDetailLog.action}</span>
+                </div>
+                <p className="text-sm font-semibold text-slate-800 leading-relaxed mt-2">{selectedDetailLog.description}</p>
+              </div>
+
+              {selectedDetailLog.details && (
+                <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-2">
+                  <p className="text-[10px] font-black uppercase text-slate-400">Payload / Contexto Adicional</p>
+                  <p className="text-xs font-medium text-slate-600 leading-relaxed mt-1 whitespace-pre-wrap">{selectedDetailLog.details}</p>
+                </div>
+              )}
+
+              {selectedDetailLog.stackTrace && (
+                <div className="bg-rose-50/20 p-5 rounded-2xl border border-rose-100/50 space-y-3">
+                  <div className="flex justify-between items-center">
+                    <p className="text-[10px] font-black uppercase text-rose-700 flex items-center gap-1">
+                      <Terminal size={12} /> Rastro do Erro (Stack Trace)
+                    </p>
+                    <button 
+                      onClick={() => {
+                        navigator.clipboard.writeText(selectedDetailLog.stackTrace || '');
+                        alert('Rastro do erro copiado para a área de transferência!');
+                      }}
+                      className="px-2.5 py-1 rounded bg-white hover:bg-rose-50 border border-rose-200 text-[9px] font-black uppercase text-rose-700 transition-all flex items-center gap-1 shadow-sm"
+                    >
+                      <Copy size={10} /> Copiar Rastro
+                    </button>
+                  </div>
+                  <div className="bg-slate-900 text-rose-300 p-4 rounded-xl font-mono text-[10px] overflow-x-auto max-h-60 leading-relaxed scrollbar-thin scrollbar-thumb-slate-700">
+                    <pre className="whitespace-pre">{selectedDetailLog.stackTrace}</pre>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="p-6 border-t bg-slate-50/50 flex justify-end">
+              <button 
+                onClick={() => setSelectedDetailLog(null)} 
+                className="px-8 py-3.5 bg-white border rounded-xl font-black text-slate-500 hover:bg-slate-100 uppercase text-xs tracking-wider transition-all shadow-sm"
+              >
+                Fechar Painel
+              </button>
+            </div>
           </div>
         </div>
       )}

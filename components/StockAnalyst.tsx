@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Product, Order } from '../types';
+import { Product, Order, RawMaterial } from '../types';
 import { 
   DollarSign, Package, AlertTriangle, AlertCircle, TrendingUp, Sparkles, 
   Search, Sliders, Play, TrendingDown, Target, HelpCircle, ArrowUpRight, 
@@ -14,6 +14,7 @@ import {
 interface StockAnalystProps {
   products: Product[];
   orders?: Order[];
+  rawMaterials?: RawMaterial[];
 }
 
 // Cores sofisticadas para o dashboard
@@ -28,7 +29,7 @@ const COLORS = [
   '#16a34a', // Green
 ];
 
-export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], orders = [] }) => {
+export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], orders = [], rawMaterials = [] }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [stockLevelFilter, setStockLevelFilter] = useState<'all' | 'low' | 'normal' | 'out_of_stock'>('all');
@@ -40,13 +41,31 @@ export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], order
   const [isJsonModalOpen, setIsJsonModalOpen] = useState(false);
   const [copiedJson, setCopiedJson] = useState(false);
 
-  // 1. Obter categorias únicas existentes nos produtos ativos
-  const activeCategories = useMemo(() => {
-    const cats = products.map(p => p.category).filter(Boolean);
-    return ['all', ...Array.from(new Set(cats))];
-  }, [products]);
+  // 1. Obter as matérias-primas reais ou virtuais se vazio
+  const actualRawMaterials = useMemo(() => {
+    if (rawMaterials && rawMaterials.length > 0) {
+      return rawMaterials;
+    }
+    // Fallback: se não houver insumos, gera virtuais a partir de produtos
+    return products.map(p => ({
+      id: p.id,
+      tenantId: p.tenantId,
+      name: p.name,
+      unit: p.unit || 'un',
+      currentStock: p.stock || 0,
+      minStock: p.minStock || 2,
+      costPerUnit: p.cost || 0,
+      category: p.category || 'Geral'
+    }));
+  }, [rawMaterials, products]);
 
-  // 2. Extrair dados históricos do histórico de pedidos (últimos 30 dias)
+  // 2. Obter categorias únicas de insumos
+  const activeCategories = useMemo<string[]>(() => {
+    const cats = actualRawMaterials.map(rm => rm.category).filter(Boolean) as string[];
+    return ['all', ...Array.from(new Set(cats))];
+  }, [actualRawMaterials]);
+
+  // 3. Extrair dados históricos do histórico de pedidos (últimos 30 dias)
   const historicalMonthlySales = useMemo(() => {
     const salesMap: Record<string, number> = {};
     if (!orders || orders.length === 0) return salesMap;
@@ -54,7 +73,6 @@ export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], order
     const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
     
     orders.forEach(order => {
-      // Filtrar apenas pedidos finalizados/entregues nos últimos 30 dias
       const isCompleted = order.status === 'finished' || order.status === 'delivered';
       const orderTime = new Date(order.createdAt).getTime();
       
@@ -72,53 +90,96 @@ export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], order
 
   // Auxiliar para obter a média mensal de um produto (calculada ou simulada)
   const getProductMonthlySales = (productId: string, minStock: number): number => {
-    if (salesSimulations[productId] !== undefined) {
-      return salesSimulations[productId];
-    }
-    // Fallback: usar venda real histórica se houver. Se não, basear-se no estoque mínimo do produto
     const realHistory = historicalMonthlySales[productId];
     if (realHistory !== undefined && realHistory > 0) {
       return realHistory;
     }
-    // Default teórico se não houver vendas reais registradas
     return Math.max(5, (minStock || 2) * 5);
   };
 
-  const handleSimulateSales = (productId: string, val: string) => {
+  const handleSimulateSales = (rmId: string, val: string) => {
     const num = isNaN(parseFloat(val)) ? 0 : Math.max(0, parseFloat(val));
     setSalesSimulations(prev => ({
       ...prev,
-      [productId]: num
+      [rmId]: num
     }));
   };
 
-  // 3. Processar todos os produtos e fazer os cálculos estratégicos solicitados
-  const analyzedProducts = useMemo(() => {
-    return products.map(product => {
-      const stock = product.stock || 0;
-      const cost = product.cost || 0;
-      const price = product.price || 0;
-      
+  // 4. Analisar as matérias-primas e vincular as Fichas Técnicas
+  const analyzedRawMaterials = useMemo(() => {
+    return actualRawMaterials.map(rm => {
+      const stock = rm.currentStock || 0;
+      const cost = rm.costPerUnit || 0;
       const valorInvestido = stock * cost;
+
+      // Encontrar pratos que usam este insumo na ficha técnica
+      const allocatedProducts = products.filter(p => 
+        p.technicalSheet?.some(ts => ts.rawMaterialId === rm.id)
+      );
+
+      // Calcular faturamento ponderado por unidade de insumo através da margem das fichas técnicas
+      let price = cost * 1.5; // fallback: 50% markup se não houver prato associado
+      if (allocatedProducts.length > 0) {
+        let totalWeight = 0;
+        let sumWeightedPrice = 0;
+        allocatedProducts.forEach(p => {
+          const tsItem = p.technicalSheet?.find(ts => ts.rawMaterialId === rm.id);
+          if (tsItem && tsItem.quantity > 0) {
+            // Custo total da ficha técnica deste prato
+            const recipeCost = p.technicalSheet?.reduce((sum, item) => {
+              const mat = actualRawMaterials.find(m => m.id === item.rawMaterialId);
+              const c = mat ? mat.costPerUnit : 0;
+              return sum + (item.quantity * c);
+            }, 0) || p.cost || 1;
+
+            const costProp = (tsItem.quantity * rm.costPerUnit) / (recipeCost || 1);
+            const revenueContributionOfRM = (costProp * p.price) / tsItem.quantity;
+
+            const salesVol = getProductMonthlySales(p.id, p.minStock || 0);
+            const weight = salesVol > 0 ? salesVol : 1;
+
+            sumWeightedPrice += revenueContributionOfRM * weight;
+            totalWeight += weight;
+          }
+        });
+        if (totalWeight > 0) {
+          price = sumWeightedPrice / totalWeight;
+        }
+      }
+
+      // Demanda de consumo do insumo baseada na ficha técnica e vendas dos produtos
+      let mvm = salesSimulations[rm.id];
+      if (mvm === undefined) {
+        mvm = 0;
+        if (allocatedProducts.length > 0) {
+          allocatedProducts.forEach(p => {
+            const tsItem = p.technicalSheet?.find(ts => ts.rawMaterialId === rm.id);
+            if (tsItem && tsItem.quantity > 0) {
+              const salesVol = getProductMonthlySales(p.id, p.minStock || 0);
+              mvm += salesVol * tsItem.quantity;
+            }
+          });
+        }
+        if (mvm <= 0) {
+          mvm = Math.max(5, (rm.minStock || 2) * 5);
+        }
+      }
+
+      const mdv = mvm / 30; // consumo diário
+      const diasCobertura = mdv > 0 ? stock / mdv : Infinity;
+
       const faturamentoPotencial = stock * price;
       const lucroPotencial = Math.max(0, faturamentoPotencial - valorInvestido);
-      
       const margemLucro = price > 0 ? ((price - cost) / price) * 100 : 0;
       const ire = valorInvestido > 0 ? (lucroPotencial / valorInvestido) * 100 : (cost === 0 && price > 0 ? 100 : 0);
 
-      const mvm = getProductMonthlySales(product.id, product.minStock || 0);
-      const mdv = mvm / 30; // média diária
-      
-      const diasCobertura = mdv > 0 ? Math.round(stock / mdv) : Infinity;
-
-      // Projeções
       const lucroUnitario = Math.max(0, price - cost);
       const projecao7d = Math.round(Math.min(stock, mdv * 7) * lucroUnitario * 100) / 100;
       const projecao30d = Math.round(Math.min(stock, mdv * 30) * lucroUnitario * 100) / 100;
       const projecao90d = Math.round(Math.min(stock, mdv * 90) * lucroUnitario * 100) / 100;
 
       return {
-        ...product,
+        ...rm,
         stock,
         cost,
         price,
@@ -132,44 +193,43 @@ export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], order
         diasCobertura,
         projecao7d,
         projecao30d,
-        projecao90d
+        projecao90d,
+        allocatedProducts
       };
     });
-  }, [products, salesSimulations, historicalMonthlySales]);
+  }, [actualRawMaterials, products, salesSimulations, historicalMonthlySales]);
 
-  // 4. Filtragem de Produtos para a lista / tabela interativa
+  // 5. Filtrar as matérias-primas conforme busca e categoria
   const filteredProducts = useMemo(() => {
-    return analyzedProducts.filter(p => {
-      const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                            p.category.toLowerCase().includes(searchTerm.toLowerCase());
+    return analyzedRawMaterials.filter(rm => {
+      const matchesSearch = rm.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                            rm.category.toLowerCase().includes(searchTerm.toLowerCase());
       
-      const matchesCategory = selectedCategory === 'all' || p.category === selectedCategory;
+      const matchesCategory = selectedCategory === 'all' || rm.category === selectedCategory;
       
       let matchesStock = true;
       if (stockLevelFilter === 'low') {
-        matchesStock = p.stock > 0 && p.stock <= (p.minStock || 2);
+        matchesStock = rm.stock > 0 && rm.stock <= (rm.minStock || 2);
       } else if (stockLevelFilter === 'out_of_stock') {
-        matchesStock = p.stock <= 0;
+        matchesStock = rm.stock <= 0;
       } else if (stockLevelFilter === 'normal') {
-        matchesStock = p.stock > (p.minStock || 2);
+        matchesStock = rm.stock > (rm.minStock || 2);
       }
 
       return matchesSearch && matchesCategory && matchesStock;
     });
-  }, [analyzedProducts, searchTerm, selectedCategory, stockLevelFilter]);
+  }, [analyzedRawMaterials, searchTerm, selectedCategory, stockLevelFilter]);
 
-  // 5. Resumo Geral de Indicadores (Considere apenas estoque disponível)
+  // 6. Resumo Geral de Indicadores de Insumos
   const resumo = useMemo(() => {
-    // Apenas produtos com estoque > 0
-    const availableStockProducts = analyzedProducts.filter(p => p.stock > 0);
+    const availableStockRMs = analyzedRawMaterials.filter(rm => rm.stock > 0);
     
-    const valor_estoque = availableStockProducts.reduce((sum, p) => sum + p.valorInvestido, 0);
-    const faturamento_potencial = availableStockProducts.reduce((sum, p) => sum + p.faturamentoPotencial, 0);
-    const lucro_potencial = availableStockProducts.reduce((sum, p) => sum + p.lucroPotencial, 0);
+    const valor_estoque = availableStockRMs.reduce((sum, rm) => sum + rm.valorInvestido, 0);
+    const faturamento_potencial = availableStockRMs.reduce((sum, rm) => sum + rm.faturamentoPotencial, 0);
+    const lucro_potencial = availableStockRMs.reduce((sum, rm) => sum + rm.lucroPotencial, 0);
     
-    // Margem média ponderada: Lucro Total ÷ Faturamento Total × 100
     const margem_media = faturamento_potencial > 0 ? (lucro_potencial / faturamento_potencial) * 100 : 0;
-    const total_itens = availableStockProducts.reduce((sum, p) => sum + p.stock, 0);
+    const total_itens = availableStockRMs.reduce((sum, rm) => sum + rm.stock, 0);
 
     return {
       valor_estoque,
@@ -178,126 +238,126 @@ export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], order
       margem_media,
       total_itens
     };
-  }, [analyzedProducts]);
+  }, [analyzedRawMaterials]);
 
-  // 6. Configurar Rankings
-  // Top 10 Lucro Potencial (Ordenado por lucro potencial desc)
+  // 7. Configurar Rankings de Insumos
   const topLucro = useMemo(() => {
-    return [...analyzedProducts]
-      .filter(p => p.lucroPotencial > 0)
+    return [...analyzedRawMaterials]
+      .filter(rm => rm.lucroPotencial > 0)
       .sort((a, b) => b.lucroPotencial - a.lucroPotencial)
       .slice(0, 10);
-  }, [analyzedProducts]);
+  }, [analyzedRawMaterials]);
 
-  // Top 10 Rentabilidade (Ordenado por IRE desc)
   const topRentabilidade = useMemo(() => {
-    return [...analyzedProducts]
-      .filter(p => p.lucroPotencial > 0 && p.valorInvestido > 0)
+    return [...analyzedRawMaterials]
+      .filter(rm => rm.lucroPotencial > 0 && rm.valorInvestido > 0)
       .sort((a, b) => b.ire - a.ire)
       .slice(0, 10);
-  }, [analyzedProducts]);
+  }, [analyzedRawMaterials]);
 
-  // Top Capital Parado (Ordenado por valor investido desc)
   const topCapitalParado = useMemo(() => {
-    return [...analyzedProducts]
-      .filter(p => p.valorInvestido > 0)
+    return [...analyzedRawMaterials]
+      .filter(rm => rm.valorInvestido > 0)
       .sort((a, b) => b.valorInvestido - a.valorInvestido)
       .slice(0, 10);
-  }, [analyzedProducts]);
+  }, [analyzedRawMaterials]);
 
-  // 7. Gráfico de Rosca: Capital Investido por Categoria
+  // 8. Divisão de Recursos por Categoria de Insumos
   const chartCategoryData = useMemo(() => {
     const dataMap: Record<string, number> = {};
-    analyzedProducts.forEach(p => {
-      if (p.valorInvestido > 0) {
-        dataMap[p.category] = (dataMap[p.category] || 0) + p.valorInvestido;
+    analyzedRawMaterials.forEach(rm => {
+      if (rm.valorInvestido > 0) {
+        dataMap[rm.category] = (dataMap[rm.category] || 0) + rm.valorInvestido;
       }
     });
     return Object.entries(dataMap).map(([name, value]) => ({
       name,
       value: Math.round(value * 100) / 100
     })).sort((a, b) => b.value - a.value);
-  }, [analyzedProducts]);
+  }, [analyzedRawMaterials]);
 
-  // 8. Inteligência de Negócio & Insights Automáticos
+  // 9. Inteligência AI do Analista de Estoque de Insumos
   const businessInsights = useMemo(() => {
     const alerts: { type: 'danger' | 'warning' | 'success' | 'info'; title: string; desc: string; icon: any }[] = [];
     
-    // A. Identificar capital parado crítico
-    const maxCapitalProduct = [...analyzedProducts]
-      .filter(p => p.stock > 0)
+    const maxCapitalRM = [...analyzedRawMaterials]
+      .filter(rm => rm.stock > 0)
       .sort((a, b) => b.valorInvestido - a.valorInvestido)[0];
 
-    if (maxCapitalProduct && maxCapitalProduct.valorInvestido > 300) {
+    if (maxCapitalRM && maxCapitalRM.valorInvestido > 150) {
+      const pNames = maxCapitalRM.allocatedProducts.map(p => p.name).slice(0, 2).join(', ');
+      const pText = pNames ? ` (utilizado em: ${pNames})` : '';
       alerts.push({
         type: 'warning',
-        title: 'Elevado Capital Parado',
-        desc: `O produto "${maxCapitalProduct.name}" possui R$ ${maxCapitalProduct.valorInvestido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} travados em estoque (${maxCapitalProduct.stock} un). Considere um combo promocional no cardápio digital para acelerar o giro.`,
+        title: 'Elevado Capital em Insumos',
+        desc: `O insumo "${maxCapitalRM.name}"${pText} possui R$ ${maxCapitalRM.valorInvestido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} travados em estoque físico (${maxCapitalRM.stock} ${maxCapitalRM.unit}). Acelere as vendas destes itens para liberar fluxo de caixa.`,
         icon: BadgeAlert
       });
     }
 
-    // B. Produtos com baixa margem (< 25%)
-    const lowMarginProducts = analyzedProducts.filter(p => p.stock > 0 && p.margemLucro < 25 && p.cost > 0);
-    if (lowMarginProducts.length > 0) {
-      const topLowMargin = lowMarginProducts.sort((a, b) => a.margemLucro - b.margemLucro)[0];
+    const lowMarginRMs = analyzedRawMaterials.filter(rm => rm.stock > 0 && rm.margemLucro < 30 && rm.cost > 0);
+    if (lowMarginRMs.length > 0) {
+      const topLowMargin = lowMarginRMs.sort((a, b) => a.margemLucro - b.margemLucro)[0];
+      const productsList = topLowMargin.allocatedProducts.map(p => p.name).slice(0, 3).join(', ');
+      const productsText = productsList ? ` das fichas técnicas de: ${productsList}` : '';
       alerts.push({
         type: 'danger',
-        title: 'Alerta de Margem Baixa',
-        desc: `O produto "${topLowMargin.name}" opera com margem de lucro de apenas ${topLowMargin.margemLucro.toFixed(1)}% (Preço: R$ ${topLowMargin.price.toFixed(2)} vs Custo: R$ ${topLowMargin.cost.toFixed(2)}). Recomenda-se renegociar com fornecedores ou reajustar o preço de venda imediatamente.`,
+        title: 'Alerta de Margem Crítica de Insumo',
+        desc: `O insumo "${topLowMargin.name}" opera com uma margem de lucro estimada de apenas ${topLowMargin.margemLucro.toFixed(1)}%${productsText}. Considere renegociar preços com fornecedores ou reajustar o preço de venda dos produtos finais.`,
         icon: TrendingDown
       });
     }
 
-    // C. Oportunidade de ouro: Margem alta (> 55%) e Estoque Crítico
-    const goldOpportunities = analyzedProducts.filter(p => p.margemLucro > 55 && p.stock <= (p.minStock || 2));
+    const goldOpportunities = analyzedRawMaterials.filter(rm => rm.margemLucro > 55 && rm.stock <= (rm.minStock || 2));
     if (goldOpportunities.length > 0) {
       const primaryOpportunity = goldOpportunities[0];
       alerts.push({
         type: 'success',
-        title: 'Oportunidade de Alta Rentabilidade',
-        desc: `"${primaryOpportunity.name}" garante lucro com margem excelente de ${primaryOpportunity.margemLucro.toFixed(1)}%, mas está com estoque baixo (${primaryOpportunity.stock} un). Abasteça urgentemente para lucrar mais rápido!`,
+        title: 'Reposição Estratégica Recomendada',
+        desc: `O insumo "${primaryOpportunity.name}" alimenta pratos de altíssima rentabilidade (margem superior a ${primaryOpportunity.margemLucro.toFixed(0)}%), mas seu estoque está crítico (${primaryOpportunity.stock} ${primaryOpportunity.unit}). Priorize a reposição imediata para não perder vendas.`,
         icon: Sparkles
       });
     }
 
-    // D. Reposição Urgente (Abaixo do mínimo e fora do estoque)
-    const outOfStock = analyzedProducts.filter(p => p.stock <= 0);
+    const outOfStock = analyzedRawMaterials.filter(rm => rm.stock <= 0);
     if (outOfStock.length > 0) {
+      const namesList = outOfStock.map(r => r.name).slice(0, 3).join(', ');
       alerts.push({
         type: 'danger',
-        title: 'Estoque EsgotadoDetectado',
-        desc: `Atualmente há ${outOfStock.length} produtos essenciais sem unidades no estoque físico. Isso representa vendas imediatas que sua marca está deixando de faturar.`,
+        title: 'Insumos Críticos Zerados',
+        desc: `Atualmente há ${outOfStock.length} insumos essenciais zerados no estoque físico (${namesList}). Isso impede a preparação dos pratos vinculados a essas fichas técnicas.`,
         icon: AlertTriangle
       });
     }
 
-    // E. Potencial de Promoção
-    const potentialPromo = analyzedProducts.filter(p => p.stock > (p.minStock || 2) * 3 && p.margemLucro > 45);
+    const potentialPromo = analyzedRawMaterials.filter(rm => rm.stock > (rm.minStock || 2) * 2.5 && rm.margemLucro > 45);
     if (potentialPromo.length > 0) {
       const bestPromo = potentialPromo.sort((a, b) => b.stock - a.stock)[0];
+      const pNames = bestPromo.allocatedProducts.map(p => p.name).slice(0, 2).join(', ');
+      const pText = pNames ? ` para os produtos: ${pNames}` : '';
       alerts.push({
         type: 'info',
-        title: 'Potencial Ideal de Promoção',
-        desc: `"${bestPromo.name}" possui excesso de estoque (${bestPromo.stock} un) e margem confortável de ${bestPromo.margemLucro.toFixed(1)}%. Ótimo candidato para ser ofertado em destaque no banner principal do Marketplace, atraindo clientes sem prejudicar sua saúde financeira.`,
+        title: 'Giro Rápido Recomendado',
+        desc: `O insumo "${bestPromo.name}" está com estoque elevado (${bestPromo.stock} ${bestPromo.unit}) e possui margem saudável (${bestPromo.margemLucro.toFixed(0)}%). Sugerimos lançar promoções ou combos${pText} no cardápio digital para queimar este estoque.`,
         icon: Award
       });
     }
 
-    // F. Representantes do maior volume de lucro proporcional
-    if (topLucro.length > 0) {
-      const topOne = topLucro[0];
+    const sortedByLucro = [...analyzedRawMaterials].sort((a, b) => b.lucroPotencial - a.lucroPotencial);
+    if (sortedByLucro.length > 0 && sortedByLucro[0].lucroPotencial > 0) {
+      const topOne = sortedByLucro[0];
       alerts.push({
         type: 'success',
         title: 'Seu Maior Motor de Lucratividade',
-        desc: `O produto "${topOne.name}" é o seu campeão de lucro potencial acumulado. Vendendo todo o estoque de ${topOne.stock} un., você injetará R$ ${topOne.lucroPotencial.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} de lucro puro na conta do restaurante.`,
+        desc: `O insumo "${topOne.name}" representa o maior potencial de retorno financeiro. A venda total de pratos que usam este insumo gerará R$ ${topOne.lucroPotencial.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} de lucro puro.`,
         icon: Target
       });
     }
 
     return alerts;
-  }, [analyzedProducts, topLucro]);
+  }, [analyzedRawMaterials]);
 
+  // 10. Relatório JSON do Estoque de Insumos
   const reportJson = useMemo(() => {
     return {
       resumo: {
@@ -306,27 +366,28 @@ export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], order
         lucro_potencial: Number(resumo.lucro_potencial.toFixed(2)),
         margem_media: Number(resumo.margem_media.toFixed(2))
       },
-      top_lucro: topLucro.map(p => ({
-        nome_do_produto: p.name,
-        categoria: p.category,
-        quantidade_em_estoque: p.stock,
-        custo_unitario: Number(p.cost.toFixed(2)),
-        preco_de_venda: Number(p.price.toFixed(2)),
-        lucro_potencial: Number(p.lucroPotencial.toFixed(2))
+      top_lucro: topLucro.map(rm => ({
+        nome_do_insumo: rm.name,
+        categoria: rm.category,
+        quantidade_em_estoque: rm.stock,
+        unidade: rm.unit,
+        custo_unitario: Number(rm.cost.toFixed(2)),
+        valor_investido: Number(rm.valorInvestido.toFixed(2)),
+        lucro_potencial: Number(rm.lucroPotencial.toFixed(2))
       })),
-      top_rentabilidade: topRentabilidade.map(p => ({
-        nome_do_produto: p.name,
-        categoria: p.category,
-        custo_unitario: Number(p.cost.toFixed(2)),
-        preco_de_venda: Number(p.price.toFixed(2)),
-        margem_de_lucro: Number(p.margemLucro.toFixed(2)),
-        ire: Number(p.ire.toFixed(4))
+      top_rentabilidade: topRentabilidade.map(rm => ({
+        nome_do_insumo: rm.name,
+        categoria: rm.category,
+        custo_unitario: Number(rm.cost.toFixed(2)),
+        margem_de_lucro_estimada: Number(rm.margemLucro.toFixed(2)),
+        ire: Number(rm.ire.toFixed(4))
       })),
-      capital_parado: topCapitalParado.map(p => ({
-        nome_do_produto: p.name,
-        categoria: p.category,
-        quantidade_em_estoque: p.stock,
-        valor_investido: Number(p.valorInvestido.toFixed(2))
+      capital_parado: topCapitalParado.map(rm => ({
+        nome_do_insumo: rm.name,
+        categoria: rm.category,
+        quantidade_em_estoque: rm.stock,
+        unidade: rm.unit,
+        valor_investido: Number(rm.valorInvestido.toFixed(2))
       })),
       alertas: businessInsights.filter(i => i.type === 'danger' || i.type === 'warning').map(i => ({
         titulo: i.title,
@@ -338,27 +399,27 @@ export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], order
         titulo: i.title,
         descricao: i.desc
       })),
-      projecoes: analyzedProducts
-        .filter(p => p.mvm > 0 || simulatedMvm(p) > 0)
-        .map(p => {
-          const mvmVal = p.mvm || simulatedMvm(p);
+      projecoes: analyzedRawMaterials
+        .filter(rm => rm.mvm > 0)
+        .map(rm => {
           return {
-            nome_do_produto: p.name,
-            categoria: p.category,
-            estoque_atual: p.stock,
-            media_vendas_mensal: mvmVal,
-            dias_de_cobertura: Math.round(p.diasCobertura),
-            projecao_lucro_7d: Number(p.projecao7d.toFixed(2)),
-            projecao_lucro_30d: Number(p.projecao30d.toFixed(2)),
-            projecao_lucro_90d: Number(p.projecao90d.toFixed(2))
+            nome_do_insumo: rm.name,
+            categoria: rm.category,
+            estoque_atual: rm.stock,
+            unidade: rm.unit,
+            consumo_mensal_estimado: rm.mvm,
+            dias_de_cobertura: Math.round(rm.diasCobertura),
+            projecao_lucro_7d: Number(rm.projecao7d.toFixed(2)),
+            projecao_lucro_30d: Number(rm.projecao30d.toFixed(2)),
+            projecao_lucro_90d: Number(rm.projecao90d.toFixed(2))
           };
         })
     };
-  }, [resumo, topLucro, topRentabilidade, topCapitalParado, businessInsights, analyzedProducts]);
+  }, [resumo, topLucro, topRentabilidade, topCapitalParado, businessInsights, analyzedRawMaterials]);
 
-  // Helper method to look at simulation state
-  function simulatedMvm(p: any) {
-    return salesSimulations[p.id] || 0;
+  // Auxiliar para simulação
+  function simulatedMvm(rm: any) {
+    return salesSimulations[rm.id] || 0;
   }
 
   return (
@@ -378,7 +439,7 @@ export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], order
             Seu estoque não é apenas mercadoria... <span className="text-indigo-200">ele é dinheiro vivo !</span>
           </h2>
           <p className="text-indigo-100 text-xs sm:text-sm font-medium leading-relaxed">
-            Se todo o estoque atual disponível de <strong className="text-white underline decoration-wavy decoration-emerald-400">{resumo.total_itens} itens</strong> for liquidado, o negócio faturará <strong className="text-white text-md">R$ {resumo.faturamento_potencial.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>, gerando aproximadamente <strong className="text-emerald-300 text-lg font-black tracking-tight">R$ {resumo.lucro_potencial.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong> de lucro bruto líquido para o seu caixa.
+            Se todo o estoque atual disponível de <strong className="text-white underline decoration-wavy decoration-emerald-400">{resumo.total_itens.toLocaleString('pt-BR')} unidades de insumos</strong> for consumido nas fichas técnicas, o faturamento estimado será de <strong className="text-white text-md">R$ {resumo.faturamento_potencial.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>, gerando aproximadamente <strong className="text-emerald-300 text-lg font-black tracking-tight">R$ {resumo.lucro_potencial.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong> de lucro bruto estimado para o seu caixa.
           </p>
         </div>
 
@@ -497,7 +558,7 @@ export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], order
                 <Package size={20} />
               </div>
               <div className="mt-4">
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Produtos Estocados</p>
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Insumos Estocados</p>
                 <p className="text-lg sm:text-xl font-black text-slate-950 tracking-tighter mt-1">
                   {resumo.total_itens.toLocaleString('pt-BR')} <span className="text-xs text-slate-400 font-bold">un</span>
                 </p>
@@ -574,9 +635,9 @@ export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], order
               <div>
                 <h3 className="font-black text-sm text-slate-900 tracking-tight flex items-center gap-1.5 uppercase">
                   <BarChart3 size={16} className="text-emerald-500" />
-                  Comparativo de Lucratividade Teórica dos Produtos
+                  Comparativo de Lucratividade Teórica dos Insumos
                 </h3>
-                <p className="text-[10px] text-slate-400 font-medium">Os 8 principais produtos com maior folga monetária no estoque</p>
+                <p className="text-[10px] text-slate-400 font-medium">Os 8 principais insumos com maior folga monetária no estoque</p>
               </div>
 
               <div className="h-80 my-4">
@@ -601,7 +662,7 @@ export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], order
                   </ResponsiveContainer>
                 ) : (
                   <div className="h-full flex items-center justify-center">
-                    <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Sem produtos cadastrados com potencial de lucro</p>
+                    <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Sem insumos cadastrados com potencial de lucro</p>
                   </div>
                 )}
               </div>
@@ -643,7 +704,7 @@ export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], order
               {topLucro.length === 0 && (
                 <div className="h-full flex flex-col items-center justify-center p-8 text-center text-slate-400">
                   <Info size={28} className="opacity-40" />
-                  <p className="text-xs font-bold mt-2 uppercase tracking-wider">Nenhum produto</p>
+                  <p className="text-xs font-bold mt-2 uppercase tracking-wider">Nenhum insumo</p>
                 </div>
               )}
             </div>
@@ -668,7 +729,7 @@ export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], order
                   </div>
                   <div className="flex-1 min-w-0">
                     <h5 className="text-[11px] font-black text-slate-800 truncate" title={p.name}>{p.name}</h5>
-                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">Preço: R$ {p.price.toFixed(2)} · Custo: R$ {p.cost.toFixed(2)}</p>
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">Faturamento Estimado: R$ {p.price.toFixed(2)} · Custo: R$ {p.cost.toFixed(2)}</p>
                   </div>
                   <div className="text-right shrink-0">
                     <p className="text-xs font-black text-teal-600">{p.ire === Infinity ? 'Sem Custo' : `${p.ire.toFixed(0)}%`}</p>
@@ -679,7 +740,7 @@ export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], order
               {topRentabilidade.length === 0 && (
                 <div className="h-full flex flex-col items-center justify-center p-8 text-center text-slate-400">
                   <Info size={28} className="opacity-40" />
-                  <p className="text-xs font-bold mt-2 uppercase tracking-wider">Nenhum produto</p>
+                  <p className="text-xs font-bold mt-2 uppercase tracking-wider">Nenhum insumo</p>
                 </div>
               )}
             </div>
@@ -693,7 +754,7 @@ export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], order
                 <AlertCircle size={16} className="text-rose-500" />
                 Maior Capital Parado
               </h4>
-              <p className="text-[10px] text-slate-400 mt-1 font-medium font-sans">Produtos que estão retendo mais dinheiro físico em gaveta</p>
+              <p className="text-[10px] text-slate-400 mt-1 font-medium font-sans">Insumos que estão retendo mais dinheiro físico em gaveta</p>
             </div>
             
             <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
@@ -715,7 +776,7 @@ export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], order
               {topCapitalParado.length === 0 && (
                 <div className="h-full flex flex-col items-center justify-center p-8 text-center text-slate-400">
                   <Info size={28} className="opacity-40" />
-                  <p className="text-xs font-bold mt-2 uppercase tracking-wider">Nenhum produto</p>
+                  <p className="text-xs font-bold mt-2 uppercase tracking-wider">Nenhum insumo</p>
                 </div>
               )}
             </div>
@@ -815,7 +876,7 @@ export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], order
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
               <input 
                 type="text" 
-                placeholder="Pesquise por nome do produto..." 
+                placeholder="Pesquise por nome do insumo..." 
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
                 className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-xs font-medium placeholder-slate-400 focus:outline-none focus:border-indigo-500 transition-all shadow-sm"
@@ -853,7 +914,7 @@ export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], order
               <table className="w-full text-left border-collapse table-fixed min-w-[900px]">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-100 text-slate-400 text-[10px] font-black uppercase tracking-widest">
-                    <th className="px-6 py-4 w-[240px]">Produto / Categoria</th>
+                    <th className="px-6 py-4 w-[240px]">Insumo / Categoria</th>
                     <th className="px-4 py-4 w-[110px] text-center">Físico Atual</th>
                     <th className="px-4 py-4 w-[120px] text-center">Média Mensal</th>
                     <th className="px-4 py-4 w-[120px] text-center">Dias Cobertura</th>
@@ -872,22 +933,22 @@ export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], order
                     let coverageColor = 'text-slate-700 bg-slate-100';
                     
                     if (p.diasCobertura === Infinity) {
-                      coverageLabel = 'Sem vendas';
+                      coverageLabel = 'Sem consumo';
                       coverageColor = 'text-slate-400 bg-slate-50';
                     } else if (isOut) {
                       coverageLabel = 'Esgotado';
                       coverageColor = 'text-rose-600 bg-rose-50 border border-rose-100/50';
                     } else if (p.diasCobertura < 7) {
-                      coverageLabel = `${p.diasCobertura} dias (Ruína)`;
+                      coverageLabel = `${Math.round(p.diasCobertura)} dias (Ruína)`;
                       coverageColor = 'text-rose-600 bg-rose-50 border border-rose-100/30 font-black';
                     } else if (p.diasCobertura < 15) {
-                      coverageLabel = `${p.diasCobertura} dias (Baixo)`;
+                      coverageLabel = `${Math.round(p.diasCobertura)} dias (Baixo)`;
                       coverageColor = 'text-amber-600 bg-amber-50 border border-amber-100/30';
                     } else if (p.diasCobertura > 90) {
-                      coverageLabel = `${p.diasCobertura} d (Excesso)`;
+                      coverageLabel = `${Math.round(p.diasCobertura)} d (Excesso)`;
                       coverageColor = 'text-violet-600 bg-violet-50 border border-violet-100/30';
                     } else {
-                      coverageLabel = `${p.diasCobertura} dias`;
+                      coverageLabel = `${Math.round(p.diasCobertura)} dias`;
                       coverageColor = 'text-emerald-600 bg-emerald-50 border border-emerald-150/30';
                     }
 
@@ -917,7 +978,7 @@ export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], order
                               onChange={e => handleSimulateSales(p.id, e.target.value)}
                               className="w-10 bg-transparent text-center font-black text-slate-800 focus:outline-none focus:ring-1 focus:ring-slate-300 rounded text-xs py-0.5"
                             />
-                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">un</span>
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">{p.unit || 'un'}</span>
                           </div>
                         </td>
 
@@ -951,7 +1012,7 @@ export const StockAnalyst: React.FC<StockAnalystProps> = ({ products = [], order
                   {filteredProducts.length === 0 && (
                     <tr>
                       <td colSpan={8} className="px-6 py-12 text-center text-slate-400 font-bold uppercase tracking-wider text-xs">
-                        Nenhum produto correspondente aos filtros foi encontrado.
+                        Nenhum insumo correspondente aos filtros foi encontrado.
                       </td>
                     </tr>
                   )}

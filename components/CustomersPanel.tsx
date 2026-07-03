@@ -9,6 +9,7 @@ import {
   AlertCircle, ChevronRight, UserCircle, Edit3, Printer, Calendar
 } from 'lucide-react';
 import { maskPhone, maskCPF, maskCurrency, maskCEP } from '../utils/masks';
+import { maskPhoneLGPD, maskEmailLGPD, maskDocumentLGPD } from '../utils/lgpd';
 
 interface CustomersPanelProps {
   customers: Customer[];
@@ -47,6 +48,27 @@ const parseSafeDate = (val: any): Date => {
     return new Date(Number(dateStr));
   }
   return new Date();
+};
+
+const PiiField: React.FC<{ value: string; maskFn: (val: string) => string; icon?: React.ReactNode; className?: string }> = ({ value, maskFn, icon, className = "" }) => {
+  const [revealed, setRevealed] = useState(false);
+  const isMasked = localStorage.getItem('lgpd_mask_pii') === 'true';
+
+  return (
+    <div 
+      onClick={(e) => { e.stopPropagation(); if (isMasked) setRevealed(!revealed); }}
+      className={`flex items-center gap-1.5 text-[10px] font-bold text-slate-500 ${isMasked ? 'cursor-pointer hover:text-indigo-600 transition-colors' : ''} ${className}`}
+      title={isMasked ? (revealed ? 'Clique para ocultar (LGPD)' : 'Clique para revelar (LGPD)') : undefined}
+    >
+      {icon}
+      <span>{isMasked && !revealed ? maskFn(value) : value}</span>
+      {isMasked && (
+        <span className="text-[7px] px-1 py-0.2 bg-slate-100 text-slate-400 rounded font-normal shrink-0">
+          {revealed ? 'exposto' : 'oculto'}
+        </span>
+      )}
+    </div>
+  );
 };
 
 const CustomersPanel: React.FC<CustomersPanelProps> = memo(({ 
@@ -415,7 +437,11 @@ const CustomersPanel: React.FC<CustomersPanelProps> = memo(({
                       )}
                     </div>
                     <div className="flex items-center gap-1 mt-0.5">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{customer.document}</p>
+                      <PiiField 
+                        value={customer.document} 
+                        maskFn={maskDocumentLGPD} 
+                        className="text-[10px] font-bold text-slate-400 uppercase tracking-widest"
+                      />
                       {customer.tags && customer.tags.length > 0 && (
                         <div className="flex gap-1 ml-2">
                            {customer.tags.map((tag, i) => (
@@ -436,13 +462,19 @@ const CustomersPanel: React.FC<CustomersPanelProps> = memo(({
 
               <div className="mt-3 pt-3 border-t flex flex-wrap gap-3 items-center justify-between">
                 <div className="flex gap-3">
-                  <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
-                    <Phone size={12} className="text-indigo-500" /> {customer.phone}
-                  </div>
+                  <PiiField 
+                    value={customer.phone} 
+                    maskFn={maskPhoneLGPD} 
+                    icon={<Phone size={12} className="text-indigo-500" />} 
+                    className="text-[10px] font-bold text-slate-500"
+                  />
                   {customer.email && (
-                    <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
-                      <Mail size={12} className="text-indigo-500" /> {customer.email}
-                    </div>
+                    <PiiField 
+                      value={customer.email} 
+                      maskFn={maskEmailLGPD} 
+                      icon={<Mail size={12} className="text-indigo-500" />} 
+                      className="text-[10px] font-bold text-slate-500"
+                    />
                   )}
                 </div>
                 <div className="flex gap-1.5">

@@ -37,8 +37,10 @@ import {
   Trash2,
   Check,
   MessageSquare,
-  Bot
+  Bot,
+  Package
 } from "lucide-react";
+import { StockAnalyst } from "./StockAnalyst";
 import {
   AreaChart,
   Area,
@@ -190,7 +192,8 @@ export default function LojistaCopilot({
   const [userQuery, setUserQuery] = useState("");
   const [isChatLoading, setIsChatLoading] = useState(false);
 
-  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'copilot' | 'cmv-cardapio' | 'chatbot'>('overview');
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'copilot' | 'cmv-cardapio' | 'chatbot' | 'analista-estoque'>('overview');
+  const [isMobileAppMode, setIsMobileAppMode] = useState(false);
 
   // Automatic initialization of chatMessages from Kai Copilot
   React.useEffect(() => {
@@ -1229,6 +1232,247 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
     }
   };
 
+  if (isMobileAppMode) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[85vh] py-6 bg-slate-100/30 rounded-3xl p-4 border border-dashed border-slate-200 animate-in fade-in duration-500">
+        <div className="max-w-md w-full mb-4 flex items-center justify-between px-2">
+          <div>
+            <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse" /> PWA Simulado Ativo
+            </span>
+            <h2 className="text-sm font-black text-slate-850">KitchenFlow Lojista App</h2>
+          </div>
+          <button
+            onClick={() => setIsMobileAppMode(false)}
+            className="px-3 py-1.5 bg-indigo-650 hover:bg-indigo-700 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer shadow-sm"
+          >
+            Sair do Modo App (Voltar p/ Web)
+          </button>
+        </div>
+
+        {/* Smartphone Frame Simulator */}
+        <div className="w-full max-w-[390px] h-[800px] bg-slate-950 rounded-[3.2rem] p-3.5 shadow-2xl border-4 border-slate-900 relative flex flex-col overflow-hidden">
+          {/* Speaker & Camera Notch */}
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-6 bg-slate-900 rounded-b-2xl z-50 flex items-center justify-center gap-1.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-slate-800" />
+            <div className="w-12 h-1 bg-slate-800 rounded-full" />
+          </div>
+
+          {/* Screen Content Wrapper */}
+          <div className="flex-1 bg-slate-900 text-white rounded-[2.5rem] flex flex-col overflow-hidden relative border border-slate-800">
+            {/* Safe Area Header */}
+            <div className="pt-8 pb-3 px-5 bg-slate-950 border-b border-slate-800/80 flex items-center justify-between text-white">
+              <div className="flex items-center gap-2">
+                <Store size={14} className="text-[#00B7FF]" />
+                <span className="font-black text-xs uppercase tracking-wider max-w-[140px] truncate">{adminSettings?.companyName || "Minha Loja"}</span>
+              </div>
+              <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono">
+                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
+                <span>ONLINE</span>
+              </div>
+            </div>
+
+            {/* Inner App Content (Scrollable) */}
+            <div className="flex-1 overflow-y-auto p-4 custom-scrollbar pb-20">
+              {activeSubTab === 'overview' && (
+                <div className="space-y-5 animate-in fade-in duration-300">
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <LayoutDashboard size={14} className="text-[#00B7FF]" />
+                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Diagnóstico da Operação</span>
+                  </div>
+                  <AIInsights sales={orders} inventory={products} />
+                  <DashboardAlerts products={products} rawMaterials={rawMaterials} onNavigateToInventory={onNavigateToInventory} />
+                </div>
+              )}
+
+              {activeSubTab === 'copilot' && (
+                <div className="space-y-5 animate-in fade-in duration-300">
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <TrendingUp size={14} className="text-[#00B7FF]" />
+                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Sua Saúde Operacional</span>
+                  </div>
+                  
+                  {/* Miniature score card */}
+                  <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800/80">
+                    <span className="text-[9px] font-bold text-slate-400 block">MARGEM LÍQUIDA REAL</span>
+                    <span className="text-2xl font-black text-white block mt-0.5">{stats.margem.toFixed(1)}%</span>
+                    <p className="text-[10px] text-slate-300 leading-normal mt-2 font-medium">{stats.descriptionText}</p>
+                    <button
+                      onClick={handleExplainOperation}
+                      className="w-full mt-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black text-[9px] uppercase tracking-wider transition-all flex items-center justify-center gap-1"
+                    >
+                      <Sparkles size={11} className="animate-pulse" /> Analisar com Kai
+                    </button>
+                  </div>
+
+                  <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800/80 space-y-3.5">
+                    <span className="text-[9px] font-bold text-slate-400 block uppercase border-b border-slate-900 pb-1.5">Resumo Financeiro</span>
+                    <div className="grid grid-cols-2 gap-3.5">
+                      <div>
+                        <span className="text-[8px] font-black text-slate-500 uppercase block">Faturamento</span>
+                        <span className="text-xs font-black text-white">R$ {stats.faturamento.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                      </div>
+                      <div>
+                        <span className="text-[8px] font-black text-slate-500 uppercase block">Margem CMV</span>
+                        <span className="text-xs font-black text-rose-400">R$ {stats.cmv.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                      </div>
+                      <div>
+                        <span className="text-[8px] font-black text-slate-500 uppercase block">Custos Fixos</span>
+                        <span className="text-xs font-black text-slate-400">R$ {(stats.folha + stats.despesasFixas).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                      </div>
+                      <div>
+                        <span className="text-[8px] font-black text-slate-500 uppercase block">Sobra Limpa</span>
+                        <span className={`text-xs font-black ${stats.lucroReal >= 0 ? "text-emerald-400" : "text-rose-500"}`}>R$ {stats.lucroReal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Profit projections */}
+                  <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800/80 space-y-2">
+                    <span className="text-[9px] font-bold text-slate-400 block uppercase">Previsão Mensal</span>
+                    <div className="p-3 bg-slate-900/50 border border-slate-800 rounded-xl">
+                      <span className="text-[8px] text-slate-400 uppercase block">Faturamento Previsto (30 dias)</span>
+                      <span className="text-lg font-black text-emerald-400">R$ {((stats.faturamento / (dateRange.daysCount || 1)) * 30).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeSubTab === 'analista-estoque' && (
+                <div className="space-y-5 animate-in fade-in duration-300">
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <Package size={14} className="text-[#00B7FF]" />
+                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Analista de Estoque</span>
+                  </div>
+                  <div className="bg-white text-slate-900 rounded-3xl p-3 shadow-md">
+                    <StockAnalyst products={products} orders={orders} rawMaterials={rawMaterials} />
+                  </div>
+                </div>
+              )}
+
+              {activeSubTab === 'cmv-cardapio' && (
+                <div className="space-y-5 animate-in fade-in duration-300">
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <BrainCircuit size={14} className="text-[#00B7FF]" />
+                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Cardápio & CMV</span>
+                  </div>
+                  <div className="bg-white text-slate-900 rounded-3xl p-3 shadow-md">
+                    <CMVAnalysis products={products} rawMaterials={rawMaterials} onUpdateProduct={onUpdateProduct} />
+                  </div>
+                </div>
+              )}
+
+              {activeSubTab === 'chatbot' && (
+                <div className="flex flex-col h-[520px] bg-slate-950 rounded-3xl border border-slate-800/80 overflow-hidden">
+                  <div className="p-3 bg-slate-900/80 border-b border-slate-800/50 flex items-center gap-2">
+                    <KaiAvatar expression="feliz" pose="tudo-sob-controle" size={28} />
+                    <div>
+                      <h4 className="text-[10px] font-black uppercase text-white leading-none">Copiloto Kai</h4>
+                      <span className="text-[8px] text-slate-400">Análise de negócios ativo</span>
+                    </div>
+                  </div>
+                  
+                  {/* Chat messages */}
+                  <div className="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar">
+                    {chatMessages.map((msg, idx) => (
+                      <div key={idx} className={`flex gap-2 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                        {msg.sender !== 'user' && (
+                          <div className="shrink-0 mt-0.5 scale-75 origin-top-left">
+                            <KaiAvatar expression={msg.expression || 'neutro'} pose={msg.pose || 'tudo-sob-controle'} size={24} />
+                          </div>
+                        )}
+                        <div className={`p-2.5 rounded-xl text-[10px] max-w-[85%] leading-relaxed font-semibold ${
+                          msg.sender === 'user' 
+                            ? 'bg-[#00B7FF] text-[#14171C] font-extrabold rounded-tr-none' 
+                            : 'bg-slate-900 text-slate-200 rounded-tl-none border border-slate-800'
+                        }`}>
+                          {msg.text.split('\n').map((line, lineIdx) => (
+                            <p key={lineIdx} className="my-0.5">{line}</p>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    {isChatLoading && (
+                      <div className="flex justify-start gap-2">
+                        <div className="bg-slate-900 p-2.5 rounded-xl rounded-tl-none border border-slate-800 flex items-center gap-1">
+                          <div className="w-1 h-1 rounded-full bg-[#00B7FF] animate-bounce" />
+                          <div className="w-1 h-1 rounded-full bg-[#00B7FF] animate-bounce" style={{ animationDelay: '150ms' }} />
+                          <div className="w-1 h-1 rounded-full bg-[#00B7FF] animate-bounce" style={{ animationDelay: '300ms' }} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Input form */}
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      handleSendChat();
+                    }}
+                    className="p-2 bg-slate-900 border-t border-slate-800 flex items-center gap-2"
+                  >
+                    <input
+                      type="text"
+                      value={userQuery}
+                      onChange={(e) => setUserQuery(e.target.value)}
+                      placeholder="CMV, metas, faturamento..."
+                      className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-[10px] font-semibold text-white placeholder:text-slate-500 focus:outline-none"
+                    />
+                    <button
+                      type="submit"
+                      className="bg-[#00B7FF] text-slate-950 font-black text-[9px] uppercase px-3 py-1.5 rounded-xl"
+                    >
+                      Enviar
+                    </button>
+                  </form>
+                </div>
+              )}
+            </div>
+
+            {/* Native Bottom Tab Navigation Bar */}
+            <div className="absolute bottom-0 left-0 right-0 h-16 bg-slate-950 border-t border-slate-800/80 flex items-center justify-around px-2 z-40">
+              <button
+                onClick={() => setActiveSubTab('overview')}
+                className={`flex flex-col items-center gap-1 text-[8px] font-black uppercase tracking-wider transition-all ${activeSubTab === 'overview' ? 'text-[#00B7FF]' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                <LayoutDashboard size={15} />
+                <span>Início</span>
+              </button>
+              <button
+                onClick={() => setActiveSubTab('copilot')}
+                className={`flex flex-col items-center gap-1 text-[8px] font-black uppercase tracking-wider transition-all ${activeSubTab === 'copilot' ? 'text-[#00B7FF]' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                <TrendingUp size={15} />
+                <span>Finanças</span>
+              </button>
+              <button
+                onClick={() => setActiveSubTab('analista-estoque')}
+                className={`flex flex-col items-center gap-1 text-[8px] font-black uppercase tracking-wider transition-all ${activeSubTab === 'analista-estoque' ? 'text-[#00B7FF]' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                <Package size={15} />
+                <span>Estoque</span>
+              </button>
+              <button
+                onClick={() => setActiveSubTab('cmv-cardapio')}
+                className={`flex flex-col items-center gap-1 text-[8px] font-black uppercase tracking-wider transition-all ${activeSubTab === 'cmv-cardapio' ? 'text-[#00B7FF]' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                <BrainCircuit size={15} />
+                <span>Cardápio</span>
+              </button>
+              <button
+                onClick={() => setActiveSubTab('chatbot')}
+                className={`flex flex-col items-center gap-1 text-[8px] font-black uppercase tracking-wider transition-all ${activeSubTab === 'chatbot' ? 'text-[#00B7FF]' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                <MessageSquare size={15} />
+                <span>Chatbot</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div id="merchant-copilot-module" className="p-4 md:p-6 lg:p-8 space-y-6 w-full">
       
@@ -1251,7 +1495,7 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
         {/* Subtabs and specific filters */}
         <div className="flex flex-wrap items-center gap-3">
           {/* Subtab selection widget */}
-          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl border shadow-sm">
+          <div className="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-2xl border shadow-sm">
             <button 
               onClick={() => setActiveSubTab('overview')}
               className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${activeSubTab === 'overview' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
@@ -1263,6 +1507,12 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
               className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${activeSubTab === 'copilot' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
             >
               <TrendingUp size={13} /> Demonstrativo Financeiro
+            </button>
+            <button 
+              onClick={() => setActiveSubTab('analista-estoque')}
+              className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${activeSubTab === 'analista-estoque' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              <Package size={13} className="text-amber-500" /> Analista de Estoque
             </button>
             <button 
               onClick={() => setActiveSubTab('cmv-cardapio')}
@@ -1284,6 +1534,14 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
           >
             <Sliders size={12} className="text-indigo-500 animate-pulse" />
             <span>Configurar Custos Fixos</span>
+          </button>
+
+          <button
+            onClick={() => setIsMobileAppMode(!isMobileAppMode)}
+            className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-all flex items-center gap-1.5 font-bold text-[10px] shadow-sm cursor-pointer"
+          >
+            <Smartphone size={13} className="animate-pulse" />
+            <span>{isMobileAppMode ? "Ver Painel Web" : "Simular App Lojista 📱"}</span>
           </button>
 
           {/* Filters and Config togglers shown only inside Copiloto Financeiro subtab */}
@@ -1592,7 +1850,7 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                     />
                   </div>
                   <h3 className="text-base font-black text-white mt-4 tracking-tight">Copiloto Kai</h3>
-                  <p className="text-[10px] text-[#7DD3FF] font-extrabold uppercase tracking-wider mt-0.5">Analista Gastronômico da Loja</p>
+                  <p className="text-[10px] text-[#7DD3FF] font-extrabold uppercase tracking-wider mt-0.5">Analista de Inteligência KitchenFlow</p>
                 </div>
 
                 <div className="bg-slate-950/60 p-4 rounded-2xl border border-white/5 space-y-2 text-center">
@@ -2382,6 +2640,22 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
           </div>
 
         </div>
+      </div>
+    </div>
+  )}
+
+  {activeSubTab === 'analista-estoque' && (
+    <div className="animate-in fade-in duration-500 w-full space-y-6">
+      <div className="bg-white border border-slate-200/80 rounded-[2.5rem] p-6 shadow-sm">
+        <div className="border-b border-slate-100 pb-3 mb-5">
+          <h2 className="text-lg font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+            <Package className="text-amber-500" /> Analista de Estoque Inteligente
+          </h2>
+          <p className="text-xs text-slate-400 font-medium mt-0.5">
+            Visualize os indicadores financeiros de giro, faturamento potencial e saúde de reposição do seu estoque físico.
+          </p>
+        </div>
+        <StockAnalyst products={products} orders={orders} rawMaterials={rawMaterials} />
       </div>
     </div>
   )}

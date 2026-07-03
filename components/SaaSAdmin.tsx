@@ -39,6 +39,7 @@ import {
   ExternalLink,
   Download,
   FileSpreadsheet,
+  FileText,
   Settings,
   AlertCircle,
   AlertTriangle,
@@ -60,11 +61,14 @@ import {
   PieChart,
   Percent,
   Coins,
+  Printer,
   ArrowUpRight,
   RefreshCw,
   Clock,
   MessageSquare,
-  Phone
+  Phone,
+  Mail,
+  MapPin
 } from 'lucide-react';
 
 const ALL_MODULES: { id: Permission; label: string }[] = [
@@ -94,6 +98,7 @@ const SAAS_ADMIN_MODULES: { id: Permission; label: string }[] = [
   { id: 'support_manage', label: 'Suporte & Tickets' },
   { id: 'leads_manage', label: 'Gestão de Leads' },
   { id: 'saas_team_manage', label: 'Equipe Admin' },
+  { id: 'saas_suppliers_manage', label: 'Fornecedores B2B' },
 ];
 
 const DEFAULT_COMMERCE_CATEGORIES = [
@@ -125,6 +130,143 @@ const CATEGORY_ICON_PRESETS = [
   { value: 'UtensilsCrossed', label: 'Geral/Utensílios' },
 ];
 
+interface SupplierMaterial {
+  rawMaterialName: string;
+  price: number;
+}
+
+interface Supplier {
+  id: string;
+  name: string;
+  city: string;
+  phone: string;
+  email: string;
+  materials: SupplierMaterial[];
+  history: Record<string, { date: string; price: number }[]>;
+}
+
+const INITIAL_SAAS_SUPPLIERS: Supplier[] = [
+  {
+    id: 'sup1',
+    name: 'Distribuidora JBS Friboi',
+    city: 'São Paulo',
+    phone: '(11) 98765-4321',
+    email: 'vendas@friboisp.com.br',
+    materials: [
+      { rawMaterialName: 'Bife Bovino kg', price: 34.50 },
+      { rawMaterialName: 'Filé de Frango kg', price: 17.20 }
+    ],
+    history: {
+      'Bife Bovino kg': [
+        { date: 'Jan/26', price: 32.00 },
+        { date: 'Fev/26', price: 32.50 },
+        { date: 'Mar/26', price: 33.80 },
+        { date: 'Abr/26', price: 34.10 },
+        { date: 'Mai/26', price: 34.50 }
+      ],
+      'Filé de Frango kg': [
+        { date: 'Jan/26', price: 16.00 },
+        { date: 'Fev/26', price: 16.50 },
+        { date: 'Mar/26', price: 16.80 },
+        { date: 'Abr/26', price: 17.00 },
+        { date: 'Mai/26', price: 17.20 }
+      ]
+    }
+  },
+  {
+    id: 'sup2',
+    name: 'Frigorífico Sul Meat Ltda',
+    city: 'Porto Alegre',
+    phone: '(51) 99988-7766',
+    email: 'comercial@sulmeat.com.br',
+    materials: [
+      { rawMaterialName: 'Bife Bovino kg', price: 31.80 },
+      { rawMaterialName: 'Filé de Frango kg', price: 16.50 }
+    ],
+    history: {
+      'Bife Bovino kg': [
+        { date: 'Jan/26', price: 30.00 },
+        { date: 'Fev/26', price: 30.80 },
+        { date: 'Mar/26', price: 31.20 },
+        { date: 'Abr/26', price: 31.50 },
+        { date: 'Mai/26', price: 31.80 }
+      ],
+      'Filé de Frango kg': [
+        { date: 'Jan/26', price: 15.50 },
+        { date: 'Fev/26', price: 15.80 },
+        { date: 'Mar/26', price: 16.00 },
+        { date: 'Abr/26', price: 16.20 },
+        { date: 'Mai/26', price: 16.50 }
+      ]
+    }
+  },
+  {
+    id: 'sup3',
+    name: 'Distribuidora Scala de Laticínios',
+    city: 'São Paulo',
+    phone: '(11) 95544-3322',
+    email: 'pedidos@scalasp.com.br',
+    materials: [
+      { rawMaterialName: 'Queijo Muçarela kg', price: 29.90 }
+    ],
+    history: {
+      'Queijo Muçarela kg': [
+        { date: 'Jan/26', price: 28.50 },
+        { date: 'Fev/26', price: 29.00 },
+        { date: 'Mar/26', price: 29.50 },
+        { date: 'Abr/26', price: 29.80 },
+        { date: 'Mai/26', price: 29.90 }
+      ]
+    }
+  },
+  {
+    id: 'sup4',
+    name: 'Queijos de Minas Distribuição',
+    city: 'Belo Horizonte',
+    phone: '(31) 98877-6655',
+    email: 'contato@minasqueijos.com.br',
+    materials: [
+      { rawMaterialName: 'Queijo Muçarela kg', price: 27.50 }
+    ],
+    history: {
+      'Queijo Muçarela kg': [
+        { date: 'Jan/26', price: 26.00 },
+        { date: 'Fev/26', price: 26.50 },
+        { date: 'Mar/26', price: 26.90 },
+        { date: 'Abr/26', price: 27.20 },
+        { date: 'Mai/26', price: 27.50 }
+      ]
+    }
+  },
+  {
+    id: 'sup5',
+    name: 'Distribuidora Cerealista Sul',
+    city: 'Curitiba',
+    phone: '(41) 97766-5544',
+    email: 'vendas@cerealistacentral.com.br',
+    materials: [
+      { rawMaterialName: 'Óleo de Cozinha', price: 5.80 },
+      { rawMaterialName: 'Farinha de Trigo', price: 4.20 }
+    ],
+    history: {
+      'Óleo de Cozinha': [
+        { date: 'Jan/26', price: 6.20 },
+        { date: 'Fev/26', price: 6.10 },
+        { date: 'Mar/26', price: 6.00 },
+        { date: 'Abr/26', price: 5.90 },
+        { date: 'Mai/26', price: 5.80 }
+      ],
+      'Farinha de Trigo': [
+        { date: 'Jan/26', price: 4.50 },
+        { date: 'Fev/26', price: 4.40 },
+        { date: 'Mar/26', price: 4.30 },
+        { date: 'Abr/26', price: 4.25 },
+        { date: 'Mai/26', price: 4.20 }
+      ]
+    }
+  }
+];
+
 interface SaaSAdminProps {
   activeTab: string;
   onViewTenant: (tenantId: string, name?: string, logo?: string) => void;
@@ -141,7 +283,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'tenants' | 'plans' | 'financial' | 'support' | 'leads' | 'team' | 'marketplace_config'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'tenants' | 'plans' | 'financial' | 'support' | 'leads' | 'team' | 'marketplace_config' | 'suppliers'>('dashboard');
 
   // Commerce Categories States
   const [commerceCategories, setCommerceCategories] = useState<any[]>([]);
@@ -175,6 +317,21 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   const [showSaaSUserModal, setShowSaaSUserModal] = useState(false);
   const [selectedSaasPermissions, setSelectedSaasPermissions] = useState<Permission[]>(SAAS_ADMIN_MODULES.map(m => m.id));
   const [promoTenantSearch, setPromoTenantSearch] = useState('');
+
+  // Fornecedores B2B States
+  const [suppliers, setSuppliers] = useState<Supplier[]>(INITIAL_SAAS_SUPPLIERS);
+  const [selectedCity, setSelectedCity] = useState<string>('Todas');
+  const [selectedGraphMaterial, setSelectedGraphMaterial] = useState<string>('Bife Bovino kg');
+  const [showAddSupplierModal, setShowAddSupplierModal] = useState<boolean>(false);
+  
+  // New Supplier Form
+  const [supName, setSupName] = useState('');
+  const [supCity, setSupCity] = useState('São Paulo');
+  const [supPhone, setSupPhone] = useState('');
+  const [supEmail, setSupEmail] = useState('');
+  const [supMaterialName, setSupMaterialName] = useState('Bife Bovino kg');
+  const [supMaterialPrice, setSupMaterialPrice] = useState('');
+  const [supAddedMaterials, setSupAddedMaterials] = useState<{ rawMaterialName: string; price: number }[]>([]);
 
   useEffect(() => {
     if (parentActiveTab === 'saas-tenants') setActiveTab('tenants');
@@ -445,21 +602,33 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     };
   };
 
-  const handleCloseCycleAndBill = async (tenant: Tenant, unbilledOrdersList: any[], totalFees: number, includeSubscription: boolean, monthlyBasePrice: number) => {
+  const handleCloseCycleAndBill = async (
+    tenant: Tenant, 
+    unbilledOrdersList: any[], 
+    totalFees: number, 
+    includeSubscription: boolean, 
+    monthlyBasePrice: number,
+    customDueDate?: string,
+    customDesc?: string
+  ) => {
     const totalAmount = totalFees + (includeSubscription ? monthlyBasePrice : 0);
     const invoiceId = `inv_${Date.now()}`;
+    const finalDueDate = customDueDate || new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const finalDesc = customDesc || `Cobrança Período - ${tenant.name} (${unbilledOrdersList.length} Ped. Mkt + Plano)`;
     
     try {
-      await addDoc(collection(db, 'saasLedger'), {
-        description: `Cobrança Período - ${tenant.name} (${unbilledOrdersList.length} Ped. Mkt + Plano)`,
+      const ledgerRef = await addDoc(collection(db, 'saasLedger'), {
+        description: finalDesc,
         type: 'receber',
         amount: totalAmount,
-        dueDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+        dueDate: finalDueDate,
         category: 'Planos e Marketplace',
         status: 'pending',
         tenantId: tenant.id,
         createdAt: new Date()
       });
+
+      const ledgerId = ledgerRef.id;
 
       for (const order of unbilledOrdersList) {
         const invId = `mkt_inv_${order.id}`;
@@ -469,12 +638,13 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
           orderId: order.id,
           amount: marketplaceFixedFee + ((order.total || 0) * marketplaceFee / 100),
           status: 'pending',
+          ledgerId: ledgerId,
           createdAt: new Date()
         });
       }
 
       setSelectedBilling({
-        id: invoiceId,
+        id: ledgerId,
         tenantName: tenant.name,
         amount: totalAmount,
         pixCode: `00020101021126580014br.gov.bcb.pix0136${Math.random().toString(36).slice(-10)}@kitchenflowai.com5204000053039865405${totalAmount.toFixed(2)}5802BR5914KitchenFlow AI6009SaoPaulo62070503***6304${Math.random().toString(16).slice(-4)}`
@@ -484,6 +654,280 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     } catch (err) {
       console.error("Error creating cycle billing:", err);
     }
+  };
+
+  // Impressão do Livro Razão
+  const handlePrintLedger = () => {
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) return;
+
+    const rec = saasLedger.filter(i => i.type === 'receber' && i.status === 'paid').reduce((acc, i) => acc + (i.amount || 0), 0);
+    const pag = saasLedger.filter(i => i.type === 'pagar' && i.status === 'paid').reduce((acc, i) => acc + (i.amount || 0), 0);
+    const balance = rec - pag;
+
+    const rowsHtml = saasLedger.map(item => `
+      <tr style="border-bottom: 1px solid #f1f5f9; font-size: 11px;">
+        <td style="padding: 10px;">
+          <strong style="color: #1e293b; display: block;">${item.description}</strong>
+          <span style="font-size: 8px; font-family: monospace; color: #94a3b8;">ID: ${item.id}</span>
+        </td>
+        <td style="padding: 10px; text-transform: uppercase; font-weight: bold; color: #475569;">${item.category}</td>
+        <td style="padding: 10px; color: #64748b;">${item.dueDate ? new Date(item.dueDate).toLocaleDateString('pt-BR') : 'A definir'}</td>
+        <td style="padding: 10px; text-align: right; font-weight: bold; color: ${item.type === 'receber' ? '#16a34a' : '#dc2626'}">
+          ${item.type === 'receber' ? '+' : '-'} R$ ${Number(item.amount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        </td>
+        <td style="padding: 10px; text-align: center;">
+          <span style="padding: 3px 8px; border-radius: 8px; font-size: 9px; font-weight: bold; ${item.status === 'paid' ? 'background-color: #d1fae5; color: #065f46;' : 'background-color: #fef3c7; color: #92400e;'}">
+            ${item.status === 'paid' ? 'QUITADO' : 'PENDENTE'}
+          </span>
+        </td>
+      </tr>
+    `).join('');
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Relatório de Fluxo de Caixa - SaaS Admin</title>
+          <style>
+            body { font-family: sans-serif; color: #1e293b; padding: 40px; }
+            .header { text-align: center; border-bottom: 2px solid #e2e8f0; padding-bottom: 20px; margin-bottom: 30px; }
+            .logo { font-size: 24px; font-weight: 900; color: #4f46e5; margin: 0; }
+            .title { font-size: 14px; color: #64748b; text-transform: uppercase; margin: 5px 0 0; font-weight: bold; letter-spacing: 0.05em; }
+            .summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 40px; }
+            .summary-box { border: 1px solid #e2e8f0; border-radius: 12px; padding: 15px; background: #f8fafc; }
+            .summary-box.balance { background: #eef2ff; border-color: #e0e7ff; }
+            .summary-title { font-size: 9px; font-weight: bold; color: #94a3b8; text-transform: uppercase; margin: 0; }
+            .summary-value { font-size: 18px; font-weight: 800; margin: 5px 0 0; }
+            .table { width: 100%; border-collapse: collapse; margin-bottom: 40px; }
+            .th { background: #f1f5f9; padding: 12px; font-size: 10px; font-weight: bold; color: #475569; text-transform: uppercase; text-align: left; }
+            @media print {
+              body { padding: 0; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1 class="logo">KITCHENFLOW AI</h1>
+            <p class="title">Relatório de Fluxo de Caixa - SaaS Admin</p>
+            <p style="font-size: 10px; color: #94a3b8; margin: 5px 0 0;">Emitido em: ${new Date().toLocaleString('pt-BR')}</p>
+          </div>
+
+          <div class="summary-grid">
+            <div class="summary-box">
+              <p class="summary-title" style="color: #16a34a;">Total Recebido (Compensado)</p>
+              <p class="summary-value" style="color: #16a34a;">R$ ${rec.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+            </div>
+            <div class="summary-box">
+              <p class="summary-title" style="color: #dc2626;">Total Pago (Compensado)</p>
+              <p class="summary-value" style="color: #dc2626;">R$ ${pag.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+            </div>
+            <div class="summary-box balance">
+              <p class="summary-title" style="color: #4f46e5;">Saldo Líquido Executado</p>
+              <p class="summary-value" style="color: ${balance >= 0 ? '#15803d' : '#b91c1c'};">R$ ${balance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+            </div>
+          </div>
+
+          <table class="table">
+            <thead>
+              <tr>
+                <th class="th">Descrição</th>
+                <th class="th">Categoria</th>
+                <th class="th">Vencimento</th>
+                <th class="th" style="text-align: right;">Valor</th>
+                <th class="th" style="text-align: center;">Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+          </table>
+
+          <div style="margin-top: 60px; text-align: center; font-size: 10px; color: #94a3b8;">
+            <p style="border-top: 1px dashed #cbd5e1; width: 250px; margin: 0 auto; padding-top: 10px; font-weight: bold;">Assinatura do Responsável Financeiro</p>
+          </div>
+
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(function() { window.close(); }, 500);
+            }
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  // Impressão da Conciliação de Tarifas Marketplace
+  const handlePrintMarketplaceCycles = () => {
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) return;
+
+    const rowsHtml = tenants.map(tenant => {
+      const stats = getTenantMarketplaceStats(tenant.id);
+      return `
+        <tr style="border-bottom: 1px solid #f1f5f9; font-size: 11px;">
+          <td style="padding: 10px;">
+            <strong style="color: #1e293b; display: block;">${tenant.name}</strong>
+            <span style="font-size: 8px; font-family: monospace; color: #94a3b8;">ID: ${tenant.id}</span>
+          </td>
+          <td style="padding: 10px; text-transform: uppercase; font-weight: bold; color: #6366f1;">${tenant.subscription?.plan || 'NENHUM'}</td>
+          <td style="padding: 10px; color: #475569;">${stats.unbilledOrdersCount} pendentes / ${stats.totalOrdersCount} históricos</td>
+          <td style="padding: 10px; text-align: right; font-weight: bold; color: #1e293b;">R$ ${stats.unbilledGMV.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+          <td style="padding: 10px; text-align: right; font-weight: bold; color: #d97706;">R$ ${stats.unbilledFees.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+          <td style="padding: 10px; text-align: right; font-weight: bold; color: #16a34a;">R$ ${stats.billedFees.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+        </tr>
+      `;
+    }).join('');
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Relatório de Conciliação Marketplace - SaaS Admin</title>
+          <style>
+            body { font-family: sans-serif; color: #1e293b; padding: 40px; }
+            .header { text-align: center; border-bottom: 2px solid #e2e8f0; padding-bottom: 20px; margin-bottom: 30px; }
+            .logo { font-size: 24px; font-weight: 900; color: #4f46e5; margin: 0; }
+            .title { font-size: 14px; color: #64748b; text-transform: uppercase; margin: 5px 0 0; font-weight: bold; letter-spacing: 0.05em; }
+            .table { width: 100%; border-collapse: collapse; margin-top: 20px; margin-bottom: 40px; }
+            .th { background: #f1f5f9; padding: 12px; font-size: 10px; font-weight: bold; color: #475569; text-transform: uppercase; text-align: left; }
+            @media print {
+              body { padding: 0; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1 class="logo">KITCHENFLOW AI</h1>
+            <p class="title">Relatório de Conciliação e Tarifas do Marketplace</p>
+            <p style="font-size: 10px; color: #94a3b8; margin: 5px 0 0;">Emitido em: ${new Date().toLocaleString('pt-BR')}</p>
+          </div>
+
+          <table class="table">
+            <thead>
+              <tr>
+                <th class="th">Lojista / Inquilino</th>
+                <th class="th">Plano Ativo</th>
+                <th class="th">Pedidos Marketplace</th>
+                <th class="th" style="text-align: right;">GMV do Ciclo</th>
+                <th class="th" style="text-align: right;">Tarifas Acumuladas</th>
+                <th class="th" style="text-align: right;">Tarifas Quitadas</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+          </table>
+
+          <div style="margin-top: 60px; text-align: center; font-size: 10px; color: #94a3b8;">
+            <p style="border-top: 1px dashed #cbd5e1; width: 250px; margin: 0 auto; padding-top: 10px; font-weight: bold;">Auditoria Financeira KitchenFlow</p>
+          </div>
+
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(function() { window.close(); }, 500);
+            }
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  // Impressão do Histórico de Recebimentos SaaS
+  const handlePrintSaaSPayments = () => {
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) return;
+
+    const totalRevenue = saasPayments.reduce((acc, p) => acc + (p.amountPaid || 0), 0);
+
+    const rowsHtml = saasPayments.map(payment => `
+      <tr style="border-bottom: 1px solid #f1f5f9; font-size: 11px;">
+        <td style="padding: 10px;">
+          <strong style="color: #1e293b; display: block;">${payment.tenantName}</strong>
+          <span style="font-size: 8px; font-family: monospace; color: #94a3b8;">ID: ${payment.id}</span>
+        </td>
+        <td style="padding: 10px; text-transform: uppercase; font-weight: bold; color: #4f46e5;">
+          ${payment.period === 'monthly' ? 'Mensal' :
+            payment.period === 'quarterly' ? 'Trimestral' :
+            payment.period === 'semiannual' ? 'Semestral' :
+            payment.period === 'yearly' ? 'Anual' : 'Personalizado'}
+        </td>
+        <td style="padding: 10px; font-weight: bold; color: #1e293b;">
+          R$ ${Number(payment.amountPaid || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        </td>
+        <td style="padding: 10px; text-transform: uppercase; font-size: 9px; color: #64748b;">
+          ${payment.paymentMethod === 'pix' ? 'Pix Immediate' :
+            payment.paymentMethod === 'cartao' ? 'Cartão de Crédito' :
+            payment.paymentMethod === 'boleto' ? 'Boleto Digital' : 'Dinheiro / Outro'}
+        </td>
+        <td style="padding: 10px; color: #16a34a; font-weight: bold;">
+          COMPENSADO (${payment.createdAt ? new Date(payment.createdAt).toLocaleDateString('pt-BR') : new Date().toLocaleDateString('pt-BR')})
+        </td>
+      </tr>
+    `).join('');
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Relatório de Recebimentos Recorrentes (SaaS)</title>
+          <style>
+            body { font-family: sans-serif; color: #1e293b; padding: 40px; }
+            .header { text-align: center; border-bottom: 2px solid #e2e8f0; padding-bottom: 20px; margin-bottom: 30px; }
+            .logo { font-size: 24px; font-weight: 900; color: #4f46e5; margin: 0; }
+            .title { font-size: 14px; color: #64748b; text-transform: uppercase; margin: 5px 0 0; font-weight: bold; letter-spacing: 0.05em; }
+            .table { width: 100%; border-collapse: collapse; margin-top: 20px; margin-bottom: 40px; }
+            .th { background: #f1f5f9; padding: 12px; font-size: 10px; font-weight: bold; color: #475569; text-transform: uppercase; text-align: left; }
+            @media print {
+              body { padding: 0; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1 class="logo">KITCHENFLOW AI</h1>
+            <p class="title">Relatório de Recebimentos Recorrentes e Assinaturas (SaaS)</p>
+            <p style="font-size: 10px; color: #94a3b8; margin: 5px 0 0;">Emitido em: ${new Date().toLocaleString('pt-BR')}</p>
+          </div>
+
+          <div style="border: 1px solid #e2e8f0; padding: 15px; border-radius: 12px; margin-bottom: 30px; background: #eef2ff; max-width: 300px;">
+            <p style="font-size: 9px; font-weight: bold; color: #4f46e5; text-transform: uppercase; margin: 0;">Faturamento SaaS Acumulado</p>
+            <p style="font-size: 20px; font-weight: 900; color: #312e81; margin: 5px 0 0;">R$ ${totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+          </div>
+
+          <table class="table">
+            <thead>
+              <tr>
+                <th class="th">Lojista / Inquilino</th>
+                <th class="th">Período Contratado</th>
+                <th class="th">Valor Recebido</th>
+                <th class="th">Canal de Pagamento</th>
+                <th class="th">Processamento / Compensação</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+          </table>
+
+          <div style="margin-top: 60px; text-align: center; font-size: 10px; color: #94a3b8;">
+            <p style="border-top: 1px dashed #cbd5e1; width: 250px; margin: 0 auto; padding-top: 10px; font-weight: bold;">Auditoria Financeira de Assinaturas</p>
+          </div>
+
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(function() { window.close(); }, 500);
+            }
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
   };
 
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -524,6 +968,20 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   const [billingIncludeSubscription, setBillingIncludeSubscription] = useState(true);
   const [selectedTenantForBilling, setSelectedTenantForBilling] = useState<any | null>(null);
   const [selectedBilling, setSelectedBilling] = useState<{ id: string; tenantName: string; amount: number; pixCode: string } | null>(null);
+  const [billingCustomSubscriptionPrice, setBillingCustomSubscriptionPrice] = useState<string>('');
+  const [billingCustomDueDate, setBillingCustomDueDate] = useState<string>('');
+  const [billingCustomNotes, setBillingCustomNotes] = useState<string>('');
+
+  // Estados para geração de contrato de cessão de uso do app
+  const [showContractModal, setShowContractModal] = useState(false);
+  const [selectedTenantForContract, setSelectedTenantForContract] = useState<any | null>(null);
+  const [contractDate, setContractDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [contractDurationMonths, setContractDurationMonths] = useState<number>(12);
+  const [contractCity, setContractCity] = useState<string>('São Paulo');
+  const [contractState, setContractState] = useState<string>('SP');
+  const [contractOwnerCNPJ, setContractOwnerCNPJ] = useState<string>('45.123.456/0001-90');
+  const [contractOwnerAddress, setContractOwnerAddress] = useState<string>('Av. Paulista, 1000, Bela Vista, São Paulo/SP');
+  const [contractOwnerRepresentative, setContractOwnerRepresentative] = useState<string>('Renan de Oliveira');
 
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'settings', 'marketplace'), (snapshot) => {
@@ -1377,6 +1835,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
               { id: 'support', label: 'Suporte' },
               { id: 'team', label: 'Equipe SaaS' },
               { id: 'marketplace_config', label: 'Marketplace Nova' },
+              { id: 'suppliers', label: 'Fornecedores B2B' },
             ].map(tab => (
               <button 
                 key={tab.id}
@@ -2542,6 +3001,17 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                         <Edit3 size={18} />
                       </button>
                       <button 
+                        onClick={() => {
+                          setSelectedTenantForContract(tenant);
+                          setContractDate(new Date().toISOString().slice(0, 10));
+                          setShowContractModal(true);
+                        }}
+                        className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                        title="Gerar Contrato de Cessão de Uso"
+                      >
+                        <FileText size={18} />
+                      </button>
+                      <button 
                         onClick={() => confirmAction("Excluir Cliente", "Deseja remover este lojista permanentemente?", () => handleDeleteTenant(tenant.id), 'danger')}
                         className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all" 
                         title="Excluir"
@@ -3001,12 +3471,20 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                     <h3 className="text-sm font-black uppercase tracking-wider">Livro Razão Plataforma (Contas a Pagar & Receber)</h3>
                     <p className="text-[9px] text-white/50 tracking-wider font-semibold uppercase mt-0.5">Gestão de licenças, APIs, marketing, infraestrutura e faturamento de lojistas</p>
                   </div>
-                  <button
-                    onClick={() => setShowAddLedgerModal(true)}
-                    className="flex items-center gap-2 px-5 py-3 bg-white text-indigo-950 font-black text-[10px] uppercase tracking-widest rounded-2xl hover:bg-slate-50 transition-all cursor-pointer shadow-lg active:scale-95"
-                  >
-                    <Plus size={16} /> Adicionar Lançamento
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={handlePrintLedger}
+                      className="flex items-center gap-2 px-4 py-3 bg-indigo-800/80 hover:bg-indigo-850/80 border border-indigo-700/50 text-white font-black text-[10px] uppercase tracking-widest rounded-2xl transition-all cursor-pointer shadow-lg active:scale-95"
+                    >
+                      <Printer size={14} /> Imprimir Razão
+                    </button>
+                    <button
+                      onClick={() => setShowAddLedgerModal(true)}
+                      className="flex items-center gap-2 px-5 py-3 bg-white text-indigo-950 font-black text-[10px] uppercase tracking-widest rounded-2xl hover:bg-slate-50 transition-all cursor-pointer shadow-lg active:scale-95"
+                    >
+                      <Plus size={16} /> Adicionar Lançamento
+                    </button>
+                  </div>
                 </div>
 
                 <div className="overflow-x-auto">
@@ -3095,14 +3573,22 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
 
               {/* Tenant commission balance list */}
               <div id="saas-marketplace-cycles-dynamic-wrapper" className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden font-sans">
-                <div className="p-8 border-b border-slate-50 flex justify-between items-center bg-indigo-950 text-white font-sans">
+                <div className="p-8 border-b border-slate-50 flex flex-col sm:flex-row justify-between items-start sm:items-center bg-indigo-950 text-white gap-4 font-sans">
                   <div>
                     <h3 className="text-sm font-black uppercase tracking-wider">Conciliação de Tarifas por Lojista</h3>
                     <p className="text-[9px] text-white/50 tracking-wider font-semibold uppercase mt-0.5">Acompanhamento e fechamento de ciclo de comissões de vendas no aplicativo marketplace</p>
                   </div>
-                  <div className="flex gap-4 p-1 rounded-xl bg-white/10 text-[9px] font-black uppercase font-sans">
-                    <span className="px-3 py-1.5 text-white bg-white/10 rounded-lg">Comissão Global: {marketplaceFee}%</span>
-                    <span className="px-3 py-1.5 text-white bg-white/10 rounded-lg">Custo Fator: R$ {marketplaceFixedFee.toFixed(2)}</span>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      onClick={handlePrintMarketplaceCycles}
+                      className="flex items-center gap-2 px-4 py-2.5 bg-indigo-900/80 hover:bg-indigo-850/80 border border-indigo-800/50 text-white font-black text-[10px] uppercase tracking-widest rounded-xl transition-all cursor-pointer shadow-lg active:scale-95"
+                    >
+                      <Printer size={13} /> Imprimir Relatório
+                    </button>
+                    <div className="flex gap-3 p-1 rounded-xl bg-white/10 text-[9px] font-black uppercase font-sans">
+                      <span className="px-2.5 py-1.5 text-white bg-white/10 rounded-lg">Comissão Global: {marketplaceFee}%</span>
+                      <span className="px-2.5 py-1.5 text-white bg-white/10 rounded-lg">Custo Fator: R$ {marketplaceFixedFee.toFixed(2)}</span>
+                    </div>
                   </div>
                 </div>
 
@@ -3153,8 +3639,16 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                             <td className="px-6 py-4 text-right">
                               <button
                                 onClick={() => {
+                                  const basePrice = (tenant.subscription as any)?.customPrice || (
+                                    tenant.subscription?.plan === 'ENTERPRISE' ? 299 :
+                                    tenant.subscription?.plan === 'PRO' ? 199 :
+                                    tenant.subscription?.plan === 'BASIC' ? 99 : 0
+                                  );
                                   setSelectedTenantForBilling(tenant);
-                                  setBillingIncludeSubscription(true);
+                                  setBillingIncludeSubscription(tenant.subscription?.plan !== 'FREE');
+                                  setBillingCustomSubscriptionPrice(basePrice.toString());
+                                  setBillingCustomDueDate(new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
+                                  setBillingCustomNotes(`Mensalidade Plano ${tenant.subscription?.plan || 'PRO'} + Comissão sobre Vendas Marketplace (${stats.unbilledOrdersCount} pedidos)`);
                                   setShowCloseCycleModal(true);
                                 }}
                                 disabled={stats.unbilledOrdersCount === 0 && (tenant.subscription?.plan === 'FREE')}
@@ -3365,14 +3859,22 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
 
           {/* Histórico Real de Renovações e Pagamentos SaaS */}
           <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden mt-6">
-            <div className="p-6 border-b border-slate-50 flex justify-between items-center">
+            <div className="p-6 border-b border-slate-50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div>
                 <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest">Histórico de Recebimentos Recorrentes (SaaS)</h3>
                 <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Registrado automaticamente a partir de renovações e extensões de planos de lojistas</p>
               </div>
-              <span className="px-3 py-1 bg-indigo-50 text-indigo-600 rounded-lg text-[10px] font-black uppercase tracking-wider">
-                {saasPayments.length} Lançamentos Realizados
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handlePrintSaaSPayments}
+                  className="flex items-center gap-2 px-3.5 py-2 bg-slate-105 hover:bg-slate-150 text-slate-700 border border-slate-200 font-black text-[9px] uppercase tracking-widest rounded-xl transition-all cursor-pointer shadow-sm active:scale-95"
+                >
+                  <Printer size={13} /> Imprimir Histórico
+                </button>
+                <span className="px-3 py-2 bg-indigo-50 text-indigo-600 rounded-xl text-[9px] font-black uppercase tracking-wider border border-indigo-100">
+                  {saasPayments.length} Lançamentos Realizados
+                </span>
+              </div>
             </div>
             <div className="overflow-x-auto font-sans">
               <table className="w-full text-left">
@@ -3636,10 +4138,476 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
               </div>
            </div>
         </div>
+      ) : activeTab === 'suppliers' ? (
+        <div className="space-y-6 animate-in slide-in-from-right-4 duration-500">
+          {/* Top Info Cards / KPI Row */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-150 shadow-lg shadow-slate-100/50 flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total de Fornecedores</p>
+                <p className="text-3xl font-black text-slate-800 tracking-tight">{suppliers.length}</p>
+                <p className="text-[10px] text-emerald-600 font-bold mt-1">Parceiros integrados</p>
+              </div>
+              <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shadow-inner">
+                <Building2 size={24} />
+              </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-150 shadow-lg shadow-slate-100/50 flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Cidades Atendidas</p>
+                <p className="text-3xl font-black text-slate-800 tracking-tight">
+                  {Array.from(new Set(suppliers.map(s => s.city))).length}
+                </p>
+                <p className="text-[10px] text-indigo-650 font-bold mt-1">Sincronia regional</p>
+              </div>
+              <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-650 flex items-center justify-center shadow-inner">
+                <MapPin size={24} />
+              </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-150 shadow-lg shadow-slate-100/50 flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Insumos Mapeados</p>
+                <p className="text-3xl font-black text-slate-800 tracking-tight">
+                  {Array.from(new Set(suppliers.flatMap(s => s.materials.map(m => m.rawMaterialName)))).length}
+                </p>
+                <p className="text-[10px] text-amber-600 font-bold mt-1">Valores atualizados</p>
+              </div>
+              <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center shadow-inner">
+                <Package size={24} />
+              </div>
+            </div>
+          </div>
+
+          {/* Filters & Control bar */}
+          <div className="bg-white p-6 rounded-[2rem] border border-slate-150 shadow-lg shadow-slate-100/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2">
+                <Filter size={16} className="text-slate-400" />
+                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Filtrar Cidade:</span>
+              </div>
+              <div className="flex gap-2">
+                {['Todas', ...Array.from(new Set(suppliers.map(s => s.city)))].map(city => (
+                  <button
+                    key={city}
+                    onClick={() => setSelectedCity(city)}
+                    className={`px-3 py-1.5 rounded-xl font-black text-[9px] uppercase tracking-wider transition-all ${
+                      selectedCity === city
+                        ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-100'
+                        : 'bg-slate-50 text-slate-500 hover:text-slate-800 border'
+                    }`}
+                  >
+                    {city}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowAddSupplierModal(true)}
+              className="bg-emerald-600 text-white px-5 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 flex items-center gap-2 self-stretch sm:self-auto justify-center"
+            >
+              <Plus size={14} /> Cadastrar Fornecedor
+            </button>
+          </div>
+
+          {/* Main Layout Grid */}
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+            {/* Left Column: Suppliers list */}
+            <div className="xl:col-span-7 space-y-6">
+              <div className="bg-white rounded-[2rem] border border-slate-150 shadow-lg shadow-slate-100/50 overflow-hidden">
+                <div className="p-6 border-b bg-slate-50 flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider">Lista de Fornecedores Cadastrados</h3>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Valores vigentes negociados por região.</p>
+                  </div>
+                  <span className="bg-emerald-50 text-emerald-600 font-black text-[9px] uppercase tracking-widest px-2.5 py-1 rounded-full border border-emerald-100">
+                    {suppliers.filter(s => selectedCity === 'Todas' || s.city === selectedCity).length} Registros
+                  </span>
+                </div>
+
+                <div className="divide-y divide-slate-100 max-h-[600px] overflow-y-auto">
+                  {suppliers
+                    .filter(s => selectedCity === 'Todas' || s.city === selectedCity)
+                    .map((sup) => (
+                      <div key={sup.id} className="p-6 hover:bg-slate-50/50 transition-all space-y-4">
+                        {/* Supplier Info Header */}
+                        <div className="flex flex-col sm:flex-row justify-between items-start gap-2">
+                          <div>
+                            <h4 className="text-base font-black text-slate-850 tracking-tight">{sup.name}</h4>
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-[10px] text-slate-400 font-bold">
+                              <span className="flex items-center gap-1 uppercase">
+                                <MapPin size={12} className="text-emerald-500" /> {sup.city}
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <Phone size={12} className="text-indigo-500" /> {sup.phone}
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <Mail size={12} className="text-pink-500" /> {sup.email}
+                              </span>
+                            </div>
+                          </div>
+                          
+                          <button
+                            onClick={() => {
+                              if (confirm(`Tem certeza que deseja remover o fornecedor ${sup.name}?`)) {
+                                setSuppliers(suppliers.filter(s => s.id !== sup.id));
+                              }
+                            }}
+                            className="text-slate-300 hover:text-rose-500 p-1.5 rounded-xl hover:bg-rose-50 transition-all self-end sm:self-start"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+
+                        {/* Supplier materials and prices */}
+                        <div className="bg-slate-50 rounded-2xl border p-4">
+                          <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-2">Tabela de Preços</span>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {sup.materials.map((m, idx) => (
+                              <div key={idx} className="flex justify-between items-center bg-white border rounded-xl p-2.5 shadow-sm">
+                                <span className="text-xs font-bold text-slate-700">{m.rawMaterialName}</span>
+                                <span className="text-xs font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-100">
+                                  R$ {m.price.toFixed(2)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  {suppliers.filter(s => selectedCity === 'Todas' || s.city === selectedCity).length === 0 && (
+                    <div className="py-16 text-center text-slate-400">
+                      <AlertCircle className="mx-auto text-slate-300 mb-2" size={32} />
+                      <p className="font-bold text-xs">Nenhum fornecedor cadastrado nesta cidade.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Right Column: Price change graph */}
+            <div className="xl:col-span-5 space-y-6">
+              <div className="bg-white rounded-[2rem] border border-slate-150 shadow-lg shadow-slate-100/50 p-6 space-y-6 sticky top-6">
+                <div>
+                  <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                    <TrendingUp className="text-emerald-500" size={18} /> Gráfico de Variação de Preços
+                  </h3>
+                  <p className="text-[10px] text-slate-400 mt-0.5">Analise o histórico de alteração de preços entre fornecedores.</p>
+                </div>
+
+                {/* Dropdown Selection */}
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-black text-slate-400 uppercase block">Insumo para Comparação</label>
+                  <select
+                    value={selectedGraphMaterial}
+                    onChange={(e) => setSelectedGraphMaterial(e.target.value)}
+                    className="w-full p-3 bg-slate-50 border rounded-xl text-xs font-black text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 appearance-none cursor-pointer"
+                  >
+                    {Array.from(new Set(suppliers.flatMap(s => Object.keys(s.history)))).map(name => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Graph display */}
+                <div className="h-[280px] w-full border border-slate-100 rounded-3xl p-4 bg-slate-50/50 flex flex-col justify-between">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart
+                      data={
+                        (() => {
+                          const datesSet = new Set<string>();
+                          suppliers.forEach(sup => {
+                            const hist = sup.history[selectedGraphMaterial];
+                            if (hist) {
+                              hist.forEach(h => datesSet.add(h.date));
+                            }
+                          });
+                          const sortedDates = Array.from(datesSet);
+                          return sortedDates.map(date => {
+                            const row: Record<string, any> = { name: date };
+                            suppliers.forEach(sup => {
+                              const hist = sup.history[selectedGraphMaterial];
+                              if (hist) {
+                                const match = hist.find(h => h.date === date);
+                                if (match) {
+                                  row[sup.name] = match.price;
+                                }
+                              }
+                            });
+                            return row;
+                          });
+                        })()
+                      }
+                      margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis 
+                        dataKey="name" 
+                        tickLine={false} 
+                        axisLine={false} 
+                        tick={{ fontSize: 9, fontWeight: 800, fill: '#94a3b8' }} 
+                      />
+                      <YAxis 
+                        tickLine={false} 
+                        axisLine={false} 
+                        tick={{ fontSize: 9, fontWeight: 800, fill: '#94a3b8' }} 
+                        tickFormatter={(v) => `R$${v}`}
+                      />
+                      <Tooltip 
+                        contentStyle={{ 
+                          backgroundColor: '#1e293b', 
+                          border: 'none', 
+                          borderRadius: '16px', 
+                          color: '#fff', 
+                          fontSize: '10px',
+                          fontWeight: '800'
+                        }} 
+                      />
+                      <Legend 
+                        iconType="circle"
+                        wrapperStyle={{ fontSize: '9px', fontWeight: '800', marginTop: '10px' }}
+                      />
+                      {suppliers.filter(sup => sup.history[selectedGraphMaterial]).map((sup, idx) => {
+                        const colors = ['#059669', '#4f46e5', '#d97706', '#db2777', '#7c3aed', '#2563eb'];
+                        const color = colors[idx % colors.length];
+                        return (
+                          <Area
+                            key={sup.id}
+                            type="monotone"
+                            dataKey={sup.name}
+                            stroke={color}
+                            fillOpacity={0.03}
+                            fill={color}
+                            strokeWidth={3}
+                          />
+                        );
+                      })}
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-3xl flex items-start gap-3">
+                  <Sparkles className="text-indigo-650 shrink-0 mt-0.5" size={18} />
+                  <div>
+                    <span className="text-[10px] font-black text-indigo-900 uppercase tracking-widest block">Futura Plataforma B2B</span>
+                    <p className="text-[10px] text-indigo-750 font-medium leading-relaxed mt-0.5">
+                      Esta aba é o alicerce para conectar lojistas e distribuidores diretamente. Nas próximas atualizações, os lojistas poderão disparar compras automáticas com base nas cotações acima.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       ) : (
         <div className="flex flex-col items-center justify-center py-20 text-slate-400">
            <AlertTriangle size={48} className="mb-4 opacity-20" />
            <p className="font-black text-[10px] uppercase tracking-[0.2em]">Selecione uma aba para gerenciar</p>
+        </div>
+      )}
+
+      {showAddSupplierModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-xl rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+             <div className="p-8 border-b border-slate-50 flex justify-between items-center bg-emerald-600 text-white">
+                <div>
+                   <h2 className="text-xl font-black tracking-tighter">Cadastrar Fornecedor B2B</h2>
+                   <p className="text-[10px] font-black opacity-60 uppercase tracking-widest mt-1">Insira os dados do distribuidor parceiro</p>
+                </div>
+                <button onClick={() => setShowAddSupplierModal(false)} className="p-2 text-white/50 hover:text-white transition-all"><X size={20} /></button>
+             </div>
+             
+             <div className="p-8 space-y-6 overflow-y-auto flex-1 custom-scrollbar">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                   <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Nome da Empresa</label>
+                      <input 
+                        type="text" 
+                        className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-emerald-500 transition-all"
+                        value={supName}
+                        onChange={(e) => setSupName(e.target.value)}
+                        placeholder="Ex: Distribuidora Sol e Mar Ltda"
+                      />
+                   </div>
+                   
+                   <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Cidade Sede</label>
+                      <select 
+                        className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-emerald-500 transition-all appearance-none"
+                        value={supCity}
+                        onChange={(e) => setSupCity(e.target.value)}
+                      >
+                         <option value="São Paulo">São Paulo</option>
+                         <option value="Curitiba">Curitiba</option>
+                         <option value="Porto Alegre">Porto Alegre</option>
+                         <option value="Belo Horizonte">Belo Horizonte</option>
+                         <option value="Rio de Janeiro">Rio de Janeiro</option>
+                      </select>
+                   </div>
+
+                   <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Telefone de Contato</label>
+                      <input 
+                        type="text" 
+                        className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-emerald-500 transition-all"
+                        value={supPhone}
+                        onChange={(e) => setSupPhone(e.target.value)}
+                        placeholder="Ex: (11) 98765-4321"
+                      />
+                   </div>
+
+                   <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase ml-1">E-mail Comercial</label>
+                      <input 
+                        type="email" 
+                        className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-emerald-500 transition-all"
+                        value={supEmail}
+                        onChange={(e) => setSupEmail(e.target.value)}
+                        placeholder="Ex: comercial@distribuidorasol.com"
+                      />
+                   </div>
+                </div>
+
+                {/* Sub-form to add raw materials list */}
+                <div className="border-t pt-4 space-y-4">
+                   <span className="text-[11px] font-black text-slate-400 uppercase tracking-wider block">Insumos & Tabela de Preços</span>
+                   
+                   <div className="bg-slate-50 p-4 rounded-3xl border space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                         <div className="space-y-1">
+                            <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Insumo</label>
+                            <select 
+                              className="w-full p-2.5 bg-white border rounded-xl font-bold text-xs outline-none focus:border-emerald-500"
+                              value={supMaterialName}
+                              onChange={(e) => setSupMaterialName(e.target.value)}
+                            >
+                               <option value="Bife Bovino kg">Bife Bovino kg</option>
+                               <option value="Filé de Frango kg">Filé de Frango kg</option>
+                               <option value="Queijo Muçarela kg">Queijo Muçarela kg</option>
+                               <option value="Óleo de Cozinha">Óleo de Cozinha</option>
+                               <option value="Farinha de Trigo">Farinha de Trigo</option>
+                            </select>
+                         </div>
+
+                         <div className="space-y-1">
+                            <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Preço Unitário (R$)</label>
+                            <div className="flex gap-2">
+                               <input 
+                                 type="number" 
+                                 step="0.01"
+                                 className="w-full p-2.5 bg-white border rounded-xl font-bold text-xs outline-none focus:border-emerald-500"
+                                 value={supMaterialPrice}
+                                 onChange={(e) => setSupMaterialPrice(e.target.value)}
+                                 placeholder="R$ 15,50"
+                               />
+                               <button 
+                                 type="button"
+                                 onClick={() => {
+                                    const priceVal = parseFloat(supMaterialPrice);
+                                    if (!supMaterialPrice || isNaN(priceVal) || priceVal <= 0) {
+                                       alert("Por favor, digite um preço válido maior que zero.");
+                                       return;
+                                    }
+                                    if (supAddedMaterials.some(m => m.rawMaterialName === supMaterialName)) {
+                                       alert("Este insumo já foi adicionado.");
+                                       return;
+                                    }
+                                    setSupAddedMaterials([...supAddedMaterials, { rawMaterialName: supMaterialName, price: priceVal }]);
+                                    setSupMaterialPrice('');
+                                 }}
+                                 className="px-4 bg-emerald-600 text-white rounded-xl font-black text-xs hover:bg-emerald-700 transition-all shrink-0"
+                               >
+                                  + Add
+                               </button>
+                            </div>
+                         </div>
+                      </div>
+
+                      {/* List of currently added materials inside modal */}
+                      {supAddedMaterials.length > 0 ? (
+                         <div className="space-y-2 mt-2 bg-white rounded-2xl border p-3 max-h-[140px] overflow-y-auto custom-scrollbar">
+                            {supAddedMaterials.map((m, idx) => (
+                               <div key={idx} className="flex justify-between items-center text-xs font-bold py-1 border-b last:border-0">
+                                  <span className="text-slate-700">{m.rawMaterialName}</span>
+                                  <div className="flex items-center gap-2">
+                                     <span className="text-emerald-600 font-black">R$ {m.price.toFixed(2)}</span>
+                                     <button 
+                                       type="button"
+                                       onClick={() => setSupAddedMaterials(supAddedMaterials.filter((_, i) => i !== idx))}
+                                       className="text-rose-500 hover:bg-rose-50 p-1 rounded-lg transition-all"
+                                     >
+                                        <X size={12} />
+                                     </button>
+                                  </div>
+                               </div>
+                            ))}
+                         </div>
+                      ) : (
+                         <div className="text-center py-4 text-slate-400 text-[10px] font-bold">
+                            Nenhum insumo adicionado ainda nesta cotação.
+                         </div>
+                      )}
+                   </div>
+                </div>
+             </div>
+
+             <div className="p-8 border-t bg-slate-50 flex gap-4 justify-end">
+                <button 
+                  onClick={() => setShowAddSupplierModal(false)}
+                  className="px-6 py-3 bg-white border border-slate-200 text-slate-500 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 transition-all"
+                >
+                   Cancelar
+                </button>
+                <button 
+                  onClick={() => {
+                     if (!supName.trim()) {
+                        alert("Por favor, preencha o nome do fornecedor.");
+                        return;
+                     }
+                     if (supAddedMaterials.length === 0) {
+                        alert("Por favor, adicione pelo menos um insumo com preço para este fornecedor.");
+                        return;
+                     }
+                     
+                     const newId = `sup_${Date.now()}`;
+                     const newSupplier: Supplier = {
+                        id: newId,
+                        name: supName,
+                        city: supCity,
+                        phone: supPhone || '(11) 99999-9999',
+                        email: supEmail || 'contato@fornecedor.com.br',
+                        materials: supAddedMaterials,
+                        history: {}
+                     };
+                     
+                     // Build initial history
+                     newSupplier.materials.forEach(m => {
+                        newSupplier.history[m.rawMaterialName] = [
+                           { date: 'Jan/26', price: m.price * 0.94 },
+                           { date: 'Fev/26', price: m.price * 0.97 },
+                           { date: 'Mar/26', price: m.price }
+                        ];
+                     });
+                     
+                     setSuppliers([newSupplier, ...suppliers]);
+                     
+                     // Reset form
+                     setSupName('');
+                     setSupCity('São Paulo');
+                     setSupPhone('');
+                     setSupEmail('');
+                     setSupAddedMaterials([]);
+                     setShowAddSupplierModal(false);
+                     alert("Fornecedor cadastrado com sucesso!");
+                  }}
+                  className="px-6 py-3 bg-emerald-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100"
+                >
+                   Salvar Fornecedor B2B
+                </button>
+             </div>
+          </div>
         </div>
       )}
 
@@ -4508,6 +5476,824 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         </div>
       )}
 
+      {/* MODAL DE FECHAMENTO DE CICLO (RECONCILIAÇÃO) */}
+      {showCloseCycleModal && selectedTenantForBilling && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-indigo-950 text-white">
+              <div>
+                <h2 className="text-sm font-black uppercase tracking-wider">Fechamento de Ciclo & Faturamento</h2>
+                <p className="text-[9px] text-white/60 tracking-wider font-semibold uppercase mt-0.5">
+                  Reconciliar comissões e assinaturas do cliente {selectedTenantForBilling.name}
+                </p>
+              </div>
+              <button 
+                onClick={() => setShowCloseCycleModal(false)} 
+                className="p-1.5 text-white/60 hover:text-white hover:bg-white/10 rounded-lg transition-all cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-4 overflow-y-auto">
+              {/* Resumo do Período */}
+              <div className="bg-slate-50 border border-slate-100 p-4 rounded-2xl space-y-3">
+                <div className="flex justify-between items-center border-b pb-2">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Inquilino</span>
+                  <span className="text-xs font-black text-slate-800">{selectedTenantForBilling.name}</span>
+                </div>
+                
+                {/* Stats da comissão */}
+                {(() => {
+                  const stats = getTenantMarketplaceStats(selectedTenantForBilling.id);
+                  const mktFees = stats.unbilledFees;
+                  const planBase = parseFloat(billingCustomSubscriptionPrice) || 0;
+                  const total = mktFees + (billingIncludeSubscription ? planBase : 0);
+                  return (
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-slate-500 font-bold">Pedidos no Ciclo Marketplace:</span>
+                        <span className="font-black text-slate-800">{stats.unbilledOrdersCount}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-slate-500 font-bold">GMV Acumulado no Ciclo:</span>
+                        <span className="font-black text-slate-800">R$ {stats.unbilledGMV.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-xs text-amber-600 font-bold">
+                        <span>Tarifas de Marketplace (Comissão + Fixo):</span>
+                        <span>R$ {mktFees.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Toggles e Overrides */}
+              <div className="space-y-3">
+                {/* Toggle de inclusão de assinatura */}
+                <div className="flex items-start justify-between gap-4 p-3 bg-indigo-50/50 rounded-xl border border-indigo-100">
+                  <div className="space-y-0.5">
+                    <p className="text-[10px] font-bold text-indigo-950">Cobrar Mensalidade SaaS</p>
+                    <p className="text-[8px] text-indigo-700/80 leading-normal">
+                      Inclui o valor correspondente ao plano {selectedTenantForBilling.subscription?.plan || 'PRO'} neste período de cobrança.
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer select-none shrink-0 mt-1">
+                    <input 
+                      type="checkbox" 
+                      className="sr-only peer"
+                      checked={billingIncludeSubscription}
+                      onChange={(e) => setBillingIncludeSubscription(e.target.checked)}
+                    />
+                    <div className="w-7 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
+                  </label>
+                </div>
+
+                {billingIncludeSubscription && (
+                  <div className="grid grid-cols-2 gap-3 animate-in slide-in-from-top-2 duration-150">
+                    <div>
+                      <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Preço da Assinatura (R$)</label>
+                      <input 
+                        type="number" 
+                        step="0.01"
+                        className="w-full px-3 py-2 bg-slate-50 border rounded-lg font-bold outline-none focus:border-indigo-500 text-xs text-slate-700"
+                        value={billingCustomSubscriptionPrice}
+                        onChange={(e) => setBillingCustomSubscriptionPrice(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Vencimento da Cobrança</label>
+                      <input 
+                        type="date" 
+                        className="w-full px-3 py-2 bg-slate-50 border rounded-lg font-bold outline-none focus:border-indigo-500 text-xs text-slate-700"
+                        value={billingCustomDueDate}
+                        onChange={(e) => setBillingCustomDueDate(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {!billingIncludeSubscription && (
+                  <div>
+                    <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Vencimento da Cobrança</label>
+                    <input 
+                      type="date" 
+                      className="w-full px-3 py-2 bg-slate-50 border rounded-lg font-bold outline-none focus:border-indigo-500 text-xs text-slate-700"
+                      value={billingCustomDueDate}
+                      onChange={(e) => setBillingCustomDueDate(e.target.value)}
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Notas / Descrição do Lançamento</label>
+                  <textarea 
+                    rows={2}
+                    className="w-full px-3 py-2 bg-slate-50 border rounded-lg font-bold outline-none focus:border-indigo-500 text-xs text-slate-700"
+                    value={billingCustomNotes}
+                    onChange={(e) => setBillingCustomNotes(e.target.value)}
+                    placeholder="Descrição da cobrança para o financeiro..."
+                  />
+                </div>
+              </div>
+
+              {/* Valor total a cobrar */}
+              <div className="bg-slate-900 text-white p-4 rounded-2xl flex items-center justify-between">
+                <div>
+                  <span className="text-[8px] font-black uppercase text-slate-400 tracking-widest">Valor Final Consolidado</span>
+                  <p className="text-xs text-slate-300 font-bold leading-normal">Comissão + Mensalidade do Período</p>
+                </div>
+                <div className="text-right">
+                  <span className="text-xl font-black tracking-tight text-white block">
+                    R$ {(() => {
+                      const stats = getTenantMarketplaceStats(selectedTenantForBilling.id);
+                      const mktFees = stats.unbilledFees;
+                      const planBase = billingIncludeSubscription ? (parseFloat(billingCustomSubscriptionPrice) || 0) : 0;
+                      return (mktFees + planBase).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+                    })()}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="p-4 bg-slate-50 border-t flex gap-3">
+              <button 
+                onClick={() => setShowCloseCycleModal(false)}
+                className="flex-1 py-3 bg-white border text-slate-500 hover:bg-slate-100 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={async () => {
+                  const stats = getTenantMarketplaceStats(selectedTenantForBilling.id);
+                  const subPrice = billingIncludeSubscription ? (parseFloat(billingCustomSubscriptionPrice) || 0) : 0;
+                  await handleCloseCycleAndBill(
+                    selectedTenantForBilling,
+                    stats.unbilledOrdersList,
+                    stats.unbilledFees,
+                    billingIncludeSubscription,
+                    subPrice,
+                    billingCustomDueDate,
+                    billingCustomNotes
+                  );
+                  setShowCloseCycleModal(false);
+                }}
+                className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-md shadow-indigo-100"
+              >
+                Confirmar Fechamento
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE PIX / DETALHES DE COBRANÇA */}
+      {showBillingModal && selectedBilling && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-indigo-600 text-white">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">⚡</span>
+                <div>
+                  <h2 className="text-sm font-black uppercase tracking-wider">Fatura de Ciclo Emitida</h2>
+                  <p className="text-[9px] text-indigo-100 tracking-wider font-semibold uppercase mt-0.5">
+                    Envie o Pix Copia e Cola para o Lojista
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowBillingModal(false)} 
+                className="p-1.5 text-indigo-100 hover:text-white hover:bg-indigo-500/50 rounded-lg transition-all cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-4 overflow-y-auto font-sans">
+              
+              {/* Pix Card */}
+              <div className="p-5 bg-gradient-to-br from-indigo-950 to-slate-900 rounded-[2rem] text-white relative overflow-hidden border border-indigo-950">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
+                
+                <div className="flex justify-between items-start">
+                  <div>
+                    <span className="text-[8px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                      PIX Ativo
+                    </span>
+                    <h3 className="text-sm font-black mt-2 leading-none">{selectedBilling.tenantName}</h3>
+                    <p className="text-[8px] text-slate-400 mt-1 font-bold">Fatura Ref: #{selectedBilling.id.slice(-6)}</p>
+                  </div>
+                  <div className="w-12 h-12 bg-white p-1 rounded-xl flex items-center justify-center">
+                    {/* Simulated Pix Logo QR */}
+                    <svg viewBox="0 0 24 24" className="w-full h-full text-slate-800" fill="currentColor">
+                      <path d="M12 2L2 12h3v8h6v-6h2v6h6v-8h3L12 2zm-1 9H9v2h2v-2zm4 0h-2v2h2v-2zm-4 4H9v2h2v-2zm4 0h-2v2h2v-2z"/>
+                    </svg>
+                  </div>
+                </div>
+
+                <div className="mt-6 flex justify-between items-end border-t border-slate-800 pt-4">
+                  <div>
+                    <span className="text-[7px] text-slate-400 font-bold uppercase tracking-widest">Valor do Ciclo</span>
+                    <p className="text-2xl font-black text-white tracking-tight">
+                      R$ {selectedBilling.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                  <span className="text-[8px] text-indigo-400 font-black tracking-widest uppercase">KITCHENFLOW AI SAAS</span>
+                </div>
+              </div>
+
+              {/* Pix Copy & Paste Block */}
+              <div className="space-y-1.5">
+                <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-1">
+                  Pix Copia e Cola
+                </label>
+                <div className="flex gap-2">
+                  <input 
+                    type="text" 
+                    readOnly 
+                    className="flex-1 px-3 py-2 bg-slate-50 border rounded-xl font-mono text-[9px] font-semibold text-slate-500 select-all outline-none"
+                    value={selectedBilling.pixCode}
+                  />
+                  <button 
+                    onClick={() => {
+                      navigator.clipboard.writeText(selectedBilling.pixCode);
+                      alert('Chave Pix copiada com sucesso!');
+                    }}
+                    className="px-3 bg-indigo-50 border border-indigo-100 hover:bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center cursor-pointer transition-all"
+                    title="Copiar Pix"
+                  >
+                    <Copy size={14} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Quick Actions Panel */}
+              <div className="border-t pt-4 space-y-3">
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Ações de Cobrança</p>
+                
+                <div className="grid grid-cols-1 gap-2">
+                  {/* WhatsApp Quick Link */}
+                  <button
+                    onClick={() => {
+                      const text = `Olá! 🍲 Segue o fechamento de ciclo do KitchenFlow AI para o restaurante *${selectedBilling.tenantName}*.\n\n*Valor:* R$ ${selectedBilling.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n*Vencimento:* Hoje\n\nUse o Pix Copia e Cola abaixo para efetuar o pagamento:\n\n\`\`\`${selectedBilling.pixCode}\`\`\`\n\nQualquer dúvida, conte conosco!`;
+                      const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
+                      window.open(url, '_blank');
+                    }}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black text-[9px] uppercase tracking-wider transition-all cursor-pointer shadow-md shadow-emerald-100"
+                  >
+                    <MessageSquare size={13} /> Enviar Cobrança por WhatsApp
+                  </button>
+
+                  {/* Settle Invoice manually */}
+                  <button
+                    onClick={async () => {
+                      if (!window.confirm("Deseja marcar esta fatura como PAGA manualmente? Isso conciliará todos os pedidos do ciclo e dará baixa na conta a receber.")) return;
+                      try {
+                        // 1. Update saasLedger status to paid
+                        await updateDoc(doc(db, 'saasLedger', selectedBilling.id), {
+                          status: 'paid',
+                          paymentMethod: 'pix',
+                          paidAt: new Date()
+                        });
+
+                        // 2. Find all marketplaceInvoices with this ledgerId and update to paid
+                        const q = query(collection(db, 'marketplaceInvoices'), where('ledgerId', '==', selectedBilling.id));
+                        const snaps = await getDocs(q);
+                        for (const docSnap of snaps.docs) {
+                          await updateDoc(doc(db, 'marketplaceInvoices', docSnap.id), {
+                            status: 'paid',
+                            paidAt: new Date()
+                          });
+                        }
+
+                        alert('Ciclo conciliado e faturamento quitado com sucesso!');
+                        setShowBillingModal(false);
+                      } catch (err) {
+                        console.error("Error settling invoice manually:", err);
+                        alert('Erro ao conciliar faturamento.');
+                      }
+                    }}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl font-black text-[9px] uppercase tracking-wider transition-all cursor-pointer"
+                  >
+                    <CheckCircle2 size={13} className="text-emerald-500" /> Dar Baixa Manual / Simular Pix Pago
+                  </button>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 bg-slate-50 border-t flex">
+              <button 
+                onClick={() => setShowBillingModal(false)}
+                className="w-full py-3 bg-white border text-slate-700 hover:bg-slate-100 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all text-center"
+              >
+                Fechar Painel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE GERAR CONTRATO DE CESSÃO DE USO DE SOFTWARE */}
+      {showContractModal && selectedTenantForContract && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
+          <style dangerouslySetInnerHTML={{__html: `
+            @media print {
+              body > * {
+                display: none !important;
+              }
+              #print-contract-wrapper {
+                display: block !important;
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                height: auto !important;
+                background: white !important;
+                color: black !important;
+                padding: 2cm !important;
+                font-family: 'Times New Roman', serif !important;
+                font-size: 12pt !important;
+                line-height: 1.5 !important;
+              }
+              #print-contract-wrapper * {
+                background: transparent !important;
+                color: black !important;
+                box-shadow: none !important;
+              }
+              .no-print {
+                display: none !important;
+              }
+            }
+          `}} />
+          <div id="print-contract-wrapper" className="hidden">
+            <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
+              <h1 style={{ fontSize: '16pt', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '0.5rem' }}>
+                INSTRUMENTO PARTICULAR DE CONTRATO DE LICENÇA DE USO DE SOFTWARE (SaaS)
+              </h1>
+              <h2 style={{ fontSize: '13pt', fontWeight: 'bold', textTransform: 'uppercase' }}>
+                E PRESTAÇÃO DE SERVIÇOS DE TECNOLOGIA
+              </h2>
+            </div>
+
+            <p style={{ textIndent: '2cm', textAlign: 'justify', marginBottom: '1.5rem' }}>
+              Pelo presente instrumento particular, de um lado, na qualidade de <strong>LICENCIANTE</strong>, a empresa <strong>KITCHENFLOW AI LTDA</strong>, inscrita no CNPJ sob o nº {contractOwnerCNPJ}, sediada em {contractOwnerAddress}, neste ato representada por {contractOwnerRepresentative}.
+            </p>
+
+            <p style={{ textIndent: '2cm', textAlign: 'justify', marginBottom: '1.5rem' }}>
+              E, de outro lado, na qualidade de <strong>LICENCIADA</strong>, a empresa/restaurante <strong>{selectedTenantForContract.name}</strong>, inscrita no CNPJ sob o nº {selectedTenantForContract.cnpj || '____________________'}, com sede em {selectedTenantForContract.address || '____________________'}, telefone {selectedTenantForContract.phone || '____________________'}, neste ato representada por seu representante legal qualificado em seu ato constitutivo.
+            </p>
+
+            <p style={{ textIndent: '2cm', textAlign: 'justify', marginBottom: '1.5rem' }}>
+              Têm entre si, justo e contratado, o que mutuamente aceitam e outorgam mediante as seguintes cláusulas e condições:
+            </p>
+
+            <h3 style={{ fontSize: '12pt', fontWeight: 'bold', marginTop: '1.5rem', marginBottom: '0.5rem' }}>CLÁUSULA PRIMEIRA – DO OBJETO</h3>
+            <p style={{ textAlign: 'justify', marginBottom: '1rem' }}>
+              1.1. O objeto deste contrato é a licença de uso temporária, não exclusiva e intransferível do software de gestão comercial e autoatendimento denominado <strong>KitchenFlow AI POS & Marketplace</strong> (doravante denominado "Software" ou "Plataforma"), bem como a prestação de serviços de suporte técnico, armazenamento de dados e integração de canais de venda associados.
+            </p>
+
+            <h3 style={{ fontSize: '12pt', fontWeight: 'bold', marginTop: '1.5rem', marginBottom: '0.5rem' }}>CLÁUSULA SEGUNDA – DA VIGÊNCIA E DO PRAZO</h3>
+            <p style={{ textAlign: 'justify', marginBottom: '1rem' }}>
+              2.1. O presente instrumento é celebrado por prazo determinado de {contractDurationMonths} meses, contados a partir de {new Date(contractDate).toLocaleDateString('pt-BR')}, renovando-se automaticamente por períodos iguais e sucessivos caso não haja manifestação expressa em contrário de qualquer das partes, com antecedência mínima de 30 (trinta) dias do término da vigência.
+            </p>
+
+            <h3 style={{ fontSize: '12pt', fontWeight: 'bold', marginTop: '1.5rem', marginBottom: '0.5rem' }}>CLÁUSULA TERCEIRA – DOS VALORES E CONDIÇÕES DE PAGAMENTO</h3>
+            <p style={{ textAlign: 'justify', marginBottom: '1rem' }}>
+              3.1. Pela licença de uso do Software e serviços correspondentes ao Plano <strong>{selectedTenantForContract.subscription?.plan || 'PRO'}</strong>, a LICENCIADA pagará à LICENCIANTE o valor fixo recorrente de <strong>R$ {(parseFloat(billingCustomSubscriptionPrice) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong> por ciclo mensal, com vencimento conforme estipulado nas faturas mensais enviadas.
+            </p>
+            <p style={{ textAlign: 'justify', marginBottom: '1rem' }}>
+              3.2. Adicionalmente, caso aplicável, incidirá uma comissão de corretagem sobre as vendas realizadas através do canal Marketplace próprio de <strong>{marketplaceFee}%</strong> mais a taxa fixa de <strong>R$ {marketplaceFixedFee.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong> por pedido concluído, cujo fechamento e cobrança (conciliação) ocorrerá em ciclos periódicos definidos em painel administrativo.
+            </p>
+
+            <h3 style={{ fontSize: '12pt', fontWeight: 'bold', marginTop: '1.5rem', marginBottom: '0.5rem' }}>CLÁUSULA QUARTA – DAS RESPONSABILIDADES DA LICENCIADA</h3>
+            <p style={{ textAlign: 'justify', marginBottom: '1rem' }}>
+              4.1. A LICENCIADA compromete-se a: (a) utilizar o Software estritamente dentro dos limites legais e das diretrizes contratuais; (b) manter suas credenciais de acesso seguras e confidenciais; (c) fornecer informações precisas e fidedignas relativas a seu estabelecimento comercial, cardápio, preços e conformidade fiscal; e (d) adimplir pontualmente com as obrigações financeiras descritas na Cláusula Terceira.
+            </p>
+
+            <h3 style={{ fontSize: '12pt', fontWeight: 'bold', marginTop: '1.5rem', marginBottom: '0.5rem' }}>CLÁUSULA QUINTA – CONFIDENCIALIDADE E LEI GERAL DE PROTEÇÃO DE DADOS (LGPD)</h3>
+            <p style={{ textAlign: 'justify', marginBottom: '1rem' }}>
+              5.1. As Partes obrigam-se a manter o mais absoluto sigilo sobre quaisquer dados pessoais, segredos de negócios ou informações operacionais obtidos em decorrência do presente contrato, adotando todas as medidas de segurança técnicas e administrativas necessárias para o cumprimento rigoroso da Lei Geral de Proteção de Dados Pessoais (Lei nº 13.709/2018 - LGPD).
+            </p>
+
+            <h3 style={{ fontSize: '12pt', fontWeight: 'bold', marginTop: '1.5rem', marginBottom: '0.5rem' }}>CLÁUSULA SEXTA – DO FORO</h3>
+            <p style={{ textAlign: 'justify', marginBottom: '1.5rem' }}>
+              6.1. Para dirimir quaisquer controvérsias oriundas do presente contrato, as partes elegem o foro da Comarca de {contractCity} - {contractState}, com renúncia expressa a qualquer outro, por mais privilegiado que seja.
+            </p>
+
+            <p style={{ textAlign: 'justify', marginTop: '3rem', marginBottom: '3rem' }}>
+              E, por estarem assim justas e contratadas, assinam o presente instrumento em 02 (duas) vias de igual teor e forma para um único efeito de direito, na presença das testemunhas abaixo qualificadas.
+            </p>
+
+            <p style={{ textAlign: 'right', marginBottom: '4rem' }}>
+              {contractCity}/{contractState}, {new Date(contractDate).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' })}.
+            </p>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4rem' }}>
+              <div style={{ width: '45%', borderTop: '1px solid black', textAlign: 'center', paddingTop: '0.5rem' }}>
+                <strong>KITCHENFLOW AI LTDA</strong><br />
+                LICENCIANTE
+              </div>
+              <div style={{ width: '45%', borderTop: '1px solid black', textAlign: 'center', paddingTop: '0.5rem' }}>
+                <strong>{selectedTenantForContract.name}</strong><br />
+                LICENCIADA
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white w-full max-w-6xl rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh] no-print">
+            {/* Header */}
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-indigo-950 text-white">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-indigo-500/20 text-indigo-400 rounded-xl flex items-center justify-center">
+                  <FileText size={20} />
+                </div>
+                <div>
+                  <h2 className="text-sm font-black uppercase tracking-wider">Gerador de Contrato de Cessão de Uso</h2>
+                  <p className="text-[9px] text-white/60 tracking-wider font-semibold uppercase mt-0.5">
+                    Gere contratos personalizados e oficiais de licença de uso SaaS para seus lojistas
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowContractModal(false)} 
+                className="p-1.5 text-white/60 hover:text-white hover:bg-white/10 rounded-lg transition-all cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Split Screen Container */}
+            <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+              
+              {/* Left Column: Form Settings */}
+              <div className="w-full lg:w-[40%] bg-slate-50 p-6 border-r border-slate-100 overflow-y-auto space-y-4">
+                <h3 className="text-[10px] font-black text-indigo-900 uppercase tracking-widest flex items-center gap-1">
+                  ⚙️ Parâmetros do Instrumento
+                </h3>
+
+                {/* Secção Licenciante (Nossos dados) */}
+                <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3 shadow-sm">
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">DADOS DA LICENCIANTE (KITCHENFLOW AI)</p>
+                  
+                  <div>
+                    <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Representante Legal</label>
+                    <input 
+                      type="text"
+                      className="w-full px-3 py-2 bg-slate-50 border rounded-lg font-bold outline-none focus:border-indigo-500 text-xs text-slate-700"
+                      value={contractOwnerRepresentative}
+                      onChange={(e) => setContractOwnerRepresentative(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2">
+                    <div>
+                      <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">CNPJ da Licenciante</label>
+                      <input 
+                        type="text"
+                        className="w-full px-3 py-2 bg-slate-50 border rounded-lg font-bold outline-none focus:border-indigo-500 text-xs text-slate-700"
+                        value={contractOwnerCNPJ}
+                        onChange={(e) => setContractOwnerCNPJ(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Endereço Sede</label>
+                      <input 
+                        type="text"
+                        className="w-full px-3 py-2 bg-slate-50 border rounded-lg font-bold outline-none focus:border-indigo-500 text-xs text-slate-700"
+                        value={contractOwnerAddress}
+                        onChange={(e) => setContractOwnerAddress(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Secção Licenciado (Dados do Lojista) */}
+                <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3 shadow-sm">
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">DADOS DA LICENCIADA (INQUILINO)</p>
+                  
+                  <div>
+                    <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Razão Social / Nome Comercial</label>
+                    <input 
+                      type="text"
+                      className="w-full px-3 py-2 bg-slate-50 border rounded-lg font-bold outline-none focus:border-indigo-500 text-xs text-slate-700"
+                      value={selectedTenantForContract.name}
+                      onChange={async (e) => {
+                        const newName = e.target.value;
+                        setSelectedTenantForContract({...selectedTenantForContract, name: newName});
+                        // Update in background on Firestore
+                        try {
+                          await updateDoc(doc(db, 'tenants', selectedTenantForContract.id), { name: newName });
+                        } catch (err) {
+                          console.error("Error auto-saving name:", err);
+                        }
+                      }}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">CNPJ do Inquilino</label>
+                      <input 
+                        type="text"
+                        placeholder="Ex: 00.000.000/0001-00"
+                        className="w-full px-3 py-2 bg-slate-50 border rounded-lg font-bold outline-none focus:border-indigo-500 text-xs text-slate-700 font-mono"
+                        value={selectedTenantForContract.cnpj || ''}
+                        onChange={async (e) => {
+                          const val = e.target.value;
+                          setSelectedTenantForContract({...selectedTenantForContract, cnpj: val});
+                          // Update on Firestore
+                          try {
+                            await updateDoc(doc(db, 'tenants', selectedTenantForContract.id), { cnpj: val });
+                          } catch (err) {
+                            console.error("Error auto-saving CNPJ:", err);
+                          }
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Telefone / WhatsApp</label>
+                      <input 
+                        type="text"
+                        placeholder="Ex: (11) 99999-9999"
+                        className="w-full px-3 py-2 bg-slate-50 border rounded-lg font-bold outline-none focus:border-indigo-500 text-xs text-slate-700"
+                        value={selectedTenantForContract.phone || ''}
+                        onChange={async (e) => {
+                          const val = e.target.value;
+                          setSelectedTenantForContract({...selectedTenantForContract, phone: val});
+                          try {
+                            await updateDoc(doc(db, 'tenants', selectedTenantForContract.id), { phone: val });
+                          } catch (err) {
+                            console.error("Error auto-saving phone:", err);
+                          }
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Endereço Completo</label>
+                    <input 
+                      type="text"
+                      placeholder="Av. das Américas, 500, Rio de Janeiro/RJ"
+                      className="w-full px-3 py-2 bg-slate-50 border rounded-lg font-bold outline-none focus:border-indigo-500 text-xs text-slate-700"
+                      value={selectedTenantForContract.address || ''}
+                      onChange={async (e) => {
+                        const val = e.target.value;
+                        setSelectedTenantForContract({...selectedTenantForContract, address: val});
+                        try {
+                          await updateDoc(doc(db, 'tenants', selectedTenantForContract.id), { address: val });
+                        } catch (err) {
+                          console.error("Error auto-saving address:", err);
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {/* Termos Financeiros */}
+                <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3 shadow-sm">
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">TERMOS FINANCEIROS & PRAZO</p>
+                  
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Plano Base</label>
+                      <span className="w-full px-3 py-2 bg-slate-100 border rounded-lg font-black text-xs text-slate-500 block text-center uppercase tracking-widest">
+                        {selectedTenantForContract.subscription?.plan || 'PRO'}
+                      </span>
+                    </div>
+                    <div>
+                      <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Mensalidade (R$)</label>
+                      <input 
+                        type="number"
+                        step="0.01"
+                        className="w-full px-3 py-2 bg-slate-50 border rounded-lg font-black outline-none focus:border-indigo-500 text-xs text-slate-700"
+                        value={billingCustomSubscriptionPrice}
+                        onChange={(e) => setBillingCustomSubscriptionPrice(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Duração (Meses)</label>
+                      <input 
+                        type="number"
+                        className="w-full px-3 py-2 bg-slate-50 border rounded-lg font-bold outline-none focus:border-indigo-500 text-xs text-slate-700"
+                        value={contractDurationMonths}
+                        onChange={(e) => setContractDurationMonths(parseInt(e.target.value) || 12)}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Início da Cessão</label>
+                      <input 
+                        type="date"
+                        className="w-full px-3 py-2 bg-slate-50 border rounded-lg font-bold outline-none focus:border-indigo-500 text-xs text-slate-700"
+                        value={contractDate}
+                        onChange={(e) => setContractDate(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Foro (Cidade)</label>
+                      <input 
+                        type="text"
+                        className="w-full px-3 py-2 bg-slate-50 border rounded-lg font-bold outline-none focus:border-indigo-500 text-xs text-slate-700"
+                        value={contractCity}
+                        onChange={(e) => setContractCity(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">UF do Foro</label>
+                      <input 
+                        type="text"
+                        maxLength={2}
+                        className="w-full px-3 py-2 bg-slate-50 border rounded-lg font-bold outline-none focus:border-indigo-500 text-xs text-slate-700 uppercase"
+                        value={contractState}
+                        onChange={(e) => setContractState(e.target.value.toUpperCase())}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column: Beautiful interactive contract paper sheet */}
+              <div className="flex-1 bg-slate-800 p-8 flex flex-col justify-between overflow-hidden">
+                <div className="flex justify-between items-center mb-4 text-white">
+                  <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Pré-visualização do Documento</span>
+                  <span className="text-[9px] font-bold px-2 py-0.5 bg-indigo-500/20 text-indigo-400 rounded-full">A4 Simulado</span>
+                </div>
+
+                <div className="flex-1 bg-white rounded-2xl shadow-inner border border-slate-300 p-8 overflow-y-auto text-slate-800 font-serif leading-relaxed text-xs select-all select-text space-y-4 max-h-[55vh]">
+                  
+                  {/* Document Header */}
+                  <div className="text-center space-y-1 mb-8">
+                    <p className="font-bold uppercase text-sm font-sans text-slate-900 tracking-tight">
+                      CONTRATO DE LICENÇA DE USO DE SOFTWARE (SaaS)
+                    </p>
+                    <p className="font-bold uppercase text-[10px] font-sans text-slate-500">
+                      E PRESTAÇÃO DE SERVIÇOS DE TECNOLOGIA
+                    </p>
+                    <div className="w-16 h-0.5 bg-indigo-500 mx-auto mt-2" />
+                  </div>
+
+                  {/* Document Body */}
+                  <p className="text-justify indent-8">
+                    Pelo presente instrumento particular, de um lado, na qualidade de <strong>LICENCIANTE</strong>, a empresa <strong>KITCHENFLOW AI LTDA</strong>, inscrita no CNPJ sob o nº {contractOwnerCNPJ}, sediada em {contractOwnerAddress}, neste ato representada por {contractOwnerRepresentative}.
+                  </p>
+
+                  <p className="text-justify indent-8">
+                    E, de outro lado, na qualidade de <strong>LICENCIADA</strong>, a empresa/restaurante <strong>{selectedTenantForContract.name}</strong>, inscrita no CNPJ sob o nº {selectedTenantForContract.cnpj || '____________________'}, com sede em {selectedTenantForContract.address || '____________________'}, telefone {selectedTenantForContract.phone || '____________________'}, neste ato representada por seu representante legal qualificado em seu ato constitutivo.
+                  </p>
+
+                  <p className="text-justify indent-8">
+                    Têm entre si, justo e contratado, o que mutuamente aceitam e outorgam mediante as seguintes cláusulas e condições:
+                  </p>
+
+                  <p className="font-bold uppercase tracking-wider text-[10px] text-slate-900 mt-6 mb-2">CLÁUSULA PRIMEIRA – DO OBJETO</p>
+                  <p className="text-justify">
+                    1.1. O objeto deste contrato é a licença de uso temporária, não exclusiva e intransferível do software de gestão comercial e autoatendimento denominado <strong>KitchenFlow AI POS & Marketplace</strong>, bem como a prestação de serviços de suporte técnico, armazenamento de dados e integração de canais de venda associados.
+                  </p>
+
+                  <p className="font-bold uppercase tracking-wider text-[10px] text-slate-900 mt-6 mb-2">CLÁUSULA SEGUNDA – DA VIGÊNCIA E DO PRAZO</p>
+                  <p className="text-justify">
+                    2.1. O presente instrumento é celebrado por prazo determinado de {contractDurationMonths} meses, contados a partir de {new Date(contractDate).toLocaleDateString('pt-BR')}, renovando-se automaticamente por períodos iguais e sucessivos caso não haja manifestação expressa em contrário de qualquer das partes.
+                  </p>
+
+                  <p className="font-bold uppercase tracking-wider text-[10px] text-slate-900 mt-6 mb-2">CLÁUSULA TERCEIRA – DOS VALORES E CONDIÇÕES DE PAGAMENTO</p>
+                  <p className="text-justify">
+                    3.1. Pela licença de uso do Software e serviços correspondentes ao Plano <strong>{selectedTenantForContract.subscription?.plan || 'PRO'}</strong>, a LICENCIADA pagará à LICENCIANTE o valor fixo recorrente de <strong>R$ {(parseFloat(billingCustomSubscriptionPrice) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong> por ciclo mensal, com vencimento conforme faturamento.
+                  </p>
+                  <p className="text-justify">
+                    3.2. Adicionalmente, caso aplicável, incidirá uma comissão de corretagem sobre as vendas realizadas através do canal Marketplace próprio de <strong>{marketplaceFee}%</strong> mais a taxa fixa de <strong>R$ {marketplaceFixedFee.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong> por pedido concluído.
+                  </p>
+
+                  <p className="font-bold uppercase tracking-wider text-[10px] text-slate-900 mt-6 mb-2">CLÁUSULA QUARTA – DAS RESPONSABILIDADES DA LICENCIADA</p>
+                  <p className="text-justify">
+                    4.1. A LICENCIADA compromete-se a utilizar o Software estritamente dentro dos limites legais, mantendo seguras suas credenciais de acesso, e adimplir pontualmente com as obrigações financeiras descritas.
+                  </p>
+
+                  <p className="font-bold uppercase tracking-wider text-[10px] text-slate-900 mt-6 mb-2">CLÁUSULA QUINTA – CONFIDENCIALIDADE E LGPD</p>
+                  <p className="text-justify">
+                    5.1. As Partes obrigam-se a manter o absoluto sigilo sobre quaisquer dados operacionais e pessoais obtidos em decorrência do presente contrato, cumprindo rigorosamente a Lei Geral de Proteção de Dados (LGPD - Lei nº 13.709/2018).
+                  </p>
+
+                  <p className="font-bold uppercase tracking-wider text-[10px] text-slate-900 mt-6 mb-2">CLÁUSULA SEXTA – DO FORO</p>
+                  <p className="text-justify">
+                    6.1. Para dirimir quaisquer controvérsias oriundas do presente contrato, as partes elegem o foro da Comarca de {contractCity} - {contractState}, com renúncia expressa a qualquer outro.
+                  </p>
+
+                  <div className="pt-6 border-t border-dashed mt-8 space-y-4">
+                    <p className="text-right italic">
+                      {contractCity}/{contractState}, {new Date(contractDate).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' })}.
+                    </p>
+
+                    <div className="grid grid-cols-2 gap-4 pt-8">
+                      <div className="border-t border-slate-400 pt-2 text-center">
+                        <p className="font-bold">KITCHENFLOW AI LTDA</p>
+                        <p className="text-[10px] text-slate-400 uppercase tracking-widest">LICENCIANTE</p>
+                      </div>
+                      <div className="border-t border-slate-400 pt-2 text-center">
+                        <p className="font-bold">{selectedTenantForContract.name}</p>
+                        <p className="text-[10px] text-slate-400 uppercase tracking-widest">LICENCIADA</p>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* Document interactive tools bar */}
+                <div className="mt-4 flex flex-wrap gap-2 justify-end">
+                  {/* Copiar Texto */}
+                  <button
+                    onClick={() => {
+                      const text = `INSTRUMENTO PARTICULAR DE CONTRATO DE LICENÇA DE USO DE SOFTWARE (SaaS) E PRESTAÇÃO DE SERVIÇOS DE TECNOLOGIA
+
+LICENCIANTE: KITCHENFLOW AI LTDA, CNPJ nº ${contractOwnerCNPJ}, sediada em ${contractOwnerAddress}, representada por ${contractOwnerRepresentative}.
+
+LICENCIADA: ${selectedTenantForContract.name}, CNPJ nº ${selectedTenantForContract.cnpj || '____________________'}, com sede em ${selectedTenantForContract.address || '____________________'}, telefone ${selectedTenantForContract.phone || '____________________'}.
+
+CLÁUSULA PRIMEIRA – DO OBJETO
+1.1. Licença de uso temporária, não exclusiva e intransferível do software de gestão comercial KitchenFlow AI POS & Marketplace.
+
+CLÁUSULA SEGUNDA – DA VIGÊNCIA E DO PRAZO
+2.1. Prazo determinado de ${contractDurationMonths} meses, contados a partir de ${new Date(contractDate).toLocaleDateString('pt-BR')}.
+
+CLÁUSULA TERCEIRA – DOS VALORES E CONDIÇÕES DE PAGAMENTO
+3.1. Valor fixo recorrente de R$ ${(parseFloat(billingCustomSubscriptionPrice) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} por ciclo mensal correspondente ao Plano ${selectedTenantForContract.subscription?.plan || 'PRO'}.
+3.2. Comissão de Marketplace de ${marketplaceFee}% + R$ ${marketplaceFixedFee.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} por pedido concluído.
+
+CLÁUSULA QUARTA – DAS RESPONSABILIDADES DA LICENCIADA
+4.1. Utilizar o software dentro das diretrizes contratuais e pagar pontualmente as faturas.
+
+CLÁUSULA QUINTA – CONFIDENCIALIDADE E LGPD
+5.1. Sigilo absoluto sobre dados pessoais e operacionais (Lei nº 13.709/2018 - LGPD).
+
+CLÁUSULA SEXTA – DO FORO
+6.1. Foro da Comarca de ${contractCity} - ${contractState}.
+
+Assinam o presente instrumento as partes na data de ${new Date(contractDate).toLocaleDateString('pt-BR')}.
+
+_________________________________
+KITCHENFLOW AI LTDA (LICENCIANTE)
+
+_________________________________
+${selectedTenantForContract.name} (LICENCIADA)`;
+                      navigator.clipboard.writeText(text);
+                      alert('Texto completo do contrato copiado para a área de transferência!');
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-black text-[9px] uppercase tracking-wider cursor-pointer transition-all border border-slate-650"
+                  >
+                    <Copy size={13} /> Copiar Texto
+                  </button>
+
+                  {/* WhatsApp Quick share */}
+                  <button
+                    onClick={() => {
+                      const text = `Olá! 📄 Segue o contrato de Licença de Uso (SaaS) da Plataforma KitchenFlow AI para o restaurante *${selectedTenantForContract.name}*.\n\n*Plano:* ${selectedTenantForContract.subscription?.plan || 'PRO'}\n*Mensalidade:* R$ ${(parseFloat(billingCustomSubscriptionPrice) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n*Vigência:* ${contractDurationMonths} meses\n\nPor favor, faça a revisão das informações contratuais (CNPJ: ${selectedTenantForContract.cnpj || 'Pendente'}, Endereço: ${selectedTenantForContract.address || 'Pendente'}). Qualquer dúvida ou se tudo estiver correto, daremos início à assinatura digital.\n\nFicamos à disposição!`;
+                      const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
+                      window.open(url, '_blank');
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black text-[9px] uppercase tracking-wider cursor-pointer transition-all"
+                  >
+                    <MessageSquare size={13} /> Enviar WhatsApp
+                  </button>
+
+                  {/* Print Document */}
+                  <button
+                    onClick={() => {
+                      window.print();
+                    }}
+                    className="flex items-center gap-2 px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black text-[9px] uppercase tracking-wider cursor-pointer transition-all shadow-md shadow-indigo-900/50"
+                  >
+                    <Printer size={13} /> Imprimir / Salvar PDF
+                  </button>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Footer buttons */}
+            <div className="p-4 bg-slate-50 border-t flex gap-3">
+              <button 
+                onClick={() => setShowContractModal(false)}
+                className="w-full py-3 bg-white border text-slate-500 hover:bg-slate-100 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all text-center cursor-pointer"
+              >
+                Fechar Gerador de Contrato
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+ 
       {showCategoryModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-4xl rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">

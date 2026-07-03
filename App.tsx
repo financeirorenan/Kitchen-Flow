@@ -75,7 +75,8 @@ import {
   Wallet,
   TrendingUp,
   Utensils,
-  Bike
+  Bike,
+  Fingerprint
 } from 'lucide-react';
 
 interface CashSession {
@@ -237,6 +238,12 @@ const App: React.FC = () => {
     setTimeout(() => setToast(null), 4000);
   };
 
+  const addLogRef = useRef<any>(null);
+
+  useEffect(() => {
+    addLogRef.current = addLog;
+  }, [addLog]);
+
   useEffect(() => {
     const handlePrintNotification = (e: Event) => {
       const customEvent = e as CustomEvent<{ message: string; type: 'success' | 'error' | 'info' }>;
@@ -259,12 +266,80 @@ const App: React.FC = () => {
       }
     };
 
+    const handleError = (event: ErrorEvent) => {
+      const errorMsg = event.message || 'Erro inesperado no cliente';
+      const file = event.filename ? event.filename.split('/').pop() : 'desconhecido';
+      const line = event.lineno || '';
+      const col = event.colno || '';
+      const stack = event.error?.stack || '';
+      const loc = `${file}:${line}:${col}`;
+      
+      console.error(`[Mapeador de Erros] Capturado erro: ${errorMsg} em ${loc}`);
+      
+      if (addLogRef.current) {
+        addLogRef.current(
+          'system',
+          'ERRO_JS',
+          `Falha na execução: "${errorMsg}" em ${loc}`,
+          'ERROR',
+          `Localização: ${event.filename || 'N/A'}:${line}:${col}`,
+          stack
+        );
+      }
+    };
+
+    const handleRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason;
+      const errorMsg = reason instanceof Error ? reason.message : String(reason);
+      const stack = reason instanceof Error ? reason.stack : '';
+      
+      console.error(`[Mapeador de Erros] Capturada Promise Rejeitada: ${errorMsg}`);
+      
+      if (addLogRef.current) {
+        addLogRef.current(
+          'system',
+          'PROMISE_REJECTED',
+          `Falha assíncrona: "${errorMsg}"`,
+          'ERROR',
+          `Razão da rejeição: ${typeof reason === 'object' ? JSON.stringify(reason) : String(reason)}`,
+          stack
+        );
+      }
+    };
+
+    const handleManualErrorReport = (e: Event) => {
+      const customEvent = e as CustomEvent<{
+        action: string;
+        description: string;
+        details?: string;
+        stackTrace?: string;
+        level?: 'INFO' | 'WARNING' | 'ERROR' | 'SYSTEM';
+      }>;
+      if (customEvent.detail && addLogRef.current) {
+        const { action, description, level = 'ERROR', details, stackTrace } = customEvent.detail;
+        addLogRef.current(
+          'system',
+          action,
+          description,
+          level,
+          details,
+          stackTrace
+        );
+      }
+    };
+
     window.addEventListener('kitchenflow-print-notifier', handlePrintNotification);
     window.addEventListener('kitchenflow-show-print-modal', handleShowPrintModal);
+    window.addEventListener('error', handleError);
+    window.addEventListener('unhandledrejection', handleRejection);
+    window.addEventListener('kitchenflow-report-error', handleManualErrorReport);
     
     return () => {
       window.removeEventListener('kitchenflow-print-notifier', handlePrintNotification);
       window.removeEventListener('kitchenflow-show-print-modal', handleShowPrintModal);
+      window.removeEventListener('error', handleError);
+      window.removeEventListener('unhandledrejection', handleRejection);
+      window.removeEventListener('kitchenflow-report-error', handleManualErrorReport);
     };
   }, []);
 
@@ -458,6 +533,10 @@ const App: React.FC = () => {
       addLog(currentUserData.id, 'SAAS_AUDIT', `Super Admin encerrou suporte/visualização do parceiro: ${backupName}`);
     }
   };
+
+  const [cookieConsentAccepted, setCookieConsentAccepted] = useState(() => {
+    return localStorage.getItem('lgpd_cookie_accepted') === 'true';
+  });
 
   const [digitalMenuSettings, setDigitalMenuSettings] = useState<DigitalMenuSettings>({
     primaryColor: '#E31B23',
@@ -702,7 +781,7 @@ const App: React.FC = () => {
     setCashSession({ isOpen: false, openingValue: 0, openedAt: null });
 
     // PRIORIDADE: Primeiro o ID que estamos visualizando (Suporte), depois o ID do próprio usuário logado
-    // Se for Super Admin, o padrão é a loja "Viva la fome" (ID: HCL1177LRQVPEKCTYRAHU7IGBQ42) para evitar o painel vazio/placeholder "GastroAI".
+    // Se for Super Admin, o padrão é a loja "Viva la fome" (ID: HCL1177LRQVPEKCTYRAHU7IGBQ42) para evitar o painel vazio/placeholder "KitchenFlow AI".
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || (isSuperAdmin ? 'HCL1177LRQVPEKCTYRAHU7IGBQ42' : '');
     if (!effectiveTenantId) {
       setTenantData(null);
@@ -847,6 +926,15 @@ const App: React.FC = () => {
             return true;
           });
           col.setter(uniqueUsers);
+        } else if (col.name === 'auditLogs') {
+          const seen = new Set<string>();
+          const uniqueLogs = items.filter((item: any) => {
+            if (!item.id) return true;
+            if (seen.has(item.id)) return false;
+            seen.add(item.id);
+            return true;
+          });
+          col.setter(uniqueLogs);
         } else {
           col.setter(items);
         }
@@ -1021,15 +1109,15 @@ const App: React.FC = () => {
         }
 
         // Se após as buscas o usuário ainda não possuir perfil no Firestore, nós auto-criamos
-        // um perfil padrão de OWNER associado ao tenant principal "Viva la fome" (HCL1177LRQVPEKCTYRAHU7IGBQ42)
+        // um perfil padrão (CUSTOMER se for no marketplace, OWNER se for no painel) associado ao tenant correspondente
         // para garantir acesso e evitar que vejam telas de erro ou bloqueio de acesso desnecessários.
         if (!finalUserData && firebaseUser.email) {
           const isMaster = firebaseUser.email === 'financeirorenanuk@gmail.com';
           const isMarketplaceRoute = window.location.pathname.startsWith('/marketplace');
           
-          let role: UserRole = isMaster ? 'SAAS_ADMIN' : 'OWNER';
-          let tenantId = isMaster ? '' : 'HCL1177LRQVPEKCTYRAHU7IGBQ42';
-          let defaultName = firebaseUser.displayName || firebaseUser.email.split('@')[0] || 'Lojista';
+          let role: UserRole = isMaster ? 'SAAS_ADMIN' : (isMarketplaceRoute ? 'CUSTOMER' : 'OWNER');
+          let tenantId = isMaster ? '' : (isMarketplaceRoute ? 'GLOBAL' : 'HCL1177LRQVPEKCTYRAHU7IGBQ42');
+          let defaultName = firebaseUser.displayName || firebaseUser.email.split('@')[0] || (isMarketplaceRoute ? 'Cliente' : 'Lojista');
 
           // Verificar se é entregador cadastrado na coleção de couriers
           const courierQuery = query(collection(db, 'couriers'), where('email', '==', firebaseUser.email.toLowerCase().trim()), limit(1));
@@ -3349,7 +3437,14 @@ const App: React.FC = () => {
     addLog('u1', 'ENTREGA', `Acerto realizado para ${orderIds.length} pedidos. R$ ${totalEarningsToDeduct.toFixed(2)} pagos.`);
   };
 
-  const addLog = async (userId: string, action: string, description: string) => {
+  async function addLog(
+    userId: string, 
+    action: string, 
+    description: string, 
+    level: 'INFO' | 'WARNING' | 'ERROR' | 'SYSTEM' = 'INFO',
+    details?: string,
+    stackTrace?: string
+  ) {
     // Resilient fallback logic for tenant resolution
     const userObj = users.find(u => u.id === userId) || currentUserData || { 
       id: userId || 'system', 
@@ -3368,7 +3463,10 @@ const App: React.FC = () => {
       userRole: (userObj as any).role || 'SAAS_ADMIN',
       action,
       description,
-      timestamp: new Date()
+      timestamp: new Date(),
+      level,
+      details,
+      stackTrace
     };
 
     try {
@@ -3386,8 +3484,13 @@ const App: React.FC = () => {
       console.warn("Unable to fully persist or sync audit log:", err);
     }
 
-    setAuditLogs(prev => [newLog, ...prev]);
-  };
+    setAuditLogs(prev => {
+      if (prev.some(log => log.id === newLog.id)) {
+        return prev;
+      }
+      return [newLog, ...prev];
+    });
+  }
 
   const handleAddUser = async (user: Partial<User>) => {
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
@@ -4967,6 +5070,8 @@ const App: React.FC = () => {
             onSavePreset={handleSaveUserPreset}
             isSuperAdmin={isSuperAdmin}
             allowedModules={isSuperAdmin ? undefined : tenantData?.subscription?.allowedModules}
+            orders={orders}
+            onAddFinancialRecord={handleAddFinancialRecord}
           />
         )}
         {activeTab === 'kds' && hasPermission('kds_view') && (
@@ -5241,6 +5346,48 @@ const App: React.FC = () => {
           />
         )}
       </AnimatePresence>
+
+      {/* Cookie Consent Banner (LGPD) */}
+      {localStorage.getItem('lgpd_cookie_banner') === 'true' && !cookieConsentAccepted && (
+        <div className="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:max-w-md bg-slate-900 text-white p-4 rounded-2xl shadow-2xl z-[99999] border border-slate-800 animate-in slide-in-from-bottom-10 duration-500">
+          <div className="flex items-start gap-3">
+             <div className="bg-indigo-500/20 p-2 rounded-xl text-indigo-400 shrink-0">
+                <Fingerprint size={18} />
+             </div>
+             <div className="space-y-1">
+                <h4 className="text-[10px] font-black tracking-wider uppercase text-indigo-400">Privacidade & Cookies (LGPD)</h4>
+                <p className="text-[10px] text-slate-300 font-medium leading-normal">
+                   {localStorage.getItem('lgpd_consent_text') || 'Utilizamos cookies essenciais e tecnologias semelhantes para fornecer recursos de PDV, segurança e relatórios fiscais conforme a LGPD.'}
+                </p>
+                <div className="text-[8px] text-slate-400 font-bold mt-1">
+                   DPO: {localStorage.getItem('lgpd_dpo_name') || 'Equipe de Privacidade KitchenFlow'} • {localStorage.getItem('lgpd_dpo_email') || 'privacidade@kitchenflow.ai'}
+                </div>
+                <div className="flex gap-2 pt-2">
+                   <button 
+                      onClick={() => {
+                         localStorage.setItem('lgpd_cookie_accepted', 'true');
+                         setCookieConsentAccepted(true);
+                         showToast('Suas preferências de privacidade foram salvas!', 'success');
+                      }}
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[8px] font-black uppercase tracking-wider rounded-lg transition-colors"
+                   >
+                      Aceitar e Prosseguir
+                   </button>
+                   <button 
+                      onClick={() => {
+                         localStorage.setItem('lgpd_cookie_accepted', 'true');
+                         setCookieConsentAccepted(true);
+                         showToast('Consentimento registrado.', 'info');
+                      }}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 text-[8px] font-black uppercase tracking-wider rounded-lg transition-colors"
+                   >
+                      Recusar Opcionais
+                   </button>
+                </div>
+             </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

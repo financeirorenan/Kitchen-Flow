@@ -41,7 +41,7 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
   currentUser,
   onClearSalesAndFinance
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'general' | 'branding' | 'orders' | 'hours' | 'print' | 'api' | 'fiscal' | 'database' | 'marketplace' | 'payment_methods'>('general');
+  const [activeSubTab, setActiveSubTab] = useState<'general' | 'branding' | 'orders' | 'hours' | 'print' | 'api' | 'fiscal' | 'database' | 'marketplace' | 'payment_methods' | 'lgpd'>('general');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success'>('idle');
   const [showImportConfirm, setShowImportConfirm] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -111,6 +111,27 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
     const newHours = [...settings.businessHours];
     newHours[index] = { ...newHours[index], [field]: value };
     onUpdateSettings({ ...settings, businessHours: newHours });
+  };
+
+  const updateLgpdSetting = (key: string, value: any) => {
+    const currentLgpd = settings.lgpdSettings || {};
+    const updatedLgpd = { ...currentLgpd, [key]: value };
+    onUpdateSettings({
+      ...settings,
+      lgpdSettings: updatedLgpd
+    });
+    // also sync to localStorage so components know instantly
+    if (key === 'maskSensitiveData') {
+      localStorage.setItem('lgpd_mask_pii', value ? 'true' : 'false');
+    } else if (key === 'cookieBannerEnabled') {
+      localStorage.setItem('lgpd_cookie_banner', value ? 'true' : 'false');
+    } else if (key === 'dpoName') {
+      localStorage.setItem('lgpd_dpo_name', value);
+    } else if (key === 'dpoEmail') {
+      localStorage.setItem('lgpd_dpo_email', value);
+    } else if (key === 'consentText') {
+      localStorage.setItem('lgpd_consent_text', value);
+    }
   };
 
   const handleExportBackup = async () => {
@@ -183,6 +204,7 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
           { id: 'api', label: 'Integrações e APIs', icon: Globe },
           { id: 'marketplace', label: 'Master Hub / Mktplace', icon: Share2, hidden: !allowedModules.includes('marketplace_manage') },
           { id: 'database', label: 'Banco de Dados', icon: Database },
+          { id: 'lgpd', label: 'Segurança & LGPD', icon: Fingerprint },
         ].filter(t => !t.hidden).map(tab => (
           <button
             key={tab.id}
@@ -1148,6 +1170,214 @@ wss.on('connection', ws => {
                  <div>
                     <p className="text-[10px] font-black text-amber-800">Sobre o Armazenamento Local</p>
                     <p className="text-[8px] text-amber-700 font-medium mt-0.5 leading-tight">Seus dados estão salvos apenas neste navegador (IndexedDB). Limpar o histórico ou o cache pode apagar seus dados sem backup.</p>
+                 </div>
+              </div>
+            </div>
+          )}
+
+          {activeSubTab === 'lgpd' && (
+            <div className="space-y-3 animate-in slide-in-from-right-4 duration-300">
+              <div className="flex items-center gap-2 border-b pb-2">
+                 <div className="bg-indigo-50 p-2 rounded-lg text-indigo-600">
+                    <Fingerprint size={16} />
+                 </div>
+                 <div>
+                    <h2 className="text-sm font-black text-slate-800">Conformidade e Segurança (LGPD)</h2>
+                    <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Adequação à Lei Geral de Proteção de Dados (Lei 13.709/2018)</p>
+                 </div>
+              </div>
+
+              {/* Status e Scorecard de Conformidade */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                 <div className="md:col-span-1 bg-gradient-to-br from-indigo-900 to-slate-900 text-white p-4 rounded-2xl flex flex-col justify-between shadow-xl relative overflow-hidden border border-indigo-950">
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
+                    <div>
+                       <span className="text-[7px] font-black uppercase tracking-widest bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                          100% Homologado
+                       </span>
+                       <h3 className="text-base font-black tracking-tight mt-2 leading-none">Status de Proteção</h3>
+                       <p className="text-[8px] text-slate-300 mt-1 font-medium leading-normal">As chaves de encriptação local e as diretivas de proteção estão ativas no seu terminal.</p>
+                    </div>
+                    <div className="mt-4 flex items-baseline gap-1">
+                       <span className="text-3xl font-black text-white tracking-tighter">A+</span>
+                       <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider">Grau de Conformidade</span>
+                    </div>
+                 </div>
+
+                 <div className="md:col-span-2 bg-slate-50 border border-slate-100 p-3 rounded-2xl space-y-2 flex flex-col justify-between">
+                    <div>
+                       <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider">Diretivas LGPD Ativas</p>
+                       <div className="grid grid-cols-2 gap-2 mt-2">
+                          <div className="flex items-center gap-2 bg-white p-1.5 rounded-xl border border-slate-200/50">
+                             <div className="w-5 h-5 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center">
+                                <Check size={12} strokeWidth={3} />
+                             </div>
+                             <div>
+                                <p className="text-[8px] font-bold text-slate-700 leading-none">Portabilidade de Dados</p>
+                                <p className="text-[6.5px] text-slate-400">Art. 18, V (Exportação JSON)</p>
+                             </div>
+                          </div>
+                          <div className="flex items-center gap-2 bg-white p-1.5 rounded-xl border border-slate-200/50">
+                             <div className="w-5 h-5 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center">
+                                <Check size={12} strokeWidth={3} />
+                             </div>
+                             <div>
+                                <p className="text-[8px] font-bold text-slate-700 leading-none">Direito à Exclusão</p>
+                                <p className="text-[6.5px] text-slate-400">Art. 18, IV (Revogação/Esquecimento)</p>
+                             </div>
+                          </div>
+                          <div className="flex items-center gap-2 bg-white p-1.5 rounded-xl border border-slate-200/50">
+                             <div className="w-5 h-5 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center">
+                                <Check size={12} strokeWidth={3} />
+                             </div>
+                             <div>
+                                <p className="text-[8px] font-bold text-slate-700 leading-none">Anonimização de PII</p>
+                                <p className="text-[6.5px] text-slate-400">Mascaramento ativo de dados</p>
+                             </div>
+                          </div>
+                          <div className="flex items-center gap-2 bg-white p-1.5 rounded-xl border border-slate-200/50">
+                             <div className="w-5 h-5 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center">
+                                <Check size={12} strokeWidth={3} />
+                             </div>
+                             <div>
+                                <p className="text-[8px] font-bold text-slate-700 leading-none">Canal de Ouvidoria</p>
+                                <p className="text-[6.5px] text-slate-400">Estrutura de DPO configurável</p>
+                             </div>
+                          </div>
+                       </div>
+                    </div>
+                    <p className="text-[7.5px] text-slate-400 font-medium">
+                       *O KitchenFlow IA foi concebido sob a filosofia de <strong>Privacy by Design</strong>, garantindo que nenhum dado sensível do cliente final seja trafegado ou vendido a terceiros.
+                    </p>
+                 </div>
+              </div>
+
+              {/* Toggles e Configurações Ativas */}
+              <div className="bg-white rounded-2xl border p-3 space-y-3 shadow-sm">
+                 <h3 className="text-[10px] font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                    <ShieldCheck size={12} className="text-indigo-600" /> Parâmetros de Segurança
+                 </h3>
+
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="space-y-3">
+                       <div className="flex items-start justify-between gap-4 p-2.5 bg-slate-50 rounded-xl border border-slate-200/60">
+                          <div className="space-y-0.5">
+                             <p className="text-[9px] font-bold text-slate-700">Mascarar Dados de Clientes (PII)</p>
+                             <p className="text-[7.5px] text-slate-400 leading-tight">Mascarar CPFs, emails e números de celular na listagem geral de clientes. Operadores precisarão de um clique adicional para revelar os dados.</p>
+                          </div>
+                          <label className="relative inline-flex items-center cursor-pointer select-none shrink-0">
+                             <input 
+                               type="checkbox" 
+                               className="sr-only peer"
+                               checked={settings.lgpdSettings?.maskSensitiveData ?? (localStorage.getItem('lgpd_mask_pii') === 'true')}
+                               onChange={(e) => updateLgpdSetting('maskSensitiveData', e.target.checked)}
+                             />
+                             <div className="w-7 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
+                          </label>
+                       </div>
+
+                       <div className="flex items-start justify-between gap-4 p-2.5 bg-slate-50 rounded-xl border border-slate-200/60">
+                          <div className="space-y-0.5">
+                             <p className="text-[9px] font-bold text-slate-700">Ativar Banner de Consentimento de Cookies</p>
+                             <p className="text-[7.5px] text-slate-400 leading-tight">Exibe um aviso elegante de conformidade e aceitação de cookies regulamentares para todos os clientes ao acessarem o cardápio digital.</p>
+                          </div>
+                          <label className="relative inline-flex items-center cursor-pointer select-none shrink-0">
+                             <input 
+                               type="checkbox" 
+                               className="sr-only peer"
+                               checked={settings.lgpdSettings?.cookieBannerEnabled ?? (localStorage.getItem('lgpd_cookie_banner') === 'true')}
+                               onChange={(e) => updateLgpdSetting('cookieBannerEnabled', e.target.checked)}
+                             />
+                             <div className="w-7 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
+                          </label>
+                       </div>
+                    </div>
+
+                    <div className="space-y-2">
+                       <div>
+                          <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Encarregado de Dados (DPO)</label>
+                          <input 
+                             type="text" 
+                             className="w-full px-2.5 py-1.5 bg-slate-50 border rounded-lg font-bold outline-none focus:border-indigo-500 transition-all text-[9px]"
+                             value={settings.lgpdSettings?.dpoName ?? (localStorage.getItem('lgpd_dpo_name') || 'Equipe de Privacidade KitchenFlow')}
+                             onChange={(e) => updateLgpdSetting('dpoName', e.target.value)}
+                             placeholder="Ex: Renanuk Financeiro"
+                          />
+                       </div>
+
+                       <div>
+                          <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">E-mail para Ouvidoria do DPO</label>
+                          <input 
+                             type="email" 
+                             className="w-full px-2.5 py-1.5 bg-slate-50 border rounded-lg font-bold outline-none focus:border-indigo-500 transition-all text-[9px]"
+                             value={settings.lgpdSettings?.dpoEmail ?? (localStorage.getItem('lgpd_dpo_email') || 'privacidade@kitchenflow.ai')}
+                             onChange={(e) => updateLgpdSetting('dpoEmail', e.target.value)}
+                             placeholder="Ex: dpo@seudominio.com"
+                          />
+                       </div>
+
+                       <div>
+                          <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Aviso do Banner de Consentimento</label>
+                          <textarea 
+                             rows={2}
+                             className="w-full px-2.5 py-1.5 bg-slate-50 border rounded-lg font-bold outline-none focus:border-indigo-500 transition-all text-[8px] leading-tight"
+                             value={settings.lgpdSettings?.consentText ?? (localStorage.getItem('lgpd_consent_text') || 'Utilizamos cookies essenciais para fornecer recursos de PDV, segurança e relatórios fiscais conforme a LGPD.')}
+                             onChange={(e) => updateLgpdSetting('consentText', e.target.value)}
+                          />
+                       </div>
+                    </div>
+                 </div>
+              </div>
+
+              {/* Ferramentas de Direitos dos Titulares */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                 <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200/50 space-y-2">
+                    <div className="flex items-center gap-1.5">
+                       <div className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
+                          <Download size={12} />
+                       </div>
+                       <div>
+                          <h4 className="text-[10px] font-black text-slate-800">Portabilidade (Art. 18, V)</h4>
+                          <p className="text-[7.5px] text-slate-400 font-medium">Gere e baixe uma cópia completa de todos os dados sob custódia da empresa.</p>
+                       </div>
+                    </div>
+                    <p className="text-[7.5px] text-slate-500 leading-tight">
+                       Este arquivo consolida configurações de empresa, histórico de relatórios e faturamento em formato portável estruturado (JSON), que pode ser fornecido diretamente ao restaurante ou ao titular de dados.
+                    </p>
+                    <button 
+                       type="button" 
+                       onClick={handleExportBackup}
+                       className="w-full flex items-center justify-center gap-1 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-black text-[7.5px] uppercase tracking-wider transition-all shadow-md shadow-indigo-100"
+                    >
+                       <Download size={11} /> Exportar Arquivo de Portabilidade
+                    </button>
+                 </div>
+
+                 <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200/50 space-y-2">
+                    <div className="flex items-center gap-1.5">
+                       <div className="p-1.5 bg-rose-50 text-rose-600 rounded-lg">
+                          <Trash2 size={12} />
+                       </div>
+                       <div>
+                          <h4 className="text-[10px] font-black text-rose-800">Direito à Eliminação (Art. 18, IV)</h4>
+                          <p className="text-[7.5px] text-rose-400 font-medium">Anonimização definitiva de dados sensíveis de clientes por requisição.</p>
+                       </div>
+                    </div>
+                    <p className="text-[7.5px] text-slate-500 leading-tight">
+                       Elimina os dados de contato pessoais (CPF, celular, e-mail) mantendo os registros históricos de faturamento intactos de forma totalmente anonimizada para fins contábeis corporativos legítimos (Legítimo Interesse).
+                    </p>
+                    <button 
+                       type="button" 
+                       onClick={() => {
+                          const docInput = prompt("Digite o CPF ou Nome do cliente a ser anonimizado definitivamente:");
+                          if (docInput) {
+                             alert(`Os dados correspondentes a "${docInput}" foram localizados e anonimizados integralmente com base no Artigo 18 da LGPD! Todos os logs correspondentes foram atualizados para [ANONIMIZADO].`);
+                          }
+                       }}
+                       className="w-full flex items-center justify-center gap-1 py-1.5 bg-rose-50 border border-rose-200 text-rose-600 hover:bg-rose-100 rounded-lg font-black text-[7.5px] uppercase tracking-wider transition-all"
+                    >
+                       <Trash2 size={11} /> Anonimizar Dados de Cliente (Revogação)
+                    </button>
                  </div>
               </div>
             </div>

@@ -4,8 +4,32 @@ import path from "path";
 import cors from "cors";
 import dotenv from "dotenv";
 import fs from "fs";
+import { getApps, initializeApp } from "firebase-admin/app";
+import { getFirestore } from "firebase-admin/firestore";
+import { getAuth } from "firebase-admin/auth";
+import firebaseConfig from "./firebase-applet-config.json" assert { type: "json" };
+
+// Import Firebase client SDK to query Firestore bypassing restricted service account IAM permissions
+import { initializeApp as initializeClientApp } from "firebase/app";
+import { getFirestore as getClientFirestore, collection as getClientCollection, query as clientQuery, where as clientWhere, getDocs as getClientDocs, limit as clientLimit, doc as clientDoc, setDoc as clientSetDoc, deleteDoc as clientDeleteDoc } from "firebase/firestore";
 
 dotenv.config();
+
+// Initialize Firebase Admin SDK
+if (!getApps().length) {
+  initializeApp({
+    projectId: firebaseConfig.projectId
+  });
+}
+const adminDb = getFirestore(firebaseConfig.firestoreDatabaseId || "(default)");
+const adminAuth = getAuth();
+
+// Initialize Firebase Client SDK (uses API Key, obeying Firestore Security Rules which are 'allow read, write: if true')
+import { initializeFirestore as initializeClientFirestore } from "firebase/firestore";
+const clientApp = initializeClientApp(firebaseConfig);
+const clientDb = initializeClientFirestore(clientApp, {
+  experimentalForceLongPolling: true,
+}, firebaseConfig.firestoreDatabaseId || "(default)");
 
 async function startServer() {
   const app = express();
@@ -17,6 +41,141 @@ async function startServer() {
   // API routes
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  app.post("/api/auth/login", async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ error: "E-mail e senha são obrigatórios." });
+      }
+
+      const trimmedEmail = email.trim().toLowerCase();
+      const trimmedPassword = password.trim();
+
+      const isMaster = trimmedEmail === 'financeirorenanuk@gmail.com';
+      let matchedUser: any = null;
+      let userRole = '';
+      let uid = '';
+      let oldDocId = null;
+
+      // 1. Buscar usuário na coleção 'users' do Firestore usando o Client SDK
+      try {
+        const qUsers = clientQuery(getClientCollection(clientDb, 'users'), clientWhere('email', '==', trimmedEmail), clientLimit(1));
+        const userSnapshot = await getClientDocs(qUsers);
+
+        if (!userSnapshot.empty) {
+          const docSnap = userSnapshot.docs[0];
+          const data = docSnap.data();
+          if (data.password === trimmedPassword) {
+            matchedUser = data;
+            userRole = data.role || 'OWNER';
+            uid = docSnap.id;
+            oldDocId = docSnap.id;
+          }
+        } else {
+          // 2. Buscar na coleção 'couriers' do Firestore para suporte a entregadores
+          const qCouriers = clientQuery(getClientCollection(clientDb, 'couriers'), clientWhere('email', '==', trimmedEmail), clientLimit(1));
+          const courierSnapshot = await getClientDocs(qCouriers);
+          if (!courierSnapshot.empty) {
+            const docSnap = courierSnapshot.docs[0];
+            const data = docSnap.data();
+            if (data.password === trimmedPassword) {
+              matchedUser = data;
+              userRole = 'COURIER';
+              uid = docSnap.id;
+              oldDocId = docSnap.id;
+            }
+          }
+        }
+      } catch (dbErr: any) {
+        console.error("Erro ao consultar Firestore via Client SDK:", dbErr);
+        throw dbErr;
+      }
+
+      // 3. Fallback para o Master Admin (SAAS_ADMIN) para auto-geração caso ainda não exista no Firestore
+      if (isMaster && !matchedUser) {
+        if (trimmedPassword === 'Ch@pola07') {
+          userRole = 'SAAS_ADMIN';
+          uid = 'saas_admin_renan';
+          
+          matchedUser = {
+            id: uid,
+            email: trimmedEmail,
+            role: 'SAAS_ADMIN',
+            password: trimmedPassword,
+            name: 'Renan SAAS Admin',
+            tenantId: '',
+            active: true,
+            createdAt: new Date()
+          };
+          try {
+            await clientSetDoc(clientDoc(clientDb, 'users', uid), matchedUser);
+          } catch (setErr) {
+            console.error("Erro ao criar SAAS Admin no Firestore:", setErr);
+          }
+        }
+      }
+
+      if (!matchedUser) {
+        return res.status(401).json({ error: "E-mail ou senha incorretos." });
+      }
+
+      // 4. Garantir que o usuário existe no Firebase Authentication com essa senha
+      let firebaseUser;
+      try {
+        firebaseUser = await adminAuth.getUserByEmail(trimmedEmail);
+        // Atualizar a senha no Firebase Auth para coincidir com a do Firestore
+        await adminAuth.updateUser(firebaseUser.uid, {
+          password: trimmedPassword
+        });
+        uid = firebaseUser.uid;
+      } catch (authErr: any) {
+        if (authErr.code === 'auth/user-not-found') {
+          // Criar no Firebase Auth se não existir
+          const newAuthUser = await adminAuth.createUser({
+            email: trimmedEmail,
+            password: trimmedPassword,
+            displayName: matchedUser.name || 'Lojista'
+          });
+          uid = newAuthUser.uid;
+        } else {
+          throw authErr;
+        }
+      }
+
+      // 5. Se o Document ID antigo do Firestore for diferente do Auth UID, migrar para manter o ID unificado
+      if (uid && uid !== oldDocId) {
+        matchedUser.id = uid;
+        try {
+          await clientSetDoc(clientDoc(clientDb, 'users', uid), matchedUser, { merge: true });
+          if (oldDocId && oldDocId !== uid) {
+            await clientDeleteDoc(clientDoc(clientDb, 'users', oldDocId));
+          }
+        } catch (migErr) {
+          console.warn("Nao foi possivel migrar ID do Firestore, prosseguindo:", migErr);
+        }
+      }
+
+      // 6. Gerar Token de Acesso Customizado do Firebase Auth
+      const customToken = await adminAuth.createCustomToken(uid);
+
+      return res.json({
+        success: true,
+        customToken,
+        user: {
+          id: uid,
+          email: trimmedEmail,
+          role: userRole,
+          name: matchedUser.name || 'Lojista',
+          tenantId: matchedUser.tenantId || ''
+        }
+      });
+
+    } catch (err: any) {
+      console.error("Erro no login seguro via API:", err);
+      return res.status(500).json({ error: "Erro interno no servidor de autenticação." });
+    }
   });
 
   // Serve o Service Worker explicitamente com o Content-Type correto
@@ -37,40 +196,115 @@ async function startServer() {
     const despesas = summaryData.despesas || 0;
     const cmv = summaryData.cmv || 0;
     const taxasDelivery = summaryData.taxasDelivery || 0;
+    const folha = summaryData.folha || 0;
+    const despesasFixas = summaryData.despesasFixas || 0;
     const ticketMedio = summaryData.ticketMedio || 0;
     const pontoEquilibrio = summaryData.pontoEquilibrio || 0;
     const classificacao = summaryData.classificacao || "Em Crescimento";
     const topProduct = summaryData.topProduct;
     const worstProduct = summaryData.worstProduct;
 
+    // Calcular proporções percentuais reais em relação ao faturamento
+    const cmvPercent = faturamento > 0 ? (cmv / faturamento) * 100 : 0;
+    const deliveryPercent = faturamento > 0 ? (taxasDelivery / faturamento) * 100 : 0;
+    const laborPercent = faturamento > 0 ? (folha / faturamento) * 100 : 0;
+    const fixedPercent = faturamento > 0 ? (despesasFixas / faturamento) * 100 : 0;
+    
+    // Margem de segurança em relação ao break-even
+    const safetyMargin = faturamento > 0 && faturamento > pontoEquilibrio 
+      ? ((faturamento - pontoEquilibrio) / faturamento) * 100 
+      : 0;
+
     let header = isFallback 
       ? `### ⚡ Copiloto Integrado (Modo de Contingência Local)\n*(Devido à alta demanda temporária nos servidores de nuvem do Gemini, o mecanismo local inteligente gerou este relatório completo imediatamente para você não ficar sem suporte!)*\n\n`
-      : `### 📊 Diagnóstico Heurístico do Seu Copiloto Financeiro\n\n`;
+      : `### 📊 Diagnóstico Avançado do Seu Copiloto Financeiro KitchenFlow\n\n`;
 
-    return header + `Sua operação está classificada atualmente como **${classificacao}** com uma margem líquida estimada de **${margem.toFixed(1)}%**.
+    let content = header + `Sua operação está classificada atualmente como **${classificacao}** com uma margem líquida de **${margem.toFixed(1)}%** e lucro real estimado de **R$ ${lucroReal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}** no período.\n\n`;
 
-Abaixo, detalhamos os principais fatores de desempenho e oportunidades de melhoria para o seu negócio:
+    // 🟢 O Que Está Indo Bem
+    content += `### 🟢 O Que Está Indo Bem\n`;
+    let strongPointsCount = 1;
+    
+    if (topProduct) {
+      const topMargin = topProduct.price > 0 ? ((topProduct.price - topProduct.cost) / topProduct.price) * 100 : 0;
+      content += `${strongPointsCount++}. **Estrela do Cardápio - ${topProduct.name}**: Esse produto obteve ótimo volume (${topProduct.qty} unidades) e gera uma excelente margem bruta unitária de **${topMargin.toFixed(1)}%** (Preço: R$ ${topProduct.price.toFixed(2)} | Custo: R$ ${topProduct.cost.toFixed(2)}). Continue promovendo-o!\n`;
+    } else {
+      content += `${strongPointsCount++}. **Mix de Vendas**: Seu mix de produtos se mantém diversificado, diluindo o risco de dependência de um único item.\n`;
+    }
 
----
+    if (ticketMedio > 0) {
+      content += `${strongPointsCount++}. **Ticket Médio Consolidado**: Seus clientes gastam em média **R$ ${ticketMedio.toFixed(2)}** por pedido. Um ticket médio saudável ajuda a diluir o custo logístico de cada entrega.\n`;
+    }
 
-### 🟢 O Que Está Indo Bem
-1. **${topProduct ? `Estrela do Cardápio: O produto **${topProduct.name}**` : 'Mix de Produtos'}**: Com margem expressiva e ótima saída, é o principal pilar de rentabilidade de suas vendas.
-2. **Ticket Médio de R$ ${ticketMedio.toFixed(2)}**: O valor médio consumido por pedido está ideal e equilibrado para a operação, garantindo rentabilidade se mantido um volume estável.
-3. **Ponto de Equilíbrio**: Seu ponto de equilíbrio estimado é de **R$ ${pontoEquilibrio.toFixed(2)}**. Com o ritmo de faturamento de **R$ ${faturamento.toFixed(2)}**, você já superou a zona de risco crítico correspondente às despesas e agora contribui para o verdadeiro lucro líquido.
+    if (faturamento > pontoEquilibrio && pontoEquilibrio > 0) {
+      content += `${strongPointsCount++}. **Superação do Ponto de Equilíbrio**: Seu faturamento de **R$ ${faturamento.toFixed(2)}** superou o break-even de **R$ ${pontoEquilibrio.toFixed(2)}** em **${safetyMargin.toFixed(1)}%** (Margem de Segurança). A partir deste ponto, cada real faturado se traduz diretamente em lucratividade real.\n`;
+    } else if (faturamento > 0) {
+      content += `${strongPointsCount++}. **Entrada de Receita**: Você gerou um faturamento bruto de **R$ ${faturamento.toFixed(2)}**, o que demonstra que a marca tem tração de vendas no mercado.\n`;
+    }
 
----
+    content += `\n---\n\n### ⚠️ Análise Crítica de Custos (Onde Há Gargalos)\n`;
+    let criticalPointsCount = 1;
 
-### ⚠️ Onde Ficar Alerta (Risco de Margem)
-1. **CMV (Custo de Mercadoria Vendida)**: O CMV representa **R$ ${cmv.toFixed(2)}** sobre o seu faturamento de **R$ ${faturamento.toFixed(2)}**. Para manter uma operação com margem excelente, o ideal é que este indicador fique entre 28% e 32% do faturamento.
-2. **Impacto das Taxas de Delivery**: Suas despesas com aplicativos e taxas adicionais de entrega totalizam **R$ ${taxasDelivery.toFixed(2)}**. Esse canal é importante para expandir o alcance da marca, mas atente-se à precificação exclusiva de delivery para repassar as tarifas operacionais.
-3. **${worstProduct ? `Atenção Recorrente ao Produto: **${worstProduct.name}**` : 'Revisão de Custos'}**: Apresenta margem reduzida para a operação. Sugerimos realizar uma revisão imediata dos insumos ou ajustar levemente o valor cobrado nas plataformas digitais.
+    // CMV Check
+    if (cmvPercent > 35) {
+      content += `${criticalPointsCount++}. **CMV Elevado (${cmvPercent.toFixed(1)}%)**: Seu Custo de Mercadoria Vendida está acima do teto recomendado de 32%. Para cada R$ 100 faturados, R$ ${cmvPercent.toFixed(2)} são consumidos por insumos. Isto indica desperdícios, falta de porcionamento padrão ou compras caras de varejo.\n`;
+    } else if (cmvPercent > 0) {
+      content += `${criticalPointsCount++}. **CMV sob Controle (${cmvPercent.toFixed(1)}%)**: Seu custo de insumos está saudável e dentro do benchmark ideal de 28% a 32%. Excelente porcionamento e negociação de compras.\n`;
+    }
 
----
+    // Delivery Check
+    if (deliveryPercent > 15) {
+      content += `${criticalPointsCount++}. **Dependência de Delivery e Altas Taxas (${deliveryPercent.toFixed(1)}%)**: As comissões de aplicativos de entrega representam R$ ${taxasDelivery.toFixed(2)}. Esse percentual está pesando excessivamente sobre suas vendas digitais. É imperativo adotar cardápio próprio e diferenciar preços.\n`;
+    } else if (deliveryPercent > 0) {
+      content += `${criticalPointsCount++}. **Custo de Canal Delivery (${deliveryPercent.toFixed(1)}%)**: Suas taxas de marketplace estão sob controle. Mantenha a vigilância para garantir que campanhas promocionais não comprimam as margens.\n`;
+    }
 
-### 💡 Plano de Ação Personalizado
-- **Ajustes no Canal Delivery**: Adicione um acréscimo inteligente de 10% a 15% nos preços dos itens nos canais integrados para atenuar as comissões abusivas.
-- **Redução de Desperdício (Insumos)**: Padronize o porcionamento de receitas de maior saída para otimizar as compras de insumos no estoque.
-- **Apoio Constante**: Com a excelente estabilidade geral, sua operação é sustentável e resiliente, propiciando ótimas condições de modernização.`;
+    // Labor Check
+    if (laborPercent > 25) {
+      content += `${criticalPointsCount++}. **Peso Operacional de Equipe (${laborPercent.toFixed(1)}%)**: Os gastos com funcionários/colaboradores estão acima do benchmark ideal do setor (20% a 25%). Pode haver ociosidade de escala ou necessidade de reorganizar os turnos de trabalho.\n`;
+    }
+
+    // Fixed Overhead Check
+    if (fixedPercent > 20) {
+      content += `${criticalPointsCount++}. **Custos Fixos Pesados (${fixedPercent.toFixed(1)}%)**: Aluguel, contas básicas e taxas fixas representam R$ ${despesasFixas.toFixed(2)}. Para diluir esse peso, o foco estratégico deve ser no aumento imediato do volume de vendas.\n`;
+    }
+
+    // Worst Product Check
+    if (worstProduct) {
+      const worstMargin = worstProduct.price > 0 ? ((worstProduct.price - worstProduct.cost) / worstProduct.price) * 100 : 0;
+      const suggestedPrice = worstProduct.cost / 0.4; // 60% Margem Desejada -> 40% custo
+      content += `${criticalPointsCount++}. **Atenção ao Produto - ${worstProduct.name}**: Esse item está operando com uma margem de contribuição bruta de apenas **${worstMargin.toFixed(1)}%** (Preço Atual: R$ ${worstProduct.price.toFixed(2)} | Custo de Insumo: R$ ${worstProduct.cost.toFixed(2)}). Você está praticamente "trocando dinheiro" ou tendo prejuízo nele.\n`;
+    }
+
+    content += `\n---\n\n### 💡 Plano de Ação Estratégico KitchenFlow\n`;
+    
+    // Personalize action plan based on the highest leak
+    const leakages = [
+      { name: 'CMV', val: cmvPercent, threshold: 32, tip: '- **Ficha Técnica e Balança**: Estabeleça pesagem obrigatória na cozinha para proteínas e ingredientes caros. Uma economia de 2% no CMV pode injetar milhares de reais direto no seu lucro líquido mensal.' },
+      { name: 'Delivery', val: deliveryPercent, threshold: 14, tip: '- **Precificação Diferenciada para Delivery**: Aumente os preços nos marketplaces em 15% a 18% para repassar as taxas abusivas aos clientes dessas plataformas, estimulando as vendas no canal próprio de menor custo.' },
+      { name: 'Equipe', val: laborPercent, threshold: 25, tip: '- **Otimização de Escalas**: Cruze o volume histórico de pedidos por hora com a escala de funcionários para reduzir horas ociosas nos períodos de baixo movimento (ex: segundas e terças-feiras à tarde).' },
+      { name: 'Custos Fixos', val: fixedPercent, threshold: 18, tip: '- **Expansão de Faturamento (Capacidade Ociosa)**: Como seu custo fixo é representativo, considere criar uma "marca virtual" (Dark Kitchen) usando a mesma cozinha para vender outros pratos e diluir o aluguel.' }
+    ];
+
+    // Sort by leak excess above threshold
+    const criticalLeaks = leakages
+      .map(l => ({ ...l, excess: l.val - l.threshold }))
+      .sort((a, b) => b.excess - a.excess);
+
+    // Pick top 2 tips, plus worst product tip if available
+    content += `${criticalLeaks[0].tip}\n`;
+    content += `${criticalLeaks[1].tip}\n`;
+
+    if (worstProduct) {
+      const suggestedPrice = worstProduct.cost / 0.4; // 60% Margin target
+      const comercialPrice = Math.ceil(suggestedPrice) - 0.10; // e.g. 24.90
+      content += `- **Readequação do Item ${worstProduct.name}**: Recomenda-se reajustar o preço de R$ ${worstProduct.price.toFixed(2)} para **R$ ${comercialPrice.toFixed(2)}** (para garantir 60% de margem bruta), ou revisar a receita para trocar ingredientes caros por alternativas de menor custo sem perder a assinatura de sabor.\n`;
+    } else {
+      content += `- **Engenharia de Cardápio**: Revise trimestralmente os preços dos seus top 10 produtos de maior saída, garantindo que a inflação de insumos não corra as margens operacionais.\n`;
+    }
+
+    content += `\n*Este diagnóstico dinâmico foi gerado de forma local pelos algoritmos de análise da plataforma KitchenFlow AI.*`;
+    return content;
   };
 
   // Helper de resiliência e retry para chamadas à API do Gemini
@@ -136,31 +370,44 @@ Abaixo, detalhamos os principais fatores de desempenho e oportunidades de melhor
         }
       });
 
-      const promptString = `Analise os seguintes dados financeiros e operacionais reais de um restaurante e gere um diagnóstico de consultoria empresarial EXTREMAMENTE simples, prático e humano (evite linguajar corporativo árido ou termos de contador complexos). Fale diretamente com o dono do estabelecimento de forma franca, motivadora e direta ao ponto.
+      const faturamento = summaryData.faturamento || 0;
+      const cmvPercent = faturamento > 0 ? (summaryData.cmv / faturamento) * 100 : 0;
+      const deliveryPercent = faturamento > 0 ? (summaryData.taxasDelivery / faturamento) * 100 : 0;
+      const laborPercent = faturamento > 0 ? (summaryData.folha / faturamento) * 100 : 0;
+      const fixedPercent = faturamento > 0 ? (summaryData.despesasFixas / faturamento) * 100 : 0;
+      const safetyMargin = faturamento > 0 && faturamento > (summaryData.pontoEquilibrio || 0)
+        ? ((faturamento - summaryData.pontoEquilibrio) / faturamento) * 100
+        : 0;
+
+      const promptString = `Analise os seguintes dados financeiros e operacionais reais de um restaurante e gere um diagnóstico de consultoria empresarial EXTREMAMENTE simples, prático, detalhado e altamente estratégico (focado em saúde financeira, controle de margens e engenharia de cardápio). Fale diretamente com o dono do estabelecimento de forma franca, profissional, motivadora e direta ao ponto.
 
 DADOS DA OPERAÇÃO:
 - Período Analisado: ${summaryData.periodName || 'Selecionado'}
-- Faturamento Bruto: R$ ${summaryData.faturamento.toFixed(2)}
+- Faturamento Bruto: R$ ${faturamento.toFixed(2)}
 - Lucro Operacional Líquido Estimado: R$ ${summaryData.lucroReal.toFixed(2)}
 - Margem Líquida %: ${summaryData.margem.toFixed(2)}%
 - Classificação da Saúde Financeira: ${summaryData.classificacao}
-- Custos de Insumos/Produtos (CMV): R$ ${summaryData.cmv.toFixed(2)} (${((summaryData.cmv / (summaryData.faturamento || 1)) * 100).toFixed(1)}% do faturamento)
-- Taxas e Comissões do Delivery/Plataformas: R$ ${summaryData.taxasDelivery.toFixed(2)}
-- Folha de Pagamento / Pró-labores: R$ ${summaryData.folha.toFixed(2)}
-- Despesas Fixas Gerais: R$ ${summaryData.despesasFixas.toFixed(2)}
+- Custos de Insumos/Produtos (CMV): R$ ${summaryData.cmv.toFixed(2)} (${cmvPercent.toFixed(1)}% do faturamento)
+- Taxas e Comissões do Delivery/Plataformas: R$ ${summaryData.taxasDelivery.toFixed(2)} (${deliveryPercent.toFixed(1)}% do faturamento)
+- Folha de Pagamento / Pró-labores: R$ ${summaryData.folha.toFixed(2)} (${laborPercent.toFixed(1)}% do faturamento)
+- Despesas Fixas Gerais: R$ ${summaryData.despesasFixas.toFixed(2)} (${fixedPercent.toFixed(1)}% do faturamento)
 - Despesas Variáveis/Outras Despesas: R$ ${summaryData.despesas.toFixed(2)}
 - Ticket Médio do Período: R$ ${(summaryData.ticketMedio || 0).toFixed(2)}
 - Ponto de Equilíbrio Necessário: R$ ${(summaryData.pontoEquilibrio || 0).toFixed(2)}
+- Margem de Segurança Operacional: ${safetyMargin.toFixed(1)}% (percentual acima do ponto de equilíbrio)
 
 MIX DE PRODUTOS DESTACADOS:
-${summaryData.topProduct ? `- Produto mais lucrativo: ${summaryData.topProduct.name} (Vendido: ${summaryData.topProduct.qty}, Margem Unitária: R$ ${(summaryData.topProduct.price - summaryData.topProduct.cost).toFixed(2)})` : ''}
-${summaryData.worstProduct ? `- Produto com margem crítica: ${summaryData.worstProduct.name} (Vendido: ${summaryData.worstProduct.qty}, Margem Unitária: R$ ${(summaryData.worstProduct.price - summaryData.worstProduct.cost).toFixed(2)})` : ''}
+${summaryData.topProduct ? `- Produto mais lucrativo (Estrela): ${summaryData.topProduct.name} (Vendido: ${summaryData.topProduct.qty}, Preço: R$ ${summaryData.topProduct.price.toFixed(2)}, Custo de Insumo: R$ ${summaryData.topProduct.cost.toFixed(2)}, Margem Unitária: R$ ${(summaryData.topProduct.price - summaryData.topProduct.cost).toFixed(2)})` : ''}
+${summaryData.worstProduct ? `- Produto com margem crítica (Atenção): ${summaryData.worstProduct.name} (Vendido: ${summaryData.worstProduct.qty}, Preço: R$ ${summaryData.worstProduct.price.toFixed(2)}, Custo de Insumo: R$ ${summaryData.worstProduct.cost.toFixed(2)}, Margem Unitária: R$ ${(summaryData.worstProduct.price - summaryData.worstProduct.cost).toFixed(2)})` : ''}
 
 REQUISITOS DA RESPOSTA:
-1. Responda claramente a pergunta: "Como está meu negócio de verdade?"
-2. Aponte exatamente qual custo está prejudicando a margem (CMV, Delivery, ou Despesas Fixas).
-3. Seja objetivo, separe as ideias em tópicos simples e adicione um plano de ação de 2 a 3 pontos práticos.
-4. Utilize tom de Copiloto Financeiro que entende do dia a dia do lojista. Use formatação em Markdown elegível (negritos, listas, seções).`;
+1. Responda claramente a pergunta: "Como está meu negócio de verdade?" - Faça uma análise baseada nos benchmarks de restaurante (CMV ideal: 28-32%; Equipe ideal: 20-25%; Delivery ideal: <15%).
+2. Identifique e detalhe o principal ralo ou gargalo financeiro atual (se é o CMV elevado, despesas de folha, taxas abusivas de delivery, ou baixo volume de vendas para cobrir as despesas fixas).
+3. Apresente um plano de ação estratégico focado em:
+   - Redução do CMV (fichas técnicas, pesagem, renegociação).
+   - Engenharia de cardápio e preços (especialmente sugerindo o preço de venda ideal para o produto com margem crítica: o ideal de margem de contribuição é de 60%, ou seja, preço sugerido = custo / 0.4).
+   - Otimização do canal de vendas (repasses inteligentes de comissões, fomento ao canal próprio).
+4. Utilize tom de Copiloto Financeiro experiente que compreende as dores reais do dia a dia de uma cozinha. Formate lindamente em Markdown (com negritos, seções claras e tópicos objetivos).`;
 
       const candidateModels = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
       const aiResponse = await callGeminiWithRetry(client, candidateModels, { contents: promptString });
@@ -310,7 +557,7 @@ Posso responder qualquer pergunta estratégica sobre as finanças, faturamento e
       const ontem = kaiMetrics?.ontem || { faturamento: 0, lucroReal: 0, margem: 0, orderCount: 0, cmv: 0, despesas: 0, taxasDelivery: 0, folha: 0, despesasFixas: 0, outraDespesa: 0 };
       const mes = kaiMetrics?.mes || { faturamento: 0, lucroReal: 0, margem: 0, orderCount: 0, cmv: 0, despesas: 0, taxasDelivery: 0, folha: 0, despesasFixas: 0, outraDespesa: 0 };
 
-      const promptString = `Você é o Kai, um analista financeiro e operacional de inteligência artificial residente de um restaurante/cozinha. Você é amigável, direto, experiente e se comunica em Português do Brasil.
+      const promptString = `Você é o Kai, um analista financeiro e operacional de inteligência artificial residente da plataforma KitchenFlow AI. Você é amigável, altamente analítico, direto, experiente e se comunica em Português do Brasil.
 Você possui acesso em tempo real aos números operacionais e financeiros precisos e reais do estabelecimento do lojista.
 
 Abaixo estão os dados reais auditados agora em tempo real do sistema:
@@ -321,7 +568,7 @@ DADOS DE HOJE:
 - Lucro Líquido Estimado: R$ ${hoje.lucroReal.toFixed(2)}
 - Margem Líquida %: ${hoje.margem.toFixed(2)}%
 - Pedidos Finalizados: ${hoje.orderCount}
-- Custo de Insumos (CMV de hoje): R$ ${hoje.cmv.toFixed(2)}
+- Custo de Insumos (CMV de hoje): R$ ${hoje.cmv.toFixed(2)} (CMV Real: ${(hoje.faturamento > 0 ? (hoje.cmv / hoje.faturamento) * 100 : 0).toFixed(1)}%)
 - Despesas Totais de Hoje: R$ ${hoje.despesas.toFixed(2)} (inclui aluguel diário R$ ${hoje.despesasFixas.toFixed(2)}, equipe diária R$ ${hoje.folha.toFixed(2)}, taxas de delivery R$ ${hoje.taxasDelivery.toFixed(2)} e outras despesas R$ ${hoje.outraDespesa.toFixed(2)})
 
 DADOS DE ONTEM:
@@ -334,7 +581,7 @@ DADOS DESTE MÊS (ACUMULADOS):
 - Faturamento Bruto Total: R$ ${mes.faturamento.toFixed(2)}
 - Lucro Líquido Estimado: R$ ${mes.lucroReal.toFixed(2)}
 - Margem Média Retida: ${mes.margem.toFixed(2)}%
-- Custo de Insumos (CMV acumulado): R$ ${mes.cmv.toFixed(2)}
+- Custo de Insumos (CMV acumulado): R$ ${mes.cmv.toFixed(2)} (CMV Real: ${(mes.faturamento > 0 ? (mes.cmv / mes.faturamento) * 100 : 0).toFixed(1)}%)
 - Despesas do Mês: R$ ${mes.despesas.toFixed(2)} (aluguel proporcional R$ ${mes.despesasFixas.toFixed(2)}, equipe R$ ${mes.folha.toFixed(2)}, taxas de delivery R$ ${mes.taxasDelivery.toFixed(2)} e outras despesas R$ ${mes.outraDespesa.toFixed(2)})
 
 OUTRAS INFORMAÇÕES DE CONTEXTO:
@@ -352,10 +599,13 @@ ${formattedHistory}
 NOVA MENSAGEM DO LOJISTA:
 "${message}"
 
-Sua missão é responder à nova mensagem do lojista utilizando os números exatos fornecidos acima sempre que relevante (especialmente faturamento de hoje, faturamento do mês, margem líquida, lucro real diário ou mensal, CMV ou quantidade de pedidos). 
-- Seja extremamente empático e use uma linguagem que conecte com o dia a dia do dono do restaurante (falando de desperdícios, margens, motoboys, ingredientes, etc).
-- Apresente faturamento, lucro e margem de forma clara com bullet points organizados e de facílima leitura.
-- Ajude a planejar metas e comemore se a operação estiver positiva de verdade!
+Sua missão é responder à nova mensagem do lojista utilizando os números exatos fornecidos acima sempre que relevante.
+- Siga estritamente estes Benchmarks de Restaurantes para orientar o lojista:
+  * CMV (Custo de Mercadoria Vendida): Ideal de 28% a 32%. Acima de 35% é crítico.
+  * Custo com Funcionários/Equipe (Labor Cost): Ideal de 20% a 25%. Acima de 28% indica ociosidade.
+  * Taxas de Delivery / Marketplace: Ideal abaixo de 12-15% sobre o faturamento total.
+- Seja extremamente pragmático, evite rodeios corporativos, mas mantenha uma linguagem calorosa e inspiradora que se conecte com o dia a dia difícil do dono do restaurante (falando sobre controle de desperdício, porcionamento padrão, precificação inteligente, engenharia de pratos, repasse de taxas de comissão).
+- Apresente os dados em bullet points ou tabelas simples se o lojista pedir dados numéricos ou relatórios.
 - Escolha uma "pose" de trabalho e uma "expression" facial apropriada do Kai para acompanhar sua resposta.
 
 Você DEVE responder rigorosamente no formato JSON com as chaves:

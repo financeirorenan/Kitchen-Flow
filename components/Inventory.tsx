@@ -10,13 +10,12 @@ import {
   Minus, Percent, ClipboardList, Info, Beaker, Scale, Trash2, Tag,
   LayoutGrid, ListChecks, GripVertical, Eye, EyeOff, ArrowRightLeft,
   Truck, Utensils, Smartphone, QrCode, Upload, Box, Clock, LayoutDashboard, DollarSign,
-  Pizza
+  Pizza, ShoppingCart, Send
 } from 'lucide-react';
 import { Reorder, AnimatePresence, motion } from 'framer-motion';
 import { maskCurrency, parseCurrency } from '../utils/masks';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { compressImage } from '../lib/imageUtils';
-import { StockAnalyst } from './StockAnalyst';
 
 interface InventoryProps {
   products: Product[];
@@ -36,6 +35,37 @@ interface InventoryProps {
   onSyncCloud?: () => Promise<boolean>;
   orders?: Order[];
 }
+
+const cleanStringForCompare = (str: string): string => {
+  if (!str) return '';
+  return str
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // remove acentos
+    .replace(/[^a-z0-9]/g, ' ')      // remove caracteres especiais, mantendo letras e números
+    .replace(/\s+/g, ' ')            // colapsa espaços múltiplos em um único espaço
+    .trim();
+};
+
+const isSimilarName = (name1: string, name2: string): boolean => {
+  const clean1 = cleanStringForCompare(name1);
+  const clean2 = cleanStringForCompare(name2);
+  if (!clean1 || !clean2) return false;
+  if (clean1 === clean2) return true;
+  
+  const stopWords = new Set(['de', 'da', 'do', 'em', 'um', 'uma', 'com', 'para', 'sem', 'por', 'ao', 'os', 'as', 'o', 'a']);
+  const words1 = clean1.split(' ').filter(w => !stopWords.has(w) && w.length > 1);
+  const words2 = clean2.split(' ').filter(w => !stopWords.has(w) && w.length > 1);
+  
+  if (words1.length === 0 || words2.length === 0) return false;
+  
+  // Check if all words of the shorter name are contained in the longer name
+  const [shorter, longer] = words1.length < words2.length ? [words1, words2] : [words2, words1];
+  const matchCount = shorter.filter(w => longer.includes(w)).length;
+  
+  // If at least 75% of the shorter name's words are in the longer name, it's a match!
+  return matchCount / shorter.length >= 0.75;
+};
 
 const Inventory: React.FC<InventoryProps> = memo(({ 
   products, rawMaterials, onUpdateProduct, onAddProduct, onDeleteProduct, 
@@ -68,7 +98,226 @@ const Inventory: React.FC<InventoryProps> = memo(({
     return baseOrder.filter(cat => finalSet.has(cat));
   }, [productCategories, products, digitalMenuSettings.categoryOrder]);
 
-  const [activeSubTab, setActiveSubTab] = useState<'products' | 'raw-materials' | 'analyst'>('products');
+  const [activeSubTab, setActiveSubTab] = useState<'products' | 'raw-materials' | 'shopping-list'>('products');
+  const [shoppingPeriod, setShoppingPeriod] = useState<'day' | 'week' | 'month'>('week');
+  const [customDailyConsumptions, setCustomDailyConsumptions] = useState<Record<string, number>>({});
+  const [selectedShoppingMaterials, setSelectedShoppingMaterials] = useState<Record<string, boolean>>({});
+  const [onlyShowCritical, setOnlyShowCritical] = useState<boolean>(true);
+
+  // Helper to calculate raw material consumption stats based on product recipe sheets and order history
+  const getRawMaterialConsumptionStats = (rawMaterialId: string) => {
+    const productsUsingMaterial = products.filter(p => 
+      p.technicalSheet?.some(ts => ts.rawMaterialId === rawMaterialId)
+    );
+
+    let totalUsed = 0;
+    const completedOrders = (orders || []).filter(o => 
+      o.status === 'finished' || o.status === 'delivered'
+    );
+
+    let daysDiff = 7; // Lookback range defaults to 7 days
+    if (completedOrders.length > 0) {
+      const dates = completedOrders.map(o => {
+        try {
+          return new Date(o.createdAt).getTime();
+        } catch {
+          return Date.now();
+        }
+      });
+      const minDate = Math.min(...dates);
+      const maxDate = Math.max(...dates);
+      daysDiff = Math.max(1, Math.ceil((maxDate - minDate) / (1000 * 60 * 60 * 24)));
+    }
+
+    completedOrders.forEach(order => {
+      order.items.forEach(item => {
+        const product = productsUsingMaterial.find(p => p.id === item.productId);
+        if (product && product.technicalSheet) {
+          const tsItem = product.technicalSheet.find(ts => ts.rawMaterialId === rawMaterialId);
+          if (tsItem) {
+            totalUsed += item.quantity * tsItem.quantity;
+          }
+        }
+      });
+    });
+
+    const avgDaily = totalUsed / Math.max(1, daysDiff);
+    return {
+      totalUsed,
+      avgDaily: avgDaily > 0 ? avgDaily : 0,
+      daysDiff
+    };
+  };
+
+  // Sync / initialize shopping list items and values
+  useEffect(() => {
+    const initialSelected: Record<string, boolean> = {};
+    const initialDaily: Record<string, number> = { ...customDailyConsumptions };
+
+    rawMaterials.forEach(m => {
+      // If stock is low, pre-select it
+      if (m.currentStock <= m.minStock) {
+        initialSelected[m.id] = true;
+      }
+      
+      // Calculate daily average if not already set or customized
+      if (initialDaily[m.id] === undefined || initialDaily[m.id] === 0) {
+        const stats = getRawMaterialConsumptionStats(m.id);
+        // Default to minStock / 7 as fallback if calculated consumption is 0
+        initialDaily[m.id] = stats.avgDaily > 0 ? parseFloat(stats.avgDaily.toFixed(2)) : Math.max(0.1, parseFloat((m.minStock / 7).toFixed(2)));
+      }
+    });
+
+    setSelectedShoppingMaterials(prev => {
+      const next = { ...prev };
+      Object.keys(initialSelected).forEach(id => {
+        if (next[id] === undefined) {
+          next[id] = true;
+        }
+      });
+      return next;
+    });
+    setCustomDailyConsumptions(prev => {
+      const next = { ...prev };
+      Object.keys(initialDaily).forEach(id => {
+        if (next[id] === undefined) {
+          next[id] = initialDaily[id];
+        }
+      });
+      return next;
+    });
+  }, [rawMaterials, orders]);
+
+  const handleUpdateDailyConsumption = (id: string, value: string) => {
+    const parsed = parseFloat(value);
+    if (!isNaN(parsed) && parsed >= 0) {
+      setCustomDailyConsumptions(prev => ({ ...prev, [id]: parsed }));
+    } else if (value === '') {
+      setCustomDailyConsumptions(prev => ({ ...prev, [id]: 0 }));
+    }
+  };
+
+  const handlePrintShoppingList = () => {
+    const selectedItems = rawMaterials.filter(m => selectedShoppingMaterials[m.id]);
+    if (selectedItems.length === 0) {
+      alert("Selecione ao menos um insumo para imprimir.");
+      return;
+    }
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) return;
+    
+    const periodLabel = shoppingPeriod === 'day' ? 'Dia (Consumo Diário)' : shoppingPeriod === 'week' ? 'Semana (7 dias)' : 'Mês (30 dias)';
+    
+    const tableRows = selectedItems.map(m => {
+      const daily = customDailyConsumptions[m.id] || 0;
+      const multiplier = shoppingPeriod === 'day' ? 1 : shoppingPeriod === 'week' ? 7 : 30;
+      const needed = daily * multiplier;
+      const suggested = Math.max(0, parseFloat((needed - m.currentStock).toFixed(2)));
+      const cost = suggested * m.costPerUnit;
+      return `
+        <tr style="border-bottom: 1px solid #e2e8f0;">
+          <td style="padding: 12px; text-align: left; font-family: sans-serif; font-size: 13px;">${m.name}</td>
+          <td style="padding: 12px; text-align: left; font-family: sans-serif; font-size: 11px; text-transform: uppercase; color: #64748b;">${m.category}</td>
+          <td style="padding: 12px; text-align: right; font-family: monospace; font-size: 13px;">${m.currentStock} / ${m.minStock} ${m.unit}</td>
+          <td style="padding: 12px; text-align: right; font-family: monospace; font-size: 13px;">${daily.toFixed(2)} ${m.unit}/dia</td>
+          <td style="padding: 12px; text-align: right; font-family: monospace; font-size: 13px;">${needed.toFixed(2)} ${m.unit}</td>
+          <td style="padding: 12px; text-align: right; font-family: monospace; font-size: 13px; font-weight: bold; color: #4f46e5;">+${suggested} ${m.unit}</td>
+          <td style="padding: 12px; text-align: right; font-family: monospace; font-size: 13px; font-weight: bold;">R$ ${cost.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const totalCost = selectedItems.reduce((sum, m) => {
+      const daily = customDailyConsumptions[m.id] || 0;
+      const multiplier = shoppingPeriod === 'day' ? 1 : shoppingPeriod === 'week' ? 7 : 30;
+      const needed = daily * multiplier;
+      const suggested = Math.max(0, parseFloat((needed - m.currentStock).toFixed(2)));
+      return sum + (suggested * m.costPerUnit);
+    }, 0);
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Lista de Compras Inteligente - KitchenFlow AI</title>
+          <style>
+            body { font-family: system-ui, -apple-system, sans-serif; color: #1e293b; padding: 40px; }
+            .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #e2e8f0; padding-bottom: 20px; margin-bottom: 30px; }
+            h1 { margin: 0; font-size: 24px; font-weight: 800; color: #0f172a; text-transform: uppercase; letter-spacing: -0.025em; }
+            .meta { font-size: 12px; color: #64748b; margin: 4px 0 0 0; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th { background-color: #f8fafc; padding: 12px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #475569; border-bottom: 2px solid #e2e8f0; letter-spacing: 0.05em; }
+            .total { margin-top: 40px; text-align: right; font-size: 18px; font-weight: 800; color: #0f172a; border-top: 2px solid #e2e8f0; padding-top: 20px; }
+          </style>
+        </head>
+        <body onload="window.print()">
+          <div class="header">
+            <div>
+              <h1>Lista de Compras Inteligente</h1>
+              <p class="meta">Previsão baseada em consumo médio: <strong>${periodLabel}</strong></p>
+            </div>
+            <div style="text-align: right;">
+              <p class="meta">Data de Emissão: ${new Date().toLocaleDateString('pt-BR')}</p>
+              <p class="meta">KitchenFlow AI</p>
+            </div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th style="text-align: left;">Insumo</th>
+                <th style="text-align: left;">Categoria</th>
+                <th style="text-align: right;">Estoque Atual / Mín</th>
+                <th style="text-align: right;">Consumo Médio</th>
+                <th style="text-align: right;">Previsão Período</th>
+                <th style="text-align: right;">Sugerido Comprar</th>
+                <th style="text-align: right;">Custo Est.</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRows}
+            </tbody>
+          </table>
+          <div class="total">
+            Custo Total Estimado: R$ ${totalCost.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </div>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  const handleShareWhatsApp = () => {
+    const selectedItems = rawMaterials.filter(m => selectedShoppingMaterials[m.id]);
+    if (selectedItems.length === 0) {
+      alert("Por favor, selecione pelo menos um insumo para a lista de compras.");
+      return;
+    }
+
+    const periodLabel = shoppingPeriod === 'day' ? 'Consumo Diário' : shoppingPeriod === 'week' ? 'Semana (7 dias)' : 'Mês (30 dias)';
+    let message = `*Lista de Compras Inteligente - KitchenFlow AI*\n`;
+    message += `*Previsão de Abastecimento:* ${periodLabel}\n`;
+    message += `*Data de Geração:* ${new Date().toLocaleDateString('pt-BR')}\n\n`;
+
+    let totalCost = 0;
+    selectedItems.forEach(m => {
+      const daily = customDailyConsumptions[m.id] || 0;
+      const multiplier = shoppingPeriod === 'day' ? 1 : shoppingPeriod === 'week' ? 7 : 30;
+      const needed = daily * multiplier;
+      const suggested = Math.max(0, parseFloat((needed - m.currentStock).toFixed(2)));
+      if (suggested > 0) {
+        const cost = suggested * m.costPerUnit;
+        totalCost += cost;
+        message += `• *${m.name}*: Comprar *${suggested} ${m.unit}* _(Estoque: ${m.currentStock} / Mín: ${m.minStock} ${m.unit})_ - Est: R$ ${cost.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n`;
+      }
+    });
+
+    message += `\n*Custo Total Estimado:* R$ ${totalCost.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n\n`;
+    message += `_Gerado automaticamente pelo sistema de Estoque Inteligente KitchenFlow AI._`;
+
+    const encodedText = encodeURIComponent(message);
+    const url = `https://api.whatsapp.com/send?text=${encodedText}`;
+    window.open(url, '_blank');
+  };
+
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [activeMaterialTab, setActiveMaterialTab] = useState<'basic' | 'history'>('basic');
   const [editingMaterial, setEditingMaterial] = useState<RawMaterial | null>(null);
@@ -108,12 +357,12 @@ const Inventory: React.FC<InventoryProps> = memo(({
       const initialSelection: Record<number, boolean> = {};
       invoice.items.forEach((item: any, idx: number) => {
         initialSelection[idx] = true; // selecionado por padrão
-        // Tenta encontrar um insumo local com nome próximo
-        const match = rawMaterials.find(rm => 
-          rm.name.toLowerCase().trim() === item.name.toLowerCase().trim() ||
-          rm.name.toLowerCase().includes(item.name.toLowerCase()) ||
-          item.name.toLowerCase().includes(rm.name.toLowerCase())
-        );
+        // Tenta encontrar um insumo local com nome próximo usando comparação inteligente (limpando acentos e marcas)
+        const itemClean = cleanStringForCompare(item.name);
+        const match = rawMaterials.find(rm => {
+          const rmClean = cleanStringForCompare(rm.name);
+          return rmClean === itemClean || rmClean.includes(itemClean) || itemClean.includes(rmClean) || isSimilarName(rm.name, item.name);
+        });
         if (match) {
           initialMapping[idx] = match.id;
         } else {
@@ -366,53 +615,122 @@ const Inventory: React.FC<InventoryProps> = memo(({
     let addedCount = 0;
     let updatedCount = 0;
 
+    const purchaseDate = parsedInvoice.purchaseDate ? new Date(parsedInvoice.purchaseDate) : new Date();
+    const purchaseDateStr = purchaseDate.toISOString().split('T')[0];
+
+    // Cópias dos dados para consolidar localmente e evitar problemas de concorrência e duplicidade
+    const tempRawMaterials = [...rawMaterials];
+    const newMaterialsToCreate: Partial<RawMaterial>[] = [];
+    const materialsToUpdateMap: Record<string, RawMaterial> = {};
+
     parsedInvoice.items.forEach((item, idx) => {
       if (!selectedItemsForImport[idx]) return;
 
       const mappingId = mappingToExisting[idx];
-      const purchaseDate = parsedInvoice.purchaseDate ? new Date(parsedInvoice.purchaseDate) : new Date();
+      const itemNameClean = cleanStringForCompare(item.name);
 
-      if (mappingId === 'NEW') {
-        const newMaterial: Partial<RawMaterial> = {
-          id: `raw-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-          name: item.name,
-          unit: item.normalizedUnit || 'kg',
-          currentStock: Number(item.normalizedQuantity) || 0,
-          minStock: 1,
-          costPerUnit: Number(item.costPerUnit) || 0,
-          category: item.category || 'Outros',
-          lastPurchaseDate: purchaseDate,
-          priceHistory: [
-            {
-              date: purchaseDate.toISOString().split('T')[0],
-              price: Number(item.costPerUnit) || 0,
-              cost: Number(item.costPerUnit) || 0
-            }
-          ]
-        };
-        onAddRawMaterial(newMaterial);
-        addedCount++;
+      // Tenta encontrar se esse insumo já existe no estoque (para atualizar).
+      // Se mappingId for diferente de 'NEW', foi associado explicitamente pelo usuário.
+      // Se mappingId for 'NEW', mas o nome coincide com um insumo existente no estoque,
+      // nós inteligentemente associamos ao existente para somar e evitar duplicar!
+      let existing: RawMaterial | undefined = undefined;
+
+      if (mappingId !== 'NEW') {
+        existing = tempRawMaterials.find(rm => rm.id === mappingId);
       } else {
-        const existing = rawMaterials.find(rm => rm.id === mappingId);
-        if (existing) {
-          const updatedRaw: RawMaterial = {
-            ...existing,
-            currentStock: Number(existing.currentStock || 0) + (Number(item.normalizedQuantity) || 0),
-            costPerUnit: Number(item.costPerUnit) || 0,
+        existing = tempRawMaterials.find(rm => cleanStringForCompare(rm.name) === itemNameClean || isSimilarName(rm.name, item.name));
+      }
+
+      const itemNormalizedQuantity = Number(item.normalizedQuantity) || 0;
+      const itemCostPerUnit = Number(item.costPerUnit) || 0;
+
+      if (existing) {
+        // --- ATUALIZAR INSUMO EXISTENTE ---
+        const targetId = existing.id;
+        const currentMaterial = materialsToUpdateMap[targetId] || { ...existing };
+
+        // Somar a quantidade ao estoque acumulado
+        currentMaterial.currentStock = Number(currentMaterial.currentStock || 0) + itemNormalizedQuantity;
+        currentMaterial.costPerUnit = itemCostPerUnit;
+        currentMaterial.lastPurchaseDate = purchaseDate;
+
+        const existingHistory = currentMaterial.priceHistory || [];
+        const alreadyHasPriceForDate = existingHistory.some(ph => ph.date === purchaseDateStr && ph.price === itemCostPerUnit);
+        if (!alreadyHasPriceForDate) {
+          currentMaterial.priceHistory = [
+            ...existingHistory,
+            {
+              date: purchaseDateStr,
+              price: itemCostPerUnit,
+              cost: itemCostPerUnit
+            }
+          ];
+        }
+
+        materialsToUpdateMap[targetId] = currentMaterial;
+
+        // Atualiza na lista temporária para o próximo passo do loop
+        const tempIdx = tempRawMaterials.findIndex(rm => rm.id === targetId);
+        if (tempIdx !== -1) {
+          tempRawMaterials[tempIdx] = currentMaterial;
+        }
+      } else {
+        // --- CRIAR NOVO INSUMO ---
+        // Se houver múltiplos itens novos com o mesmo nome na nota, nós agrupamos para não criar registros duplicados!
+        const existingInNewList = newMaterialsToCreate.find(nm => cleanStringForCompare(nm.name || '') === itemNameClean || isSimilarName(nm.name || '', item.name));
+
+        if (existingInNewList) {
+          existingInNewList.currentStock = Number(existingInNewList.currentStock || 0) + itemNormalizedQuantity;
+          existingInNewList.costPerUnit = itemCostPerUnit;
+          existingInNewList.lastPurchaseDate = purchaseDate;
+
+          const existingHistory = existingInNewList.priceHistory || [];
+          const alreadyHasPriceForDate = existingHistory.some(ph => ph.date === purchaseDateStr && ph.price === itemCostPerUnit);
+          if (!alreadyHasPriceForDate) {
+            existingInNewList.priceHistory = [
+              ...existingHistory,
+              {
+                date: purchaseDateStr,
+                price: itemCostPerUnit,
+                cost: itemCostPerUnit
+              }
+            ];
+          }
+        } else {
+          const newMaterialId = `raw-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+          const newMaterial: Partial<RawMaterial> = {
+            id: newMaterialId,
+            name: item.name,
+            unit: item.normalizedUnit || 'kg',
+            currentStock: itemNormalizedQuantity,
+            minStock: 1,
+            costPerUnit: itemCostPerUnit,
+            category: item.category || 'Outros',
             lastPurchaseDate: purchaseDate,
             priceHistory: [
-              ...(existing.priceHistory || []),
               {
-                date: purchaseDate.toISOString().split('T')[0],
-                price: Number(item.costPerUnit) || 0,
-                cost: Number(item.costPerUnit) || 0
+                date: purchaseDateStr,
+                price: itemCostPerUnit,
+                cost: itemCostPerUnit
               }
             ]
           };
-          onUpdateRawMaterial(updatedRaw);
-          updatedCount++;
+
+          newMaterialsToCreate.push(newMaterial);
+          tempRawMaterials.push(newMaterial as RawMaterial);
         }
       }
+    });
+
+    // Disparar atualizações/criações
+    newMaterialsToCreate.forEach(nm => {
+      onAddRawMaterial(nm);
+      addedCount++;
+    });
+
+    Object.values(materialsToUpdateMap).forEach(updatedRaw => {
+      onUpdateRawMaterial(updatedRaw);
+      updatedCount++;
     });
 
     // Limpar estados
@@ -865,7 +1183,7 @@ const Inventory: React.FC<InventoryProps> = memo(({
         {[
           { id: 'products', label: 'Produtos', icon: Package },
           { id: 'raw-materials', label: 'Insumos', icon: Beaker },
-          { id: 'analyst', label: 'Analista de Estoque', icon: TrendingUp },
+          { id: 'shopping-list', label: 'Lista de Compras Inteligente', icon: ShoppingCart },
         ].map(tab => (
           <button 
             key={tab.id}
@@ -891,15 +1209,19 @@ const Inventory: React.FC<InventoryProps> = memo(({
       </div>
 
       {/* Stats Header */}
-      {activeSubTab !== 'analyst' && (
+      {true && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-white p-5 rounded-[1.5rem] border border-slate-100 shadow-sm flex items-center gap-4 group hover:shadow-md transition-all">
             <div className="p-3 bg-teal-50 text-teal-600 rounded-2xl group-hover:scale-110 transition-transform">
-              {activeSubTab === 'products' ? <Package size={24} /> : <Beaker size={24} />}
+              {activeSubTab === 'products' ? <Package size={24} /> : activeSubTab === 'shopping-list' ? <ShoppingCart size={24} /> : <Beaker size={24} />}
             </div>
             <div>
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{activeSubTab === 'products' ? 'Total de Produtos' : 'Total de Insumos'}</p>
-              <p className="text-2xl font-black text-slate-900 tracking-tighter">{activeSubTab === 'products' ? products.length : rawMaterials.length}</p>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                {activeSubTab === 'products' ? 'Total de Produtos' : activeSubTab === 'shopping-list' ? 'Insumos Mapeados' : 'Total de Insumos'}
+              </p>
+              <p className="text-2xl font-black text-slate-900 tracking-tighter">
+                {activeSubTab === 'products' ? products.length : rawMaterials.length}
+              </p>
             </div>
           </div>
           <div className="bg-white p-5 rounded-[1.5rem] border border-slate-100 shadow-sm flex items-center gap-4 group hover:shadow-md transition-all">
@@ -908,7 +1230,9 @@ const Inventory: React.FC<InventoryProps> = memo(({
             </div>
             <div>
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Estoque Crítico</p>
-              <p className="text-2xl font-black text-rose-600 tracking-tighter">{activeSubTab === 'products' ? lowStockCount : lowRawStockCount}</p>
+              <p className="text-2xl font-black text-rose-600 tracking-tighter">
+                {activeSubTab === 'products' ? lowStockCount : lowRawStockCount}
+              </p>
             </div>
           </div>
           <div className="bg-white p-5 rounded-[1.5rem] border border-slate-100 shadow-sm flex items-center gap-4 group hover:shadow-md transition-all">
@@ -916,8 +1240,22 @@ const Inventory: React.FC<InventoryProps> = memo(({
               <TrendingUp size={24} />
             </div>
             <div>
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Valor em Estoque</p>
-              <p className="text-2xl font-black text-slate-900 tracking-tighter">R$ {(activeSubTab === 'products' ? totalStockValue : totalRawValue).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                {activeSubTab === 'shopping-list' ? 'Custo de Reposição Est.' : 'Valor em Estoque'}
+              </p>
+              <p className="text-2xl font-black text-slate-900 tracking-tighter">
+                R$ {(activeSubTab === 'products' ? totalStockValue : activeSubTab === 'shopping-list' ? (
+                  rawMaterials
+                    .filter(m => selectedShoppingMaterials[m.id])
+                    .reduce((sum, m) => {
+                      const daily = customDailyConsumptions[m.id] || 0;
+                      const multiplier = shoppingPeriod === 'day' ? 1 : shoppingPeriod === 'week' ? 7 : 30;
+                      const needed = daily * multiplier;
+                      const suggested = Math.max(0, parseFloat((needed - m.currentStock).toFixed(2)));
+                      return sum + (suggested * m.costPerUnit);
+                    }, 0)
+                ) : totalRawValue).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
             </div>
           </div>
         </div>
@@ -1394,7 +1732,203 @@ const Inventory: React.FC<InventoryProps> = memo(({
           </div>
         </div>
       ) : (
-        <StockAnalyst products={products} orders={orders} />
+        <div className="bg-white rounded-[2rem] border border-slate-200 shadow-xl shadow-slate-100/50 overflow-hidden flex flex-col h-[calc(100vh-280px)] animate-in fade-in duration-300">
+          {/* Top Panel Controls */}
+          <div className="p-6 border-b bg-white flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shrink-0">
+            <div>
+              <h3 className="text-2xl font-black text-slate-900 tracking-tighter italic uppercase flex items-center gap-2">
+                <ShoppingCart className="text-indigo-600" size={24} /> Lista de Compras Inteligente
+              </h3>
+              <p className="text-xs text-slate-500 font-medium mt-1">
+                Sugestão baseada na média de consumo dos insumos utilizados nas vendas realizadas.
+              </p>
+            </div>
+            
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Period selection */}
+              <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
+                {(['day', 'week', 'month'] as const).map((period) => (
+                  <button
+                    key={period}
+                    onClick={() => setShoppingPeriod(period)}
+                    className={`px-3 py-1.5 rounded-lg font-black text-[9px] uppercase tracking-wider transition-all ${
+                      shoppingPeriod === period
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    {period === 'day' ? 'Consumo Diário' : period === 'week' ? 'Semanal' : 'Mensal'}
+                  </button>
+                ))}
+              </div>
+
+              {/* Critical Stock toggle */}
+              <button
+                onClick={() => setOnlyShowCritical(!onlyShowCritical)}
+                className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest border transition-all flex items-center gap-2 ${
+                  onlyShowCritical
+                    ? 'bg-rose-50 border-rose-200 text-rose-600 shadow-sm'
+                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <AlertCircle size={14} className={onlyShowCritical ? "text-rose-500" : "text-slate-400"} />
+                {onlyShowCritical ? 'Apenas Estoque Crítico' : 'Todos os Insumos'}
+              </button>
+            </div>
+          </div>
+
+          {/* List/Table */}
+          <div className="flex-1 overflow-y-auto">
+            {rawMaterials.filter(m => !onlyShowCritical || m.currentStock <= m.minStock).length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-24 text-slate-400">
+                <CheckCircle2 size={48} className="text-emerald-500 mb-4 animate-bounce" />
+                <p className="font-black text-xs uppercase tracking-widest text-slate-700">Tudo sob controle!</p>
+                <p className="text-xs text-slate-400 mt-1 max-w-sm text-center">
+                  Nenhum insumo está abaixo do estoque mínimo. Altere o filtro acima para ver todos os insumos.
+                </p>
+              </div>
+            ) : (
+              <div className="min-w-full inline-block align-middle">
+                <table className="min-w-full divide-y divide-slate-200">
+                  <thead className="bg-slate-50 sticky top-0 z-10">
+                    <tr>
+                      <th scope="col" className="w-12 px-6 py-4 text-center">
+                        <input
+                          type="checkbox"
+                          checked={rawMaterials
+                            .filter(m => !onlyShowCritical || m.currentStock <= m.minStock)
+                            .every(m => selectedShoppingMaterials[m.id])}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            const updated = { ...selectedShoppingMaterials };
+                            rawMaterials
+                              .filter(m => !onlyShowCritical || m.currentStock <= m.minStock)
+                              .forEach(m => {
+                                updated[m.id] = checked;
+                              });
+                            setSelectedShoppingMaterials(updated);
+                          }}
+                          className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
+                        />
+                      </th>
+                      <th scope="col" className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Insumo</th>
+                      <th scope="col" className="px-6 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Estoque Atual / Mín</th>
+                      <th scope="col" className="px-6 py-4 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest">Consumo Diário Médio</th>
+                      <th scope="col" className="px-6 py-4 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest">Previsão Período</th>
+                      <th scope="col" className="px-6 py-4 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest text-indigo-600">Sugerido Comprar</th>
+                      <th scope="col" className="px-6 py-4 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest">Custo Est.</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 bg-white">
+                    {rawMaterials
+                      .filter(m => !onlyShowCritical || m.currentStock <= m.minStock)
+                      .map((m) => {
+                        const daily = customDailyConsumptions[m.id] || 0;
+                        const multiplier = shoppingPeriod === 'day' ? 1 : shoppingPeriod === 'week' ? 7 : 30;
+                        const needed = daily * multiplier;
+                        const suggested = Math.max(0, parseFloat((needed - m.currentStock).toFixed(2)));
+                        const cost = suggested * m.costPerUnit;
+                        const isSelected = !!selectedShoppingMaterials[m.id];
+                        const isCritical = m.currentStock <= m.minStock;
+
+                        return (
+                          <tr 
+                            key={m.id}
+                            className={`hover:bg-slate-50 transition-all ${
+                              isSelected ? 'bg-indigo-50/20' : ''
+                            }`}
+                          >
+                            <td className="px-6 py-4 text-center">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={(e) => {
+                                  setSelectedShoppingMaterials(prev => ({
+                                    ...prev,
+                                    [m.id]: e.target.checked
+                                  }));
+                                }}
+                                className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
+                              />
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="font-bold text-slate-800 text-sm">{m.name}</div>
+                              <div className="text-[10px] text-slate-400 font-medium uppercase mt-0.5">{m.category}</div>
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                              <div className="flex items-center justify-center gap-2">
+                                <span className={`text-xs font-black px-2 py-1 rounded-lg ${
+                                  isCritical ? 'bg-rose-50 text-rose-600' : 'bg-slate-100 text-slate-600'
+                                }`}>
+                                  {m.currentStock} / {m.minStock} {m.unit}
+                                </span>
+                              </div>
+                              <div className="w-24 bg-slate-100 h-1.5 rounded-full mx-auto mt-2 overflow-hidden">
+                                <div 
+                                  className={`h-full rounded-full ${isCritical ? 'bg-rose-500' : 'bg-indigo-500'}`}
+                                  style={{ width: `${Math.min(100, (m.currentStock / Math.max(1, m.minStock)) * 100)}%` }}
+                                />
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <div className="inline-flex items-center gap-2">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  value={daily}
+                                  onChange={(e) => handleUpdateDailyConsumption(m.id, e.target.value)}
+                                  className="w-16 px-2 py-1 text-right border border-slate-200 rounded-lg text-xs font-black text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                />
+                                <span className="text-[10px] text-slate-400 font-black uppercase">{m.unit}/dia</span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <div className="text-xs font-bold text-slate-700">{needed.toFixed(2)} {m.unit}</div>
+                              <div className="text-[8px] text-slate-400 font-medium">Consumo projetado</div>
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <div className={`text-sm font-black ${suggested > 0 ? 'text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg inline-block' : 'text-slate-400'}`}>
+                                {suggested > 0 ? `+${suggested}` : 'Estoque OK'} {suggested > 0 ? m.unit : ''}
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-right font-black text-slate-800 text-xs">
+                              R$ {cost.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Bottom Action Footer */}
+          <div className="p-6 border-t bg-slate-50 flex flex-col sm:flex-row justify-between items-center gap-4 shrink-0">
+            <div className="text-center sm:text-left">
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Resumo do Pedido</span>
+              <span className="text-xs text-slate-500">
+                <strong>{rawMaterials.filter(m => selectedShoppingMaterials[m.id]).length}</strong> insumos selecionados para reposição
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={handlePrintShoppingList}
+                className="bg-slate-800 text-white px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-900 transition-all shadow-lg flex items-center gap-2"
+              >
+                <Download size={14} /> Imprimir Lista
+              </button>
+              <button
+                onClick={handleShareWhatsApp}
+                className="bg-emerald-600 text-white px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 flex items-center gap-2"
+              >
+                <Send size={14} /> Enviar via WhatsApp
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <style>{`
