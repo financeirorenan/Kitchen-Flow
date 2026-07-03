@@ -496,7 +496,7 @@ const App: React.FC = () => {
     } else if (path.startsWith('/entregador')) {
       if (currentProject !== 'COURIER') setCurrentProject('COURIER');
       setActiveTab('courier-app');
-    } else if (path.startsWith('/marketplace')) {
+    } else if (path.startsWith('/marketplace') || path.startsWith('/perfil')) {
       if (currentProject !== 'MARKETPLACE') setCurrentProject('MARKETPLACE');
     }
   }, [location.pathname, isSuperAdmin, currentProject, activeTab, navigate, currentUserData]);
@@ -4332,7 +4332,7 @@ const App: React.FC = () => {
     );
   }
 
-  const isMarketplaceRoute = location.pathname.startsWith('/marketplace');
+  const isMarketplaceRoute = location.pathname.startsWith('/marketplace') || location.pathname.startsWith('/perfil');
   const isWebsiteRoute = location.pathname.startsWith('/site') || location.pathname.startsWith('/kitchenflow') || location.pathname === '/';
   const isPublicRoute = isMarketplaceRoute || isWebsiteRoute;
 
