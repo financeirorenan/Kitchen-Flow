@@ -839,7 +839,7 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Server running on port ${PORT}`);
   });
 }
 
