@@ -438,7 +438,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const path = location.pathname;
-    if (path.startsWith('/site') || path.startsWith('/kitchenflow')) {
+    if (path === '/' || path.startsWith('/site') || path.startsWith('/kitchenflow')) {
       if (currentProject !== 'WEBSITE') setCurrentProject('WEBSITE');
     } else if (path.startsWith('/saas')) {
       if (currentUserData) {
@@ -478,21 +478,8 @@ const App: React.FC = () => {
     } else if (path.startsWith('/entregador')) {
       if (currentProject !== 'COURIER') setCurrentProject('COURIER');
       setActiveTab('courier-app');
-    } else if (path.startsWith('/marketplace') || path === '/') {
-      if (path === '/') {
-        const lojistaRoles = ['OWNER', 'ADMIN', 'MANAGER', 'CHEF', 'CASHIER', 'WAITER', 'KDS', 'STOCK_ANALYST'];
-        if (isSuperAdmin) {
-          navigate('/saas', { replace: true });
-        } else if (currentUserData?.role === 'COURIER') {
-          navigate('/entregador', { replace: true });
-        } else if (currentUserData?.role && lojistaRoles.includes(currentUserData.role)) {
-          navigate('/lojista', { replace: true });
-        } else {
-          if (currentProject !== 'WEBSITE') setCurrentProject('WEBSITE');
-        }
-      } else {
-        if (currentProject !== 'MARKETPLACE') setCurrentProject('MARKETPLACE');
-      }
+    } else if (path.startsWith('/marketplace')) {
+      if (currentProject !== 'MARKETPLACE') setCurrentProject('MARKETPLACE');
     }
   }, [location.pathname, isSuperAdmin, currentProject, activeTab, navigate, currentUserData]);
 
