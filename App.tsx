@@ -380,7 +380,25 @@ const App: React.FC = () => {
     }
   });
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
-  const [currentProject, setCurrentProject] = useState<'PLATFORM' | 'RESTAURANT' | 'MARKETPLACE' | 'COURIER' | 'WEBSITE'>('PLATFORM');
+  const [currentProject, setCurrentProject] = useState<'PLATFORM' | 'RESTAURANT' | 'MARKETPLACE' | 'COURIER' | 'WEBSITE'>(() => {
+    const path = typeof window !== 'undefined' ? window.location.pathname : '/';
+    if (path === '/' || path.startsWith('/site') || path.startsWith('/kitchenflow')) {
+      return 'WEBSITE';
+    }
+    if (path.startsWith('/marketplace') || path.startsWith('/perfil')) {
+      return 'MARKETPLACE';
+    }
+    if (path.startsWith('/entregador')) {
+      return 'COURIER';
+    }
+    if (path.startsWith('/lojista')) {
+      return 'RESTAURANT';
+    }
+    if (path.startsWith('/saas')) {
+      return 'PLATFORM';
+    }
+    return 'WEBSITE';
+  });
   const [viewingTenantId, setViewingTenantId] = useState<string | null>(null);
   const [viewingTenantName, setViewingTenantName] = useState<string | null>(null);
   const [viewingTenantLogo, setViewingTenantLogo] = useState<string | null>(null);
@@ -4485,30 +4503,20 @@ const App: React.FC = () => {
                  )
                ) : <Login onLoginSuccess={() => {}} />
             } />
-            <Route path="/marketplace" element={
-              <Marketplace 
-                currentUser={user} 
-                profile={marketplaceProfile}
-                onUpdateProfile={handleUpdateMarketplaceProfile}
-                onSelectTenant={() => {}} 
+            {["/marketplace", "/marketplace/:tenantId", "/perfil"].map((path) => (
+              <Route 
+                key={path}
+                path={path} 
+                element={
+                  <Marketplace 
+                    currentUser={user} 
+                    profile={marketplaceProfile}
+                    onUpdateProfile={handleUpdateMarketplaceProfile}
+                    onSelectTenant={() => {}} 
+                  />
+                } 
               />
-            } />
-            <Route path="/marketplace/:tenantId" element={
-              <Marketplace 
-                currentUser={user} 
-                profile={marketplaceProfile}
-                onUpdateProfile={handleUpdateMarketplaceProfile}
-                onSelectTenant={() => {}} 
-              />
-            } />
-            <Route path="/perfil" element={
-              <Marketplace 
-                currentUser={user} 
-                profile={marketplaceProfile}
-                onUpdateProfile={handleUpdateMarketplaceProfile}
-                onSelectTenant={() => {}} 
-              />
-            } />
+            ))}
             <Route path="*" element={<Navigate to="/marketplace" replace />} />
           </Routes>
         ) : (
