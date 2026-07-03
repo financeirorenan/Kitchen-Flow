@@ -4291,7 +4291,7 @@ const App: React.FC = () => {
     }
   };
 
-  const isMarketplace = location.pathname.startsWith('/marketplace') || location.pathname === '/';
+  const isMarketplace = location.pathname.startsWith('/marketplace') || location.pathname.startsWith('/perfil') || location.pathname === '/';
 
   if (authLoading || (hasApiKey === null && !isMarketplace)) {
     return (

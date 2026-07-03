@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
   Search,
   MapPin,
@@ -459,6 +459,18 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   const [navView, setNavView] = useState<
     "home" | "orders" | "favorites" | "profile"
   >("home");
+
+  const location = useLocation();
+
+  useEffect(() => {
+    if (location.pathname === "/perfil") {
+      setNavView("profile");
+    } else if (location.pathname.startsWith("/marketplace")) {
+      if (!routeTenantId) {
+        setNavView("home");
+      }
+    }
+  }, [location.pathname, routeTenantId]);
 
   // Favorites State
   const [favorites, setFavorites] = useState<string[]>(() => {
@@ -2086,6 +2098,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
           onClick={() => {
             setNavView("home");
             setActiveCategory("todos");
+            navigate("/marketplace");
           }}
         >
           <Home size={22} strokeWidth={navView === "home" ? 3.5 : 2.5} />
@@ -2138,7 +2151,10 @@ const Marketplace: React.FC<MarketplaceProps> = ({
         </button>
         <button
           className={`flex flex-col items-center gap-1.5 transition-all relative px-4 py-2 rounded-2xl ${navView === "profile" ? "text-brand-primary bg-brand-primary/5" : "text-slate-300"}`}
-          onClick={() => setNavView("profile")}
+          onClick={() => {
+            setNavView("profile");
+            navigate("/perfil");
+          }}
         >
           <div
             className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all ${navView === "profile" ? "bg-brand-primary/20" : "bg-slate-100"}`}

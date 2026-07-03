@@ -388,7 +388,7 @@ export default function KitchenflowWebsite() {
 
           <div className="hidden md:flex items-center gap-4">
             <a 
-              href="/marketplace" 
+              href="/saas" 
               className="text-xs font-extrabold text-slate-350 hover:text-white uppercase tracking-widest transition-colors"
             >
               Fazer Login
@@ -451,7 +451,7 @@ export default function KitchenflowWebsite() {
               </div>
               <div className="border-t border-slate-850 pt-4 flex flex-col gap-3">
                 <a 
-                  href="/marketplace" 
+                  href="/saas" 
                   className="text-center py-2.5 bg-slate-800 text-slate-100 rounded-xl text-xs font-bold uppercase"
                 >
                   Fazer Login
