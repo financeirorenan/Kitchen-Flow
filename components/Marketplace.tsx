@@ -1516,7 +1516,10 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                         </p>
                       </div>
                       <button 
-                        onClick={() => setNavView("orders")}
+                        onClick={() => {
+                          setNavView("orders");
+                          navigate("/marketplace");
+                        }}
                         className="bg-brand-primary text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-md hover:bg-brand-primary/95 transition-all"
                       >
                         Acompanhar
@@ -1939,7 +1942,10 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
               {/* Follow Order Status Bar Card */}
               <div 
-                onClick={() => setNavView("orders")}
+                onClick={() => {
+                  setNavView("orders");
+                  navigate("/marketplace");
+                }}
                 className="mt-8 bg-indigo-950/40 hover:bg-indigo-950/60 active:scale-[0.98] transition-all border border-indigo-500/10 backdrop-blur-md rounded-2xl p-4.5 flex items-center justify-between cursor-pointer group"
               >
                 <div className="flex items-center gap-3.5">
@@ -1960,7 +1966,10 @@ const Marketplace: React.FC<MarketplaceProps> = ({
               
               {/* Option: Meus Pedidos */}
               <button
-                onClick={() => setNavView("orders")}
+                onClick={() => {
+                  setNavView("orders");
+                  navigate("/marketplace");
+                }}
                 className="flex items-center justify-between w-full p-4.5 bg-slate-50/50 hover:bg-slate-50 active:scale-[0.99] transition-all rounded-2xl group border border-slate-100/50"
               >
                 <div className="flex items-center gap-4">
@@ -2011,7 +2020,10 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
               {/* Option: Favoritos */}
               <button
-                onClick={() => setNavView("favorites")}
+                onClick={() => {
+                  setNavView("favorites");
+                  navigate("/marketplace");
+                }}
                 className="flex items-center justify-between w-full p-4.5 bg-slate-50/50 hover:bg-slate-50 active:scale-[0.99] transition-all rounded-2xl group border border-slate-100/50"
               >
                 <div className="flex items-center gap-4">
@@ -2114,7 +2126,10 @@ const Marketplace: React.FC<MarketplaceProps> = ({
         </button>
         <button
           className={`flex flex-col items-center gap-1.5 transition-all relative px-4 py-2 rounded-2xl ${navView === "orders" ? "text-brand-primary bg-brand-primary/5" : "text-slate-300"}`}
-          onClick={() => setNavView("orders")}
+          onClick={() => {
+            setNavView("orders");
+            navigate("/marketplace");
+          }}
         >
           <ShoppingBag
             size={22}
@@ -2132,7 +2147,10 @@ const Marketplace: React.FC<MarketplaceProps> = ({
         </button>
         <button
           className={`flex flex-col items-center gap-1.5 transition-all relative px-4 py-2 rounded-2xl ${navView === "favorites" ? "text-brand-primary bg-brand-primary/5" : "text-slate-300"}`}
-          onClick={() => setNavView("favorites")}
+          onClick={() => {
+            setNavView("favorites");
+            navigate("/marketplace");
+          }}
         >
           <Heart
             size={22}
