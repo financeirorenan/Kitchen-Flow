@@ -145,6 +145,16 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
       return;
     }
 
+    const hasUppercaseNew = /[A-Z]/.test(trimmedNewPassword);
+    const hasLowercaseNew = /[a-z]/.test(trimmedNewPassword);
+    const hasSpecialNew = /[!@#$%^&*(),.?":{}|<>_+\-\[\]\/\\`';~`=]/.test(trimmedNewPassword);
+
+    if (!hasUppercaseNew || !hasLowercaseNew || !hasSpecialNew) {
+      setError('A nova senha precisa ter no mínimo 6 caracteres, contendo pelo menos uma letra maiúscula, uma letra minúscula e um caractere especial (ex: @, #, $, %, etc.).');
+      setLoading(false);
+      return;
+    }
+
     if (trimmedNewPassword !== confirmNewPassword.trim()) {
       setError('A confirmação da nova senha não confere com a senha digitada.');
       setLoading(false);
@@ -264,10 +274,22 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
         setLoading(false);
         return;
       }
-      if (trimmedPassword.length < 6) {
-        setError('A senha de acesso e validação necessita de ao menos 6 caracteres.');
-        setLoading(false);
-        return;
+      if (mode === 'signup') {
+        const hasUppercase = /[A-Z]/.test(trimmedPassword);
+        const hasLowercase = /[a-z]/.test(trimmedPassword);
+        const hasSpecial = /[!@#$%^&*(),.?":{}|<>_+\-\[\]\/\\`';~`=]/.test(trimmedPassword);
+
+        if (trimmedPassword.length < 6 || !hasUppercase || !hasLowercase || !hasSpecial) {
+          setError('A senha precisa ter no mínimo 6 caracteres, contendo pelo menos uma letra maiúscula, uma letra minúscula e um caractere especial (ex: @, #, $, %, etc.).');
+          setLoading(false);
+          return;
+        }
+      } else {
+        if (trimmedPassword.length < 6) {
+          setError('A senha de acesso e validação necessita de ao menos 6 caracteres.');
+          setLoading(false);
+          return;
+        }
       }
 
       if (mode === 'signup') {
@@ -331,12 +353,59 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
             }
 
             const data = await response.json();
-            if (data.success && data.customToken) {
-              console.log("Token de acesso recebido do servidor. Autenticando na sessão local...");
-              const loginCred = await signInWithCustomToken(auth, data.customToken);
-              signedInUser = loginCred.user;
-              loginSuccess = true;
-              console.log("Sessão autenticada via Token Customizado com sucesso!");
+            if (data.success) {
+              if (data.customToken) {
+                console.log("Token de acesso recebido do servidor. Autenticando na sessão local...");
+                const loginCred = await signInWithCustomToken(auth, data.customToken);
+                signedInUser = loginCred.user;
+                loginSuccess = true;
+                console.log("Sessão autenticada via Token Customizado com sucesso!");
+              } else if (data.isLocalSession) {
+                console.log("Sessão de bypass local autorizada pelo servidor.");
+                const simulatedFirebaseUser = {
+                  uid: data.user.id,
+                  email: data.user.email,
+                  displayName: data.user.name,
+                  isLocalSession: true
+                };
+
+                // Sincronizar o localStorage para o App inicializar corretamente com esse usuário local
+                localStorage.setItem('kitchenflow_demo_user', JSON.stringify({
+                  firebaseUser: simulatedFirebaseUser,
+                  userData: {
+                    id: data.user.id,
+                    email: data.user.email,
+                    role: data.user.role,
+                    name: data.user.name,
+                    tenantId: data.user.tenantId,
+                    active: true,
+                    status: 'online'
+                  }
+                }));
+
+                localStorage.setItem('kitchenflow_cached_user', JSON.stringify({
+                  id: data.user.id,
+                  email: data.user.email,
+                  role: data.user.role,
+                  name: data.user.name,
+                  tenantId: data.user.tenantId,
+                  active: true,
+                  status: 'online'
+                }));
+
+                // Tentativa assíncrona e silenciosa de auto-alinhamento do Firebase Auth local via Client SDK
+                try {
+                  console.log("Tentando criar conta correspondente no Firebase Auth via Client SDK...");
+                  await createUserWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
+                  console.log("Conta auto-alinhada e registrada no Firebase Auth localmente com sucesso!");
+                } catch (clientRegErr: any) {
+                  console.log("Alinhamento silencioso Firebase Auth retornou:", clientRegErr.code || clientRegErr.message);
+                }
+
+                onLoginSuccess();
+                window.location.reload();
+                return;
+              }
             }
           } catch (serverErr: any) {
             console.error("Erro na sincronização segura do servidor:", serverErr);
@@ -955,26 +1024,7 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
             <div className="flex-1 h-px bg-slate-100 animate-pulse"></div>
           </div>
 
-          {/* Demo / Sandbox Mode Section */}
-          <div className="mt-6 pt-6 border-t border-dashed border-slate-200/60 flex flex-col items-center gap-3">
-            <div className="flex flex-col items-center text-center max-w-xs">
-              <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">
-                Acesso Sandbox (Modo de Testes)
-              </span>
-              <p className="text-[9px] text-slate-400 mt-1.5 leading-relaxed">
-                Como as APIs de autenticação do Firebase ainda não estão ativadas no seu console Google Cloud para este domínio temporário, você pode usar o Modo de Testes abaixo para acessar instantaneamente com perfil total de <strong>Administrador (SaaS Admin)</strong> e experimentar todo o sistema sem qualquer restrição!
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={handleEnterDemoMode}
-              disabled={loading}
-              className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg shadow-amber-100 flex items-center justify-center gap-2 hover:scale-[1.02] active:scale-[0.98]"
-            >
-              <Sparkles size={14} className="animate-pulse text-white" />
-              Acessar em Modo de Testes (Sem Senha)
-            </button>
-          </div>
+
 
           {/* Social Sign-In */}
           {isMarketplace && (

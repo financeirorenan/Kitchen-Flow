@@ -200,57 +200,82 @@ async function startServer() {
       }
 
       // D. Garantir que o usuário existe no Firebase Authentication
-      let firebaseUser;
+      let customToken = null;
+      let adminAuthSuccess = false;
+
       try {
-        firebaseUser = await adminAuth.getUserByEmail(trimmedEmail);
-        // Atualizar a senha no Firebase Auth APENAS se não foi validado via REST API (para sincronizar senhas legadas)
-        if (!authVerified) {
-          await adminAuth.updateUser(firebaseUser.uid, {
-            password: trimmedPassword
-          });
-        }
-        uid = firebaseUser.uid;
-      } catch (authErr: any) {
-        if (authErr.code === 'auth/user-not-found') {
-          // Criar no Firebase Auth se não existir
-          const newAuthUser = await adminAuth.createUser({
-            email: trimmedEmail,
-            password: trimmedPassword,
-            displayName: matchedUser.name || 'Lojista'
-          });
-          uid = newAuthUser.uid;
-        } else {
-          throw authErr;
-        }
-      }
-
-      // 5. Se o Document ID antigo do Firestore for diferente do Auth UID, migrar para manter o ID unificado
-      if (uid && uid !== oldDocId) {
-        matchedUser.id = uid;
+        let firebaseUser;
         try {
-          await clientSetDoc(clientDoc(clientDb, 'users', uid), matchedUser, { merge: true });
-          if (oldDocId && oldDocId !== uid) {
-            await clientDeleteDoc(clientDoc(clientDb, 'users', oldDocId));
+          firebaseUser = await adminAuth.getUserByEmail(trimmedEmail);
+          // Atualizar a senha no Firebase Auth APENAS se não foi validado via REST API (para sincronizar senhas legadas)
+          if (!authVerified) {
+            await adminAuth.updateUser(firebaseUser.uid, {
+              password: trimmedPassword
+            });
           }
-        } catch (migErr) {
-          console.warn("Nao foi possivel migrar ID do Firestore, prosseguindo:", migErr);
+          uid = firebaseUser.uid;
+        } catch (authErr: any) {
+          if (authErr.code === 'auth/user-not-found') {
+            // Criar no Firebase Auth se não existir
+            const newAuthUser = await adminAuth.createUser({
+              email: trimmedEmail,
+              password: trimmedPassword,
+              displayName: matchedUser.name || 'Lojista'
+            });
+            uid = newAuthUser.uid;
+          } else {
+            throw authErr;
+          }
         }
+
+        // 5. Se o Document ID antigo do Firestore for diferente do Auth UID, migrar para manter o ID unificado
+        if (uid && uid !== oldDocId) {
+          matchedUser.id = uid;
+          try {
+            await clientSetDoc(clientDoc(clientDb, 'users', uid), matchedUser, { merge: true });
+            if (oldDocId && oldDocId !== uid) {
+              await clientDeleteDoc(clientDoc(clientDb, 'users', oldDocId));
+            }
+            oldDocId = uid;
+          } catch (migErr) {
+            console.warn("Nao foi possivel migrar ID do Firestore, prosseguindo:", migErr);
+          }
+        }
+
+        // 6. Gerar Token de Acesso Customizado do Firebase Auth
+        customToken = await adminAuth.createCustomToken(uid);
+        adminAuthSuccess = true;
+      } catch (authErr: any) {
+        console.warn(`[Login API] Falha ou indisponibilidade do Firebase Admin SDK Auth (${authErr.message || authErr}). Ativando fallback de sessão local.`);
       }
 
-      // 6. Gerar Token de Acesso Customizado do Firebase Auth
-      const customToken = await adminAuth.createCustomToken(uid);
-
-      return res.json({
-        success: true,
-        customToken,
-        user: {
-          id: uid,
-          email: trimmedEmail,
-          role: userRole,
-          name: matchedUser.name || 'Lojista',
-          tenantId: matchedUser.tenantId || ''
-        }
-      });
+      if (adminAuthSuccess && customToken) {
+        return res.json({
+          success: true,
+          customToken,
+          user: {
+            id: uid || oldDocId || matchedUser.id,
+            email: trimmedEmail,
+            role: userRole,
+            name: matchedUser.name || 'Lojista',
+            tenantId: matchedUser.tenantId || ''
+          }
+        });
+      } else {
+        // Fallback: Retornar sessão local bypassada se o Firebase Admin Auth falhar por falta de credenciais (ex: VPS cPanel)
+        console.log(`[Login API] Retornando sessão local para o usuário ${trimmedEmail} (ID: ${oldDocId || matchedUser.id})`);
+        return res.json({
+          success: true,
+          isLocalSession: true,
+          user: {
+            id: oldDocId || matchedUser.id,
+            email: trimmedEmail,
+            role: userRole,
+            name: matchedUser.name || 'Lojista',
+            tenantId: matchedUser.tenantId || ''
+          }
+        });
+      }
 
     } catch (err: any) {
       console.error("Erro no login seguro via API:", err);

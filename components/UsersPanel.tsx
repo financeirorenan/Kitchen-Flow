@@ -229,20 +229,28 @@ const UsersPanel: React.FC<UsersPanelProps> = memo(({
     }
 
     if (!editingUser) {
-      // Novo usuário: a senha é estritamente obrigatória e precisa de mínimo 6 caracteres
+      // Novo usuário: a senha é estritamente obrigatória e precisa de mínimo 6 caracteres e regras de complexidade
       if (!passwordVal) {
         setValidationError("A senha de acesso provisória é obrigatória para cadastrar novos usuários.");
         return;
       }
-      if (passwordVal.length < 6) {
-        setValidationError("A senha de acesso deve ter pelo menos 6 caracteres para garantir a segurança no Firebase.");
+      const hasUpper = /[A-Z]/.test(passwordVal);
+      const hasLower = /[a-z]/.test(passwordVal);
+      const hasSpec = /[!@#$%^&*(),.?":{}|<>_+\-\[\]\/\\`';~`=]/.test(passwordVal);
+      if (passwordVal.length < 6 || !hasUpper || !hasLower || !hasSpec) {
+        setValidationError("A senha de acesso deve ter pelo menos 6 caracteres, contendo letras maiúsculas, minúsculas e caracteres especiais (ex: @, #, $, %, etc.).");
         return;
       }
     } else {
-      // Editando usuário: senha de alteração é opcional, mas se informada deve ter pelo menos 6 caracteres
-      if (passwordVal && passwordVal.length < 6) {
-        setValidationError("A nova senha de acesso deve ter no mínimo 6 caracteres.");
-        return;
+      // Editando usuário: senha de alteração é opcional, mas se informada deve ter pelo menos 6 caracteres e regras de complexidade
+      if (passwordVal) {
+        const hasUpper = /[A-Z]/.test(passwordVal);
+        const hasLower = /[a-z]/.test(passwordVal);
+        const hasSpec = /[!@#$%^&*(),.?":{}|<>_+\-\[\]\/\\`';~`=]/.test(passwordVal);
+        if (passwordVal.length < 6 || !hasUpper || !hasLower || !hasSpec) {
+          setValidationError("A nova senha de acesso deve ter no mínimo 6 caracteres, contendo letras maiúsculas, minúsculas e caracteres especiais (ex: @, #, $, %, etc.).");
+          return;
+        }
       }
     }
 

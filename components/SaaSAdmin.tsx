@@ -1043,6 +1043,26 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     }
   };
 
+  const generateStrongRandomPassword = () => {
+    const charsLower = "abcdefghijklmnopqrstuvwxyz";
+    const charsUpper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const charsNum = "0123456789";
+    const charsSpecial = "!@#$%&*()";
+    
+    let pass = "";
+    pass += charsLower[Math.floor(Math.random() * charsLower.length)];
+    pass += charsUpper[Math.floor(Math.random() * charsUpper.length)];
+    pass += charsNum[Math.floor(Math.random() * charsNum.length)];
+    pass += charsSpecial[Math.floor(Math.random() * charsSpecial.length)];
+    
+    const allChars = charsLower + charsUpper + charsNum + charsSpecial;
+    for (let i = 0; i < 4; i++) {
+      pass += allChars[Math.floor(Math.random() * allChars.length)];
+    }
+    
+    return pass.split('').sort(() => 0.5 - Math.random()).join('');
+  };
+
   const handleCreateTenantUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedTenantForUser) return;
@@ -1051,7 +1071,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     const email = (formData.get('email') as string).trim().toLowerCase();
     const name = formData.get('name') as string;
     const role = formData.get('role') as string;
-    const password = Math.random().toString(36).slice(-8);
+    const password = generateStrongRandomPassword();
 
     setEmailError(null);
 
@@ -1088,7 +1108,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     const formData = new FormData(e.currentTarget as HTMLFormElement);
     const email = (formData.get('email') as string).trim().toLowerCase();
     const name = formData.get('name') as string;
-    const password = Math.random().toString(36).slice(-8);
+    const password = generateStrongRandomPassword();
 
     setEmailError(null);
 
@@ -1416,7 +1436,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
           console.warn("Could not check email uniqueness:", e);
         }
 
-        const password = Math.random().toString(36).slice(-8);
+        const password = generateStrongRandomPassword();
         
         const firstUser: Partial<User> = {
           id: ownerId, // Assume que o ownerId é o UID do usuário já criado ou a ser criado
@@ -1528,7 +1548,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
 
   const handleGenerateAccess = async (tenant: Tenant) => {
     let email = `${tenant.name.toLowerCase().replace(/\s+/g, '')}@sistema.com`.trim().toLowerCase();
-    const password = Math.random().toString(36).slice(-8);
+    const password = generateStrongRandomPassword();
 
     try {
       // Garantir e-mail absolutamente único na plataforma

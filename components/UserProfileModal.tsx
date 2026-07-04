@@ -179,9 +179,14 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
       return;
     }
 
-    if (password && password.length < 6) {
-      showToast('A nova senha deve ter pelo menos 6 caracteres', 'error');
-      return;
+    if (password) {
+      const hasUpper = /[A-Z]/.test(password);
+      const hasLower = /[a-z]/.test(password);
+      const hasSpec = /[!@#$%^&*(),.?":{}|<>_+\-\[\]\/\\`';~`=]/.test(password);
+      if (password.length < 6 || !hasUpper || !hasLower || !hasSpec) {
+        showToast('A nova senha precisa ter no mínimo 6 caracteres, contendo pelo menos uma letra maiúscula, uma letra minúscula e um caractere especial (ex: @, #, $, %, etc.).', 'error');
+        return;
+      }
     }
 
     if (password && password !== confirmPassword) {
