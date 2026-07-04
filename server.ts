@@ -1,35 +1,50 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import path from "path";
 import cors from "cors";
 import dotenv from "dotenv";
 import fs from "fs";
+
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
+
 import firebaseConfig from "./firebase-applet-config.json" assert { type: "json" };
 
-// Import Firebase client SDK to query Firestore bypassing restricted service account IAM permissions
 import { initializeApp as initializeClientApp } from "firebase/app";
-import { getFirestore as getClientFirestore, collection as getClientCollection, query as clientQuery, where as clientWhere, getDocs as getClientDocs, limit as clientLimit, doc as clientDoc, setDoc as clientSetDoc, deleteDoc as clientDeleteDoc } from "firebase/firestore";
+import {
+  initializeFirestore as initializeClientFirestore,
+  getFirestore as getClientFirestore,
+  collection as getClientCollection,
+  query as clientQuery,
+  where as clientWhere,
+  getDocs as getClientDocs,
+  limit as clientLimit,
+  doc as clientDoc,
+  setDoc as clientSetDoc,
+  deleteDoc as clientDeleteDoc
+} from "firebase/firestore";
 
 dotenv.config();
 
-// Initialize Firebase Admin SDK
+const isProduction = process.env.NODE_ENV === "production";
+
+// Admin Firebase
 if (!getApps().length) {
   initializeApp({
-    projectId: firebaseConfig.projectId
+    projectId: firebaseConfig.projectId,
   });
 }
-const adminDb = getFirestore(firebaseConfig.firestoreDatabaseId || "(default)");
+
+const adminDb = getFirestore();
 const adminAuth = getAuth();
 
-// Initialize Firebase Client SDK (uses API Key, obeying Firestore Security Rules which are 'allow read, write: if true')
-import { initializeFirestore as initializeClientFirestore } from "firebase/firestore";
+// Client Firebase
 const clientApp = initializeClientApp(firebaseConfig);
-const clientDb = initializeClientFirestore(clientApp, {
-  experimentalForceLongPolling: true,
-}, firebaseConfig.firestoreDatabaseId || "(default)");
+const clientDb = initializeClientFirestore(
+  clientApp,
+  { experimentalForceLongPolling: true },
+  firebaseConfig.firestoreDatabaseId || "(default)"
+);
 
 async function startServer() {
   const app = express();
@@ -37,6 +52,11 @@ async function startServer() {
 
   app.use(cors());
   app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ extended: true }));
+
+  app.get("/health", (_req, res) => {
+    res.status(200).json({ ok: true });
+  });
 
   // API routes
   app.get("/api/health", (req, res) => {
@@ -823,22 +843,37 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
     }
   });
   
-  // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  if (!isProduction) {
+    const { createServer: createViteServer } = await import("vite");
+
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
+
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
+    const distPath = path.resolve("dist");
+
+    if (fs.existsSync(distPath)) {
+      app.use(express.static(distPath));
+
+      app.get("*", (_req, res) => {
+        res.sendFile(path.join(distPath, "index.html"));
+      });
+    } else {
+      app.get("*", (_req, res) => {
+        res.status(500).send("Build do frontend não encontrado.");
+      });
+    }
   }
 
   app.listen(port, "0.0.0.0");
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error("Server failed to start:", err);
+  process.exit(1);
+});
+
+export { adminDb, adminAuth, clientDb };
