@@ -20,7 +20,6 @@ const firebaseConfig = JSON.parse(
 import { initializeApp as initializeClientApp } from "firebase/app";
 import {
   initializeFirestore as initializeClientFirestore,
-  getFirestore as getClientFirestore,
   collection as getClientCollection,
   query as clientQuery,
   where as clientWhere,
@@ -30,6 +29,8 @@ import {
   setDoc as clientSetDoc,
   deleteDoc as clientDeleteDoc
 } from "firebase/firestore";
+
+import { FiscalService } from "./server/fiscalService.js";
 
 // Admin Firebase
 if (!getApps().length) {
@@ -804,7 +805,6 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
         });
       }
 
-      const { FiscalService } = await import("./server/fiscalService.js");
       const fiscalService = new FiscalService(certificate.pfxBase64, certificate.password, config || {});
       
       const signedXml = fiscalService.generateNfceXml(order, nfceNumber || 1, series || 1);
@@ -837,13 +837,11 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
   app.post("/api/fiscal/validate-certificate", async (req, res) => {
     try {
       const { pfxBase64, password } = req.body;
-      const { FiscalService } = await import("./server/fiscalService.js");
-      
       // Simple validation by trying to instantiate the service
       new FiscalService(pfxBase64, password, {} as any);
       
       res.json({ success: true });
-    } catch (error: any) {
+    } catch {
       res.status(400).json({ success: false, error: "Invalid certificate or password" });
     }
   });
@@ -863,11 +861,11 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
     if (fs.existsSync(distPath)) {
       app.use(express.static(distPath));
 
-      app.get("*", (_req, res) => {
+      app.get("*all", (_req, res) => {
         res.sendFile(path.join(distPath, "index.html"));
       });
     } else {
-      app.get("*", (_req, res) => {
+      app.get("*all", (_req, res) => {
         res.status(500).send("Build do frontend não encontrado.");
       });
     }

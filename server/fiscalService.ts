@@ -1,8 +1,7 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import forge from 'node-forge';
 import { SignedXml } from 'xml-crypto';
 import { create } from 'xmlbuilder2';
-import axios from 'axios';
-import crypto from 'crypto';
 
 export interface FiscalConfig {
   cnpj: string;

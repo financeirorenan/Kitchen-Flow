@@ -1,224 +1,3 @@
-var __defProp = Object.defineProperty;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __esm = (fn, res, err) => function __init() {
-  if (err) throw err[0];
-  try {
-    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
-  } catch (e) {
-    throw err = [e], e;
-  }
-};
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
-};
-
-// server/fiscalService.ts
-var fiscalService_exports = {};
-__export(fiscalService_exports, {
-  FiscalService: () => FiscalService
-});
-import forge from "node-forge";
-import { SignedXml } from "xml-crypto";
-import { create } from "xmlbuilder2";
-var FiscalService;
-var init_fiscalService = __esm({
-  "server/fiscalService.ts"() {
-    FiscalService = class {
-      constructor(pfxBase64, password, config) {
-        const pfxDer = forge.util.decode64(pfxBase64);
-        const p12Asn1 = forge.asn1.fromDer(pfxDer);
-        this.p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, password);
-        const keyBags = this.p12.getBags({ bagType: forge.pki.oids.keyBag });
-        const pkcs8Bags = this.p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
-        const keyBag = keyBags[forge.pki.oids.keyBag]?.[0] || pkcs8Bags[forge.pki.oids.pkcs8ShroudedKeyBag]?.[0];
-        if (!keyBag) throw new Error("Private key not found in certificate");
-        this.privateKey = keyBag.key;
-        const certBags = this.p12.getBags({ bagType: forge.pki.oids.certBag });
-        const certBag = certBags[forge.pki.oids.certBag]?.[0];
-        if (!certBag) throw new Error("Certificate not found in PFX");
-        this.certificate = certBag.cert;
-        this.config = config;
-      }
-      generateNfceXml(order, nfceNumber, series) {
-        const now = (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d+Z$/, "-03:00");
-        const id = this.generateId(nfceNumber, series, now);
-        const xmlObj = {
-          NFe: {
-            "@xmlns": "http://www.portalfiscal.inf.br/nfe",
-            infNFe: {
-              "@Id": `NFe${id}`,
-              "@versao": "4.00",
-              ide: {
-                cUF: "35",
-                // SP example
-                cNF: Math.floor(Math.random() * 99999999).toString().padStart(8, "0"),
-                natOp: "VENDA",
-                mod: "65",
-                serie: series.toString(),
-                nNF: nfceNumber.toString(),
-                dhEmi: now,
-                tpNF: "1",
-                idDest: "1",
-                cMunFG: this.config.endereco.codigoMunicipio,
-                tpImp: "4",
-                tpEmis: "1",
-                cDV: "0",
-                // Will be calculated
-                tpAmb: this.config.ambiente,
-                finNFe: "1",
-                indFinal: "1",
-                indPres: "1",
-                procEmi: "0",
-                verProc: "1.0.0"
-              },
-              emit: {
-                CNPJ: this.config.cnpj,
-                xNome: this.config.razaoSocial,
-                enderEmit: {
-                  xLgr: this.config.endereco.logradouro,
-                  nro: this.config.endereco.numero,
-                  xBairro: this.config.endereco.bairro,
-                  cMun: this.config.endereco.codigoMunicipio,
-                  xMun: this.config.endereco.municipio,
-                  UF: this.config.endereco.uf,
-                  CEP: this.config.endereco.cep,
-                  cPais: "1058",
-                  xPais: "BRASIL"
-                },
-                IE: this.config.inscricaoEstadual,
-                CRT: "1"
-                // Simples Nacional
-              },
-              det: order.items.map((item, index) => ({
-                "@nItem": (index + 1).toString(),
-                prod: {
-                  cProd: item.productId,
-                  cEAN: "SEM GTIN",
-                  xProd: item.name,
-                  NCM: "21069090",
-                  // Generic food NCM
-                  CFOP: "5102",
-                  uCom: "UN",
-                  qCom: item.quantity.toFixed(4),
-                  vUnCom: item.price.toFixed(10),
-                  vProd: (item.quantity * item.price).toFixed(2),
-                  cEANTrib: "SEM GTIN",
-                  uTrib: "UN",
-                  qTrib: item.quantity.toFixed(4),
-                  vUnTrib: item.price.toFixed(10),
-                  indTot: "1"
-                },
-                imposto: {
-                  ICMS: {
-                    ICMSSN102: {
-                      orig: "0",
-                      CSOSN: "102"
-                    }
-                  },
-                  PIS: { PISOutr: { CST: "99", vBC: "0.00", pPIS: "0.00", vPIS: "0.00" } },
-                  COFINS: { COFINSOutr: { CST: "99", vBC: "0.00", pCOFINS: "0.00", vCOFINS: "0.00" } }
-                }
-              })),
-              total: {
-                ICMSTot: {
-                  vBC: "0.00",
-                  vICMS: "0.00",
-                  vICMSDeson: "0.00",
-                  vFCP: "0.00",
-                  vBCST: "0.00",
-                  vST: "0.00",
-                  vFCPST: "0.00",
-                  vFCPSTRet: "0.00",
-                  vProd: order.total.toFixed(2),
-                  vFrete: "0.00",
-                  vSeg: "0.00",
-                  vDesc: "0.00",
-                  vII: "0.00",
-                  vIPI: "0.00",
-                  vIPIDevol: "0.00",
-                  vPIS: "0.00",
-                  vCOFINS: "0.00",
-                  vOutro: "0.00",
-                  vNF: order.total.toFixed(2)
-                }
-              },
-              transp: { modFrete: "9" },
-              pag: {
-                detPag: {
-                  tPag: this.mapPaymentMethod(order.paymentMethod),
-                  vPag: order.total.toFixed(2)
-                }
-              }
-            }
-          }
-        };
-        const xml = create(xmlObj).end({ prettyPrint: false });
-        return this.signXml(xml, "infNFe");
-      }
-      signXml(xml, tag) {
-        const sig = new SignedXml();
-        sig.addReference(`//*[local-name(.)='${tag}']`, [
-          "http://www.w3.org/2000/09/xmldsig#enveloped-signature",
-          "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"
-        ], "http://www.w3.org/2000/09/xmldsig#sha1");
-        const pemKey = forge.pki.privateKeyToPem(this.privateKey);
-        const pemCert = forge.pki.certificateToPem(this.certificate);
-        sig.signingKey = pemKey;
-        sig.keyInfoProvider = {
-          getKeyInfo: () => `<X509Data><X509Certificate>${pemCert.replace(/-----(BEGIN|END) CERTIFICATE-----/g, "").replace(/\s/g, "")}</X509Certificate></X509Data>`,
-          getKey: () => Buffer.from(pemKey)
-        };
-        sig.computeSignature(xml, {
-          location: { reference: `//*[local-name(.)='${tag}']`, action: "after" }
-        });
-        return sig.getSignedXml();
-      }
-      generateId(number, series, date) {
-        const cUF = "35";
-        const yearMonth = date.substring(2, 4) + date.substring(5, 7);
-        const cnpj = this.config.cnpj.replace(/\D/g, "");
-        const mod = "65";
-        const ser = series.toString().padStart(3, "0");
-        const num = number.toString().padStart(9, "0");
-        const tpEmis = "1";
-        const cNF = Math.floor(Math.random() * 99999999).toString().padStart(8, "0");
-        const partialKey = `${cUF}${yearMonth}${cnpj}${mod}${ser}${num}${tpEmis}${cNF}`;
-        const dv = this.calculateDv(partialKey);
-        return `${partialKey}${dv}`;
-      }
-      calculateDv(key) {
-        let sum = 0;
-        let weight = 2;
-        for (let i = key.length - 1; i >= 0; i--) {
-          sum += parseInt(key[i]) * weight;
-          weight = weight === 9 ? 2 : weight + 1;
-        }
-        const remainder = sum % 11;
-        return remainder < 2 ? 0 : 11 - remainder;
-      }
-      mapPaymentMethod(method) {
-        const map = {
-          "dinheiro": "01",
-          "cartao_credito": "03",
-          "cartao_debito": "04",
-          "pix": "17",
-          "vale_refeicao": "10"
-        };
-        return map[method] || "99";
-      }
-      async transmitToSefaz(signedXml) {
-        console.log("Transmitting to SEFAZ...");
-        return {
-          status: "authorized",
-          protocol: "135260000000001",
-          accessKey: signedXml.match(/Id="NFe(\d+)"/)?.[1]
-        };
-      }
-    };
-  }
-});
-
 // server.ts
 import express from "express";
 import path from "path";
@@ -240,6 +19,205 @@ import {
   setDoc as clientSetDoc,
   deleteDoc as clientDeleteDoc
 } from "firebase/firestore";
+
+// server/fiscalService.ts
+import forge from "node-forge";
+import { SignedXml } from "xml-crypto";
+import { create } from "xmlbuilder2";
+var FiscalService = class {
+  constructor(pfxBase64, password, config) {
+    const pfxDer = forge.util.decode64(pfxBase64);
+    const p12Asn1 = forge.asn1.fromDer(pfxDer);
+    this.p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, password);
+    const keyBags = this.p12.getBags({ bagType: forge.pki.oids.keyBag });
+    const pkcs8Bags = this.p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
+    const keyBag = keyBags[forge.pki.oids.keyBag]?.[0] || pkcs8Bags[forge.pki.oids.pkcs8ShroudedKeyBag]?.[0];
+    if (!keyBag) throw new Error("Private key not found in certificate");
+    this.privateKey = keyBag.key;
+    const certBags = this.p12.getBags({ bagType: forge.pki.oids.certBag });
+    const certBag = certBags[forge.pki.oids.certBag]?.[0];
+    if (!certBag) throw new Error("Certificate not found in PFX");
+    this.certificate = certBag.cert;
+    this.config = config;
+  }
+  generateNfceXml(order, nfceNumber, series) {
+    const now = (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d+Z$/, "-03:00");
+    const id = this.generateId(nfceNumber, series, now);
+    const xmlObj = {
+      NFe: {
+        "@xmlns": "http://www.portalfiscal.inf.br/nfe",
+        infNFe: {
+          "@Id": `NFe${id}`,
+          "@versao": "4.00",
+          ide: {
+            cUF: "35",
+            // SP example
+            cNF: Math.floor(Math.random() * 99999999).toString().padStart(8, "0"),
+            natOp: "VENDA",
+            mod: "65",
+            serie: series.toString(),
+            nNF: nfceNumber.toString(),
+            dhEmi: now,
+            tpNF: "1",
+            idDest: "1",
+            cMunFG: this.config.endereco.codigoMunicipio,
+            tpImp: "4",
+            tpEmis: "1",
+            cDV: "0",
+            // Will be calculated
+            tpAmb: this.config.ambiente,
+            finNFe: "1",
+            indFinal: "1",
+            indPres: "1",
+            procEmi: "0",
+            verProc: "1.0.0"
+          },
+          emit: {
+            CNPJ: this.config.cnpj,
+            xNome: this.config.razaoSocial,
+            enderEmit: {
+              xLgr: this.config.endereco.logradouro,
+              nro: this.config.endereco.numero,
+              xBairro: this.config.endereco.bairro,
+              cMun: this.config.endereco.codigoMunicipio,
+              xMun: this.config.endereco.municipio,
+              UF: this.config.endereco.uf,
+              CEP: this.config.endereco.cep,
+              cPais: "1058",
+              xPais: "BRASIL"
+            },
+            IE: this.config.inscricaoEstadual,
+            CRT: "1"
+            // Simples Nacional
+          },
+          det: order.items.map((item, index) => ({
+            "@nItem": (index + 1).toString(),
+            prod: {
+              cProd: item.productId,
+              cEAN: "SEM GTIN",
+              xProd: item.name,
+              NCM: "21069090",
+              // Generic food NCM
+              CFOP: "5102",
+              uCom: "UN",
+              qCom: item.quantity.toFixed(4),
+              vUnCom: item.price.toFixed(10),
+              vProd: (item.quantity * item.price).toFixed(2),
+              cEANTrib: "SEM GTIN",
+              uTrib: "UN",
+              qTrib: item.quantity.toFixed(4),
+              vUnTrib: item.price.toFixed(10),
+              indTot: "1"
+            },
+            imposto: {
+              ICMS: {
+                ICMSSN102: {
+                  orig: "0",
+                  CSOSN: "102"
+                }
+              },
+              PIS: { PISOutr: { CST: "99", vBC: "0.00", pPIS: "0.00", vPIS: "0.00" } },
+              COFINS: { COFINSOutr: { CST: "99", vBC: "0.00", pCOFINS: "0.00", vCOFINS: "0.00" } }
+            }
+          })),
+          total: {
+            ICMSTot: {
+              vBC: "0.00",
+              vICMS: "0.00",
+              vICMSDeson: "0.00",
+              vFCP: "0.00",
+              vBCST: "0.00",
+              vST: "0.00",
+              vFCPST: "0.00",
+              vFCPSTRet: "0.00",
+              vProd: order.total.toFixed(2),
+              vFrete: "0.00",
+              vSeg: "0.00",
+              vDesc: "0.00",
+              vII: "0.00",
+              vIPI: "0.00",
+              vIPIDevol: "0.00",
+              vPIS: "0.00",
+              vCOFINS: "0.00",
+              vOutro: "0.00",
+              vNF: order.total.toFixed(2)
+            }
+          },
+          transp: { modFrete: "9" },
+          pag: {
+            detPag: {
+              tPag: this.mapPaymentMethod(order.paymentMethod),
+              vPag: order.total.toFixed(2)
+            }
+          }
+        }
+      }
+    };
+    const xml = create(xmlObj).end({ prettyPrint: false });
+    return this.signXml(xml, "infNFe");
+  }
+  signXml(xml, tag) {
+    const sig = new SignedXml();
+    sig.addReference(`//*[local-name(.)='${tag}']`, [
+      "http://www.w3.org/2000/09/xmldsig#enveloped-signature",
+      "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"
+    ], "http://www.w3.org/2000/09/xmldsig#sha1");
+    const pemKey = forge.pki.privateKeyToPem(this.privateKey);
+    const pemCert = forge.pki.certificateToPem(this.certificate);
+    sig.signingKey = pemKey;
+    sig.keyInfoProvider = {
+      getKeyInfo: () => `<X509Data><X509Certificate>${pemCert.replace(/-----(BEGIN|END) CERTIFICATE-----/g, "").replace(/\s/g, "")}</X509Certificate></X509Data>`,
+      getKey: () => Buffer.from(pemKey)
+    };
+    sig.computeSignature(xml, {
+      location: { reference: `//*[local-name(.)='${tag}']`, action: "after" }
+    });
+    return sig.getSignedXml();
+  }
+  generateId(number, series, date) {
+    const cUF = "35";
+    const yearMonth = date.substring(2, 4) + date.substring(5, 7);
+    const cnpj = this.config.cnpj.replace(/\D/g, "");
+    const mod = "65";
+    const ser = series.toString().padStart(3, "0");
+    const num = number.toString().padStart(9, "0");
+    const tpEmis = "1";
+    const cNF = Math.floor(Math.random() * 99999999).toString().padStart(8, "0");
+    const partialKey = `${cUF}${yearMonth}${cnpj}${mod}${ser}${num}${tpEmis}${cNF}`;
+    const dv = this.calculateDv(partialKey);
+    return `${partialKey}${dv}`;
+  }
+  calculateDv(key) {
+    let sum = 0;
+    let weight = 2;
+    for (let i = key.length - 1; i >= 0; i--) {
+      sum += parseInt(key[i]) * weight;
+      weight = weight === 9 ? 2 : weight + 1;
+    }
+    const remainder = sum % 11;
+    return remainder < 2 ? 0 : 11 - remainder;
+  }
+  mapPaymentMethod(method) {
+    const map = {
+      "dinheiro": "01",
+      "cartao_credito": "03",
+      "cartao_debito": "04",
+      "pix": "17",
+      "vale_refeicao": "10"
+    };
+    return map[method] || "99";
+  }
+  async transmitToSefaz(signedXml) {
+    console.log("Transmitting to SEFAZ...");
+    return {
+      status: "authorized",
+      protocol: "135260000000001",
+      accessKey: signedXml.match(/Id="NFe(\d+)"/)?.[1]
+    };
+  }
+};
+
+// server.ts
 dotenv.config();
 var isProduction = process.env.NODE_ENV === "production";
 var firebaseConfig = JSON.parse(
@@ -915,8 +893,7 @@ Forne\xE7a a resposta em formato JSON estrito correspondente ao esquema de respo
           nfeKey: simulatedAccessKey
         });
       }
-      const { FiscalService: FiscalService2 } = await Promise.resolve().then(() => (init_fiscalService(), fiscalService_exports));
-      const fiscalService = new FiscalService2(certificate.pfxBase64, certificate.password, config || {});
+      const fiscalService = new FiscalService(certificate.pfxBase64, certificate.password, config || {});
       const signedXml = fiscalService.generateNfceXml(order, nfceNumber || 1, series || 1);
       const response = await fiscalService.transmitToSefaz(signedXml);
       res.json({
@@ -944,10 +921,9 @@ Forne\xE7a a resposta em formato JSON estrito correspondente ao esquema de respo
   app.post("/api/fiscal/validate-certificate", async (req, res) => {
     try {
       const { pfxBase64, password } = req.body;
-      const { FiscalService: FiscalService2 } = await Promise.resolve().then(() => (init_fiscalService(), fiscalService_exports));
-      new FiscalService2(pfxBase64, password, {});
+      new FiscalService(pfxBase64, password, {});
       res.json({ success: true });
-    } catch (error) {
+    } catch {
       res.status(400).json({ success: false, error: "Invalid certificate or password" });
     }
   });
@@ -962,11 +938,11 @@ Forne\xE7a a resposta em formato JSON estrito correspondente ao esquema de respo
     const distPath = path.resolve("dist");
     if (fs.existsSync(distPath)) {
       app.use(express.static(distPath));
-      app.get("*", (_req, res) => {
+      app.get("*all", (_req, res) => {
         res.sendFile(path.join(distPath, "index.html"));
       });
     } else {
-      app.get("*", (_req, res) => {
+      app.get("*all", (_req, res) => {
         res.status(500).send("Build do frontend n\xE3o encontrado.");
       });
     }
