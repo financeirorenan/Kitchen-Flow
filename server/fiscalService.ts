@@ -22,7 +22,6 @@ export interface FiscalConfig {
 }
 
 export class FiscalService {
-  private p12: any;
   private privateKey: any;
   private certificate: any;
   private config: FiscalConfig;
@@ -30,16 +29,16 @@ export class FiscalService {
   constructor(pfxBase64: string, password: string, config: FiscalConfig) {
     const pfxDer = forge.util.decode64(pfxBase64);
     const p12Asn1 = forge.asn1.fromDer(pfxDer);
-    this.p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, password);
+    const p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, password);
     
-    const keyBags = this.p12.getBags({ bagType: forge.pki.oids.keyBag });
-    const pkcs8Bags = this.p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
+    const keyBags = p12.getBags({ bagType: forge.pki.oids.keyBag });
+    const pkcs8Bags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
     
     const keyBag = keyBags[forge.pki.oids.keyBag]?.[0] || pkcs8Bags[forge.pki.oids.pkcs8ShroudedKeyBag]?.[0];
     if (!keyBag) throw new Error('Private key not found in certificate');
     this.privateKey = keyBag.key as forge.pki.PrivateKey;
 
-    const certBags = this.p12.getBags({ bagType: forge.pki.oids.certBag });
+    const certBags = p12.getBags({ bagType: forge.pki.oids.certBag });
     const certBag = certBags[forge.pki.oids.certBag]?.[0];
     if (!certBag) throw new Error('Certificate not found in PFX');
     this.certificate = certBag.cert as forge.pki.Certificate;

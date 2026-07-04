@@ -345,6 +345,32 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
         }
 
         if (loginSuccess && signedInUser) {
+          // Auto-cura: Sincronizar a nova senha com o Firestore se necessário
+          try {
+            const userDocRef = doc(db, 'users', signedInUser.uid);
+            const userDocSnap = await getDoc(userDocRef);
+            if (userDocSnap.exists()) {
+              const uData = userDocSnap.data();
+              if (uData.password !== trimmedPassword) {
+                console.log("Sincronizando senha do Firestore com a senha de login atual...");
+                await setDoc(userDocRef, { password: trimmedPassword }, { merge: true });
+              }
+            } else {
+              // Se for entregador, verificar na coleção 'couriers'
+              const courierDocRef = doc(db, 'couriers', signedInUser.uid);
+              const courierDocSnap = await getDoc(courierDocRef);
+              if (courierDocSnap.exists()) {
+                const cData = courierDocSnap.data();
+                if (cData.password !== trimmedPassword) {
+                  console.log("Sincronizando senha do entregador no Firestore...");
+                  await setDoc(courierDocRef, { password: trimmedPassword }, { merge: true });
+                }
+              }
+            }
+          } catch (syncErr) {
+            console.warn("Erro ao auto-sincronizar senha no Firestore após login:", syncErr);
+          }
+
           onLoginSuccess();
           return;
         } else {

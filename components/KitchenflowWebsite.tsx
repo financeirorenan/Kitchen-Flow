@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { db } from '../firebase';
 import { collection, addDoc, Timestamp, onSnapshot, query, orderBy } from 'firebase/firestore';
 import { 
@@ -387,12 +388,12 @@ export default function KitchenflowWebsite() {
           </div>
 
           <div className="hidden md:flex items-center gap-4">
-            <a 
-              href="/saas" 
+            <Link 
+              to="/saas" 
               className="text-xs font-extrabold text-slate-350 hover:text-white uppercase tracking-widest transition-colors"
             >
               Fazer Login
-            </a>
+            </Link>
             <a 
               href="#leads-section" 
               className="px-5 py-2.5 bg-brand-primary hover:bg-[#E03D0C] text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-lg shadow-orange-950/40 border-b-2 border-[#B82300] hover:-translate-y-[1px] active:translate-y-[1px] transition-all"
@@ -450,12 +451,12 @@ export default function KitchenflowWebsite() {
                 </a>
               </div>
               <div className="border-t border-slate-850 pt-4 flex flex-col gap-3">
-                <a 
-                  href="/saas" 
+                <Link 
+                  to="/saas" 
                   className="text-center py-2.5 bg-slate-800 text-slate-100 rounded-xl text-xs font-bold uppercase"
                 >
                   Fazer Login
-                </a>
+                </Link>
                 <a 
                   href="#leads-section" 
                   onClick={() => setIsMobileMenuOpen(false)}

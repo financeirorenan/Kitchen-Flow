@@ -1214,7 +1214,7 @@ const App: React.FC = () => {
         }
         
         // Auto-redirect for specific roles if on a neutral path
-        const isNeutralPath = location.pathname === '/';
+        const isNeutralPath = window.location.pathname === '/';
         if (finalUserData?.role === 'COURIER' && isNeutralPath) {
           setActiveTab('courier-app');
         } else if (finalUserData?.role === 'SAAS_ADMIN' && isNeutralPath) {
@@ -1236,7 +1236,7 @@ const App: React.FC = () => {
     });
 
     return () => unsubscribe();
-  }, [navigate, location.pathname]);
+  }, [navigate]);
 
   // Carregamento inicial do banco de dados (Apenas para uso local/demo ou se não estivermos sincronizando com nuvem)
   useEffect(() => {
