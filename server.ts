@@ -8,7 +8,14 @@ import { getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 
-import firebaseConfig from "./firebase-applet-config.json" assert { type: "json" };
+dotenv.config();
+
+const isProduction = process.env.NODE_ENV === "production";
+
+// Safely read and parse the Firebase Applet Config to avoid experimental JSON import assertions in ESM
+const firebaseConfig = JSON.parse(
+  fs.readFileSync(path.resolve("firebase-applet-config.json"), "utf8")
+);
 
 import { initializeApp as initializeClientApp } from "firebase/app";
 import {
@@ -24,10 +31,6 @@ import {
   deleteDoc as clientDeleteDoc
 } from "firebase/firestore";
 
-dotenv.config();
-
-const isProduction = process.env.NODE_ENV === "production";
-
 // Admin Firebase
 if (!getApps().length) {
   initializeApp({
@@ -35,7 +38,9 @@ if (!getApps().length) {
   });
 }
 
-const adminDb = getFirestore();
+const adminDb = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== "(default)"
+  ? getFirestore(firebaseConfig.firestoreDatabaseId)
+  : getFirestore();
 const adminAuth = getAuth();
 
 // Client Firebase
