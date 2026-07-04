@@ -1801,10 +1801,11 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                   return (
                     <div
                       key={order.id}
-                      className="bg-white rounded-[2rem] p-6 border border-slate-50 shadow-sm"
+                      onClick={() => tenant && handleStoreClick(tenant)}
+                      className="bg-white rounded-[2rem] p-6 border border-slate-50 shadow-sm cursor-pointer hover:shadow-md hover:border-slate-100/80 active:scale-[0.99] transition-all duration-300 group"
                     >
                       <div className="flex items-center gap-4 mb-4 pb-4 border-b border-slate-50">
-                        <div className="w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-xl overflow-hidden bg-slate-50 shrink-0 aspect-square border border-slate-100">
+                        <div className="w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-xl overflow-hidden bg-slate-50 shrink-0 aspect-square border border-slate-100 group-hover:scale-105 transition-transform duration-300">
                           <img
                             src={
                               tenant?.logoUrl ||
@@ -1815,7 +1816,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between">
-                            <h4 className="font-black text-brand-black tracking-tight text-base truncate">
+                            <h4 className="font-black text-brand-black tracking-tight text-base truncate group-hover:text-brand-primary transition-colors">
                               {tenant?.name || "Restaurante"}
                             </h4>
                             <span
@@ -1848,7 +1849,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                         </div>
                       </div>
 
-                      <div className="flex gap-3">
+                      <div className="flex gap-3" onClick={(e) => e.stopPropagation()}>
                         <button
                           onClick={() => tenant && handleStoreClick(tenant)}
                           className="flex-1 py-3 bg-brand-primary/10 text-brand-primary rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-brand-primary hover:text-white transition-all"
