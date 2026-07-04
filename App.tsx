@@ -436,6 +436,8 @@ const App: React.FC = () => {
 
   const isSuperAdmin = user?.email?.toLowerCase() === 'financeirorenanuk@gmail.com' || currentUserData?.role === 'SAAS_ADMIN';
 
+  const effectiveAllowedModules = isSuperAdmin ? undefined : (tenantData?.customModules || tenantData?.subscription?.allowedModules);
+
   const hasPermission = (permission: Permission) => {
     if (isSuperAdmin) return true;
     return currentUserData?.permissions?.includes(permission) || false;
@@ -1070,12 +1072,21 @@ const App: React.FC = () => {
       setAuthLoading(false);
       return;
     }
+    
+    let userUnsubscribe: (() => void) | null = null;
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      // Desinscrever do ouvinte anterior se existir
+      if (userUnsubscribe) {
+        userUnsubscribe();
+        userUnsubscribe = null;
+      }
+
       setUser(firebaseUser);
       if (firebaseUser) {
         // 1. Buscar dados do usuário no Firestore pelo UID
         const userDocRef = doc(db, 'users', firebaseUser.uid);
-        const userDoc = await getDoc(userDocRef);
+        let userDoc = await getDoc(userDocRef);
 
         let finalUserData: User | null = null;
 
@@ -1115,7 +1126,6 @@ const App: React.FC = () => {
 
         // Se após as buscas o usuário ainda não possuir perfil no Firestore, nós auto-criamos
         // um perfil padrão (CUSTOMER se for no marketplace, OWNER se for no painel) associado ao tenant correspondente
-        // para garantir acesso e evitar que vejam telas de erro ou bloqueio de acesso desnecessários.
         if (!finalUserData && firebaseUser.email) {
           const isMaster = firebaseUser.email === 'financeirorenanuk@gmail.com';
           const isMarketplaceRoute = window.location.pathname.startsWith('/marketplace');
@@ -1178,49 +1188,54 @@ const App: React.FC = () => {
             }
           }
 
-          // Garantir que o status do usuário seja atualizado para 'online' no Firestore ao logar
-          if (finalUserData.status !== 'online') {
-            finalUserData.status = 'online';
-            try {
-              await setDoc(userDocRef, { status: 'online', updatedAt: new Date() }, { merge: true });
-            } catch (fsErr) {
-              console.warn("Erro ao atualizar status para online no Firestore:", fsErr);
-            }
-          }
+          // Subscreve em tempo real a esse documento para que qualquer alteração de permissão,
+          // cargo ou status feita pelo lojista ou admin do SaaS seja refletida instantaneamente!
+          userUnsubscribe = onSnapshot(userDocRef, (snap) => {
+            if (snap.exists()) {
+              const liveUserData = convertTimestamps(snap.data()) as User;
+              
+              // Garante que o status do usuário seja online no Firestore
+              if (liveUserData.status !== 'online') {
+                liveUserData.status = 'online';
+                setDoc(userDocRef, { status: 'online', updatedAt: new Date() }, { merge: true }).catch(() => {});
+              }
 
-          setCurrentUserData(finalUserData);
-          try {
-            localStorage.setItem('kitchenflow_cached_user', JSON.stringify(finalUserData));
-          } catch (e) {
-            console.warn(e);
-          }
-          
-          // Se o usuário pertence a um tenant, buscar dados do tenant
-          if (finalUserData.tenantId && finalUserData.tenantId !== 'GLOBAL') {
-            try {
-              const tenantDoc = await getDoc(doc(db, 'tenants', finalUserData.tenantId));
-              if (tenantDoc.exists()) {
-                const tData = convertTimestamps(tenantDoc.data()) as Tenant;
-                setTenantData(tData);
-                try {
-                  localStorage.setItem('kitchenflow_cached_tenant_data', JSON.stringify(tData));
-                } catch (e) {
-                  console.warn(e);
-                }
+              setCurrentUserData(liveUserData);
+              try {
+                localStorage.setItem('kitchenflow_cached_user', JSON.stringify(liveUserData));
+              } catch (e) {
+                console.warn(e);
               }
-            } catch (err: any) {
-              if (err.message?.includes("Quota exceeded")) {
-                console.warn("Cota do Firebase atingida. Usando dados básicos do tenant.");
-                const offlineTenant = { id: finalUserData.tenantId, name: 'Restaurante (Modo Offline)', plan: 'free' } as any;
-                setTenantData(offlineTenant);
-                try {
-                  localStorage.setItem('kitchenflow_cached_tenant_data', JSON.stringify(offlineTenant));
-                } catch (e) {
-                  console.warn(e);
-                }
+
+              // Se o usuário pertence a um tenant, buscar dados do tenant
+              if (liveUserData.tenantId && liveUserData.tenantId !== 'GLOBAL') {
+                getDoc(doc(db, 'tenants', liveUserData.tenantId)).then((tenantDoc) => {
+                  if (tenantDoc.exists()) {
+                    const tData = convertTimestamps(tenantDoc.data()) as Tenant;
+                    setTenantData(tData);
+                    try {
+                      localStorage.setItem('kitchenflow_cached_tenant_data', JSON.stringify(tData));
+                    } catch (e) {
+                      console.warn(e);
+                    }
+                  }
+                }).catch((err: any) => {
+                  if (err.message?.includes("Quota exceeded")) {
+                    console.warn("Cota do Firebase atingida. Usando dados básicos do tenant.");
+                    const offlineTenant = { id: liveUserData.tenantId, name: 'Restaurante (Modo Offline)', plan: 'free' } as any;
+                    setTenantData(offlineTenant);
+                    try {
+                      localStorage.setItem('kitchenflow_cached_tenant_data', JSON.stringify(offlineTenant));
+                    } catch (e) {
+                      console.warn(e);
+                    }
+                  }
+                });
               }
             }
-          }
+          }, (error) => {
+            handleFirestoreError(error, OperationType.GET, `users/${firebaseUser.uid}`);
+          });
         }
         
         // Auto-redirect for specific roles if on a neutral path
@@ -1245,7 +1260,10 @@ const App: React.FC = () => {
       setAuthLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      if (userUnsubscribe) userUnsubscribe();
+    };
   }, [navigate]);
 
   // Carregamento inicial do banco de dados (Apenas para uso local/demo ou se não estivermos sincronizando com nuvem)
@@ -4491,7 +4509,7 @@ const App: React.FC = () => {
           onClose={() => setIsSidebarOpen(false)}
           user={currentUserData || { name: user.displayName || 'Usuário', role: 'WAITER', avatar: user.photoURL || undefined } as any}
           onLogout={handleLogout}
-          allowedModules={isSuperAdmin ? undefined : tenantData?.subscription.allowedModules}
+          allowedModules={effectiveAllowedModules}
           isSuperAdmin={isSuperAdmin}
           isSaaSMode={currentProject === 'PLATFORM'}
           restaurantName={currentProject === 'PLATFORM' ? 'KitchenFlow AI' : (viewingTenantName || tenantData?.name || adminSettings.companyName || 'Viva Lá Fome!')}
@@ -5081,7 +5099,7 @@ const App: React.FC = () => {
             onUpdateRolePermissions={(role, perms) => setRolePermissions(prev => ({ ...prev, [role]: perms }))} 
             onSavePreset={handleSaveUserPreset}
             isSuperAdmin={isSuperAdmin}
-            allowedModules={isSuperAdmin ? undefined : tenantData?.subscription?.allowedModules}
+            allowedModules={effectiveAllowedModules}
             orders={orders}
             onAddFinancialRecord={handleAddFinancialRecord}
           />
@@ -5147,7 +5165,7 @@ const App: React.FC = () => {
             settings={adminSettings} 
             onUpdateSettings={setAdminSettings}
             onSaveSettings={handleSaveSettings}
-            allowedModules={isSuperAdmin ? undefined : tenantData?.subscription.allowedModules}
+            allowedModules={effectiveAllowedModules}
             products={products}
             orders={orders}
             customers={customers}
