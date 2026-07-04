@@ -1178,6 +1178,16 @@ const App: React.FC = () => {
             }
           }
 
+          // Garantir que o status do usuário seja atualizado para 'online' no Firestore ao logar
+          if (finalUserData.status !== 'online') {
+            finalUserData.status = 'online';
+            try {
+              await setDoc(userDocRef, { status: 'online', updatedAt: new Date() }, { merge: true });
+            } catch (fsErr) {
+              console.warn("Erro ao atualizar status para online no Firestore:", fsErr);
+            }
+          }
+
           setCurrentUserData(finalUserData);
           try {
             localStorage.setItem('kitchenflow_cached_user', JSON.stringify(finalUserData));
@@ -1340,7 +1350,14 @@ const App: React.FC = () => {
     return () => { isMounted = false; };
   }, [user, viewingTenantId, currentUserData?.tenantId]);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    if (user) {
+      try {
+        await updateDoc(doc(db, 'users', user.uid), { status: 'offline', updatedAt: new Date() });
+      } catch (err) {
+        console.warn("Erro ao atualizar status para offline no Firestore durante o logout:", err);
+      }
+    }
     signOut(auth);
     try {
       localStorage.removeItem('kitchenflow_demo_user');

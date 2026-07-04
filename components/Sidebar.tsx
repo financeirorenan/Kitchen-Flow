@@ -51,7 +51,7 @@ const Sidebar: React.FC<SidebarProps> = memo(({
   onClose, 
   user, 
   onLogout,
-  allowedModules = [],
+  allowedModules,
   isSuperAdmin = false,
   isSaaSMode = false,
   restaurantName,
@@ -87,11 +87,33 @@ const Sidebar: React.FC<SidebarProps> = memo(({
   const filteredMenuItems = isSaaSMode 
     ? saasMenuItems 
     : menuItems.filter(item => {
+        // If the user is SuperAdmin (SAAS_ADMIN or developer email), they can see everything
         if (isSuperAdmin) return true;
+
+        // Check if the module is enabled in the tenant's subscription plan.
+        // If allowedModules is undefined or empty, we assume there's no restriction or subscription loading,
+        // so we default to true to allow user's role/permissions to be the source of truth.
+        const isModuleAllowedByTenant = !allowedModules || allowedModules.length === 0 || (() => {
+          if (item.id === 'kds-kitchen-only') {
+            return allowedModules.includes('kds_view') || allowedModules.includes('kds_kitchen_only_view');
+          }
+          return allowedModules.includes(item.permission as Permission);
+        })();
+
+        if (!isModuleAllowedByTenant) return false;
+
+        // Now, check the user's specific permissions
+        const userPermissions = user.permissions || [];
+        
         if (item.id === 'kds-kitchen-only') {
-          return allowedModules.includes('kds_view') || allowedModules.includes('kds_kitchen_only_view');
+          return userPermissions.includes('kds_view') || userPermissions.includes('kds_kitchen_only_view');
         }
-        return allowedModules.includes(item.permission as Permission);
+
+        if (item.id === 'support') {
+          return true; // Técnico support is always available
+        }
+
+        return userPermissions.includes(item.permission as Permission);
       });
 
   const handleTabClick = (item: any) => {
