@@ -43,6 +43,8 @@ import {
   Settings
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import KaiAvatar from './KaiAvatar';
 
 // Fotografias profissionais geradas via IA
 import chefImage from '../src/assets/images/chef_modern_kitchen_1783212349047.jpg';
@@ -172,86 +174,127 @@ export default function KitchenflowWebsite() {
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
 
   // -----------------------------------------------------------------
-  // STAGE 1: STATES DO DASHBOARD VIVO (REAL-TIME HERO SIMULATOR)
+  // STAGE 1: STATES DO DASHBOARD VIVO (REAL-TIME MULTI-TAB SIMULATOR)
   // -----------------------------------------------------------------
-  const [liveFaturamento, setLiveFaturamento] = useState(48920);
-  const [liveCmv, setLiveCmv] = useState(29.4);
+  const [activeTab, setActiveTab] = useState<'dre' | 'kds' | 'menu' | 'ai'>('dre');
+  const [liveFaturamento, setLiveFaturamento] = useState(4820);
+  const [liveCmv, setLiveCmv] = useState(24.5);
   const [liveOrders, setLiveOrders] = useState([
-    { id: '#1425', items: '1x Pizza Trufada', source: 'Mesa 4', status: 'preparando', time: '5m' },
-    { id: '#1426', items: '2x Smash Burger + Fritas', source: 'Delivery', status: 'pendente', time: '2m' },
-    { id: '#1424', items: '1x Risoto Funghi', source: 'Mesa 12', status: 'pronto', time: '11m' },
+    { id: '#1542', items: '1x Parmegiana de carne + 1x Refrigerante Lata', source: 'Mesa 08', status: 'preparando', time: 275 },
+    { id: '#1543', items: '2x X-tudo + 1x Batata frita', source: 'Delivery', status: 'pendente', time: 75 },
+    { id: '#1541', items: '1x Parmegiana de frango + 1x Suco Natural copo', source: 'Mesa 03', status: 'pronto', time: 660 },
   ]);
+
   const [liveAiInsights, setLiveAiInsights] = useState<string[]>([
-    "✨ IA analisando vendas de hoje...",
-    "✨ CMV do Salmão fora do padrão (subiu 12% no fornecedor X)",
-    "✨ Otimização: Ajuste de ficha técnica da Lasanha reduziu custos em R$ 4.50"
+    "✨ IA do Kai: Analisando as vendas em tempo real do Viva Lá Fome...",
+    "✨ CMV Crítico: Custo da Carne Bovina subiu 8.5% no distribuidor principal",
+    "✨ Ajuste Sugerido: Ajustar ficha técnica da Parmegiana de carne economiza R$ 3.20/prato",
+    "✨ Alerta de Estoque: Batata In Natura está operando abaixo da margem mínima de segurança",
+    "✨ Sucesso Operacional: Sobra Limpa real de hoje atingiu a meta de 24.5% às 19:30"
   ]);
   const [aiInsightIndex, setAiInsightIndex] = useState(0);
 
-  // Efeito para rodar o simulador em tempo real (Dashboard Vivo)
+  // AI Chat states
+  const [chatMessages, setChatMessages] = useState<Array<{ sender: 'user' | 'kai'; text: string; pose?: string; expression?: string }>>([
+    {
+      sender: 'kai',
+      text: 'Olá lojista do Viva Lá Fome! Sou o Kai, seu Copiloto de IA em tempo real. Fiz uma auditoria instantânea do faturamento e identifiquei desvios operacionais. O que gostaria de analisar agora de forma inteligente? 🤖💡',
+      pose: 'tudo-sob-controle',
+      expression: 'feliz'
+    }
+  ]);
+  const [isTyping, setIsTyping] = useState(false);
+
+  // Recharts simulation data
+  const mockWeeklySales = [
+    { name: 'Seg', faturamento: 3200 },
+    { name: 'Ter', faturamento: 4100 },
+    { name: 'Qua', faturamento: 3800 },
+    { name: 'Qui', faturamento: 5200 },
+    { name: 'Sex', faturamento: 6800 },
+    { name: 'Sáb', faturamento: 8400 },
+    { name: 'Dom', faturamento: 7900 }
+  ];
+
+  // Helper to format seconds to MM:SS
+  const formatTime = (totalSeconds: number) => {
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = totalSeconds % 60;
+    return `${mins}m ${secs.toString().padStart(2, '0')}s`;
+  };
+
+  // KDS action handlers
+  const handleKdsStatusChange = (id: string, currentStatus: string) => {
+    setLiveOrders(prev => {
+      if (currentStatus === 'pendente') {
+        return prev.map(o => o.id === id ? { ...o, status: 'preparando' } : o);
+      } else if (currentStatus === 'preparando') {
+        return prev.map(o => o.id === id ? { ...o, status: 'pronto', time: 690 } : o);
+      } else {
+        // Remove 'pronto'
+        return prev.filter(o => o.id !== id);
+      }
+    });
+  };
+
+  // Simulates a menu item click and sending order to KDS
+  const handleSimulateMenuOrder = (itemName: string) => {
+    const nextId = `#15${Math.floor(Math.random() * 80) + 44}`;
+    const newOrder = {
+      id: nextId,
+      items: `1x ${itemName}`,
+      source: `Mesa ${Math.floor(Math.random() * 11) + 1}`,
+      status: 'pendente',
+      time: 0
+    };
+    
+    // Add to orders
+    setLiveOrders(prev => [newOrder, ...prev]);
+    
+    // Switch to KDS tab automatically to show the user the live flow!
+    setActiveTab('kds');
+  };
+
+  // AI Chat options click
+  const handleAiQuestion = (question: string, answer: string, pose: string, expression: string) => {
+    if (isTyping) return;
+    
+    setChatMessages(prev => [...prev, { sender: 'user', text: question }]);
+    setIsTyping(true);
+    
+    setTimeout(() => {
+      setChatMessages(prev => [...prev, {
+        sender: 'kai',
+        text: answer,
+        pose,
+        expression
+      }]);
+      setIsTyping(false);
+    }, 1500);
+  };
+
+  // Active ticking intervals
   useEffect(() => {
-    const orderTemplates = [
-      { items: '1x Nhoque ao Pesto', source: 'Mesa 7' },
-      { items: '2x Tacos de Cordeiro', source: 'Delivery' },
-      { items: '1x Fettuccine Camarão', source: 'Mesa 3' },
-      { items: '1x Petit Gâteau', source: 'Mesa 9' },
-    ];
-
-    const aiTemplates = [
-      "✨ Estoque atualizado automaticamente: Muçarela (-250g)",
-      "✨ CMV geral caiu para 22.8% (Sobra limpa otimizada)",
-      "✨ IA detectou: Desperdício de insumos reduzido em 14% nesta semana",
-      "✨ Sugestão enviada: Ativar promoção de Quiche às 17h para girar estoque",
-      "✨ IA: Margem de lucro líquido subiu para 24.1%",
-      "✨ Estoque crítico: Tomate Italiano abaixo da meta (alerta enviado)"
-    ];
-
-    const interval = setInterval(() => {
-      // 1. Ticking up sales
+    // 1. Faturamento and CMV updates every 3.5 seconds
+    const metricsInterval = setInterval(() => {
       setLiveFaturamento(prev => prev + Math.floor(Math.random() * 85) + 15);
-      
-      // 2. Adjusting CMV slightly downwards (simulating optimizer)
       setLiveCmv(prev => {
-        const next = prev - 0.05;
-        return next < 21.5 ? 21.5 : parseFloat(next.toFixed(2));
+        const delta = (Math.random() - 0.5) * 0.2;
+        const next = prev + delta;
+        return next < 23.5 ? 23.5 : next > 25.5 ? 25.5 : parseFloat(next.toFixed(1));
       });
+      setAiInsightIndex(prev => (prev + 1) % 5); // 5 insights
+    }, 3500);
 
-      // 3. Spawning or advancing orders
-      setLiveOrders(prev => {
-        const updated = prev.map(o => {
-          if (o.status === 'pendente') return { ...o, status: 'preparando' };
-          if (o.status === 'preparando') return { ...o, status: 'pronto' };
-          return o;
-        });
+    // 2. KDS timer increments every second
+    const kdsTimerInterval = setInterval(() => {
+      setLiveOrders(prev => prev.map(o => o.status !== 'pronto' ? { ...o, time: o.time + 1 } : o));
+    }, 1000);
 
-        // Filter out old completed ones, keep size small
-        const filtered = updated.filter(o => o.status !== 'pronto' || Math.random() > 0.4);
-
-        if (filtered.length < 4) {
-          const randTemplate = orderTemplates[Math.floor(Math.random() * orderTemplates.length)];
-          const randId = `#${Math.floor(Math.random() * 900) + 1100}`;
-          filtered.unshift({
-            id: randId,
-            items: randTemplate.items,
-            source: randTemplate.source,
-            status: 'pendente',
-            time: '1m'
-          });
-        }
-        return filtered.slice(0, 3);
-      });
-
-      // 4. Cycling AI Insights
-      setAiInsightIndex(prev => (prev + 1) % aiTemplates.length);
-      setLiveAiInsights(prev => {
-        const copy = [...prev];
-        copy.unshift(aiTemplates[Math.floor(Math.random() * aiTemplates.length)]);
-        return copy.slice(0, 3);
-      });
-
-    }, 4000);
-
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(metricsInterval);
+      clearInterval(kdsTimerInterval);
+    };
   }, []);
 
   // -----------------------------------------------------------------
@@ -264,43 +307,43 @@ export default function KitchenflowWebsite() {
 
   const videoStepsData = [
     {
-      title: "1. Pedido Entrando",
-      desc: "Cliente escaneia o QR Code na mesa e finaliza o pedido direto do celular em 0.2s.",
+      title: "1. Pedido do Viva Lá Fome",
+      desc: "O cliente faz o pedido no cardápio digital (Mesa 08 ou Delivery). O pedido cai instantaneamente no PDV consolidado.",
       badge: "Entrada Sincronizada",
       color: "from-orange-500/20 to-orange-500/5 border-orange-500/30",
       textColor: "text-orange-400"
     },
     {
-      title: "2. KDS Recebendo",
-      desc: "O Monitor Eletrônico da cozinha organiza o preparo por categoria de forma 100% automatizada.",
+      title: "2. Cozinha KDS Ativa",
+      desc: "A cozinha do Viva Lá Fome recebe o pedido na tela do KDS, dividido por setores (Chapa, Fritura) com cronômetro de preparo ativo.",
       badge: "Linha de Produção",
       color: "from-amber-500/20 to-amber-500/5 border-amber-500/30",
       textColor: "text-amber-400"
     },
     {
-      title: "3. Preparo da Cozinha",
-      desc: "Cozinheiros marcam o prato como pronto. O garçom e o cliente são notificados na hora.",
+      title: "3. Garçom Notificado",
+      desc: "A cozinha marca a Parmegiana de carne como pronta. O garçom do salão recebe um alerta vibratório na comanda digital para retirar.",
       badge: "Tempo sob controle",
       color: "from-yellow-500/20 to-yellow-500/5 border-yellow-500/30",
       textColor: "text-yellow-400"
     },
     {
-      title: "4. Estoque Diminuindo",
-      desc: "Cada venda aciona a ficha técnica e realiza a baixa automática dos insumos grama por grama.",
+      title: "4. Baixa Automática",
+      desc: "A ficha técnica do prato é lida: Arroz agulhinha (-150g), Queijo Muçarela (-40g) e Bife Bovino (-200g) sofrem baixa automática no estoque.",
       badge: "Desperdício Zero",
       color: "from-rose-500/20 to-rose-500/5 border-rose-500/30",
       textColor: "text-rose-400"
     },
     {
-      title: "5. Finanças Atualizando",
-      desc: "O faturamento e o DRE da operação são consolidados em tempo real no dashboard.",
+      title: "5. DRE Consolidado",
+      desc: "A receita de R$ 30,00 é lançada no fluxo de caixa do Viva Lá Fome, atualizando as taxas de meios de pagamento e o lucro proporcional.",
       badge: "Controle Absoluto",
       color: "from-emerald-500/20 to-emerald-500/5 border-emerald-500/30",
       textColor: "text-emerald-450"
     },
     {
-      title: "6. IA Calculando CMV",
-      desc: "Nossa IA analisa as margens e envia recomendações de compras e ajustes de lucro imediatos.",
+      title: "6. Kai IA Otimizando",
+      desc: "Nossa IA analisa as margens de lucro, sugere compras inteligentes e otimiza a ficha técnica do Viva Lá Fome em tempo real.",
       badge: "Sobra Limpa Máxima",
       color: "from-teal-500/20 to-teal-500/5 border-teal-500/30",
       textColor: "text-teal-400"
@@ -605,118 +648,416 @@ export default function KitchenflowWebsite() {
               </div>
             </div>
 
-            {/* Simulated Grid Content */}
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-              
-              {/* Left widgets: sales & active orders */}
-              <div className="md:col-span-7 space-y-4">
-                
-                {/* Sales counter */}
-                <div className="bg-slate-950/80 p-4 rounded-2xl border border-white/5 flex items-center justify-between relative overflow-hidden">
-                  <div>
-                    <p className="text-[9px] font-mono uppercase tracking-wider text-slate-500">Faturamento Hoje</p>
-                    <h3 className="text-2xl font-black text-white mt-1 font-mono transition-all duration-300">
-                      R$ {liveFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </h3>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-xs font-mono font-bold text-emerald-450 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-lg">
-                      + 24%
-                    </span>
-                    <p className="text-[8px] text-slate-500 font-bold uppercase mt-1.5">vs ontem</p>
-                  </div>
-                </div>
+            {/* Tab Selector buttons */}
+            <div className="flex flex-wrap gap-2 pb-4 mb-4 border-b border-white/5 scrollbar-thin overflow-x-auto">
+              <button
+                onClick={() => setActiveTab('dre')}
+                className={`px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all ${
+                  activeTab === 'dre'
+                    ? 'bg-[#FF4F18] text-white shadow-lg shadow-[#FF4F18]/25'
+                    : 'bg-slate-950/40 text-slate-400 hover:text-white hover:bg-slate-900 border border-white/5'
+                }`}
+                id="tab-dre-selector"
+              >
+                <BarChart2 size={13} /> Painel DRE
+              </button>
+              <button
+                onClick={() => setActiveTab('kds')}
+                className={`px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all ${
+                  activeTab === 'kds'
+                    ? 'bg-[#FF4F18] text-white shadow-lg shadow-[#FF4F18]/25'
+                    : 'bg-slate-950/40 text-slate-400 hover:text-white hover:bg-slate-900 border border-white/5'
+                }`}
+                id="tab-kds-selector"
+              >
+                <Trello size={13} /> Cozinha KDS
+              </button>
+              <button
+                onClick={() => setActiveTab('menu')}
+                className={`px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all ${
+                  activeTab === 'menu'
+                    ? 'bg-[#FF4F18] text-white shadow-lg shadow-[#FF4F18]/25'
+                    : 'bg-slate-950/40 text-slate-400 hover:text-white hover:bg-slate-900 border border-white/5'
+                }`}
+                id="tab-menu-selector"
+              >
+                <Smartphone size={13} /> Cardápio QR
+              </button>
+              <button
+                onClick={() => setActiveTab('ai')}
+                className={`px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all ${
+                  activeTab === 'ai'
+                    ? 'bg-[#FF4F18] text-white shadow-lg shadow-[#FF4F18]/25'
+                    : 'bg-slate-950/40 text-slate-400 hover:text-white hover:bg-slate-900 border border-white/5'
+                }`}
+                id="tab-ai-selector"
+              >
+                <Sparkles size={13} /> Copiloto IA
+              </button>
+            </div>
 
-                {/* Live active orders feed */}
-                <div className="bg-slate-950/80 p-4 rounded-2xl border border-white/5 space-y-3">
-                  <h4 className="text-[9px] font-mono uppercase tracking-wider text-slate-500 flex justify-between items-center">
-                    <span>Fila Operacional Ativa (PDV ➔ KDS)</span>
-                    <span className="text-[8px] bg-[#FF4F18]/10 text-[#FF4F18] border border-[#FF4F18]/20 px-2 py-0.5 rounded font-black">Tempo Real</span>
-                  </h4>
-                  
-                  <div className="space-y-2.5">
-                    <AnimatePresence initial={false}>
-                      {liveOrders.map((order, idx) => (
-                        <motion.div 
-                          key={order.id}
-                          initial={{ opacity: 0, y: -10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, scale: 0.95 }}
-                          transition={{ duration: 0.3 }}
-                          className="p-2.5 bg-[#0e1423] rounded-xl border border-white/5 flex items-center justify-between text-xs"
+            {/* Simulated Multi-Tab Content */}
+            <div className="relative">
+              <AnimatePresence mode="wait">
+                {activeTab === 'dre' && (
+                  <motion.div
+                    key="dre-panel"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.25 }}
+                    className="space-y-4"
+                    id="panel-dre-content"
+                  >
+                    {/* Top KPIs row */}
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="bg-slate-950/80 p-3.5 rounded-2xl border border-white/5 relative overflow-hidden" id="dre-kpi-sales">
+                        <p className="text-[8px] font-mono uppercase tracking-wider text-slate-500">Faturamento Hoje</p>
+                        <h4 className="text-base sm:text-lg font-black text-white mt-1 font-mono tracking-tight">
+                          R$ {liveFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </h4>
+                        <span className="text-[8px] text-emerald-450 font-mono block mt-1">+24.5% vs ontem</span>
+                      </div>
+
+                      <div className="bg-slate-950/80 p-3.5 rounded-2xl border border-white/5 relative overflow-hidden" id="dre-kpi-cmv">
+                        <p className="text-[8px] font-mono uppercase tracking-wider text-slate-500">CMV Real-Time</p>
+                        <h4 className="text-base sm:text-lg font-black text-orange-400 mt-1 font-mono tracking-tight">
+                          {liveCmv}%
+                        </h4>
+                        <span className="text-[8px] text-slate-500 font-mono block mt-1">Meta: 22.0%</span>
+                      </div>
+
+                      <div className="bg-slate-950/80 p-3.5 rounded-2xl border border-white/5 relative overflow-hidden" id="dre-kpi-profit">
+                        <p className="text-[8px] font-mono uppercase tracking-wider text-slate-500">Sobra Limpa (Líquido)</p>
+                        <h4 className="text-base sm:text-lg font-black text-emerald-400 mt-1 font-mono tracking-tight">
+                          R$ {Math.round(liveFaturamento * 0.245).toLocaleString('pt-BR')}
+                        </h4>
+                        <span className="text-[8px] text-emerald-450 font-mono block mt-1">Margem: 24.5%</span>
+                      </div>
+                    </div>
+
+                    {/* Channel mix and chart column */}
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                      {/* Recharts Sales Performance area chart */}
+                      <div className="md:col-span-8 bg-slate-950/80 p-4 rounded-2xl border border-white/5" id="dre-performance-chart">
+                        <p className="text-[8px] font-mono uppercase tracking-wider text-slate-500 mb-3">Faturamento últimos 7 dias (R$)</p>
+                        <div className="h-40 w-full font-mono text-[9px]">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <AreaChart data={mockWeeklySales} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
+                              <defs>
+                                <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="5%" stopColor="#FF4F18" stopOpacity={0.2}/>
+                                  <stop offset="95%" stopColor="#FF4F18" stopOpacity={0}/>
+                                </linearGradient>
+                              </defs>
+                              <XAxis dataKey="name" stroke="#52525b" strokeWidth={0.5} tickLine={false} />
+                              <YAxis stroke="#52525b" strokeWidth={0.5} tickLine={false} />
+                              <Tooltip contentStyle={{ backgroundColor: '#090d16', borderColor: 'rgba(255,255,255,0.1)', color: '#fff', fontSize: 10 }} />
+                              <Area type="monotone" dataKey="faturamento" stroke="#FF4F18" strokeWidth={1.5} fillOpacity={1} fill="url(#colorSales)" />
+                            </AreaChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </div>
+
+                      {/* Faturamento por Canal card */}
+                      <div className="md:col-span-4 bg-slate-950/80 p-4 rounded-2xl border border-white/5 flex flex-col justify-between" id="dre-channels-card">
+                        <p className="text-[8px] font-mono uppercase tracking-wider text-slate-500 mb-2">Canais de Venda</p>
+                        <div className="space-y-1.5 text-[9px]">
+                          {[
+                            { name: 'Salão (Mesa)', val: '40%', color: 'bg-orange-500' },
+                            { name: 'Delivery', val: '25%', color: 'bg-emerald-500' },
+                            { name: 'iFood App', val: '20%', color: 'bg-rose-500' },
+                            { name: 'QR Code Mesa', val: '10%', color: 'bg-teal-500' },
+                            { name: 'Balcão/PDV', val: '5%', color: 'bg-sky-500' },
+                          ].map((ch, i) => (
+                            <div key={i} className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5 text-slate-400">
+                                <span className={`w-1.5 h-1.5 rounded-full ${ch.color}`} />
+                                <span>{ch.name}</span>
+                              </div>
+                              <span className="font-bold text-white font-mono">{ch.val}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="border-t border-white/5 pt-2 mt-2">
+                          <div className="text-[8px] font-mono uppercase text-slate-500 leading-none">
+                            Auditoria ativa • Viva Lá Fome
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Dynamic AI advice preview snippet */}
+                    <div className="bg-[#FF4F18]/5 border border-[#FF4F18]/10 p-3 rounded-xl flex items-center justify-between text-xs" id="dre-ai-alert">
+                      <div className="flex items-center gap-2">
+                        <Sparkles size={14} className="text-[#FF4F18] animate-pulse shrink-0" />
+                        <span className="text-orange-250 font-semibold text-[10px] leading-snug">
+                          {liveAiInsights[aiInsightIndex]}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => setActiveTab('ai')}
+                        className="text-[8px] bg-[#FF4F18]/10 text-[#FF4F18] border border-[#FF4F18]/20 px-2 py-1 rounded hover:bg-[#FF4F18]/20 transition-all font-mono uppercase font-black tracking-widest shrink-0 ml-2"
+                      >
+                        Perguntar
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+
+                {activeTab === 'kds' && (
+                  <motion.div
+                    key="kds-panel"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.25 }}
+                    className="space-y-4"
+                    id="panel-kds-content"
+                  >
+                    <div className="flex items-center justify-between">
+                      <p className="text-[8px] font-mono uppercase tracking-wider text-slate-500">Fila KDS ativa • Cozinha Quente</p>
+                      <span className="text-[8px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded font-mono uppercase font-black tracking-wider">
+                        Sincronizado via PDV
+                      </span>
+                    </div>
+
+                    {liveOrders.length === 0 ? (
+                      <div className="bg-slate-950/80 p-8 rounded-2xl border border-white/5 text-center text-xs text-slate-500 font-medium" id="kds-empty-state">
+                        🍳 Nenhum pedido pendente na cozinha! Simule um no cardápio digital.
+                        <button
+                          onClick={() => setActiveTab('menu')}
+                          className="block mx-auto mt-3 px-4 py-2 bg-[#FF4F18] hover:bg-[#ff3b00] text-white rounded-xl text-[10px] font-mono uppercase tracking-wider font-black transition-all"
                         >
-                          <div className="flex items-center gap-2.5">
-                            <span className="font-mono text-[10px] text-slate-500 font-bold">{order.id}</span>
-                            <div>
-                              <p className="text-white font-bold text-[11px]">{order.items}</p>
-                              <span className="text-[9px] text-slate-500">{order.source}</span>
+                          Ir para Cardápio QR
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3" id="kds-orders-grid">
+                        <AnimatePresence initial={false}>
+                          {liveOrders.map((order) => (
+                            <motion.div
+                              key={order.id}
+                              layout
+                              initial={{ opacity: 0, scale: 0.95 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              exit={{ opacity: 0, x: 20 }}
+                              className={`bg-slate-950/80 p-3 rounded-xl border flex flex-col justify-between h-40 text-xs transition-all ${
+                                order.status === 'pendente' ? 'border-orange-500/30 shadow-md shadow-orange-500/5' :
+                                order.status === 'preparando' ? 'border-amber-500/30 shadow-md shadow-amber-500/5' :
+                                'border-emerald-500/30'
+                              }`}
+                            >
+                              <div>
+                                <div className="flex items-center justify-between border-b border-white/5 pb-1.5 mb-2">
+                                  <span className="font-mono text-[10px] text-slate-500 font-bold">{order.id}</span>
+                                  <span className={`text-[8px] px-1.5 py-0.5 rounded font-mono uppercase font-black tracking-widest ${
+                                    order.status === 'pendente' ? 'bg-orange-500/15 text-orange-400' :
+                                    order.status === 'preparando' ? 'bg-amber-500/15 text-amber-400' :
+                                    'bg-emerald-500/15 text-emerald-450'
+                                  }`}>
+                                    {order.status}
+                                  </span>
+                                </div>
+
+                                <p className="text-white font-extrabold text-[10px] sm:text-[11px] leading-tight line-clamp-2">{order.items}</p>
+                                <span className="text-[10px] text-slate-500 font-medium block mt-1">{order.source}</span>
+                              </div>
+
+                              <div className="border-t border-white/5 pt-2 mt-2 flex items-center justify-between">
+                                <span className="font-mono text-[9px] text-slate-450 font-bold flex items-center gap-1">
+                                  <Clock size={10} className={order.status !== 'pronto' ? 'animate-pulse text-[#FF4F18]' : ''} />
+                                  {formatTime(order.time)}
+                                </span>
+                                
+                                <button
+                                  onClick={() => handleKdsStatusChange(order.id, order.status)}
+                                  className={`px-2 py-1 rounded text-[8px] font-mono uppercase font-black tracking-widest transition-all ${
+                                    order.status === 'pendente' ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20 hover:bg-orange-500/20' :
+                                    order.status === 'preparando' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/20' :
+                                    'bg-slate-900 text-slate-500 border border-white/5 hover:bg-slate-800'
+                                  }`}
+                                >
+                                  {order.status === 'pendente' ? 'Iniciar' : order.status === 'preparando' ? 'Pronto' : 'Entregar'}
+                                </button>
+                              </div>
+                            </motion.div>
+                          ))}
+                        </AnimatePresence>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+
+                {activeTab === 'menu' && (
+                  <motion.div
+                    key="menu-panel"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.25 }}
+                    className="flex flex-col md:flex-row items-center gap-6"
+                    id="panel-menu-content"
+                  >
+                    {/* Left QR Code prompt mockup */}
+                    <div className="md:w-1/3 flex flex-col items-center justify-center p-4 bg-slate-950/60 rounded-2xl border border-white/5 text-center space-y-2">
+                      <div className="w-24 h-24 bg-white p-2 rounded-xl flex items-center justify-center shadow-lg">
+                        <svg viewBox="0 0 100 100" className="w-20 h-20 text-slate-900">
+                          <rect x="0" y="0" width="30" height="30" fill="currentColor" />
+                          <rect x="10" y="10" width="10" height="10" fill="white" />
+                          <rect x="70" y="0" width="30" height="30" fill="currentColor" />
+                          <rect x="80" y="10" width="10" height="10" fill="white" />
+                          <rect x="0" y="70" width="30" height="30" fill="currentColor" />
+                          <rect x="10" y="80" width="10" height="10" fill="white" />
+                          <rect x="40" y="40" width="20" height="20" fill="currentColor" />
+                          <rect x="45" y="45" width="10" height="10" fill="white" />
+                          <rect x="40" y="10" width="10" height="15" fill="currentColor" />
+                          <rect x="10" y="40" width="15" height="10" fill="currentColor" />
+                          <rect x="75" y="45" width="15" height="15" fill="currentColor" />
+                          <rect x="45" y="75" width="15" height="15" fill="currentColor" />
+                        </svg>
+                      </div>
+                      <span className="text-[9px] font-mono uppercase text-slate-450 font-bold">QR Code Mesa 08</span>
+                      <p className="text-[10px] text-slate-500 leading-snug">Aponte o celular e simule o autoatendimento: o pedido entra na cozinha na hora!</p>
+                    </div>
+
+                    {/* Right products menu list mockup */}
+                    <div className="md:w-2/3 bg-slate-950/80 p-4 rounded-2xl border border-white/5 w-full">
+                      <p className="text-[8px] font-mono uppercase tracking-wider text-slate-500 mb-3 text-left">Cardápio Digital • Viva Lá Fome</p>
+                      <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                        {[
+                          { name: 'Parmegiana de carne', price: '30,00', desc: 'Bife bovino empanado, molho pomodoro rústico e muçarela gratinada. Acompanha arroz e fritas.' },
+                          { name: 'X-tudo Gourmet', price: '31,00', desc: 'Hambúrguer de fraldinha 180g, bacon, ovo frito, muçarela, alface e tomate.' },
+                          { name: 'Bolinha de queijo', price: '20,00', desc: 'Porção crocante com 8 unidades de pura muçarela com cream cheese.' },
+                          { name: 'Refrigerante Lata', price: '6,00', desc: 'Lata 350ml trincando de gelada.' },
+                        ].map((item, idx) => (
+                          <div key={idx} className="p-2.5 bg-[#0e1423] rounded-xl border border-white/5 flex items-start justify-between text-left gap-3 group hover:border-[#FF4F18]/20 transition-all">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <h5 className="font-extrabold text-[11px] text-white leading-none uppercase tracking-wide">{item.name}</h5>
+                                <span className="text-[10px] font-bold text-orange-450 font-mono">R$ {item.price}</span>
+                              </div>
+                              <p className="text-[9px] text-slate-450 leading-tight font-medium line-clamp-2">{item.desc}</p>
+                            </div>
+                            <button
+                              onClick={() => handleSimulateMenuOrder(item.name)}
+                              className="px-2 py-1.5 bg-[#FF4F18] hover:bg-[#ff3b00] text-white rounded-lg text-[9px] font-mono uppercase font-black shrink-0 tracking-widest hover:scale-105 active:scale-95 transition-all"
+                            >
+                              Pedir
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+
+                {activeTab === 'ai' && (
+                  <motion.div
+                    key="ai-panel"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.25 }}
+                    className="grid grid-cols-1 md:grid-cols-12 gap-4 h-[280px]"
+                    id="panel-ai-content"
+                  >
+                    {/* Left Column: Animated Kai Avatar */}
+                    <div className="md:col-span-4 flex flex-col items-center justify-center p-4 bg-slate-950/60 rounded-2xl border border-white/5 text-center relative overflow-hidden">
+                      <div className="absolute top-0 left-0 w-20 h-20 bg-[#FF4F18]/5 rounded-full blur-xl" />
+                      
+                      {/* Animated Kai Avatar with current expression/pose */}
+                      <div className="w-28 h-28 flex items-center justify-center scale-110">
+                        <KaiAvatar 
+                          expression={isTyping ? 'analisando' : (chatMessages[chatMessages.length - 1]?.expression as any || 'feliz')}
+                          pose={isTyping ? 'analisando-dados' : (chatMessages[chatMessages.length - 1]?.pose as any || 'tudo-sob-controle')}
+                          size={110} 
+                        />
+                      </div>
+                      
+                      <span className="text-[10px] font-sans font-extrabold text-white uppercase tracking-wider mt-2">Kai Copiloto AI</span>
+                      <span className="text-[8px] font-mono text-emerald-400 uppercase font-black bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded mt-1 animate-pulse">
+                        Ativo & Monitorando
+                      </span>
+                    </div>
+
+                    {/* Right Column: Chat messages feed */}
+                    <div className="md:col-span-8 flex flex-col justify-between bg-slate-950/80 p-4 rounded-2xl border border-white/5 h-full relative overflow-hidden">
+                      {/* Message Feed list */}
+                      <div className="flex-1 overflow-y-auto space-y-3 pr-1 text-xs max-h-32 scrollbar-thin">
+                        {chatMessages.map((msg, i) => (
+                          <div
+                            key={i}
+                            className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+                          >
+                            <div className={`p-2.5 rounded-xl max-w-[85%] leading-relaxed ${
+                              msg.sender === 'user'
+                                ? 'bg-[#FF4F18] text-white font-semibold rounded-br-none text-[10px]'
+                                : 'bg-[#0e1423] border border-white/5 text-orange-200 rounded-bl-none text-[10px] font-medium'
+                            }`}>
+                              {msg.text}
                             </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className={`text-[8px] px-2 py-0.5 rounded font-mono uppercase font-black tracking-widest ${
-                              order.status === 'pendente' ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20' :
-                              order.status === 'preparando' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' :
-                              'bg-emerald-500/10 text-emerald-450 border border-emerald-500/20'
-                            }`}>
-                              {order.status}
-                            </span>
-                            <span className="text-[9px] text-slate-500 font-mono font-bold shrink-0">{order.time}</span>
+                        ))}
+                        
+                        {isTyping && (
+                          <div className="flex justify-start">
+                            <div className="bg-[#0e1423] border border-white/5 text-slate-400 p-2.5 rounded-xl rounded-bl-none text-[10px] font-bold flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 bg-[#FF4F18] rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                              <span className="w-1.5 h-1.5 bg-[#FF4F18] rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                              <span className="w-1.5 h-1.5 bg-[#FF4F18] rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                              <span className="text-[9px] font-mono ml-1 uppercase">Kai pensando...</span>
+                            </div>
                           </div>
-                        </motion.div>
-                      ))}
-                    </AnimatePresence>
-                  </div>
-                </div>
+                        )}
+                      </div>
 
-              </div>
-
-              {/* Right widgets: CMV audit & IA Core */}
-              <div className="md:col-span-5 space-y-4 flex flex-col justify-between">
-                
-                {/* CMV card */}
-                <div className="bg-slate-950/80 p-4 rounded-2xl border border-white/5 flex flex-col justify-between h-[104px]">
-                  <p className="text-[9px] font-mono uppercase tracking-wider text-slate-500">CMV Dinâmico (Auditoria)</p>
-                  <div className="flex items-baseline justify-between mt-1">
-                    <h3 className="text-3xl font-black text-orange-400 font-mono">{liveCmv}%</h3>
-                    <span className="text-[9px] font-mono font-bold text-emerald-450">Meta: 22.0%</span>
-                  </div>
-                  <div className="w-full h-1 bg-slate-900 rounded-full overflow-hidden mt-1.5">
-                    <div className="h-full bg-orange-500 rounded-full" style={{ width: `${(liveCmv / 35) * 100}%` }} />
-                  </div>
-                </div>
-
-                {/* AI Active Brain (Protagonist AI) */}
-                <div className="bg-slate-950/80 p-4 rounded-2xl border border-white/5 flex-1 space-y-3 flex flex-col justify-between">
-                  <div>
-                    <h4 className="text-[9px] font-mono uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                      <Sparkles size={11} className="text-[#FF4F18]" /> Monitor do Copiloto AI
-                    </h4>
-                    <p className="text-[8px] text-slate-500 uppercase font-bold tracking-widest mt-1">Auditoria contínua 24h</p>
-                  </div>
-
-                  {/* Active Typing style updates */}
-                  <div className="space-y-2 flex-1 flex flex-col justify-center">
-                    <AnimatePresence mode="wait">
-                      <motion.div 
-                        key={aiInsightIndex}
-                        initial={{ opacity: 0, x: 5 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        exit={{ opacity: 0, x: -5 }}
-                        transition={{ duration: 0.3 }}
-                        className="text-[10px] text-orange-200 bg-[#FF4F18]/5 border border-[#FF4F18]/10 p-2.5 rounded-xl leading-normal font-semibold"
-                      >
-                        {liveAiInsights[aiInsightIndex]}
-                      </motion.div>
-                    </AnimatePresence>
-                  </div>
-
-                  <div className="text-[8px] font-mono uppercase text-slate-500 tracking-wide text-right border-t border-white/5 pt-2">
-                    Cérebro Ativo • Latência 22ms
-                  </div>
-                </div>
-
-              </div>
-
+                      {/* Pre-set strategic query buttons */}
+                      <div className="border-t border-white/5 pt-2.5 mt-2.5 flex flex-col gap-2">
+                        <p className="text-[8px] font-mono uppercase text-slate-500 text-left">Selecione uma dúvida para a IA rodar no Viva Lá Fome:</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          <button
+                            disabled={isTyping}
+                            onClick={() => handleAiQuestion(
+                              "Como reduzir meu CMV de carne?",
+                              "No Viva Lá Fome, a Parmegiana de carne opera com custo de ingrediente de R$ 14,00. Reduzindo a gramatura do bife de 220g para 200g (padrão) e fracionando a muçarela em 40g, reduzimos o CMV de 46% para 33%, injetando +R$ 3,90 de lucro líquido por prato vendido!",
+                              "planejamento",
+                              "feliz"
+                            )}
+                            className="px-2 py-1.5 bg-[#0e1423] hover:bg-[#FF4F18]/10 text-slate-300 hover:text-white border border-white/5 rounded-lg text-[9px] text-left transition-all font-semibold"
+                          >
+                            🥩 CMV Carne Bov.
+                          </button>
+                          <button
+                            disabled={isTyping}
+                            onClick={() => handleAiQuestion(
+                              "Verificar estoques críticos",
+                              "Atenção! O estoque de Batata In Natura do Viva Lá Fome está operando com apenas 12kg (abaixo do mínimo de 20kg). O consumo estimado para o final de semana é de 45kg. Ordem de compra sugerida imediata com a Distribuidora Horti.",
+                              "controle-estoque",
+                              "alerta"
+                            )}
+                            className="px-2 py-1.5 bg-[#0e1423] hover:bg-[#FF4F18]/10 text-slate-300 hover:text-white border border-white/5 rounded-lg text-[9px] text-left transition-all font-semibold"
+                          >
+                            📦 Estoque Crítico
+                          </button>
+                          <button
+                            disabled={isTyping}
+                            onClick={() => handleAiQuestion(
+                              "Sugerir combo de margem alta",
+                              "Dica de ouro para o Viva Lá Fome: Monte o Combo Família - 2x Parmegiana de frango (CMV 39%) + 1x Bolinha de queijo (CMV 40%) + 1x Refrigerante 2L (CMV 46%). Preço sugerido: R$ 89,00. Margem de lucro de 62.5% protegida!",
+                              "tudo-sob-controle",
+                              "surpreso"
+                            )}
+                            className="px-2 py-1.5 bg-[#0e1423] hover:bg-[#FF4F18]/10 text-[#FF4F18] border border-[#FF4F18]/10 rounded-lg text-[9px] text-left transition-all font-semibold"
+                          >
+                            💡 Criar Combo AI
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
           </div>
