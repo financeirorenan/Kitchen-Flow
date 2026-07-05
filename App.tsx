@@ -5440,8 +5440,10 @@ const App: React.FC = () => {
                        }
                      }
 
+                     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
                      const rawAcceptedOrder: Order = { 
                        ...order, 
+                       tenantId: order.tenantId || effectiveTenantId || 'HCL1177LRQVPEKCTYRAHU7IGBQ42',
                        source: order.source || 'whatsapp',
                        status: 'preparing',
                        deliveryFee: order.type === 'delivery' ? globalDeliveryFee : 0 
@@ -5461,12 +5463,13 @@ const App: React.FC = () => {
                      
                      if (order.id) {
                        try {
-                         await setDoc(doc(db, 'orders', order.id), { 
-                           status: 'preparing', 
+                         // Salvar o pedido COMPLETO no Firestore (com itens, cliente, e tenantId)
+                         // para sincronização imediata em todas as telas (KDS, Entregas, Admin, etc.)
+                         await setDoc(doc(db, 'orders', order.id), cleanObject({
+                           ...acceptedOrder,
                            updatedAt: new Date(),
-                           acceptedAt: new Date(),
-                           dailyNumber: acceptedOrder.dailyNumber
-                         }, { merge: true });
+                           acceptedAt: new Date()
+                         }));
                        } catch (e) {
                          console.error("Error accepting cloud order:", e);
                        }
