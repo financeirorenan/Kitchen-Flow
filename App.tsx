@@ -3656,6 +3656,12 @@ const App: React.FC = () => {
 
   const handleAddUser = async (user: Partial<User>) => {
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    
+    if (user.role === 'SAAS_ADMIN') {
+      showToast("Erro: Não é permitido cadastrar o cargo SaaS Admin no painel do lojista.", "error");
+      throw new Error("Não é permitido cadastrar usuários com perfil SaaS Admin dentro do painel do lojista.");
+    }
+
     const trimmedEmail = (user.email || '').trim().toLowerCase();
     const trimmedPassword = (user.password || '').trim();
     const newUser: User = {
@@ -3725,6 +3731,11 @@ const App: React.FC = () => {
   const handleUpdateUser = async (id: string, updates: Partial<User>) => {
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
     
+    if (updates.role === 'SAAS_ADMIN') {
+      showToast("Erro: Não é permitido atualizar o cargo para SaaS Admin no painel do lojista.", "error");
+      throw new Error("Não é permitido definir o cargo de usuários como SaaS Admin dentro do painel do lojista.");
+    }
+
     // Se a senha estiver vazia, remove das atualizações para não sobreescrever
     const finalUpdates = { ...updates };
     if (finalUpdates.email) {

@@ -537,7 +537,7 @@ const UsersPanel: React.FC<UsersPanelProps> = memo(({
       ) : activeSubTab === 'roles' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in slide-in-from-bottom-4 duration-500">
           {(Object.keys(ROLE_DETAILS) as UserRole[])
-            .filter(role => isSuperAdmin || role !== 'SAAS_ADMIN')
+            .filter(role => role !== 'SAAS_ADMIN')
             .map(role => (
             <div key={role} className="bg-white rounded-3xl border shadow-sm p-6 flex flex-col gap-4 group hover:shadow-md transition-shadow">
               <div className="flex justify-between items-start">
@@ -882,7 +882,7 @@ const UsersPanel: React.FC<UsersPanelProps> = memo(({
                     <div className="absolute z-[60] top-full left-0 right-0 mt-3 bg-white border border-slate-100 rounded-[2rem] shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
                       <div className="p-2 max-h-[350px] overflow-y-auto custom-scrollbar">
                         {(Object.keys(ROLE_DETAILS) as UserRole[])
-                          .filter(role => isSuperAdmin || role !== 'SAAS_ADMIN')
+                          .filter(role => role !== 'SAAS_ADMIN')
                           .map(role => (
                           <button 
                             key={role}
