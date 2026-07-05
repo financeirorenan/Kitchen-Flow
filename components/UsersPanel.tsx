@@ -167,7 +167,12 @@ const UsersPanel: React.FC<UsersPanelProps> = memo(({
 
   const visiblePermissions = useMemo(() => {
     if (isSuperAdmin || !allowedModules || allowedModules.length === 0) return ALL_PERMISSIONS;
-    return ALL_PERMISSIONS.filter(p => allowedModules.includes(p.id));
+    return ALL_PERMISSIONS.filter(p => {
+      if (p.id === 'kds_kitchen_only_view') {
+        return allowedModules.includes('kds_view') || allowedModules.includes('kds_kitchen_only_view');
+      }
+      return allowedModules.includes(p.id);
+    });
   }, [isSuperAdmin, allowedModules]);
 
   const filteredPermissions = useMemo(() => {

@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Order, OrderItem, Product, Table } from '../types';
 import { 
   ChefHat, Clock, CheckCircle2, AlertTriangle, Play, Check, 
-  Sparkles, Coffee, Flame, Utensils, Award, RefreshCw, Volume2, VolumeX, Grid, Smartphone, ShoppingBag, Bike
+  Sparkles, Coffee, Flame, Utensils, Award, RefreshCw, Volume2, VolumeX, Grid, Smartphone, ShoppingBag, Bike, LogOut
 } from 'lucide-react';
 
 interface KDSKitchenOnlyProps {
@@ -11,13 +11,17 @@ interface KDSKitchenOnlyProps {
   products: Product[];
   tables: Table[];
   onUpdateStatus: (id: string, status: 'pending' | 'preparing' | 'ready') => void;
+  onLogout?: () => void;
+  showLogoutButton?: boolean;
 }
 
 export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({ 
   orders, 
   products, 
   tables, 
-  onUpdateStatus 
+  onUpdateStatus,
+  onLogout,
+  showLogoutButton = false
 }) => {
   const [selectedStation, setSelectedStation] = useState<string>('all');
   const [activeFilter, setActiveFilter] = useState<'all' | 'delivery' | 'takeout' | 'table'>('all');
@@ -213,6 +217,16 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
             {soundEnabled ? <Volume2 size={13} /> : <VolumeX size={13} />}
             {soundEnabled ? 'Sons Ativos' : 'Sons Mudos'}
           </button>
+
+          {showLogoutButton && onLogout && (
+            <button
+              onClick={onLogout}
+              className="p-2 px-3.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl border border-rose-500/30 text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 shadow-lg shadow-rose-950/20 active:scale-[0.98]"
+            >
+              <LogOut size={13} />
+              Sair da Conta
+            </button>
+          )}
 
           {/* Mini Stats Banner */}
           <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 p-1.5 px-3 rounded-xl shadow-inner font-mono text-xs font-black text-rose-400">

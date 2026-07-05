@@ -1240,7 +1240,17 @@ const App: React.FC = () => {
         
         // Auto-redirect for specific roles if on a neutral path
         const isNeutralPath = window.location.pathname === '/';
-        if (finalUserData?.role === 'COURIER' && isNeutralPath) {
+        const hasKDSKitchenOnly = finalUserData?.permissions?.includes('kds_kitchen_only_view');
+        const isKDSOnlyUserLocal = finalUserData && 
+          (hasKDSKitchenOnly || finalUserData.role === 'KDS') && 
+          !finalUserData.permissions?.includes('admin_settings_manage') && 
+          !finalUserData.permissions?.includes('finance_view') &&
+          !finalUserData.permissions?.includes('pos_access') &&
+          !finalUserData.permissions?.includes('tables_manage');
+
+        if (isKDSOnlyUserLocal) {
+          setActiveTab('kds-kitchen-only');
+        } else if (finalUserData?.role === 'COURIER' && isNeutralPath) {
           setActiveTab('courier-app');
         } else if (finalUserData?.role === 'SAAS_ADMIN' && isNeutralPath) {
           navigate('/saas');
@@ -1367,6 +1377,84 @@ const App: React.FC = () => {
     initDb();
     return () => { isMounted = false; };
   }, [user, viewingTenantId, currentUserData?.tenantId]);
+
+  // Dynamic tab permissions map to auto-select allowed views on login or when activeTab becomes unpermitted
+  useEffect(() => {
+    if (!currentUserData) return;
+    
+    const isSuperAdmin = currentUserData.email?.toLowerCase() === 'financeirorenanuk@gmail.com' || currentUserData.role === 'SAAS_ADMIN';
+    if (isSuperAdmin) return;
+
+    // Special check for isKDSOnlyUser
+    const hasKDSKitchenOnly = currentUserData.permissions?.includes('kds_kitchen_only_view');
+    const isKDSOnlyUser = hasKDSKitchenOnly && 
+      !currentUserData.permissions?.includes('admin_settings_manage') && 
+      !currentUserData.permissions?.includes('finance_view') &&
+      !currentUserData.permissions?.includes('pos_access') &&
+      !currentUserData.permissions?.includes('tables_manage');
+
+    if (isKDSOnlyUser) {
+      if (activeTab !== 'kds-kitchen-only') {
+        setActiveTab('kds-kitchen-only');
+      }
+      return;
+    }
+
+    // Verify if activeTab matches permitted menus
+    const tabPermissions: Record<string, string> = {
+      'merchant-copilot': 'finance_view',
+      'tables': 'tables_manage',
+      'kds': 'kds_view',
+      'kds-kitchen-only': 'kds_kitchen_only_view',
+      'order-monitor': 'kds_view',
+      'delivery': 'delivery_manage',
+      'digital-menu': 'digital_menu_manage',
+      'customers': 'customers_manage',
+      'inventory': 'inventory_edit',
+      'finance': 'finance_view',
+      'users': 'users_manage',
+      'settings': 'admin_settings_manage'
+    };
+
+    const requiredPermission = tabPermissions[activeTab];
+    if (requiredPermission) {
+      const hasDirectPermission = currentUserData.permissions?.includes(requiredPermission as any);
+      
+      // Special allowance for kds-kitchen-only which can be opened by kds_view too
+      const isAllowedKDSKitchen = activeTab === 'kds-kitchen-only' && currentUserData.permissions?.includes('kds_view');
+
+      if (!hasDirectPermission && !isAllowedKDSKitchen) {
+        // Active tab is not allowed, redirect to first allowed tab
+        const menuTabsOrder = [
+          { tab: 'merchant-copilot', perm: 'finance_view' },
+          { tab: 'tables', perm: 'tables_manage' },
+          { tab: 'kds', perm: 'kds_view' },
+          { tab: 'kds-kitchen-only', perm: 'kds_kitchen_only_view' },
+          { tab: 'order-monitor', perm: 'kds_view' },
+          { tab: 'delivery', perm: 'delivery_manage' },
+          { tab: 'digital-menu', perm: 'digital_menu_manage' },
+          { tab: 'customers', perm: 'customers_manage' },
+          { tab: 'inventory', perm: 'inventory_edit' },
+          { tab: 'finance', perm: 'finance_view' },
+          { tab: 'users', perm: 'users_manage' },
+          { tab: 'settings', perm: 'admin_settings_manage' }
+        ];
+
+        const firstAllowed = menuTabsOrder.find(m => {
+          if (m.tab === 'kds-kitchen-only') {
+            return currentUserData.permissions?.includes('kds_view') || currentUserData.permissions?.includes('kds_kitchen_only_view');
+          }
+          return currentUserData.permissions?.includes(m.perm as any);
+        });
+
+        if (firstAllowed) {
+          setActiveTab(firstAllowed.tab);
+        } else {
+          setActiveTab('support');
+        }
+      }
+    }
+  }, [currentUserData, activeTab]);
 
   const handleLogout = async () => {
     if (user) {
@@ -4470,6 +4558,14 @@ const App: React.FC = () => {
     );
   }
 
+  const hasKDSKitchenOnly = currentUserData?.permissions?.includes('kds_kitchen_only_view');
+  const isKDSOnlyUser = !!currentUserData && 
+    (hasKDSKitchenOnly || currentUserData.role === 'KDS') && 
+    !currentUserData.permissions?.includes('admin_settings_manage') && 
+    !currentUserData.permissions?.includes('finance_view') &&
+    !currentUserData.permissions?.includes('pos_access') &&
+    !currentUserData.permissions?.includes('tables_manage');
+
   return (
     <div className="flex h-screen max-h-screen w-screen bg-slate-50 relative overflow-hidden">
       {/* Sistema Online / Toast Global */}
@@ -4495,7 +4591,7 @@ const App: React.FC = () => {
           </motion.div>
         )}
       </AnimatePresence>
-      {currentProject !== 'MARKETPLACE' && currentProject !== 'COURIER' && currentProject !== 'WEBSITE' && (
+      {currentProject !== 'MARKETPLACE' && currentProject !== 'COURIER' && currentProject !== 'WEBSITE' && !isKDSOnlyUser && (
         <Sidebar 
           activeTab={activeTab} 
           setActiveTab={(tab) => {
@@ -4560,57 +4656,59 @@ const App: React.FC = () => {
           ) : (
             <>
               {/* Header Mobile */}
-        <header className="lg:hidden bg-white border-b p-2 flex items-center justify-between sticky top-0 z-30">
-          <button 
-            onClick={() => setIsSidebarOpen(true)}
-            className="p-2 text-slate-600 hover:bg-slate-50 rounded-lg"
-          >
-            <Menu size={20} />
-          </button>
-          <div className="flex items-center gap-2">
-            <div className={`w-8 h-8 ${currentProject === 'PLATFORM' ? 'bg-slate-950 border border-white/10' : 'bg-indigo-600'} rounded-lg flex items-center justify-center text-white font-black text-xs overflow-hidden`}>
-              {currentProject === 'PLATFORM' ? (
-                <svg viewBox="0 0 100 100" className="w-full h-full p-1" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <defs>
-                    <linearGradient id="intermundosGradHeader" x1="0%" y1="0%" x2="100%" y2="100%">
-                      <stop offset="0%" stopColor="#10b981" />
-                      <stop offset="100%" stopColor="#047857" />
-                    </linearGradient>
-                  </defs>
-                  <polygon points="50,10 90,50 50,90 10,50" stroke="url(#intermundosGradHeader)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.3" />
-                  <polygon points="50,5 81.82,18.18 95,50 81.82,81.82 50,95 18.18,81.82 5,50 18.18,18.18" stroke="url(#intermundosGradHeader)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                  <line x1="50" y1="5" x2="50" y2="95" stroke="url(#intermundosGradHeader)" strokeWidth="1" strokeLinecap="round" opacity="0.4" />
-                  <line x1="5" y1="50" x2="95" y2="50" stroke="url(#intermundosGradHeader)" strokeWidth="1" strokeLinecap="round" opacity="0.4" />
-                  <line x1="18.18" y1="18.18" x2="81.82" y2="81.82" stroke="url(#intermundosGradHeader)" strokeWidth="1" strokeLinecap="round" opacity="0.4" />
-                  <line x1="18.18" y1="81.82" x2="81.82" y2="18.18" stroke="url(#intermundosGradHeader)" strokeWidth="1" strokeLinecap="round" opacity="0.4" />
-                  <polygon points="50,5 81.82,18.18 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.15" />
-                  <polygon points="50,5 18.18,18.18 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.05" />
-                  <polygon points="95,50 81.82,18.18 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.1" />
-                  <polygon points="95,50 81.82,81.82 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.2" />
-                  <polygon points="50,95 81.82,81.82 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.25" />
-                  <polygon points="50,95 18.18,81.82 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.15" />
-                  <polygon points="5,50 18.18,81.82 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.1" />
-                  <polygon points="5,50 18.18,18.18 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.2" />
-                  <circle cx="50" cy="50" r="10" fill="#ffffff" opacity="0.15" />
-                  <circle cx="50" cy="50" r="4" fill="#047857" />
-                  <circle cx="50" cy="50" r="2" fill="#34d399" />
-                </svg>
-              ) : (
-                (viewingTenantLogo || tenantData?.logoUrl || adminSettings.logoUrl) ? (
-                  <img src={viewingTenantLogo || tenantData?.logoUrl || adminSettings.logoUrl} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                ) : (
-                  (viewingTenantName || tenantData?.name || adminSettings.companyName || 'G').substring(0, 1).toUpperCase()
-                )
+              {!isKDSOnlyUser && (
+                <header className="lg:hidden bg-white border-b p-2 flex items-center justify-between sticky top-0 z-30">
+                  <button 
+                    onClick={() => setIsSidebarOpen(true)}
+                    className="p-2 text-slate-600 hover:bg-slate-50 rounded-lg"
+                  >
+                    <Menu size={20} />
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <div className={`w-8 h-8 ${currentProject === 'PLATFORM' ? 'bg-slate-950 border border-white/10' : 'bg-indigo-600'} rounded-lg flex items-center justify-center text-white font-black text-xs overflow-hidden`}>
+                      {currentProject === 'PLATFORM' ? (
+                        <svg viewBox="0 0 100 100" className="w-full h-full p-1" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <defs>
+                            <linearGradient id="intermundosGradHeader" x1="0%" y1="0%" x2="100%" y2="100%">
+                              <stop offset="0%" stopColor="#10b981" />
+                              <stop offset="100%" stopColor="#047857" />
+                            </linearGradient>
+                          </defs>
+                          <polygon points="50,10 90,50 50,90 10,50" stroke="url(#intermundosGradHeader)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.3" />
+                          <polygon points="50,5 81.82,18.18 95,50 81.82,81.82 50,95 18.18,81.82 5,50 18.18,18.18" stroke="url(#intermundosGradHeader)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                          <line x1="50" y1="5" x2="50" y2="95" stroke="url(#intermundosGradHeader)" strokeWidth="1" strokeLinecap="round" opacity="0.4" />
+                          <line x1="5" y1="50" x2="95" y2="50" stroke="url(#intermundosGradHeader)" strokeWidth="1" strokeLinecap="round" opacity="0.4" />
+                          <line x1="18.18" y1="18.18" x2="81.82" y2="81.82" stroke="url(#intermundosGradHeader)" strokeWidth="1" strokeLinecap="round" opacity="0.4" />
+                          <line x1="18.18" y1="81.82" x2="81.82" y2="18.18" stroke="url(#intermundosGradHeader)" strokeWidth="1" strokeLinecap="round" opacity="0.4" />
+                          <polygon points="50,5 81.82,18.18 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.15" />
+                          <polygon points="50,5 18.18,18.18 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.05" />
+                          <polygon points="95,50 81.82,18.18 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.1" />
+                          <polygon points="95,50 81.82,81.82 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.2" />
+                          <polygon points="50,95 81.82,81.82 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.25" />
+                          <polygon points="50,95 18.18,81.82 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.15" />
+                          <polygon points="5" y1="50" x2="18.18" y2="81.82" stroke="url(#intermundosGradHeader)" strokeWidth="1" strokeLinecap="round" opacity="0.1" />
+                          <polygon points="5,50 18.18,18.18 50,50" fill="url(#intermundosGradHeader)" fillOpacity="0.2" />
+                          <circle cx="50" cy="50" r="10" fill="#ffffff" opacity="0.15" />
+                          <circle cx="50" cy="50" r="4" fill="#047857" />
+                          <circle cx="50" cy="50" r="2" fill="#34d399" />
+                        </svg>
+                      ) : (
+                        (viewingTenantLogo || tenantData?.logoUrl || adminSettings.logoUrl) ? (
+                          <img src={viewingTenantLogo || tenantData?.logoUrl || adminSettings.logoUrl} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        ) : (
+                          (viewingTenantName || tenantData?.name || adminSettings.companyName || 'G').substring(0, 1).toUpperCase()
+                        )
+                      )}
+                    </div>
+                    <span className="font-bold text-slate-800">
+                      {currentProject === 'PLATFORM' ? 'Saas Adm' : (viewingTenantName || tenantData?.name || adminSettings.companyName || 'Carregando...')}
+                    </span>
+                  </div>
+                  <div className="w-10" /> {/* Spacer */}
+                </header>
               )}
-            </div>
-            <span className="font-bold text-slate-800">
-              {currentProject === 'PLATFORM' ? 'Saas Adm' : (viewingTenantName || tenantData?.name || adminSettings.companyName || 'Carregando...')}
-            </span>
-          </div>
-          <div className="w-10" /> {/* Spacer */}
-        </header>
 
-        <div className={`flex-1 p-1 custom-scrollbar ${(activeTab === 'kds' || activeTab === 'kds-kitchen-only' || activeTab === 'order-monitor') ? 'h-[calc(100vh-64px)] lg:h-[calc(100vh-20px)] overflow-hidden flex flex-col' : 'overflow-y-auto max-h-screen'}`}>
+              <div className={`flex-1 custom-scrollbar ${isKDSOnlyUser ? 'h-screen max-h-screen overflow-hidden flex flex-col p-0' : (activeTab === 'kds' || activeTab === 'kds-kitchen-only' || activeTab === 'order-monitor') ? 'h-[calc(100vh-64px)] lg:h-[calc(100vh-20px)] overflow-hidden flex flex-col p-1' : 'overflow-y-auto max-h-screen p-1'}`}>
           {currentProject === 'PLATFORM' ? (
             <SaaSAdmin 
               activeTab={activeTab}
@@ -4625,86 +4723,88 @@ const App: React.FC = () => {
             />
           ) : (
             <>
-              <header className="flex justify-between items-center mb-4 bg-white p-6 rounded-[2.5rem] border shadow-sm">
-            <div className="flex items-center gap-4">
-              <div>
-                <h2 className="text-[10px] font-black text-indigo-600 uppercase tracking-[0.2em] mb-1">
-                  Painel Lojista Profissional
-                </h2>
-                <h1 className="text-3xl font-black text-slate-800 tracking-tighter flex items-center gap-3">
-                  <span className="text-slate-600">
-                    {activeTab === 'dashboard' ? 'Painel de Controle' : 
-                     activeTab === 'tables' ? 'Mesas e Comandas' :
-                     activeTab === 'kds' ? 'Monitor KDS (Logística)' :
-                     activeTab === 'kds-kitchen-only' ? 'Cozinha (KDS Produção)' :
-                     activeTab === 'order-monitor' ? 'Monitor de Pedidos (TV)' :
-                     activeTab === 'delivery' ? 'Painel de Entregas' :
-                     activeTab === 'digital-menu' ? 'Cardápio Digital' :
-                     activeTab === 'customers' ? 'Gestão de Clientes' :
-                     activeTab === 'inventory' ? 'Controle de Estoque' :
-                     activeTab === 'finance' ? 'Gestão Financeira' :
-                     activeTab === 'merchant-copilot' ? 'Módulo Lojista' :
-                     activeTab === 'ai-cmv' ? 'Assistente de Cardápio' :
-                     activeTab === 'reports' ? 'Relatórios Inteligentes' :
-                     activeTab === 'users' ? 'Gestão de Equipe' :
-                     activeTab === 'saas-admin' ? 'Gestão SaaS' :
-                      activeTab === 'settings' ? 'Configurações do Sistema' : activeTab}
-                  </span>
-                </h1>
-              </div>
-            </div>
-            <div className="flex items-center gap-4">
-               {isSuperAdmin && viewingTenantId && (
-                 <button 
-                   onClick={handleStopViewingTenant}
-                   className="flex items-center gap-2 px-6 py-3 bg-rose-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-rose-200 hover:bg-rose-700 transition-all border-b-4 border-rose-800 active:translate-y-[2px] active:border-b-0 group"
-                 >
-                   <Shield size={16} className="group-hover:rotate-12 transition-transform" />
-                   Sair do Modo de Visualização (Tenant: {viewingTenantName || tenantData?.name || 'Carregando...'})
-                 </button>
-               )}
-               <div 
-                 onClick={() => setIsProfileOpen(true)}
-                 className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center text-white font-black shadow-xl shadow-slate-200 text-sm cursor-pointer hover:bg-slate-800 transition-all hover:scale-105 active:scale-[0.98] overflow-hidden shrink-0"
-                 title="Editar Perfil"
-               >
-                 {currentUserData?.avatar ? (
-                   <img src={currentUserData.avatar} alt={currentUserData.name} className="w-full h-full object-cover animate-fade-in" referrerPolicy="no-referrer" />
-                 ) : (
-                   (viewingTenantName || tenantData?.name || adminSettings.companyName || 'Viva Lá Fome!').substring(0, 2).toUpperCase()
-                 )}
-               </div>
-            </div>
-          </header>
+              {!isKDSOnlyUser && (
+                <header className="flex justify-between items-center mb-4 bg-white p-6 rounded-[2.5rem] border shadow-sm">
+                  <div className="flex items-center gap-4">
+                    <div>
+                      <h2 className="text-[10px] font-black text-indigo-600 uppercase tracking-[0.2em] mb-1">
+                        Painel Lojista Profissional
+                      </h2>
+                      <h1 className="text-3xl font-black text-slate-800 tracking-tighter flex items-center gap-3">
+                        <span className="text-slate-600">
+                          {activeTab === 'dashboard' ? 'Painel de Controle' : 
+                           activeTab === 'tables' ? 'Mesas e Comandas' :
+                           activeTab === 'kds' ? 'Monitor KDS (Logística)' :
+                           activeTab === 'kds-kitchen-only' ? 'Cozinha (KDS Produção)' :
+                           activeTab === 'order-monitor' ? 'Monitor de Pedidos (TV)' :
+                           activeTab === 'delivery' ? 'Painel de Entregas' :
+                           activeTab === 'digital-menu' ? 'Cardápio Digital' :
+                           activeTab === 'customers' ? 'Gestão de Clientes' :
+                           activeTab === 'inventory' ? 'Controle de Estoque' :
+                           activeTab === 'finance' ? 'Gestão Financeira' :
+                           activeTab === 'merchant-copilot' ? 'Módulo Lojista' :
+                           activeTab === 'ai-cmv' ? 'Assistente de Cardápio' :
+                           activeTab === 'reports' ? 'Relatórios Inteligentes' :
+                           activeTab === 'users' ? 'Gestão de Equipe' :
+                           activeTab === 'saas-admin' ? 'Gestão SaaS' :
+                            activeTab === 'settings' ? 'Configurações do Sistema' : activeTab}
+                        </span>
+                      </h1>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4">
+                     {isSuperAdmin && viewingTenantId && (
+                       <button 
+                         onClick={handleStopViewingTenant}
+                         className="flex items-center gap-2 px-6 py-3 bg-rose-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-rose-200 hover:bg-rose-700 transition-all border-b-4 border-rose-800 active:translate-y-[2px] active:border-b-0 group"
+                       >
+                         <Shield size={16} className="group-hover:rotate-12 transition-transform" />
+                         Sair do Modo de Visualização (Tenant: {viewingTenantName || tenantData?.name || 'Carregando...'})
+                       </button>
+                     )}
+                     <div 
+                       onClick={() => setIsProfileOpen(true)}
+                       className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center text-white font-black shadow-xl shadow-slate-200 text-sm cursor-pointer hover:bg-slate-800 transition-all hover:scale-105 active:scale-[0.98] overflow-hidden shrink-0"
+                       title="Editar Perfil"
+                     >
+                       {currentUserData?.avatar ? (
+                         <img src={currentUserData.avatar} alt={currentUserData.name} className="w-full h-full object-cover animate-fade-in" referrerPolicy="no-referrer" />
+                       ) : (
+                         (viewingTenantName || tenantData?.name || adminSettings.companyName || 'Viva Lá Fome!').substring(0, 2).toUpperCase()
+                       )}
+                     </div>
+                  </div>
+                </header>
+              )}
 
-          {quotaExceeded && (
-            <div className="mb-4 bg-rose-50 border-2 border-rose-100 p-4 rounded-2xl flex items-center gap-4 animate-pulse">
-              <div className="w-10 h-10 bg-rose-500 rounded-xl flex items-center justify-center text-white shrink-0">
-                <AlertTriangle size={20} />
-              </div>
-              <div className="flex-1">
-                <h3 className="text-rose-800 font-black text-xs uppercase tracking-widest">Limite de Sincronização Atingido (Quota)</h3>
-                <p className="text-[10px] text-rose-600 font-bold leading-tight">
-                  O Firebase atingiu o limite gratuito de leituras para hoje. O sistema está operando com dados locais salvos.
-                  Novos dados da rede podem não aparecer até que o limite seja resetado automaticamente (geralmente à meia-noite).
-                </p>
-              </div>
-              <button 
-                onClick={() => window.location.reload()}
-                className="px-3 py-1 bg-rose-500 text-white rounded-lg font-black text-[8px] uppercase tracking-widest hover:bg-rose-600 transition-colors shrink-0"
-              >
-                Tentar Recarregar
-              </button>
-              <button 
-                onClick={() => setQuotaExceeded(false)}
-                className="p-2 text-rose-400 hover:text-rose-600 transition-colors"
-              >
-                <X size={16} />
-              </button>
-            </div>
-          )}
+              {quotaExceeded && (
+                <div className="mb-4 bg-rose-50 border-2 border-rose-100 p-4 rounded-2xl flex items-center gap-4 animate-pulse">
+                  <div className="w-10 h-10 bg-rose-500 rounded-xl flex items-center justify-center text-white shrink-0">
+                    <AlertTriangle size={20} />
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="text-rose-800 font-black text-xs uppercase tracking-widest">Limite de Sincronização Atingido (Quota)</h3>
+                    <p className="text-[10px] text-rose-600 font-bold leading-tight">
+                      O Firebase atingiu o limite gratuito de leituras para hoje. O sistema está operando com dados locais salvos.
+                      Novos dados da rede podem não aparecer até que o limite seja resetado automaticamente (geralmente à meia-noite).
+                    </p>
+                  </div>
+                  <button 
+                    onClick={() => window.location.reload()}
+                    className="px-3 py-1 bg-rose-500 text-white rounded-lg font-black text-[8px] uppercase tracking-widest hover:bg-rose-600 transition-colors shrink-0"
+                  >
+                    Tentar Recarregar
+                  </button>
+                  <button 
+                    onClick={() => setQuotaExceeded(false)}
+                    className="p-2 text-rose-400 hover:text-rose-600 transition-colors"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              )}
 
-          <div className={`p-4 md:p-6 custom-scrollbar flex-1 flex flex-col ${(activeTab === 'kds' || activeTab === 'kds-kitchen-only' || activeTab === 'order-monitor') ? 'min-h-0 overflow-hidden pb-4' : 'pb-20'}`}>
+              <div className={isKDSOnlyUser ? "flex-1 flex flex-col min-h-0 overflow-hidden" : `p-4 md:p-6 custom-scrollbar flex-1 flex flex-col ${(activeTab === 'kds' || activeTab === 'kds-kitchen-only' || activeTab === 'order-monitor') ? 'min-h-0 overflow-hidden pb-4' : 'pb-20'}`}>
             <AnimatePresence mode="wait">
               <motion.div
                 key={activeTab}
@@ -5131,6 +5231,8 @@ const App: React.FC = () => {
             products={products}
             tables={tables}
             onUpdateStatus={handleUpdateOrderStatus}
+            onLogout={handleLogout}
+            showLogoutButton={isKDSOnlyUser}
           />
         )}
         {activeTab === 'order-monitor' && hasPermission('kds_view') && (
