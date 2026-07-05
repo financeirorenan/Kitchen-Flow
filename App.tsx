@@ -438,9 +438,23 @@ const App: React.FC = () => {
 
   const effectiveAllowedModules = isSuperAdmin ? undefined : (tenantData?.customModules || tenantData?.subscription?.allowedModules);
 
+  const getUserPermissions = (userData: User | null): Permission[] => {
+    if (!userData) return [];
+    const isSuper = userData.email?.toLowerCase() === 'financeirorenanuk@gmail.com' || userData.role === 'SAAS_ADMIN';
+    if (isSuper) {
+      return ALL_MODULES.map(m => m.id);
+    }
+    const perms = userData.permissions;
+    if (perms && perms.length > 0) {
+      return perms;
+    }
+    // Fallback to role-based default permissions from our state
+    return (userData.role ? rolePermissions[userData.role] : []) || [];
+  };
+
   const hasPermission = (permission: Permission) => {
     if (isSuperAdmin) return true;
-    return currentUserData?.permissions?.includes(permission) || false;
+    return getUserPermissions(currentUserData).includes(permission);
   };
 
   const [marketplaceProfile, setMarketplaceProfile] = useState<{name: string, phone: string} | null>(null);
@@ -1240,13 +1254,14 @@ const App: React.FC = () => {
         
         // Auto-redirect for specific roles if on a neutral path
         const isNeutralPath = window.location.pathname === '/';
-        const hasKDSKitchenOnly = finalUserData?.permissions?.includes('kds_kitchen_only_view');
+        const finalUserPerms = getUserPermissions(finalUserData);
+        const hasKDSKitchenOnly = finalUserPerms.includes('kds_kitchen_only_view');
         const isKDSOnlyUserLocal = finalUserData && 
           (hasKDSKitchenOnly || finalUserData.role === 'KDS') && 
-          !finalUserData.permissions?.includes('admin_settings_manage') && 
-          !finalUserData.permissions?.includes('finance_view') &&
-          !finalUserData.permissions?.includes('pos_access') &&
-          !finalUserData.permissions?.includes('tables_manage');
+          !finalUserPerms.includes('admin_settings_manage') && 
+          !finalUserPerms.includes('finance_view') &&
+          !finalUserPerms.includes('pos_access') &&
+          !finalUserPerms.includes('tables_manage');
 
         if (isKDSOnlyUserLocal) {
           setActiveTab('kds-kitchen-only');
@@ -1386,12 +1401,13 @@ const App: React.FC = () => {
     if (isSuperAdmin) return;
 
     // Special check for isKDSOnlyUser
-    const hasKDSKitchenOnly = currentUserData.permissions?.includes('kds_kitchen_only_view');
-    const isKDSOnlyUser = hasKDSKitchenOnly && 
-      !currentUserData.permissions?.includes('admin_settings_manage') && 
-      !currentUserData.permissions?.includes('finance_view') &&
-      !currentUserData.permissions?.includes('pos_access') &&
-      !currentUserData.permissions?.includes('tables_manage');
+    const userPerms = getUserPermissions(currentUserData);
+    const hasKDSKitchenOnly = userPerms.includes('kds_kitchen_only_view');
+    const isKDSOnlyUser = (hasKDSKitchenOnly || currentUserData.role === 'KDS') && 
+      !userPerms.includes('admin_settings_manage') && 
+      !userPerms.includes('finance_view') &&
+      !userPerms.includes('pos_access') &&
+      !userPerms.includes('tables_manage');
 
     if (isKDSOnlyUser) {
       if (activeTab !== 'kds-kitchen-only') {
@@ -1418,10 +1434,10 @@ const App: React.FC = () => {
 
     const requiredPermission = tabPermissions[activeTab];
     if (requiredPermission) {
-      const hasDirectPermission = currentUserData.permissions?.includes(requiredPermission as any);
+      const hasDirectPermission = userPerms.includes(requiredPermission as any);
       
       // Special allowance for kds-kitchen-only which can be opened by kds_view too
-      const isAllowedKDSKitchen = activeTab === 'kds-kitchen-only' && currentUserData.permissions?.includes('kds_view');
+      const isAllowedKDSKitchen = activeTab === 'kds-kitchen-only' && userPerms.includes('kds_view');
 
       if (!hasDirectPermission && !isAllowedKDSKitchen) {
         // Active tab is not allowed, redirect to first allowed tab
@@ -1442,9 +1458,9 @@ const App: React.FC = () => {
 
         const firstAllowed = menuTabsOrder.find(m => {
           if (m.tab === 'kds-kitchen-only') {
-            return currentUserData.permissions?.includes('kds_view') || currentUserData.permissions?.includes('kds_kitchen_only_view');
+            return userPerms.includes('kds_view') || userPerms.includes('kds_kitchen_only_view');
           }
-          return currentUserData.permissions?.includes(m.perm as any);
+          return userPerms.includes(m.perm as any);
         });
 
         if (firstAllowed) {
@@ -1454,7 +1470,7 @@ const App: React.FC = () => {
         }
       }
     }
-  }, [currentUserData, activeTab]);
+  }, [currentUserData, activeTab, rolePermissions]);
 
   const handleLogout = async () => {
     if (user) {
@@ -4558,13 +4574,14 @@ const App: React.FC = () => {
     );
   }
 
-  const hasKDSKitchenOnly = currentUserData?.permissions?.includes('kds_kitchen_only_view');
+  const localUserPerms = getUserPermissions(currentUserData);
+  const hasKDSKitchenOnly = localUserPerms.includes('kds_kitchen_only_view');
   const isKDSOnlyUser = !!currentUserData && 
     (hasKDSKitchenOnly || currentUserData.role === 'KDS') && 
-    !currentUserData.permissions?.includes('admin_settings_manage') && 
-    !currentUserData.permissions?.includes('finance_view') &&
-    !currentUserData.permissions?.includes('pos_access') &&
-    !currentUserData.permissions?.includes('tables_manage');
+    !localUserPerms.includes('admin_settings_manage') && 
+    !localUserPerms.includes('finance_view') &&
+    !localUserPerms.includes('pos_access') &&
+    !localUserPerms.includes('tables_manage');
 
   return (
     <div className="flex h-screen max-h-screen w-screen bg-slate-50 relative overflow-hidden">
@@ -4621,7 +4638,7 @@ const App: React.FC = () => {
           <Routes>
             <Route path="/entregador" element={
                user ? (
-                 (currentUserData?.role === 'COURIER' || currentUserData?.permissions?.includes('courier_app_access')) ? (
+                 (currentUserData?.role === 'COURIER' || getUserPermissions(currentUserData).includes('courier_app_access')) ? (
                    <CourierApp currentUser={currentUserData} />
                  ) : (
                    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6 text-center">

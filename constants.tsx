@@ -137,6 +137,11 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<string, Permission[]> = {
   WAITER: ['pos_access', 'tables_manage'],
   CASHIER: ['pos_access', 'delivery_manage'],
   CHEF: ['kds_view', 'inventory_edit'],
+  KDS: ['kds_kitchen_only_view'],
+  COURIER: ['courier_app_access'],
+  OWNER: ['dashboard_view', 'pos_access', 'tables_manage', 'kds_view', 'delivery_manage', 'inventory_edit', 'finance_view', 'cmv_analysis', 'users_manage', 'digital_menu_manage', 'admin_settings_manage', 'fiscal_manage', 'customers_manage'],
+  SAAS_ADMIN: ['dashboard_view', 'pos_access', 'tables_manage', 'kds_view', 'kds_kitchen_only_view', 'delivery_manage', 'inventory_edit', 'finance_view', 'cmv_analysis', 'users_manage', 'digital_menu_manage', 'admin_settings_manage', 'fiscal_manage', 'customers_manage'],
+  CUSTOMER: [],
   STOCK_ANALYST: ['dashboard_view', 'inventory_edit', 'cmv_analysis'],
 };
 
