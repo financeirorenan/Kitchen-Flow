@@ -1202,12 +1202,12 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 acceptedAt: isAutoAccept ? new Date() : undefined,
               });
 
-              // Salvar o pedido no Firestore
-              const orderRef = await addDoc(
-                collection(db, "orders"),
+              // Salvar o pedido no Firestore usando o ID do pedido para consistência absoluta entre todos os painéis (KDS, Admin, etc.)
+              await setDoc(
+                doc(db, "orders", order.id),
                 orderWithTenant,
               );
-              console.log("Pedido salvo com sucesso! ID:", orderRef.id);
+              console.log("Pedido salvo com sucesso! ID:", order.id);
 
               // Persistir cliente na coleção 'customers' do tenant para CRM
               const customerPhone = order.customerPhone || profile?.phone;

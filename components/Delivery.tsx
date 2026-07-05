@@ -5,7 +5,7 @@ import {
   Navigation, CheckCircle2, 
   User as UserIcon, Phone, MapPin, Package,
   ChevronRight, Bike, X, UserCheck, 
-  TrendingUp, Settings, Plus,
+  TrendingUp, Settings, Plus, RefreshCw,
   Save, UserPlus, Wallet, ArrowRightLeft,
   Banknote, QrCode, ClipboardList, Timer, Clock,
   Coins, CreditCard, DollarSign, Calculator, AlertTriangle, Edit3,
@@ -769,7 +769,22 @@ const Delivery: React.FC<DeliveryProps> = memo(({
                                      <p className="text-[6px] text-slate-400 truncate w-24">{order.customerAddress}</p>
                                    </div>
                                 </div>
-                                <button onClick={() => onUpdateStatus(order.id, 'delivered')} className="p-1 bg-emerald-500 text-white rounded-md hover:bg-emerald-600 shadow-sm"><CheckCircle2 size={12} /></button>
+                                 <div className="flex items-center gap-1">
+                                   <button 
+                                     onClick={() => setSelectedOrderId(order.id)} 
+                                     title="Mudar Entregador" 
+                                     className="p-1 bg-amber-500 hover:bg-amber-600 text-white rounded-md shadow-sm transition-all"
+                                   >
+                                     <RefreshCw size={12} />
+                                   </button>
+                                   <button 
+                                     onClick={() => onUpdateStatus(order.id, 'delivered')} 
+                                     title="Marcar como Entregue" 
+                                     className="p-1 bg-emerald-500 hover:bg-emerald-600 text-white rounded-md shadow-sm transition-all"
+                                   >
+                                     <CheckCircle2 size={12} />
+                                   </button>
+                                 </div>
                              </div>
                           ))}
                           {deliveryOrders.filter(o => o.courierId === data.courier.id && o.status === 'delivering').length === 0 && (
@@ -1176,18 +1191,13 @@ const Delivery: React.FC<DeliveryProps> = memo(({
                     <button 
                       key={courier.id} 
                       onClick={() => { onAssignCourier(selectedOrderId, courier.id); setSelectedOrderId(null); }} 
-                      disabled={courier.status === 'offline'}
-                      className={`w-full flex items-center justify-between p-3 rounded-xl border-2 transition-all text-left group ${
-                        courier.status === 'offline' 
-                          ? 'opacity-50 cursor-not-allowed border-slate-50 grayscale' 
-                          : 'border-slate-50 hover:border-indigo-600 hover:bg-indigo-50'
-                      }`}
+                      className="w-full flex items-center justify-between p-3 rounded-xl border-2 border-slate-50 hover:border-indigo-600 hover:bg-indigo-50 transition-all text-left group"
                     >
                      <div className="flex items-center gap-3">
                         <div className="p-2 bg-white shadow-sm border rounded-lg group-hover:bg-indigo-600 group-hover:text-white transition-all"><Bike size={16} /></div>
                         <div>
                           <p className="font-black text-slate-800 text-[10px]">{courier.name}</p>
-                          <p className={`text-[8px] font-black uppercase ${courier.status === 'offline' ? 'text-slate-400' : (isDelivering ? 'Em Rota (Bloqueado)' : (activeOrdersCount > 0 ? `${activeOrdersCount} pedidos aguardando saída` : 'Livre agora'))}`}>
+                          <p className={`text-[8px] font-black uppercase ${courier.status === 'offline' ? 'text-slate-400' : (isDelivering ? 'Em Rota' : (activeOrdersCount > 0 ? `${activeOrdersCount} pedidos aguardando saída` : 'Livre agora'))}`}>
                             {courier.status === 'offline' ? 'Offline' : (isDelivering ? 'Em Rota' : (activeOrdersCount > 0 ? `${activeOrdersCount} aguardando` : 'Livre'))}
                           </p>
                         </div>

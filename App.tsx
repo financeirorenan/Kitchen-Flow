@@ -2572,7 +2572,7 @@ const App: React.FC = () => {
       address: courier.address,
       pixKey: courier.pixKey,
       dailyFee: courier.dailyFee || 0,
-      status: 'offline',
+      status: 'available',
       active: true,
       createdAt: new Date()
     };
@@ -2688,6 +2688,24 @@ const App: React.FC = () => {
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
     const courier = couriers.find(c => c.id === courierId);
     
+    // Check if the order is already assigned to a different courier
+    const existingOrder = orders.find(o => o.id === orderId);
+    const oldCourierId = existingOrder?.courierId;
+    
+    if (oldCourierId && oldCourierId !== courierId) {
+      const otherActiveOrders = orders.filter(o => o.courierId === oldCourierId && o.status === 'delivering' && o.id !== orderId);
+      if (otherActiveOrders.length === 0) {
+        setCouriers(prev => prev.map(c => c.id === oldCourierId ? { ...c, status: 'available' } : c));
+        if (effectiveTenantId) {
+          try {
+            await setDoc(doc(db, 'couriers', oldCourierId), { status: 'available', updatedAt: new Date() }, { merge: true });
+          } catch (e) {
+            console.error("Error reverting old courier status:", e);
+          }
+        }
+      }
+    }
+
     // Calculate route position: check how many orders are already assigned to this courier that are not delivered
     const currentAssignments = orders.filter(o => o.courierId === courierId && !['delivered', 'cancelled'].includes(o.status));
     const routePosition = currentAssignments.length + 1;
@@ -3685,7 +3703,7 @@ const App: React.FC = () => {
             tenantId: newUser.tenantId,
             name: newUser.name,
             phone: '', // Pode ser preenchido depois
-            status: 'offline',
+            status: 'available',
             active: true,
             createdAt: new Date()
           };
