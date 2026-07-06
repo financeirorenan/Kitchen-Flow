@@ -175,6 +175,7 @@ export interface DigitalMenuSettings {
   showStock: boolean;
   bannerUrl: string;
   logoUrl: string;
+  slug?: string; // Slug de URL personalizado para o cardápio digital (ex: vivalafome)
   categoryImages?: Record<string, string>; // Imagens personalizadas para cada categoria
   categoryOrder?: string[]; // Ordem personalizada das categorias
   hiddenCategories?: string[]; // Categorias ocultas no cardápio digital

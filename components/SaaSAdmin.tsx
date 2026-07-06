@@ -1595,7 +1595,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     setPlanDescription(plan.description);
     setPlanPrice(plan.price);
     setPlanMaxUsers(plan.maxUsers);
-    setPlanMaxOrders(plan.maxOrders || 1000);
+    setPlanMaxOrders(plan.maxOrders !== undefined && plan.maxOrders !== null ? plan.maxOrders : 1000);
     setPlanModules(plan.modules);
     setPlanBillingCycle(plan.billingCycle || 'monthly');
     setShowPlanModal(true);

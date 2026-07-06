@@ -119,7 +119,8 @@ export default function LojistaCopilot({
     // Find current plan
     const currentPlan = activePlans.find(p => p.name.toUpperCase() === planName.toUpperCase() || p.id === tenantData.subscription?.planId);
     const basePrice = currentPlan?.price || (planName.toUpperCase() === 'START' ? 149.90 : 249.90);
-    const maxOrders = currentPlan?.maxOrders || (planName.toUpperCase() === 'START' ? 500 : 1000);
+    const maxOrders = (currentPlan?.maxOrders !== undefined && currentPlan?.maxOrders !== null) ? currentPlan.maxOrders : (planName.toUpperCase() === 'START' ? 500 : 1000);
+    const isUnlimited = maxOrders === 0 || maxOrders >= 99999;
     
     // Count orders in current month
     const now = new Date();
@@ -129,7 +130,7 @@ export default function LojistaCopilot({
       return oDate.getMonth() === now.getMonth() && oDate.getFullYear() === now.getFullYear();
     });
     const ordersUsed = currentMonthOrders.length;
-    const isExcedent = ordersUsed > maxOrders;
+    const isExcedent = !isUnlimited && ordersUsed > maxOrders;
     const excedentCount = isExcedent ? ordersUsed - maxOrders : 0;
     
     // Calculate excedent cost
@@ -150,25 +151,27 @@ export default function LojistaCopilot({
     const discountAmount = rawExcedentCost * (discountPercent / 100);
     const finalExcedentCost = rawExcedentCost - discountAmount;
     const totalInvoiceEstimated = basePrice + finalExcedentCost;
-    const percentUsed = maxOrders > 0 ? (ordersUsed / maxOrders) * 100 : 0;
+    const percentUsed = isUnlimited ? 0 : (maxOrders > 0 ? (ordersUsed / maxOrders) * 100 : 0);
     
     // Look for smart upgrade suggestion
     let nextPlan = null;
     let upgradeRecommended = false;
     
-    // Find plans priced higher than current plan, sorted by price ascending
-    const higherPlans = activePlans
-      .filter(p => p.price > basePrice && p.active !== false)
-      .sort((a, b) => a.price - b.price);
-      
-    if (higherPlans.length > 0) {
-      const targetPlan = higherPlans[0];
-      const priceDifference = targetPlan.price - basePrice;
-      const thresholdAmount = priceDifference * 0.70;
-      
-      if (finalExcedentCost >= thresholdAmount) {
-        nextPlan = targetPlan;
-        upgradeRecommended = true;
+    if (!isUnlimited) {
+      // Find plans priced higher than current plan, sorted by price ascending
+      const higherPlans = activePlans
+        .filter(p => p.price > basePrice && p.active !== false)
+        .sort((a, b) => a.price - b.price);
+        
+      if (higherPlans.length > 0) {
+        const targetPlan = higherPlans[0];
+        const priceDifference = targetPlan.price - basePrice;
+        const thresholdAmount = priceDifference * 0.70;
+        
+        if (finalExcedentCost >= thresholdAmount) {
+          nextPlan = targetPlan;
+          upgradeRecommended = true;
+        }
       }
     }
     
@@ -188,7 +191,8 @@ export default function LojistaCopilot({
       finalExcedentCost,
       totalInvoiceEstimated,
       nextPlan,
-      upgradeRecommended
+      upgradeRecommended,
+      isUnlimited
     };
   }, [tenantData, plans, orders, saasConfig]);
   
@@ -1704,22 +1708,24 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
               {/* Progress bar */}
               <div className="space-y-2">
                 <div className="flex justify-between text-xs font-bold text-slate-600">
-                  <span>Franquia Mensal: {subscriptionStats.maxOrders} pedidos inclusos</span>
-                  <span className={subscriptionStats.percentUsed >= 100 ? "text-amber-600 font-black" : "text-indigo-600"}>
-                    {subscriptionStats.ordersUsed} utilizados ({Math.round(subscriptionStats.percentUsed)}%)
+                  <span>Franquia Mensal: {subscriptionStats.isUnlimited ? "Pedidos Ilimitados" : `${subscriptionStats.maxOrders} pedidos inclusos`}</span>
+                  <span className={subscriptionStats.isUnlimited ? "text-indigo-600" : (subscriptionStats.percentUsed >= 100 ? "text-amber-600 font-black" : "text-indigo-600")}>
+                    {subscriptionStats.ordersUsed} utilizados {subscriptionStats.isUnlimited ? "" : `(${Math.round(subscriptionStats.percentUsed)}%)`}
                   </span>
                 </div>
                 <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden border shadow-inner">
                   <motion.div 
                     initial={{ width: 0 }}
-                    animate={{ width: `${Math.min(subscriptionStats.percentUsed, 100)}%` }}
+                    animate={{ width: `${subscriptionStats.isUnlimited ? 100 : Math.min(subscriptionStats.percentUsed, 100)}%` }}
                     transition={{ duration: 0.8, ease: "easeOut" }}
                     className={`h-full rounded-full ${
-                      subscriptionStats.percentUsed >= 100 
-                        ? "bg-rose-500" 
-                        : subscriptionStats.percentUsed >= 80 
-                          ? "bg-amber-500" 
-                          : "bg-indigo-600"
+                      subscriptionStats.isUnlimited
+                        ? "bg-indigo-600"
+                        : subscriptionStats.percentUsed >= 100 
+                          ? "bg-rose-500" 
+                          : subscriptionStats.percentUsed >= 80 
+                            ? "bg-amber-500" 
+                            : "bg-indigo-600"
                     }`}
                   />
                 </div>
@@ -1734,9 +1740,15 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                 <div className="bg-slate-50 p-4 rounded-2xl flex flex-col justify-between relative overflow-hidden">
                   <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Pedidos Excedentes</span>
                   <span className="text-lg font-black text-slate-800 tracking-tight mt-1">
-                    {subscriptionStats.excedentCount} <span className="text-xs text-slate-400 font-bold">pedidos extras</span>
+                    {subscriptionStats.isUnlimited ? (
+                      <span className="text-sm text-indigo-600 font-black uppercase">Ilimitado</span>
+                    ) : (
+                      <>
+                        {subscriptionStats.excedentCount} <span className="text-xs text-slate-400 font-bold">pedidos extras</span>
+                      </>
+                    )}
                   </span>
-                  {subscriptionStats.isExcedent && (
+                  {!subscriptionStats.isUnlimited && subscriptionStats.isExcedent && (
                     <span className="absolute right-3 top-3 text-[9px] font-black text-rose-500 bg-rose-50 px-1.5 py-0.5 rounded uppercase">
                       + R$ {subscriptionStats.rate.toFixed(2)}/un
                     </span>
@@ -1749,9 +1761,9 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                   </span>
                   <div className="flex flex-col mt-1">
                     <span className="text-lg font-black text-indigo-600 tracking-tight">
-                      R$ {subscriptionStats.finalExcedentCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      {subscriptionStats.isUnlimited ? "R$ 0,00" : `R$ ${subscriptionStats.finalExcedentCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
                     </span>
-                    {subscriptionStats.discountPercent > 0 && (
+                    {!subscriptionStats.isUnlimited && subscriptionStats.discountPercent > 0 && (
                       <span className="text-[8px] text-emerald-600 font-extrabold uppercase mt-0.5">
                         {subscriptionStats.discountPercent}% desconto volume aplicado (Economizou R$ {subscriptionStats.discountAmount.toFixed(2)})
                       </span>
