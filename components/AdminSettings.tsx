@@ -1,8 +1,9 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { AdminSettings, BusinessHours, Product, Order, Customer, User, Permission, CardOperator } from '../types';
-import { db } from '../services/db';
+import { AdminSettings, BusinessHours, Product, Order, Customer, User, Permission, CardOperator, Tenant, Plan } from '../types';
+import { db } from '../firebase';
+import { doc, updateDoc } from 'firebase/firestore';
 import { printTestReceipt, pairUSBPrinter } from '../services/printService';
 import FiscalSettings from './FiscalSettings';
 import PartnerHub from './PartnerHub';
@@ -13,7 +14,8 @@ import {
   Smartphone, Code, Webhook, Zap as ZapIcon, FileText, 
   Fingerprint, ShieldAlert, Key, Download, UploadCloud,
   Database, RefreshCw, FileJson, ExternalLink, Monitor, Loader2,
-  Palette, LayoutDashboard, ShoppingBag, Share2, Upload, Camera
+  Palette, LayoutDashboard, ShoppingBag, Share2, Upload, Camera,
+  Award, Sparkles, ArrowRight
 } from 'lucide-react';
 import { maskPhone, maskCPF, maskCNPJ, maskCEP } from '../utils/masks';
 import { compressImage } from '../lib/imageUtils';
@@ -28,6 +30,14 @@ interface AdminSettingsProps {
   customers?: Customer[];
   currentUser?: User | null;
   onClearSalesAndFinance?: () => Promise<void>;
+  tenantData?: Tenant | null;
+  plans?: Plan[];
+  saasConfig?: {
+    excedentOrderPrice: number;
+    maxExtraOrdersLimit: number;
+    enableExtraOrdersLimit: boolean;
+    volumeDiscounts: { threshold: number; discountPercent: number }[];
+  } | null;
 }
 
 const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({ 
@@ -39,9 +49,12 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
   orders = [],
   customers = [],
   currentUser,
-  onClearSalesAndFinance
+  onClearSalesAndFinance,
+  tenantData = null,
+  plans = [],
+  saasConfig = null
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'general' | 'branding' | 'orders' | 'hours' | 'print' | 'api' | 'fiscal' | 'database' | 'marketplace' | 'payment_methods' | 'lgpd'>('general');
+  const [activeSubTab, setActiveSubTab] = useState<'general' | 'branding' | 'orders' | 'hours' | 'print' | 'api' | 'fiscal' | 'database' | 'marketplace' | 'payment_methods' | 'lgpd' | 'subscription'>('general');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success'>('idle');
   const [showImportConfirm, setShowImportConfirm] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -49,6 +62,92 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
   const [importJson, setImportJson] = useState<string | null>(null);
   const [importStatus, setImportStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Subscription / usage details calculation
+  const subscriptionStats = useMemo(() => {
+    if (!tenantData) return null;
+    const planName = tenantData.subscription?.plan || 'START';
+    const activePlans = plans || [];
+    
+    // Find current plan
+    const currentPlan = activePlans.find(p => p.name.toUpperCase() === planName.toUpperCase() || p.id === tenantData.subscription?.planId);
+    const basePrice = currentPlan?.price || (planName.toUpperCase() === 'START' ? 149.90 : 249.90);
+    const maxOrders = (currentPlan?.maxOrders !== undefined && currentPlan?.maxOrders !== null) ? currentPlan.maxOrders : (planName.toUpperCase() === 'START' ? 500 : 1000);
+    const isUnlimited = maxOrders === 0 || maxOrders >= 99999;
+    
+    // Count orders in current month
+    const now = new Date();
+    const currentMonthOrders = orders.filter(o => {
+      if (!o.createdAt) return false;
+      const oDate = o.createdAt instanceof Date ? o.createdAt : (o.createdAt.toDate ? o.createdAt.toDate() : new Date(o.createdAt));
+      return oDate.getMonth() === now.getMonth() && oDate.getFullYear() === now.getFullYear();
+    });
+    const ordersUsed = currentMonthOrders.length;
+    const isExcedent = !isUnlimited && ordersUsed > maxOrders;
+    const excedentCount = isExcedent ? ordersUsed - maxOrders : 0;
+    
+    // Calculate excedent cost
+    const rate = saasConfig?.excedentOrderPrice !== undefined ? saasConfig.excedentOrderPrice : 0.20;
+    let rawExcedentCost = excedentCount * rate;
+    
+    // Apply volume discounts
+    let discountPercent = 0;
+    const discounts = saasConfig?.volumeDiscounts || [];
+    const activeDiscountTier = [...discounts]
+      .sort((a, b) => b.threshold - a.threshold) // sort desc to get the highest matched threshold
+      .find(tier => excedentCount >= tier.threshold);
+      
+    if (activeDiscountTier) {
+      discountPercent = activeDiscountTier.discountPercent;
+    }
+    
+    const discountAmount = rawExcedentCost * (discountPercent / 100);
+    const finalExcedentCost = rawExcedentCost - discountAmount;
+    const totalInvoiceEstimated = basePrice + finalExcedentCost;
+    const percentUsed = isUnlimited ? 0 : (maxOrders > 0 ? (ordersUsed / maxOrders) * 100 : 0);
+    
+    // Look for smart upgrade suggestion (only if not already unlimited)
+    let nextPlan = null;
+    let upgradeRecommended = false;
+    
+    if (!isUnlimited) {
+      // Find plans priced higher than current plan, sorted by price ascending
+      const higherPlans = activePlans
+        .filter(p => p.price > basePrice && p.active !== false)
+        .sort((a, b) => a.price - b.price);
+        
+      if (higherPlans.length > 0) {
+        const targetPlan = higherPlans[0];
+        const priceDifference = targetPlan.price - basePrice;
+        const thresholdAmount = priceDifference * 0.70;
+        
+        if (finalExcedentCost >= thresholdAmount) {
+          nextPlan = targetPlan;
+          upgradeRecommended = true;
+        }
+      }
+    }
+    
+    return {
+      planName,
+      currentPlan,
+      basePrice,
+      maxOrders,
+      ordersUsed,
+      percentUsed,
+      isExcedent,
+      excedentCount,
+      rate,
+      rawExcedentCost,
+      discountPercent,
+      discountAmount,
+      finalExcedentCost,
+      totalInvoiceEstimated,
+      nextPlan,
+      upgradeRecommended,
+      isUnlimited
+    };
+  }, [tenantData, plans, orders, saasConfig]);
 
   const [isSearchingCep, setIsSearchingCep] = useState(false);
   const [pairedDeviceName, setPairedDeviceName] = useState<string>(localStorage.getItem('paired_usb_name') || '');
@@ -205,6 +304,7 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
           { id: 'marketplace', label: 'Master Hub / Mktplace', icon: Share2, hidden: !allowedModules.includes('marketplace_manage') },
           { id: 'database', label: 'Banco de Dados', icon: Database },
           { id: 'lgpd', label: 'Segurança & LGPD', icon: Fingerprint },
+          { id: 'subscription', label: 'Plano & Assinatura', icon: Award },
         ].filter(t => !t.hidden).map(tab => (
           <button
             key={tab.id}
@@ -1382,6 +1482,192 @@ wss.on('connection', ws => {
               </div>
             </div>
           )}
+          {activeSubTab === 'subscription' && (
+            <div className="space-y-4 animate-in slide-in-from-right-4 duration-300">
+              <div className="flex items-center gap-2 border-b pb-2">
+                 <div className="bg-indigo-50 p-2 rounded-lg text-indigo-600">
+                    <Award size={16} />
+                 </div>
+                 <div>
+                    <h2 className="text-sm font-black text-slate-800">Plano e Assinatura Ativa</h2>
+                    <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Acompanhe seu consumo mensal e altere seu plano de assinatura</p>
+                 </div>
+              </div>
+
+              {subscriptionStats ? (
+                <div className="space-y-4">
+                  {/* Consumption alert if any */}
+                  {!subscriptionStats.isUnlimited && subscriptionStats.percentUsed >= 100 && (
+                     <div className="p-3 bg-amber-500 text-white rounded-xl text-[10px] font-bold flex items-center gap-2">
+                       <AlertCircle size={16} />
+                       Você ultrapassou a franquia de pedidos inclusos. Pedidos extras são cobrados em R$ {subscriptionStats.rate.toFixed(2)} por unidade.
+                     </div>
+                  )}
+
+                  {/* Consumed / Total Progress Card */}
+                  <div className="bg-slate-50 p-4 rounded-2xl border space-y-4">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <span className="text-[7px] font-black uppercase tracking-widest bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
+                          Plano Ativo: {subscriptionStats.planName}
+                        </span>
+                        <p className="text-xs font-black text-slate-800 mt-1">Franquia de Pedidos do Mês</p>
+                      </div>
+                      <span className="text-xs font-bold text-slate-600">
+                        {subscriptionStats.ordersUsed} / {subscriptionStats.isUnlimited ? "Ilimitado" : `${subscriptionStats.maxOrders} pedidos`}
+                      </span>
+                    </div>
+
+                    <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+                      <div 
+                        className={`h-full rounded-full transition-all duration-500 ${
+                          subscriptionStats.isUnlimited
+                            ? "bg-indigo-600"
+                            : subscriptionStats.percentUsed >= 100 
+                              ? "bg-rose-500" 
+                              : subscriptionStats.percentUsed >= 80 
+                                ? "bg-amber-500" 
+                                : "bg-indigo-600"
+                        }`}
+                        style={{ width: `${subscriptionStats.isUnlimited ? 100 : Math.min(subscriptionStats.percentUsed, 100)}%` }}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-center">
+                      <div className="bg-white p-2.5 rounded-xl border">
+                        <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Preço Base Mensal</p>
+                        <p className="text-sm font-black text-slate-800 mt-0.5">R$ {subscriptionStats.basePrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                      </div>
+                      <div className="bg-white p-2.5 rounded-xl border">
+                        <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Pedidos Adicionais</p>
+                        <p className="text-sm font-black text-slate-800 mt-0.5">
+                          {subscriptionStats.isUnlimited ? "Incluso" : `+${subscriptionStats.excedentCount} (R$ ${subscriptionStats.rate.toFixed(2)}/un)`}
+                        </p>
+                      </div>
+                      <div className="bg-white p-2.5 rounded-xl border border-indigo-100">
+                        <p className="text-[7px] font-black text-indigo-600 uppercase tracking-widest">Adicional Estimado</p>
+                        <p className="text-sm font-black text-indigo-600 mt-0.5">R$ {subscriptionStats.finalExcedentCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                      </div>
+                    </div>
+
+                    <div className="p-3 bg-white rounded-xl flex justify-between items-center text-[10px] border">
+                      <span className="font-bold text-slate-600">Cobrança Total Estimada para Próximo Ciclo:</span>
+                      <span className="font-black text-indigo-700 text-sm">R$ {subscriptionStats.totalInvoiceEstimated.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                  </div>
+
+                  {/* SMART UPGRADE BANNER */}
+                  {subscriptionStats.upgradeRecommended && subscriptionStats.nextPlan && (
+                    <div className="p-4 bg-emerald-600 text-white rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-1">
+                          <Sparkles size={14} className="text-amber-300" />
+                          <p className="font-black text-xs uppercase tracking-tight">Upgrade Recomendado</p>
+                        </div>
+                        <p className="text-[9px] opacity-90 leading-tight font-medium max-w-xl">
+                          Migrar para o plano <span className="font-extrabold">{subscriptionStats.nextPlan.name}</span> aumentará sua franquia mensal para <span className="font-extrabold">{subscriptionStats.nextPlan.maxOrders} pedidos</span> e eliminará os custos extras acumulados de R$ {subscriptionStats.finalExcedentCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}.
+                        </p>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const tenantId = tenantData.id;
+                            await updateDoc(doc(db, 'tenants', tenantId), {
+                              'subscription.plan': subscriptionStats.nextPlan.name,
+                              'subscription.planId': subscriptionStats.nextPlan.id
+                            });
+                            alert(`Upgrade realizado para o plano ${subscriptionStats.nextPlan.name} com sucesso!`);
+                          } catch (err) {
+                            console.error("Erro ao realizar upgrade:", err);
+                            alert("Não foi possível realizar o upgrade.");
+                          }
+                        }}
+                        className="px-3 py-1.5 bg-white text-emerald-700 hover:bg-slate-50 font-black text-[8px] uppercase tracking-wider rounded-lg transition-all shadow shrink-0 self-end sm:self-center cursor-pointer"
+                      >
+                        Fazer Upgrade
+                      </button>
+                    </div>
+                  )}
+
+                  {/* List of plans available for subscription */}
+                  <div className="space-y-2 pt-2">
+                    <h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Planos Disponíveis</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      {(plans || []).filter(p => p.active !== false).map(p => {
+                        const isCurrent = p.name.toUpperCase() === subscriptionStats.planName.toUpperCase() || p.id === tenantData.subscription?.planId;
+                        return (
+                          <div 
+                            key={p.id} 
+                            className={`p-4 rounded-2xl border transition-all flex flex-col justify-between ${
+                              isCurrent 
+                                ? 'bg-indigo-50/50 border-2 border-indigo-500 shadow-md shadow-indigo-100' 
+                                : 'bg-white hover:border-slate-300'
+                            }`}
+                          >
+                            <div className="space-y-1">
+                              <div className="flex justify-between items-start">
+                                <h4 className="font-black text-xs text-slate-800">{p.name}</h4>
+                                {isCurrent && (
+                                  <span className="bg-indigo-600 text-white text-[7px] font-extrabold uppercase tracking-widest px-1.5 py-0.5 rounded">
+                                    Ativo
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[10px] text-slate-400 font-bold">
+                                {p.maxOrders === 0 || p.maxOrders >= 99999 ? "Pedidos Ilimitados" : `${p.maxOrders || 500} pedidos / mês`}
+                              </p>
+                              {p.features && p.features.length > 0 && (
+                                <ul className="text-[8px] text-slate-500 font-medium space-y-0.5 mt-1 list-disc pl-3">
+                                  {p.features.slice(0, 3).map((f: string, i: number) => (
+                                    <li key={i}>{f}</li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+
+                            <div className="mt-4 pt-2 border-t flex items-center justify-between">
+                              <div>
+                                <span className="text-xs font-black text-slate-800">R$ {p.price.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                <span className="text-[8px] text-slate-400 font-bold"> /mês</span>
+                              </div>
+                              
+                              {!isCurrent && (
+                                <button
+                                  onClick={async () => {
+                                    if (confirm(`Deseja alterar seu plano de assinatura para ${p.name}?`)) {
+                                      try {
+                                        const tenantId = tenantData.id;
+                                        await updateDoc(doc(db, 'tenants', tenantId), {
+                                          'subscription.plan': p.name,
+                                          'subscription.planId': p.id
+                                        });
+                                        alert(`Plano de assinatura alterado para ${p.name} com sucesso!`);
+                                      } catch (err) {
+                                        console.error("Erro ao alterar assinatura:", err);
+                                        alert("Não foi possível alterar a assinatura.");
+                                      }
+                                    }
+                                  }}
+                                  className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-black text-[8px] uppercase tracking-wider transition-all cursor-pointer"
+                                >
+                                  Mudar
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center p-6 text-slate-400 text-xs font-bold">
+                  Carregando dados da assinatura...
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Outras abas permanecem com seus formulários... */}
         </div>
 

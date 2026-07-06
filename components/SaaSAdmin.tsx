@@ -283,7 +283,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'tenants' | 'plans' | 'financial' | 'support' | 'leads' | 'team' | 'marketplace_config' | 'suppliers'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'tenants' | 'plans' | 'financial' | 'support' | 'leads' | 'team' | 'marketplace_config' | 'suppliers' | 'subscription_rules'>('dashboard');
 
   // Commerce Categories States
   const [commerceCategories, setCommerceCategories] = useState<any[]>([]);
@@ -1002,7 +1002,21 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         }
       }
     });
-    return () => unsub();
+
+    const unsubSaas = onSnapshot(doc(db, 'settings', 'saas_config'), (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        if (data.excedentOrderPrice !== undefined) setSaasExcedentPrice(data.excedentOrderPrice);
+        if (data.maxExtraOrdersLimit !== undefined) setSaasMaxExtraOrders(data.maxExtraOrdersLimit);
+        if (data.enableExtraOrdersLimit !== undefined) setSaasEnableExtraLimit(data.enableExtraOrdersLimit);
+        if (data.volumeDiscounts !== undefined) setSaasVolumeDiscounts(data.volumeDiscounts);
+      }
+    });
+
+    return () => {
+      unsub();
+      unsubSaas();
+    };
   }, []);
 
   const handleSaveMarketplaceConfig = async () => {
@@ -1256,7 +1270,20 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   const [planDescription, setPlanDescription] = useState('');
   const [planPrice, setPlanPrice] = useState(0);
   const [planMaxUsers, setPlanMaxUsers] = useState(5);
+  const [planMaxOrders, setPlanMaxOrders] = useState(1000);
   const [planModules, setPlanModules] = useState<Permission[]>(['dashboard_view']);
+
+  // --- STATE FOR GLOBAL SAAS SUBSCRIPTION RULES ---
+  const [saasExcedentPrice, setSaasExcedentPrice] = useState(0.20);
+  const [saasMaxExtraOrders, setSaasMaxExtraOrders] = useState(1000);
+  const [saasEnableExtraLimit, setSaasEnableExtraLimit] = useState(false);
+  const [saasVolumeDiscounts, setSaasVolumeDiscounts] = useState<{ threshold: number; discountPercent: number }[]>([
+    { threshold: 500, discountPercent: 10 },
+    { threshold: 1000, discountPercent: 20 }
+  ]);
+  // Tiers inputs
+  const [newTierThreshold, setNewTierThreshold] = useState<number | ''>('');
+  const [newTierDiscount, setNewTierDiscount] = useState<number | ''>('');
 
   // Tenant Form states
   const [name, setName] = useState('');
@@ -1331,7 +1358,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
       features: [],
       modules: planModules,
       maxUsers: planMaxUsers,
-      maxOrders: 1000,
+      maxOrders: planMaxOrders,
       billingCycle: planBillingCycle,
       active: true
     };
@@ -1351,6 +1378,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     setPlanDescription('');
     setPlanPrice(0);
     setPlanMaxUsers(5);
+    setPlanMaxOrders(1000);
     setPlanModules(['dashboard_view']);
     setPlanBillingCycle('monthly');
   };
@@ -1567,6 +1595,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     setPlanDescription(plan.description);
     setPlanPrice(plan.price);
     setPlanMaxUsers(plan.maxUsers);
+    setPlanMaxOrders(plan.maxOrders || 1000);
     setPlanModules(plan.modules);
     setPlanBillingCycle(plan.billingCycle || 'monthly');
     setShowPlanModal(true);
@@ -1703,9 +1732,6 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     if (renewPeriod === 'monthly') {
       billingMonths = 1;
       computedExpiryDate.setMonth(computedExpiryDate.getMonth() + 1);
-    } else if (renewPeriod === 'quarterly') {
-      billingMonths = 3;
-      computedExpiryDate.setMonth(computedExpiryDate.getMonth() + 3);
     } else if (renewPeriod === 'semiannual') {
       billingMonths = 6;
       computedExpiryDate.setMonth(computedExpiryDate.getMonth() + 6);
@@ -1719,7 +1745,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     if (renewPeriod !== 'custom') {
       const selectedPlan = plans.find(p => p.id === renewingTenant.planId) || plans.find(p => p.name === renewingTenant.subscription.plan);
       const basePrice = selectedPlan ? selectedPlan.price : 99;
-      const discounts = { monthly: 0, quarterly: 0.05, semiannual: 0.10, yearly: 0.20 };
+      const discounts = { monthly: 0, semiannual: 0.05, yearly: 0.10 };
       const discount = discounts[renewPeriod as keyof typeof discounts] || 0;
       finalPrice = basePrice * billingMonths * (1 - discount);
     }
@@ -1740,7 +1766,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
           tenantName: renewingTenant.name,
           planName: renewingTenant.subscription.plan,
           period: renewPeriod,
-          priceBeforeDiscount: renewPeriod === 'custom' ? finalPrice : (finalPrice / (1 - (renewPeriod === 'monthly' ? 0 : renewPeriod === 'quarterly' ? 0.05 : renewPeriod === 'semiannual' ? 0.10 : 0.20))),
+          priceBeforeDiscount: renewPeriod === 'custom' ? finalPrice : (finalPrice / (1 - (renewPeriod === 'monthly' ? 0 : renewPeriod === 'semiannual' ? 0.05 : 0.10))),
           amountPaid: finalPrice,
           paymentMethod: renewPaymentMethod,
           createdAt: new Date(),
@@ -1769,6 +1795,11 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   };
 
+  const getTenantBillingCycle = (t: Tenant) => {
+    const pObj = plans.find(p => p.id === t.planId) || plans.find(p => p.name === t.subscription?.plan);
+    return pObj ? pObj.billingCycle : (((t.subscription as any)?.billingCycle) || 'monthly');
+  };
+
   const filteredTenants = tenants.filter(t => {
     const matchesSearch = t.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                           t.ownerId.toLowerCase().includes(searchTerm.toLowerCase());
@@ -1776,22 +1807,22 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     if (!matchesSearch) return false;
     
     const days = getDaysRemaining(t.subscription?.expiryDate);
+    const isMonthly = getTenantBillingCycle(t) === 'monthly';
     
     if (tenantFilter === 'active') {
-      return t.active && days >= 0;
+      return t.active && (days >= 0 || isMonthly);
     }
     if (tenantFilter === 'expiring') {
-      return t.active && days >= 0 && days <= 7;
+      return t.active && days >= 0 && days <= 7 && !isMonthly;
     }
     if (tenantFilter === 'expired') {
-      return !t.active || days < 0;
+      return (!t.active || days < 0) && !isMonthly;
     }
     return true;
   });
 
   const monthlyTenants = tenants.filter(t => {
-    const pObj = plans.find(p => p.id === t.planId) || plans.find(p => p.name === t.subscription?.plan);
-    const billingCycle = pObj ? pObj.billingCycle : (((t.subscription as any)?.billingCycle) || 'monthly');
+    const billingCycle = getTenantBillingCycle(t);
     return t.active && billingCycle === 'monthly';
   });
   const valorReceberMensalPlanos = monthlyTenants.reduce((acc, t) => {
@@ -1806,6 +1837,8 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
 
   const expiredTenantsList = tenants.filter(t => {
     if (t.subscription?.plan === 'FREE') return false;
+    const isMonthly = getTenantBillingCycle(t) === 'monthly';
+    if (isMonthly) return false;
     const days = getDaysRemaining(t.subscription?.expiryDate);
     return days < 0;
   });
@@ -1875,6 +1908,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
             {activeTab === 'tenants' ? 'Gestão de Clientes' : 
              activeTab === 'plans' ? 'Planos e Preços' :
              activeTab === 'financial' ? 'Financeiro da Plataforma' :
+             activeTab === 'subscription_rules' ? 'Regras de Assinatura' :
              'Dashboard da Plataforma'}
           </h1>
         </div>
@@ -1884,6 +1918,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
               { id: 'dashboard', label: 'Dashboard' },
               { id: 'tenants', label: 'Clientes' },
               { id: 'plans', label: 'Planos' },
+              { id: 'subscription_rules', label: 'Regras SaaS' },
               { id: 'financial', label: 'Financeiro' },
               { id: 'leads', label: 'Leads' },
               { id: 'support', label: 'Suporte' },
@@ -2899,9 +2934,9 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
           <div className="flex flex-wrap items-center gap-2">
             {[
               { id: 'all', label: 'Todos', count: tenants.length },
-              { id: 'active', label: 'Ativos', count: tenants.filter(t => t.active && getDaysRemaining(t.subscription?.expiryDate) >= 0).length },
-              { id: 'expiring', label: 'Expira em Breve', count: tenants.filter(t => t.active && getDaysRemaining(t.subscription?.expiryDate) >= 0 && getDaysRemaining(t.subscription?.expiryDate) <= 7).length },
-              { id: 'expired', label: 'Inativos/Expirados', count: tenants.filter(t => !t.active || getDaysRemaining(t.subscription?.expiryDate) < 0).length }
+              { id: 'active', label: 'Ativos', count: tenants.filter(t => t.active && (getDaysRemaining(t.subscription?.expiryDate) >= 0 || getTenantBillingCycle(t) === 'monthly')).length },
+              { id: 'expiring', label: 'Expira em Breve', count: tenants.filter(t => t.active && getDaysRemaining(t.subscription?.expiryDate) >= 0 && getDaysRemaining(t.subscription?.expiryDate) <= 7 && getTenantBillingCycle(t) !== 'monthly').length },
+              { id: 'expired', label: 'Inativos/Expirados', count: tenants.filter(t => (!t.active || getDaysRemaining(t.subscription?.expiryDate) < 0) && getTenantBillingCycle(t) !== 'monthly').length }
             ].map(f => (
               <button
                 key={f.id}
@@ -2964,13 +2999,20 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                   <td className="px-6 py-4">
                     {(() => {
                       const days = getDaysRemaining(tenant.subscription.expiryDate);
-                      if (!tenant.active || days < 0) {
+                      const isMonthly = getTenantBillingCycle(tenant) === 'monthly';
+                      if ((!tenant.active || days < 0) && !isMonthly) {
                         return (
                           <span className="px-2.5 py-1 bg-rose-50 text-rose-600 rounded-lg border border-rose-100 text-[8px] font-black uppercase tracking-widest inline-flex items-center gap-1">
                             <XCircle size={10} /> Expirado
                           </span>
                         );
-                      } else if (days <= 7) {
+                      } else if (isMonthly && days < 0) {
+                        return (
+                          <span className="px-2.5 py-1 bg-teal-50 text-teal-600 rounded-lg border border-teal-100 text-[8px] font-black uppercase tracking-widest inline-flex items-center gap-1">
+                            <CheckCircle2 size={10} /> Recorrente Ativo
+                          </span>
+                        );
+                      } else if (days <= 7 && !isMonthly) {
                         return (
                           <span className="px-2.5 py-1 bg-amber-50 text-amber-600 rounded-lg border border-amber-100 text-[8px] font-black uppercase tracking-widest inline-flex items-center gap-1 animate-pulse">
                             <AlertTriangle size={10} /> Expira Breve
@@ -2988,19 +3030,22 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                   <td className="px-6 py-4">
                     {(() => {
                       const days = getDaysRemaining(tenant.subscription.expiryDate);
+                      const isMonthly = getTenantBillingCycle(tenant) === 'monthly';
                       return (
                         <div className="space-y-0.5">
                           <p className="text-xs font-black text-slate-700 font-mono">
                             {new Date(tenant.subscription.expiryDate).toLocaleDateString('pt-BR')}
                           </p>
                           <p className={`text-[9px] font-bold uppercase tracking-wider ${
-                            days < 0 ? 'text-rose-500' :
+                            days < 0 ? (isMonthly ? 'text-teal-600' : 'text-rose-500') :
                             days === 0 ? 'text-rose-600 font-black animate-pulse' :
                             days <= 7 ? 'text-amber-500 font-black' :
                             'text-slate-400'
                           }`}>
                             {days < 0 
-                              ? `Vencido há ${Math.abs(days)} ${Math.abs(days) === 1 ? 'dia' : 'dias'}` 
+                              ? (isMonthly 
+                                ? `Recorrente (Próx. ciclo ativo)` 
+                                : `Vencido há ${Math.abs(days)} ${Math.abs(days) === 1 ? 'dia' : 'dias'}`)
                               : days === 0 
                               ? 'Vence Hoje!' 
                               : days === 1 
@@ -4203,6 +4248,158 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
               </div>
            </div>
         </div>
+      ) : activeTab === 'subscription_rules' ? (
+        <div className="space-y-6 animate-in slide-in-from-right-4 duration-500">
+           <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden">
+              <div className="p-8 border-b border-slate-50 flex justify-between items-center bg-slate-900 text-white">
+                 <div>
+                   <h3 className="text-lg font-black tracking-tighter">Regras Globais de Assinatura</h3>
+                   <p className="text-[10px] font-black opacity-60 uppercase tracking-widest mt-1">Defina preços de excedentes, franquias e descontos de volume</p>
+                 </div>
+                 <button 
+                   onClick={async () => {
+                     try {
+                       await setDoc(doc(db, 'settings', 'saas_config'), {
+                         excedentOrderPrice: saasExcedentPrice,
+                         maxExtraOrdersLimit: saasMaxExtraOrders,
+                         enableExtraOrdersLimit: saasEnableExtraLimit,
+                         volumeDiscounts: saasVolumeDiscounts
+                       });
+                       alert("Configurações de Assinatura salvas com sucesso!");
+                     } catch (err) {
+                       console.error("Erro ao salvar regras de assinatura:", err);
+                       alert("Erro ao salvar.");
+                     }
+                   }}
+                   className="px-6 py-3 bg-emerald-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-500 transition-all shadow-xl shadow-emerald-900/20"
+                 >
+                   <Save size={16} className="inline mr-2" />
+                   Salvar Regras
+                 </button>
+              </div>
+              
+              <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
+                 <div className="space-y-6">
+                    <div className="space-y-2">
+                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Valor por Pedido Excedente (R$)</label>
+                       <input 
+                         type="number" 
+                         step="0.01"
+                         className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-600 transition-all" 
+                         value={saasExcedentPrice}
+                         onChange={(e) => setSaasExcedentPrice(Number(e.target.value))}
+                       />
+                       <p className="text-[9px] text-slate-400 font-medium">Este valor será cobrado por cada pedido que ultrapassar a franquia do plano na próxima renovação.</p>
+                    </div>
+
+                    <div className="space-y-4 p-5 bg-slate-50 rounded-[1.8rem] border border-slate-100/85">
+                       <div className="flex items-center justify-between">
+                          <div className="pr-4">
+                            <span className="text-[10px] font-black text-slate-700 uppercase tracking-widest block">Limitar Pedidos Extras (Segurança)</span>
+                            <span className="text-[8.5px] text-slate-400 font-medium block mt-0.5">Defina uma quantidade máxima de pedidos adicionais que o restaurante pode registrar antes que necessite de moderação manual (opcional).</span>
+                          </div>
+                          <input 
+                            type="checkbox" 
+                            className="w-5 h-5 accent-indigo-600 rounded-lg cursor-pointer shrink-0"
+                            checked={saasEnableExtraLimit}
+                            onChange={(e) => setSaasEnableExtraLimit(e.target.checked)}
+                          />
+                       </div>
+                       
+                       {saasEnableExtraLimit && (
+                          <div className="space-y-2 animate-in slide-in-from-top-2 duration-250 pt-2 border-t border-slate-200/50">
+                             <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Quantidade Máxima de Pedidos Extras</label>
+                             <input 
+                               type="number" 
+                               className="w-full p-3.5 bg-white border-2 border-slate-100 rounded-xl font-bold text-xs outline-none focus:border-indigo-600 transition-all" 
+                               value={saasMaxExtraOrders}
+                               onChange={(e) => setSaasMaxExtraOrders(Number(e.target.value))}
+                             />
+                          </div>
+                       )}
+                    </div>
+                 </div>
+
+                 <div className="space-y-6">
+                    <div className="bg-slate-50/50 p-6 rounded-[2rem] border border-slate-155 space-y-4">
+                       <div className="flex justify-between items-center">
+                          <div>
+                             <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">Descontos para Grandes Volumes</h4>
+                             <p className="text-[9px] text-slate-400 font-medium mt-0.5">Defina faixas de descontos percentuais para incentivar o uso excedente em alta escala.</p>
+                          </div>
+                       </div>
+
+                       <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar">
+                          {saasVolumeDiscounts.length > 0 ? (
+                             saasVolumeDiscounts.map((discount, idx) => (
+                                <div key={idx} className="flex justify-between items-center p-3.5 bg-white border rounded-xl shadow-sm text-xs">
+                                   <div className="font-bold text-slate-700">
+                                      A partir de <span className="text-indigo-600 font-black">{discount.threshold}</span> pedidos extras
+                                   </div>
+                                   <div className="flex items-center gap-3">
+                                      <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 rounded-lg text-[10px] font-extrabold">
+                                         -{discount.discountPercent}% desc.
+                                      </span>
+                                      <button 
+                                        type="button"
+                                        onClick={() => {
+                                          setSaasVolumeDiscounts(saasVolumeDiscounts.filter((_, i) => i !== idx));
+                                        }}
+                                        className="text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-rose-50 transition-all"
+                                      >
+                                         <Trash2 size={14} />
+                                      </button>
+                                   </div>
+                                </div>
+                             ))
+                          ) : (
+                             <p className="text-[10px] text-slate-400 font-bold uppercase text-center py-4">Nenhum desconto cadastrado.</p>
+                          )}
+                       </div>
+
+                       <div className="grid grid-cols-2 gap-3.5 pt-4 border-t border-slate-150">
+                          <div className="space-y-1">
+                             <label className="text-[9px] font-black text-slate-400 uppercase">A partir de (Qtd)</label>
+                             <input 
+                               type="number" 
+                               placeholder="Ex: 500"
+                               className="w-full p-3 bg-white border rounded-xl font-bold text-xs outline-none focus:border-indigo-500"
+                               value={newTierThreshold}
+                               onChange={(e) => setNewTierThreshold(e.target.value === '' ? '' : Number(e.target.value))}
+                             />
+                          </div>
+                          <div className="space-y-1">
+                             <label className="text-[9px] font-black text-slate-400 uppercase">Desconto (%)</label>
+                             <div className="relative">
+                                <input 
+                                  type="number" 
+                                  placeholder="Ex: 15"
+                                  className="w-full p-3 bg-white border rounded-xl font-bold text-xs outline-none focus:border-indigo-500 pr-8"
+                                  value={newTierDiscount}
+                                  onChange={(e) => setNewTierDiscount(e.target.value === '' ? '' : Number(e.target.value))}
+                                />
+                                <span className="absolute right-3 top-3 text-xs font-black text-slate-400">%</span>
+                             </div>
+                          </div>
+                       </div>
+                       
+                       <button 
+                         type="button"
+                         onClick={() => {
+                           if (newTierThreshold === '' || newTierDiscount === '') return;
+                           setSaasVolumeDiscounts([...saasVolumeDiscounts, { threshold: Number(newTierThreshold), discountPercent: Number(newTierDiscount) }].sort((a,b) => a.threshold - b.threshold));
+                           setNewTierThreshold('');
+                           setNewTierDiscount('');
+                         }}
+                         className="w-full py-3 bg-slate-800 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-900 transition-all"
+                       >
+                          Adicionar Faixa de Desconto
+                       </button>
+                    </div>
+                 </div>
+              </div>
+           </div>
+        </div>
       ) : activeTab === 'suppliers' ? (
         <div className="space-y-6 animate-in slide-in-from-right-4 duration-500">
           {/* Top Info Cards / KPI Row */}
@@ -5190,10 +5387,20 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                     required
                   >
                     <option value="monthly">Mensal</option>
-                    <option value="quarterly">Trimestral (A cada 3 meses)</option>
                     <option value="semiannual">Semestral (A cada 6 meses)</option>
                     <option value="yearly">Anual (A cada 12 meses)</option>
                   </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Franquia de Pedidos (Mensal)</label>
+                  <input 
+                    type="number" 
+                    required
+                    className="w-full px-4 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold outline-none focus:border-indigo-500 transition-all"
+                    value={planMaxOrders}
+                    onChange={(e) => setPlanMaxOrders(Number(e.target.value))}
+                  />
+                  <p className="text-[9px] text-slate-400 font-bold ml-1">Defina como 0 (zero) para configurar pedidos ILIMITADOS neste plano.</p>
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Descrição</label>
@@ -5274,9 +5481,8 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                 <div className="grid grid-cols-2 gap-2">
                   {[
                     { id: 'monthly', label: 'Mensal', desc: 'Preço cheio' },
-                    { id: 'quarterly', label: 'Trimestral', desc: '5% de desconto' },
-                    { id: 'semiannual', label: 'Semestral', desc: '10% de desconto' },
-                    { id: 'yearly', label: 'Anual', desc: '20% de economia' },
+                    { id: 'semiannual', label: 'Semestral', desc: '5% de desconto' },
+                    { id: 'yearly', label: 'Anual', desc: '10% de desconto' },
                     { id: 'custom', label: 'Personalizado', desc: 'Definir data/valor' }
                   ].map(p => (
                     <button
@@ -5327,8 +5533,8 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                       R$ {(() => {
                         const sPlan = plans.find(p => p.id === renewingTenant.planId) || plans.find(p => p.name === renewingTenant.subscription.plan);
                         const basePrice = sPlan ? sPlan.price : 99;
-                        const mul = renewPeriod === 'monthly' ? 1 : renewPeriod === 'quarterly' ? 3 : renewPeriod === 'semiannual' ? 6 : 12;
-                        const disc = renewPeriod === 'monthly' ? 0 : renewPeriod === 'quarterly' ? 0.05 : renewPeriod === 'semiannual' ? 0.10 : 0.20;
+                        const mul = renewPeriod === 'monthly' ? 1 : renewPeriod === 'semiannual' ? 6 : 12;
+                        const disc = renewPeriod === 'monthly' ? 0 : renewPeriod === 'semiannual' ? 0.05 : 0.10;
                         return (basePrice * mul * (1 - disc)).toFixed(2);
                       })()}
                     </p>
@@ -5336,7 +5542,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                   <div className="text-right">
                     <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Custo por Ciclo</p>
                     <span className="px-2 py-1 bg-emerald-100 text-emerald-700 text-[8px] font-black rounded-lg uppercase tracking-wider">
-                      {renewPeriod === 'monthly' ? 'Normal' : renewPeriod === 'quarterly' ? '5% OFF' : renewPeriod === 'semiannual' ? '10% OFF' : '20% OFF'}
+                      {renewPeriod === 'monthly' ? 'Normal' : renewPeriod === 'semiannual' ? '5% OFF' : renewPeriod === 'yearly' ? '10% OFF' : 'Personalizado'}
                     </span>
                   </div>
                 </div>
@@ -5357,8 +5563,6 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                       }
                       if (renewPeriod === 'monthly') {
                         currentExpiry.setMonth(currentExpiry.getMonth() + 1);
-                      } else if (renewPeriod === 'quarterly') {
-                        currentExpiry.setMonth(currentExpiry.getMonth() + 3);
                       } else if (renewPeriod === 'semiannual') {
                         currentExpiry.setMonth(currentExpiry.getMonth() + 6);
                       } else if (renewPeriod === 'yearly') {

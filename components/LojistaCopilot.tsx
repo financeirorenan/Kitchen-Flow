@@ -1,6 +1,8 @@
 import React, { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Order, Product, FinancialRecord, AdminSettings, RawMaterial } from "../types";
+import { Order, Product, FinancialRecord, AdminSettings, RawMaterial, Tenant, Plan } from "../types";
+import { db } from "../firebase";
+import { doc, updateDoc } from "firebase/firestore";
 import {
   TrendingUp,
   TrendingDown,
@@ -82,6 +84,14 @@ interface LojistaCopilotProps {
   rawMaterials: RawMaterial[];
   onUpdateProduct: (product: Product) => void;
   onNavigateToInventory: () => void;
+  tenantData?: Tenant | null;
+  plans?: Plan[];
+  saasConfig?: {
+    excedentOrderPrice: number;
+    maxExtraOrdersLimit: number;
+    enableExtraOrdersLimit: boolean;
+    volumeDiscounts: { threshold: number; discountPercent: number }[];
+  } | null;
 }
 
 type PeriodType = "today" | "last7" | "thisMonth" | "lastMonth";
@@ -93,9 +103,94 @@ export default function LojistaCopilot({
   adminSettings,
   rawMaterials = [],
   onUpdateProduct,
-  onNavigateToInventory
+  onNavigateToInventory,
+  tenantData = null,
+  plans = [],
+  saasConfig = null
 }: LojistaCopilotProps) {
   const [selectedPeriod, setSelectedPeriod] = useState<PeriodType>("thisMonth");
+
+  // Subscription / usage details calculation
+  const subscriptionStats = useMemo(() => {
+    if (!tenantData) return null;
+    const planName = tenantData.subscription?.plan || 'START';
+    const activePlans = plans || [];
+    
+    // Find current plan
+    const currentPlan = activePlans.find(p => p.name.toUpperCase() === planName.toUpperCase() || p.id === tenantData.subscription?.planId);
+    const basePrice = currentPlan?.price || (planName.toUpperCase() === 'START' ? 149.90 : 249.90);
+    const maxOrders = currentPlan?.maxOrders || (planName.toUpperCase() === 'START' ? 500 : 1000);
+    
+    // Count orders in current month
+    const now = new Date();
+    const currentMonthOrders = orders.filter(o => {
+      if (!o.createdAt) return false;
+      const oDate = o.createdAt instanceof Date ? o.createdAt : (o.createdAt.toDate ? o.createdAt.toDate() : new Date(o.createdAt));
+      return oDate.getMonth() === now.getMonth() && oDate.getFullYear() === now.getFullYear();
+    });
+    const ordersUsed = currentMonthOrders.length;
+    const isExcedent = ordersUsed > maxOrders;
+    const excedentCount = isExcedent ? ordersUsed - maxOrders : 0;
+    
+    // Calculate excedent cost
+    const rate = saasConfig?.excedentOrderPrice !== undefined ? saasConfig.excedentOrderPrice : 0.20;
+    let rawExcedentCost = excedentCount * rate;
+    
+    // Apply volume discounts
+    let discountPercent = 0;
+    const discounts = saasConfig?.volumeDiscounts || [];
+    const activeDiscountTier = [...discounts]
+      .sort((a, b) => b.threshold - a.threshold) // sort desc to get the highest matched threshold
+      .find(tier => excedentCount >= tier.threshold);
+      
+    if (activeDiscountTier) {
+      discountPercent = activeDiscountTier.discountPercent;
+    }
+    
+    const discountAmount = rawExcedentCost * (discountPercent / 100);
+    const finalExcedentCost = rawExcedentCost - discountAmount;
+    const totalInvoiceEstimated = basePrice + finalExcedentCost;
+    const percentUsed = maxOrders > 0 ? (ordersUsed / maxOrders) * 100 : 0;
+    
+    // Look for smart upgrade suggestion
+    let nextPlan = null;
+    let upgradeRecommended = false;
+    
+    // Find plans priced higher than current plan, sorted by price ascending
+    const higherPlans = activePlans
+      .filter(p => p.price > basePrice && p.active !== false)
+      .sort((a, b) => a.price - b.price);
+      
+    if (higherPlans.length > 0) {
+      const targetPlan = higherPlans[0];
+      const priceDifference = targetPlan.price - basePrice;
+      const thresholdAmount = priceDifference * 0.70;
+      
+      if (finalExcedentCost >= thresholdAmount) {
+        nextPlan = targetPlan;
+        upgradeRecommended = true;
+      }
+    }
+    
+    return {
+      planName,
+      currentPlan,
+      basePrice,
+      maxOrders,
+      ordersUsed,
+      percentUsed,
+      isExcedent,
+      excedentCount,
+      rate,
+      rawExcedentCost,
+      discountPercent,
+      discountAmount,
+      finalExcedentCost,
+      totalInvoiceEstimated,
+      nextPlan,
+      upgradeRecommended
+    };
+  }, [tenantData, plans, orders, saasConfig]);
   
   interface FixedCostItem {
     id: string;
@@ -1577,6 +1672,141 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
             rawMaterials={rawMaterials}
             onNavigateToInventory={onNavigateToInventory} 
           />
+
+          {/* Card de Assinatura e Consumo de Pedidos */}
+          {subscriptionStats && (
+            <div className="bg-white p-6 rounded-3xl border shadow-sm space-y-6">
+              <div className="flex items-center justify-between flex-wrap gap-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                    <Award size={16} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-slate-800 tracking-tight flex items-center gap-2">
+                      Assinatura e Consumo de Pedidos
+                    </h3>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Acompanhamento de franquia mensal em tempo real</p>
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-2">
+                  <span className="bg-indigo-50 text-indigo-700 text-[10px] font-extrabold uppercase tracking-widest px-3 py-1 rounded-full">
+                    Plano {subscriptionStats.planName}
+                  </span>
+                  {subscriptionStats.percentUsed >= 100 && (
+                    <span className="bg-rose-50 text-rose-700 text-[10px] font-extrabold uppercase tracking-widest px-3 py-1 rounded-full animate-pulse">
+                      Excedente Ativo
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Progress bar */}
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs font-bold text-slate-600">
+                  <span>Franquia Mensal: {subscriptionStats.maxOrders} pedidos inclusos</span>
+                  <span className={subscriptionStats.percentUsed >= 100 ? "text-amber-600 font-black" : "text-indigo-600"}>
+                    {subscriptionStats.ordersUsed} utilizados ({Math.round(subscriptionStats.percentUsed)}%)
+                  </span>
+                </div>
+                <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden border shadow-inner">
+                  <motion.div 
+                    initial={{ width: 0 }}
+                    animate={{ width: `${Math.min(subscriptionStats.percentUsed, 100)}%` }}
+                    transition={{ duration: 0.8, ease: "easeOut" }}
+                    className={`h-full rounded-full ${
+                      subscriptionStats.percentUsed >= 100 
+                        ? "bg-rose-500" 
+                        : subscriptionStats.percentUsed >= 80 
+                          ? "bg-amber-500" 
+                          : "bg-indigo-600"
+                    }`}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+                <div className="bg-slate-50 p-4 rounded-2xl flex flex-col justify-between">
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Valor Base do Plano</span>
+                  <span className="text-lg font-black text-slate-800 tracking-tight mt-1">R$ {subscriptionStats.basePrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                </div>
+                
+                <div className="bg-slate-50 p-4 rounded-2xl flex flex-col justify-between relative overflow-hidden">
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Pedidos Excedentes</span>
+                  <span className="text-lg font-black text-slate-800 tracking-tight mt-1">
+                    {subscriptionStats.excedentCount} <span className="text-xs text-slate-400 font-bold">pedidos extras</span>
+                  </span>
+                  {subscriptionStats.isExcedent && (
+                    <span className="absolute right-3 top-3 text-[9px] font-black text-rose-500 bg-rose-50 px-1.5 py-0.5 rounded uppercase">
+                      + R$ {subscriptionStats.rate.toFixed(2)}/un
+                    </span>
+                  )}
+                </div>
+
+                <div className="bg-slate-50 p-4 rounded-2xl flex flex-col justify-between border-2 border-indigo-50">
+                  <span className="text-[9px] font-black text-indigo-600 uppercase tracking-widest flex items-center gap-1">
+                    <Sparkles size={10} /> Adicional Estimado
+                  </span>
+                  <div className="flex flex-col mt-1">
+                    <span className="text-lg font-black text-indigo-600 tracking-tight">
+                      R$ {subscriptionStats.finalExcedentCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </span>
+                    {subscriptionStats.discountPercent > 0 && (
+                      <span className="text-[8px] text-emerald-600 font-extrabold uppercase mt-0.5">
+                        {subscriptionStats.discountPercent}% desconto volume aplicado (Economizou R$ {subscriptionStats.discountAmount.toFixed(2)})
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Total predicted block */}
+              <div className="p-4 bg-indigo-50/50 rounded-2xl flex justify-between items-center text-xs border border-indigo-100">
+                <div className="text-slate-600 font-bold">
+                  Total Estimado para Próxima Fatura (Base + Excedentes):
+                </div>
+                <div className="text-indigo-700 font-black text-lg">
+                  R$ {subscriptionStats.totalInvoiceEstimated.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </div>
+              </div>
+
+              {/* SMART UPGRADE SUGGESTION */}
+              {subscriptionStats.upgradeRecommended && subscriptionStats.nextPlan && (
+                <div className="p-5 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-[1.8rem] shadow-lg shadow-emerald-500/10 space-y-4">
+                  <div className="flex items-start gap-3">
+                    <Sparkles className="shrink-0 text-amber-300 mt-1" size={20} />
+                    <div className="space-y-1">
+                      <p className="font-black text-sm tracking-tight">Upgrade Inteligente Recomendado</p>
+                      <p className="text-[11px] opacity-90 font-medium leading-relaxed">
+                        Seus custos adicionais com pedidos excedentes atingiram R$ {subscriptionStats.finalExcedentCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}. 
+                        Migrar para o plano <span className="font-extrabold text-amber-200">{subscriptionStats.nextPlan.name}</span> por apenas <span className="font-extrabold text-amber-200">R$ {subscriptionStats.nextPlan.price.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span> aumentará sua franquia mensal para <span className="font-extrabold text-amber-200">{subscriptionStats.nextPlan.maxOrders} pedidos</span> e eliminará as cobranças de excedente atuais!
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <button 
+                    onClick={async () => {
+                      try {
+                        const tenantId = tenantData.id;
+                        await updateDoc(doc(db, 'tenants', tenantId), {
+                          'subscription.plan': subscriptionStats.nextPlan.name,
+                          'subscription.planId': subscriptionStats.nextPlan.id
+                        });
+                        alert(`Parabéns! Seu plano foi atualizado para ${subscriptionStats.nextPlan.name} com sucesso!`);
+                      } catch (error) {
+                        console.error("Erro ao efetuar upgrade automático:", error);
+                        alert("Não foi possível efetuar o upgrade automático.");
+                      }
+                    }}
+                    className="w-full py-3 bg-white text-emerald-700 hover:bg-emerald-50 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-md cursor-pointer"
+                  >
+                    Efetuar Upgrade para {subscriptionStats.nextPlan.name} Agora
+                    <ArrowRight size={14} />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             <div className="lg:col-span-8 space-y-6">

@@ -357,6 +357,21 @@ const App: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [rolePermissions, setRolePermissions] = useState<Record<UserRole, Permission[]>>(INITIAL_ROLE_PERMISSIONS as Record<UserRole, Permission[]>);
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [saasConfig, setSaasConfig] = useState<{
+    excedentOrderPrice: number;
+    maxExtraOrdersLimit: number;
+    enableExtraOrdersLimit: boolean;
+    volumeDiscounts: { threshold: number; discountPercent: number }[];
+  }>({
+    excedentOrderPrice: 0.20,
+    maxExtraOrdersLimit: 1000,
+    enableExtraOrdersLimit: false,
+    volumeDiscounts: [
+      { threshold: 500, discountPercent: 10 },
+      { threshold: 1000, discountPercent: 20 }
+    ]
+  });
   const [globalDeliveryFee, setGlobalDeliveryFee] = useState(7.00);
   const [financialRecords, setFinancialRecords] = useState<FinancialRecord[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -379,6 +394,36 @@ const App: React.FC = () => {
       return null;
     }
   });
+  const [subWarningDismissed, setSubWarningDismissed] = useState(false);
+
+  // Subscription alerts calculation
+  const subStats = useMemo(() => {
+    if (!tenantData) return null;
+    const planName = tenantData.subscription?.plan || 'START';
+    const plan = plans.find(p => p.name.toUpperCase() === planName.toUpperCase() || p.id === tenantData.subscription?.planId);
+    
+    // Default franchise is 500 if START, or look up from plan
+    const maxOrders = (plan?.maxOrders !== undefined && plan?.maxOrders !== null) ? plan.maxOrders : (planName.toUpperCase() === 'START' ? 500 : 1000);
+    const isUnlimited = maxOrders === 0 || maxOrders >= 99999;
+    
+    // Count of completed/registered orders in current month
+    const now = new Date();
+    const currentMonthOrders = orders.filter(o => {
+      if (!o.createdAt) return false;
+      const oDate = o.createdAt instanceof Date ? o.createdAt : (o.createdAt.toDate ? o.createdAt.toDate() : new Date(o.createdAt));
+      return oDate.getMonth() === now.getMonth() && oDate.getFullYear() === now.getFullYear();
+    });
+    const ordersUsed = currentMonthOrders.length;
+    const percentUsed = isUnlimited ? 0 : (maxOrders > 0 ? (ordersUsed / maxOrders) * 100 : 0);
+    
+    return {
+      planName,
+      maxOrders,
+      ordersUsed,
+      percentUsed,
+      isUnlimited
+    };
+  }, [tenantData, plans, orders]);
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [currentProject, setCurrentProject] = useState<'PLATFORM' | 'RESTAURANT' | 'MARKETPLACE' | 'COURIER' | 'WEBSITE'>(() => {
     const path = typeof window !== 'undefined' ? window.location.pathname : '/';
@@ -968,6 +1013,29 @@ const App: React.FC = () => {
       });
     });
 
+    const plansUnsub = onSnapshot(collection(db, 'plans'), (snapshot) => {
+      const loadedPlans: Plan[] = [];
+      snapshot.forEach((doc) => {
+        loadedPlans.push({ id: doc.id, ...doc.data() } as Plan);
+      });
+      setPlans(loadedPlans);
+    });
+
+    const saasConfigUnsub = onSnapshot(doc(db, 'settings', 'saas_config'), (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        setSaasConfig({
+          excedentOrderPrice: data.excedentOrderPrice !== undefined ? data.excedentOrderPrice : 0.20,
+          maxExtraOrdersLimit: data.maxExtraOrdersLimit !== undefined ? data.maxExtraOrdersLimit : 1000,
+          enableExtraOrdersLimit: data.enableExtraOrdersLimit !== undefined ? data.enableExtraOrdersLimit : false,
+          volumeDiscounts: data.volumeDiscounts !== undefined ? data.volumeDiscounts : [
+            { threshold: 500, discountPercent: 10 },
+            { threshold: 1000, discountPercent: 20 }
+          ]
+        });
+      }
+    });
+
     const settingsUnsub = onSnapshot(doc(db, 'settings', effectiveTenantId), (snapshot) => {
       if (snapshot.exists()) {
         const rawData = snapshot.data();
@@ -1077,6 +1145,8 @@ const App: React.FC = () => {
       unsubscribes.forEach(unsub => unsub());
       settingsUnsub();
       tenantUnsub();
+      plansUnsub();
+      saasConfigUnsub();
     };
   }, [currentUserData?.tenantId, viewingTenantId, isSuperAdmin]);
 
@@ -4769,6 +4839,53 @@ const App: React.FC = () => {
             />
           ) : (
             <>
+              {/* Alertas de Consumo de Assinatura */}
+              {subStats && currentProject === 'RESTAURANT' && !subWarningDismissed && !subStats.isUnlimited && (
+                <div className="mb-4 animate-in slide-in-from-top-4 duration-300">
+                  {subStats.percentUsed >= 100 ? (
+                    <div className="bg-amber-500 border border-amber-600 text-white px-6 py-4 rounded-[1.8rem] shadow-lg flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                      <div className="flex items-center gap-3">
+                        <AlertTriangle size={20} className="shrink-0 text-white" />
+                        <div>
+                          <p className="font-black text-xs tracking-tight uppercase">Franquia de Pedidos Atingida ({subStats.ordersUsed} / {subStats.maxOrders})</p>
+                          <p className="text-[10px] opacity-95 font-semibold mt-0.5 leading-relaxed">Você atingiu o limite de pedidos do seu plano. O KitchenFlowAI nunca bloqueia suas vendas: os pedidos adicionais continuam funcionando normalmente e serão cobrados na próxima renovação.</p>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => setSubWarningDismissed(true)} 
+                        className="px-4 py-2 bg-white/20 hover:bg-white/30 text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all self-end sm:self-center shrink-0"
+                      >
+                        Entendido
+                      </button>
+                    </div>
+                  ) : subStats.percentUsed >= 80 ? (
+                    <div className="bg-amber-50 border border-amber-200 text-amber-800 px-6 py-4 rounded-[1.8rem] shadow-md flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                      <div className="flex items-center gap-3">
+                        <AlertTriangle size={20} className="shrink-0 text-amber-600" />
+                        <div>
+                          <p className="font-black text-xs tracking-tight uppercase">Aviso de Franquia de Pedidos ({subStats.ordersUsed} / {subStats.maxOrders} - {Math.round(subStats.percentUsed)}%)</p>
+                          <p className="text-[10px] text-amber-700 font-semibold mt-0.5 leading-relaxed">Você utilizou mais de 80% dos pedidos inclusos no seu plano. Para evitar custos adicionais por pedidos extras, você pode fazer upgrade para um plano maior a qualquer momento.</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                        <button 
+                          onClick={() => setActiveTab('settings')} 
+                          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all"
+                        >
+                          Ver Planos
+                        </button>
+                        <button 
+                          onClick={() => setSubWarningDismissed(true)} 
+                          className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all"
+                        >
+                          Fechar
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+
               {!isKDSOnlyUser && (
                 <header className="flex justify-between items-center mb-4 bg-white p-6 rounded-[2.5rem] border shadow-sm">
                   <div className="flex items-center gap-4">
@@ -5231,6 +5348,9 @@ const App: React.FC = () => {
             rawMaterials={rawMaterials}
             onUpdateProduct={handleUpdateProduct}
             onNavigateToInventory={() => setActiveTab('inventory')}
+            tenantData={tenantData}
+            plans={plans}
+            saasConfig={saasConfig}
           />
         )}
         {activeTab === 'users' && hasPermission('users_manage') && (
@@ -5338,6 +5458,9 @@ const App: React.FC = () => {
             customers={customers}
             currentUser={currentUserData}
             onClearSalesAndFinance={handleClearSalesAndFinance}
+            tenantData={tenantData}
+            plans={plans}
+            saasConfig={saasConfig}
           />
         )}
               </motion.div>
