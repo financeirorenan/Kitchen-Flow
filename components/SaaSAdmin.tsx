@@ -315,6 +315,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   const [showLeadModal, setShowLeadModal] = useState(false);
   const [showSupportModal, setShowSupportModal] = useState(false);
   const [showSaaSUserModal, setShowSaaSUserModal] = useState(false);
+  const [editingSaaSUser, setEditingSaaSUser] = useState<User | null>(null);
   const [selectedSaasPermissions, setSelectedSaasPermissions] = useState<Permission[]>(SAAS_ADMIN_MODULES.map(m => m.id));
   const [promoTenantSearch, setPromoTenantSearch] = useState('');
 
@@ -1103,43 +1104,76 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
       console.error("Error creating tenant user:", error);
     }
   };
-  const handleCreateSaaSUser = async (e: React.FormEvent) => {
+  const handleSaveSaaSUser = async (e: React.FormEvent) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget as HTMLFormElement);
     const email = (formData.get('email') as string).trim().toLowerCase();
     const name = formData.get('name') as string;
-    const password = generateStrongRandomPassword();
+    const password = (formData.get('password') as string || '').trim();
 
     setEmailError(null);
 
     try {
-      const q = query(collection(db, 'users'), where('email', '==', email));
-      const snap = await getDocs(q);
-      
-      const qCourier = query(collection(db, 'couriers'), where('email', '==', email));
-      const snapCourier = await getDocs(qCourier);
-      
-      if (!snap.empty || !snapCourier.empty) {
-        setEmailError("Este e-mail de acesso já está cadastrado no sistema!");
-        return;
-      }
+      if (editingSaaSUser) {
+        // Modo Edição
+        if (email !== editingSaaSUser.email) {
+          const q = query(collection(db, 'users'), where('email', '==', email));
+          const snap = await getDocs(q);
+          const qCourier = query(collection(db, 'couriers'), where('email', '==', email));
+          const snapCourier = await getDocs(qCourier);
+          
+          if (!snap.empty || !snapCourier.empty) {
+            setEmailError("Este e-mail de acesso já está cadastrado no sistema!");
+            return;
+          }
+        }
 
-      await addDoc(collection(db, 'users'), {
-        email,
-        name,
-        role: 'SAAS_ADMIN',
-        permissions: selectedSaasPermissions,
-        password,
-        createdAt: new Date(),
-        active: true
-      });
-      
-      setGeneratedUser({ email, password });
-      setShowSaaSUserModal(false);
-      setShowUserGenModal(true);
-      setSelectedSaasPermissions(SAAS_ADMIN_MODULES.map(m => m.id));
+        const updateData: any = {
+          email,
+          name,
+          permissions: selectedSaasPermissions,
+          updatedAt: new Date()
+        };
+
+        if (password) {
+          updateData.password = password;
+        }
+
+        await updateDoc(doc(db, 'users', editingSaaSUser.id), updateData);
+        
+        setShowSaaSUserModal(false);
+        setEditingSaaSUser(null);
+      } else {
+        // Modo Criação
+        const q = query(collection(db, 'users'), where('email', '==', email));
+        const snap = await getDocs(q);
+        const qCourier = query(collection(db, 'couriers'), where('email', '==', email));
+        const snapCourier = await getDocs(qCourier);
+        
+        if (!snap.empty || !snapCourier.empty) {
+          setEmailError("Este e-mail de acesso já está cadastrado no sistema!");
+          return;
+        }
+
+        const finalPassword = password || generateStrongRandomPassword();
+
+        await addDoc(collection(db, 'users'), {
+          email,
+          name,
+          role: 'SAAS_ADMIN',
+          permissions: selectedSaasPermissions,
+          password: finalPassword,
+          createdAt: new Date(),
+          active: true
+        });
+        
+        setGeneratedUser({ email, password: finalPassword });
+        setShowSaaSUserModal(false);
+        setShowUserGenModal(true);
+        setSelectedSaasPermissions(SAAS_ADMIN_MODULES.map(m => m.id));
+      }
     } catch (error) {
-      console.error("Error creating SaaS user:", error);
+      console.error("Error saving SaaS user:", error);
     }
   };
 
@@ -3332,7 +3366,18 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                            <td className="px-6 py-4 text-[10px] text-slate-400 font-medium">
                               {u.lastAccess ? new Date(u.lastAccess).toLocaleString() : 'Nunca'}
                            </td>
-                           <td className="px-6 py-4 text-right">
+                           <td className="px-6 py-4 text-right flex items-center justify-end gap-1">
+                              <button 
+                                onClick={() => {
+                                  setEditingSaaSUser(u);
+                                  setSelectedSaasPermissions(u.permissions || []);
+                                  setShowSaaSUserModal(true);
+                                }}
+                                className="p-2 text-slate-300 hover:text-indigo-600 transition-all"
+                                title="Editar Membro"
+                              >
+                                <Edit3 size={16} />
+                              </button>
                               <button 
                                 onClick={() => {
                                   setShowConfirmModal(true);
@@ -4769,12 +4814,16 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
           <div className="bg-white w-full max-w-xl rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
              <div className="p-8 border-b border-slate-50 flex justify-between items-center bg-slate-900 text-white">
                 <div>
-                   <h2 className="text-xl font-black tracking-tighter">Novo Membro Equipe SaaS</h2>
-                   <p className="text-[10px] font-black opacity-60 uppercase tracking-widest mt-1">Defina permissões específicas de acesso</p>
+                   <h2 className="text-xl font-black tracking-tighter">
+                     {editingSaaSUser ? 'Editar Membro Equipe SaaS' : 'Novo Membro Equipe SaaS'}
+                   </h2>
+                   <p className="text-[10px] font-black opacity-60 uppercase tracking-widest mt-1">
+                     {editingSaaSUser ? 'Atualize as informações e permissões' : 'Defina permissões específicas de acesso'}
+                   </p>
                 </div>
-                <button onClick={() => setShowSaaSUserModal(false)} className="p-2 text-white/50 hover:text-white transition-all"><X size={20} /></button>
+                <button onClick={() => { setShowSaaSUserModal(false); setEditingSaaSUser(null); }} className="p-2 text-white/50 hover:text-white transition-all"><X size={20} /></button>
              </div>
-             <form onSubmit={handleCreateSaaSUser} className="p-8 space-y-6">
+             <form onSubmit={handleSaveSaaSUser} className="p-8 space-y-6">
                 {emailError && (
                    <div className="bg-rose-50 border-2 border-rose-100 text-rose-600 p-4 rounded-xl text-xs font-bold text-center">
                       {emailError}
@@ -4783,12 +4832,25 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome Completo</label>
-                     <input required name="name" type="text" className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-500 transition-all" placeholder="Ex: Admin KitchenFlow AI" />
+                     <input required name="name" type="text" defaultValue={editingSaaSUser?.name || ''} className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-500 transition-all" placeholder="Ex: Admin KitchenFlow AI" />
                   </div>
                   <div className="space-y-1">
                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">E-mail de Acesso</label>
-                     <input required name="email" type="email" className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-600 transition-all" placeholder="admin@kitchenflowai.com" />
+                     <input required name="email" type="email" defaultValue={editingSaaSUser?.email || ''} className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-600 transition-all" placeholder="admin@kitchenflowai.com" />
                   </div>
+                </div>
+
+                <div className="space-y-1">
+                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                     Senha de Acesso {editingSaaSUser && <span className="text-slate-400 text-[8px] lowercase font-normal">(deixe em branco para manter a atual)</span>}
+                   </label>
+                   <input 
+                     name="password" 
+                     type="text" 
+                     required={!editingSaaSUser}
+                     className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-600 transition-all" 
+                     placeholder={editingSaaSUser ? "•••••••• (Opcional)" : "Digite uma senha ou deixe em branco para gerar automática"} 
+                   />
                 </div>
 
                 <div className="space-y-3">
@@ -4819,7 +4881,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                 </div>
 
                 <button type="submit" className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl hover:bg-slate-800 transition-all mt-4">
-                   Gerar Credenciais de Acesso
+                   {editingSaaSUser ? 'Salvar Alterações' : 'Gerar Credenciais de Acesso'}
                 </button>
              </form>
           </div>
