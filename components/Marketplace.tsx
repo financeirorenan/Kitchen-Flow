@@ -1168,11 +1168,15 @@ const Marketplace: React.FC<MarketplaceProps> = ({
           minOrderValue={storeAdminSettings?.minOrderValue}
           estimatedDeliveryTime={storeAdminSettings?.estimatedDeliveryTime}
           estimatedPickupTime={storeAdminSettings?.estimatedPickupTime}
-          onBack={() => {
-            setSelectedTenant(null);
-            navigate("/marketplace");
-          }}
-          isMarketplace={true}
+          onBack={
+            (location.pathname.startsWith('/cardapio') || window.location.hash.startsWith('#/cardapio'))
+              ? undefined 
+              : () => {
+                  setSelectedTenant(null);
+                  navigate("/marketplace");
+                }
+          }
+          isMarketplace={!(location.pathname.startsWith('/cardapio') || window.location.hash.startsWith('#/cardapio'))}
           initialAddress={currentAddress}
           isFavorite={favorites.includes(selectedTenant.id)}
           onToggleFavorite={(e) => toggleFavorite(e, selectedTenant.id)}
