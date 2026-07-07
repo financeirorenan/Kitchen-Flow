@@ -115,7 +115,7 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
   const [vehicleType, setVehicleType] = useState<'bike' | 'moto' | 'car'>('moto');
   const [pixKey, setPixKey] = useState('');
 
-  const isMarketplace = window.location.pathname.startsWith('/marketplace');
+  const isMarketplace = window.location.pathname.startsWith('/marketplace') || window.location.hash.startsWith('#/marketplace');
 
   // If we are strictly on the marketplace route, force the Customer signup role (for a clear customer-centric checkout flow)
   React.useEffect(() => {

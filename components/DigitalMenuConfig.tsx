@@ -67,7 +67,7 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
   }, [products]);
 
   const menuSlug = settings.slug || settings.restaurantName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9-]/g, '').replace(/\s+/g, '-');
-  const menuUrl = `${window.location.origin}/cardapio/${menuSlug}`;
+  const menuUrl = `${window.location.origin}/#/cardapio/${menuSlug}`;
   const kitchenflowUrl = `https://kitchenflow.com.br/${menuSlug}`;
 
   const bannerPresets = [
@@ -116,7 +116,7 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
   };
 
   const handleCopyLink = () => {
-    navigator.clipboard.writeText(kitchenflowUrl);
+    navigator.clipboard.writeText(menuUrl);
     setIsLinkCopied(true);
     setTimeout(() => setIsLinkCopied(false), 2000);
   };

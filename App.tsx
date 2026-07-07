@@ -426,7 +426,10 @@ const App: React.FC = () => {
   }, [tenantData, plans, orders]);
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [currentProject, setCurrentProject] = useState<'PLATFORM' | 'RESTAURANT' | 'MARKETPLACE' | 'COURIER' | 'WEBSITE'>(() => {
-    const path = typeof window !== 'undefined' ? window.location.pathname : '/';
+    let path = typeof window !== 'undefined' ? window.location.pathname : '/';
+    if (typeof window !== 'undefined' && window.location.hash) {
+      path = window.location.hash.substring(1).split('?')[0];
+    }
     if (path === '/' || path.startsWith('/site') || path.startsWith('/kitchenflow')) {
       return 'WEBSITE';
     }
@@ -1212,7 +1215,7 @@ const App: React.FC = () => {
         // um perfil padrão (CUSTOMER se for no marketplace, OWNER se for no painel) associado ao tenant correspondente
         if (!finalUserData && firebaseUser.email) {
           const isMaster = firebaseUser.email === 'financeirorenanuk@gmail.com';
-          const isMarketplaceRoute = window.location.pathname.startsWith('/marketplace');
+          const isMarketplaceRoute = window.location.pathname.startsWith('/marketplace') || window.location.hash.startsWith('#/marketplace');
           
           let role: UserRole = isMaster ? 'SAAS_ADMIN' : (isMarketplaceRoute ? 'CUSTOMER' : 'OWNER');
           let tenantId = isMaster ? '' : (isMarketplaceRoute ? 'GLOBAL' : 'HCL1177LRQVPEKCTYRAHU7IGBQ42');
@@ -1323,7 +1326,7 @@ const App: React.FC = () => {
         }
         
         // Auto-redirect for specific roles if on a neutral path
-        const isNeutralPath = window.location.pathname === '/';
+        const isNeutralPath = window.location.pathname === '/' && (!window.location.hash || window.location.hash === '#/');
         const finalUserPerms = getUserPermissions(finalUserData);
         const hasKDSKitchenOnly = finalUserPerms.includes('kds_kitchen_only_view');
         const isKDSOnlyUserLocal = finalUserData && 
