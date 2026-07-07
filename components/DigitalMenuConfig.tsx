@@ -66,7 +66,9 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
     return [...products].sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
   }, [products]);
 
-  const menuUrl = `${window.location.origin}/cardapio/${settings.restaurantName.toLowerCase().replace(/\s+/g, '-')}`;
+  const menuSlug = settings.slug || settings.restaurantName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9-]/g, '').replace(/\s+/g, '-');
+  const menuUrl = `${window.location.origin}/cardapio/${menuSlug}`;
+  const kitchenflowUrl = `https://kitchenflow.com.br/${menuSlug}`;
 
   const bannerPresets = [
     { name: 'Pizza', url: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?q=80&w=2070&auto=format&fit=crop' },
@@ -76,6 +78,16 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
     { name: 'Sobremesas', url: 'https://images.unsplash.com/photo-1551024601-bec78aea704b?q=80&w=1964&auto=format&fit=crop' },
     { name: 'Café', url: 'https://images.unsplash.com/photo-1509042239860-f550ce710b93?q=80&w=1974&auto=format&fit=crop' },
   ];
+
+  const handleSlugChange = (val: string) => {
+    const sanitized = val
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9-]/g, '')
+      .replace(/\s+/g, '-');
+    onUpdateSettings({ ...settings, slug: sanitized });
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'logo' | 'banner') => {
     const file = e.target.files?.[0];
@@ -104,7 +116,7 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
   };
 
   const handleCopyLink = () => {
-    navigator.clipboard.writeText(menuUrl);
+    navigator.clipboard.writeText(kitchenflowUrl);
     setIsLinkCopied(true);
     setTimeout(() => setIsLinkCopied(false), 2000);
   };
@@ -162,9 +174,20 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
           <div className="relative z-10 flex flex-col gap-1">
             <h3 className="text-lg font-black tracking-tight">Merchandising do Cardápio</h3>
             <p className="text-indigo-100 text-[11px] font-medium">Personalize visualmente seu ponto de venda online.</p>
-            <div className="mt-2 flex items-center gap-2 bg-black/20 p-1.5 rounded-xl backdrop-blur-md border border-white/10">
-               <Globe size={12} className="text-indigo-300 ml-1" />
-               <span className="text-[10px] font-mono font-bold truncate max-w-[180px]">{menuUrl}</span>
+            <div className="mt-2 flex flex-col gap-1.5">
+              <div className="flex items-center gap-2 bg-emerald-500/20 px-2 py-1.5 rounded-xl backdrop-blur-md border border-emerald-400/30">
+                 <Globe size={12} className="text-emerald-300 ml-1 shrink-0" />
+                 <span className="text-[10px] font-mono font-bold truncate max-w-[220px]" title="Domínio Oficial KitchenFlow">
+                   kitchenflow.com.br/{menuSlug}
+                 </span>
+                 <span className="text-[8px] bg-emerald-400 text-slate-900 font-extrabold uppercase px-1 py-0.2 rounded scale-90">Oficial</span>
+              </div>
+              <div className="flex items-center gap-2 bg-black/20 px-2 py-1 rounded-xl backdrop-blur-md border border-white/5 opacity-80 hover:opacity-100 transition-all">
+                 <MousePointer2 size={10} className="text-indigo-300 ml-1 shrink-0" />
+                 <span className="text-[9px] font-mono truncate max-w-[220px]" title="Link Interno / Preview">
+                   {menuUrl}
+                 </span>
+              </div>
             </div>
           </div>
           <div className="relative z-10 flex gap-2">
@@ -333,6 +356,27 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
               <div className="space-y-2">
                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome de Exibição</label>
                 <input type="text" className="w-full px-4 py-3 bg-slate-50 border rounded-xl outline-none font-bold text-xs" value={settings.restaurantName} onChange={(e) => onUpdateSettings({ ...settings, restaurantName: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-1.5">
+                  <span>Link Personalizado do Cardápio (Slug)</span>
+                  <span className="text-indigo-600 font-extrabold uppercase text-[8px] bg-indigo-50 px-1.5 py-0.5 rounded">Exclusivo KitchenFlow</span>
+                </label>
+                <div className="flex items-stretch rounded-xl overflow-hidden border shadow-inner">
+                  <span className="flex items-center px-3 bg-slate-100 text-slate-400 font-bold text-xs border-r select-none">
+                    kitchenflow.com.br/
+                  </span>
+                  <input 
+                    type="text" 
+                    placeholder={settings.restaurantName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9-]/g, '').replace(/\s+/g, '-')}
+                    className="flex-1 min-w-0 px-4 py-3 bg-slate-50 outline-none font-bold text-xs focus:bg-white transition-all" 
+                    value={settings.slug || ''} 
+                    onChange={(e) => handleSlugChange(e.target.value)} 
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400 font-semibold mt-1">
+                  Seus clientes usarão este endereço para fazer pedidos diretamente no seu cardápio digital oficial.
+                </p>
               </div>
               <div className="space-y-2">
                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Mensagem de Boas-vindas</label>

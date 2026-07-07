@@ -49,6 +49,7 @@ import {
   where,
   doc,
   getDoc,
+  getDocs,
   addDoc,
   setDoc,
   limit,
@@ -967,9 +968,15 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     };
 
     if (routeTenantId) {
-      const tenant = tenants.find((t) => t.id === routeTenantId);
+      const tenant = tenants.find((t) => {
+        const cleanId = t.id.toLowerCase();
+        const cleanSlug = t.digitalMenu?.slug?.toLowerCase();
+        const cleanNameSlug = t.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9-]/g, '').replace(/\s+/g, '-');
+        const target = routeTenantId.toLowerCase();
+        return cleanId === target || cleanSlug === target || cleanNameSlug === target;
+      });
       if (tenant) {
-        if (!selectedTenant || selectedTenant.id !== routeTenantId) {
+        if (!selectedTenant || selectedTenant.id !== tenant.id) {
           loadStoreData(tenant);
         }
       } else if (!initialLoading) {
@@ -986,8 +993,24 @@ const Marketplace: React.FC<MarketplaceProps> = ({
               } as Tenant;
               loadStoreData(tenantData);
             } else {
-              console.warn("Tenant not found:", routeTenantId);
-              setIsStoreLoading(false);
+              // Try querying by digitalMenu.slug
+              const q = query(
+                collection(db, "tenants"),
+                where("digitalMenu.slug", "==", routeTenantId),
+                limit(1)
+              );
+              const querySnap = await getDocs(q);
+              if (!querySnap.empty) {
+                const docSnap = querySnap.docs[0];
+                const tenantData = {
+                  ...docSnap.data(),
+                  id: docSnap.id,
+                } as Tenant;
+                loadStoreData(tenantData);
+              } else {
+                console.warn("Tenant not found by ID or Slug:", routeTenantId);
+                setIsStoreLoading(false);
+              }
             }
           } catch (err) {
             console.error("Error fetching tenant directly:", err);

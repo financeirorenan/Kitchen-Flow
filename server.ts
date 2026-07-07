@@ -283,6 +283,125 @@ async function startServer() {
     }
   });
 
+  app.post("/api/auth/first-access", async (req, res) => {
+    try {
+      const { email, tempPassword, newPassword } = req.body;
+      if (!email || !tempPassword || !newPassword) {
+        return res.status(400).json({ error: "E-mail, senha temporária e nova senha são obrigatórios." });
+      }
+
+      const trimmedEmail = email.trim().toLowerCase();
+      const trimmedTempPassword = tempPassword.trim();
+      const trimmedNewPassword = newPassword.trim();
+
+      if (trimmedNewPassword.length < 6) {
+        return res.status(400).json({ error: "A nova senha de acesso precisa ter ao menos 6 caracteres." });
+      }
+
+      // 1. Buscar usuário no Firestore
+      const qUsers = clientQuery(getClientCollection(clientDb, 'users'), clientWhere('email', '==', trimmedEmail), clientLimit(1));
+      const userSnapshot = await getClientDocs(qUsers);
+
+      if (userSnapshot.empty) {
+        return res.status(404).json({ error: "Acesso negado. Este e-mail não foi pré-cadastrado no sistema." });
+      }
+
+      const docSnap = userSnapshot.docs[0];
+      const userData = docSnap.data();
+      const oldDocId = docSnap.id;
+
+      // 2. Validar se a senha temporária confere com a do DB
+      if (!userData.password || userData.password !== trimmedTempPassword) {
+        return res.status(401).json({ error: "A senha temporária fornecida é inválida. Verifique os dados." });
+      }
+
+      // 3. Criar ou atualizar o usuário no Firebase Auth com a nova senha permanente
+      let uid = "";
+      try {
+        const firebaseUser = await adminAuth.getUserByEmail(trimmedEmail);
+        // Se existe, atualiza a senha
+        await adminAuth.updateUser(firebaseUser.uid, {
+          password: trimmedNewPassword,
+          displayName: userData.name || 'Lojista'
+        });
+        uid = firebaseUser.uid;
+      } catch (authErr: any) {
+        if (authErr.code === 'auth/user-not-found') {
+          // Se não existe, cria
+          const newAuthUser = await adminAuth.createUser({
+            email: trimmedEmail,
+            password: trimmedNewPassword,
+            displayName: userData.name || 'Lojista'
+          });
+          uid = newAuthUser.uid;
+        } else {
+          throw authErr;
+        }
+      }
+
+      // 4. Salvar dados atualizados no Firestore sob o novo UID gerado
+      const updatedUserData = {
+        ...userData,
+        id: uid,
+        password: trimmedNewPassword,
+        active: true,
+        updatedAt: new Date()
+      };
+
+      await clientSetDoc(clientDoc(clientDb, 'users', uid), updatedUserData, { merge: true });
+
+      // Se o Document ID antigo do Firestore for diferente do Auth UID, remover para não duplicar
+      if (oldDocId && oldDocId !== uid) {
+        try {
+          await clientDeleteDoc(clientDoc(clientDb, 'users', oldDocId));
+        } catch (delErr) {
+          console.warn("Nao foi possivel remover documento antigo pre-cadastro:", delErr);
+        }
+      }
+
+      // 5. Gerar Token de Acesso Customizado do Firebase Auth
+      let customToken = null;
+      let adminAuthSuccess = false;
+      try {
+        customToken = await adminAuth.createCustomToken(uid);
+        adminAuthSuccess = true;
+      } catch (authErr) {
+        console.warn("[First Access] Falha no createCustomToken, usando fallback local.", authErr);
+      }
+
+      if (adminAuthSuccess && customToken) {
+        return res.json({
+          success: true,
+          customToken,
+          user: {
+            id: uid,
+            email: trimmedEmail,
+            role: userData.role || 'OWNER',
+            name: userData.name || 'Lojista',
+            tenantId: userData.tenantId || ''
+          }
+        });
+      } else {
+        // Fallback local session
+        return res.json({
+          success: true,
+          isLocalSession: true,
+          user: {
+            id: uid,
+            email: trimmedEmail,
+            role: userData.role || 'OWNER',
+            name: userData.name || 'Lojista',
+            tenantId: userData.tenantId || ''
+          }
+        });
+      }
+
+    } catch (err: any) {
+      console.error("Erro no primeiro acesso via API:", err);
+      return res.status(500).json({ error: err.message || "Erro interno no servidor de autenticação." });
+    }
+  });
+
   // Serve o Service Worker explicitamente com o Content-Type correto
   app.get("/sw.js", (req, res) => {
     const swPath = path.join(process.cwd(), "public", "sw.js");

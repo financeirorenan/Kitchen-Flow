@@ -162,88 +162,75 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
     }
 
     try {
-      // 1. Verificar se usuário existe no Firestore
-      const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', trimmedEmail), limit(1));
-      const usersByEmailSnap = await getDocs(usersByEmailQuery);
+      console.log(`Iniciando ativação segura de primeiro acesso via servidor para ${trimmedEmail}...`);
+      const response = await fetch('/api/auth/first-access', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: trimmedEmail,
+          tempPassword: trimmedTempPassword,
+          newPassword: trimmedNewPassword
+        })
+      });
 
-      if (usersByEmailSnap.empty) {
-        setError('Acesso negado. Este e-mail não foi pré-cadastrado no sistema. Solicite o cadastro ao administrador.');
-        setLoading(false);
-        return;
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Erro ao realizar a ativação de primeiro acesso.');
       }
 
-      const userData = usersByEmailSnap.docs[0].data();
-      const userDocId = usersByEmailSnap.docs[0].id;
+      const data = await response.json();
 
-      // 2. Validar se a senha temporária confere com a do DB
-      if (!userData.password || userData.password !== trimmedTempPassword) {
-        setError('A senha temporária fornecida é inválida. Verifique os dados com seu administrador.');
-        setLoading(false);
-        return;
-      }
+      if (data.customToken) {
+        console.log("Token customizado de primeiro acesso recebido do servidor, realizando login client-side...");
+        const userCredential = await signInWithCustomToken(auth, data.customToken);
+        const signedInUser = userCredential.user;
+        await updateProfile(signedInUser, { displayName: data.user.name || 'Lojista' });
+        
+        console.log("Login com token de primeiro acesso bem-sucedido.");
+        onLoginSuccess();
+      } else if (data.isLocalSession) {
+        console.log("Sessão de bypass local autorizada para primeiro acesso.");
+        const simulatedFirebaseUser = {
+          uid: data.user.id,
+          email: data.user.email,
+          displayName: data.user.name,
+          isLocalSession: true
+        };
 
-      // 3. Criar ou sincronizar o usuário no Firebase Auth com a nova senha permanente
-      let user;
-      const isStaff = userData && userData.role !== 'CUSTOMER';
-      const authNewPassword = trimmedNewPassword;
-      try {
-        const userCredential = await createUserWithEmailAndPassword(auth, trimmedEmail, authNewPassword);
-        user = userCredential.user;
-      } catch (authErr: any) {
-        // Caso o usuário já exista no Auth (ex: foi criado mas senha estava desatrelada)
-        if (authErr.code === 'auth/email-already-in-use') {
-          try {
-            // Tenta logar com a senha temporária real ou a legado determinística antiga para atualizar para a nova real
-            let loginCred;
-            try {
-              loginCred = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedTempPassword);
-            } catch (tempErr) {
-              if (isStaff) {
-                // Tenta fallback com a senha determinística antiga
-                const authTempPassword = getDeterministicPassword(trimmedEmail);
-                loginCred = await signInWithEmailAndPassword(auth, trimmedEmail, authTempPassword);
-              } else {
-                throw tempErr;
-              }
-            }
-            user = loginCred.user;
-            await updatePassword(user, authNewPassword);
-          } catch (loginErr) {
-            setError('Usuário já registrado no Firebase Auth, porém não foi possível redefinir com a senha temporária antiga.');
-            setLoading(false);
-            return;
+        // Sincronizar o localStorage para o App inicializar com esse usuário local
+        localStorage.setItem('kitchenflow_demo_user', JSON.stringify({
+          firebaseUser: simulatedFirebaseUser,
+          userData: {
+            id: data.user.id,
+            email: data.user.email,
+            role: data.user.role,
+            name: data.user.name,
+            tenantId: data.user.tenantId,
+            active: true,
+            status: 'online'
           }
-        } else {
-          throw authErr;
-        }
-      }
+        }));
 
-      if (user) {
-        // 4. Salvar dados atualizados no Firestore sob o novo UID gerado
-        await updateProfile(user, { displayName: userData.name || 'Lojista' });
-
-        const userDocRef = doc(db, 'users', user.uid);
-        await setDoc(userDocRef, {
-          ...userData,
-          id: user.uid,
-          password: trimmedNewPassword, // Atualiza para a nova senha permanente
+        localStorage.setItem('kitchenflow_cached_user', JSON.stringify({
+          id: data.user.id,
+          email: data.user.email,
+          role: data.user.role,
+          name: data.user.name,
+          tenantId: data.user.tenantId,
           active: true,
-          updatedAt: new Date()
-        }, { merge: true });
-
-        // Se o Document ID antigo for diferente do novo UID, remove o documento legado para não duplicar
-        if (userDocId && userDocId !== user.uid) {
-          try {
-            await deleteDoc(doc(db, 'users', userDocId));
-          } catch (delErr) {
-            console.warn("Could not clean up legacy pre-registered user doc:", delErr);
-          }
-        }
+          status: 'online'
+        }));
 
         onLoginSuccess();
+        window.location.reload();
+      } else {
+        throw new Error("Resposta de autenticação inválida recebida do servidor.");
       }
+
     } catch (err: any) {
-      console.error("Erro no primeiro acesso:", err);
+      console.error("Erro no primeiro acesso seguro:", err);
       setError(err.message || 'Ocorreu um erro ao ativar a sua conta. Tente novamente.');
     } finally {
       setLoading(false);

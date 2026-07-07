@@ -557,7 +557,7 @@ const App: React.FC = () => {
     } else if (path.startsWith('/entregador')) {
       if (currentProject !== 'COURIER') setCurrentProject('COURIER');
       setActiveTab('courier-app');
-    } else if (path.startsWith('/marketplace') || path.startsWith('/perfil')) {
+    } else if (path.startsWith('/marketplace') || path.startsWith('/perfil') || path.startsWith('/cardapio')) {
       if (currentProject !== 'MARKETPLACE') setCurrentProject('MARKETPLACE');
     }
   }, [location.pathname, isSuperAdmin, currentProject, activeTab, navigate, currentUserData]);
@@ -4570,7 +4570,7 @@ const App: React.FC = () => {
     );
   }
 
-  const isMarketplaceRoute = location.pathname.startsWith('/marketplace') || location.pathname.startsWith('/perfil');
+  const isMarketplaceRoute = location.pathname.startsWith('/marketplace') || location.pathname.startsWith('/perfil') || location.pathname.startsWith('/cardapio');
   const isWebsiteRoute = location.pathname.startsWith('/site') || location.pathname.startsWith('/kitchenflow') || location.pathname === '/';
   const isPublicRoute = isMarketplaceRoute || isWebsiteRoute;
 
@@ -4719,7 +4719,10 @@ const App: React.FC = () => {
           }}
           isOpen={isSidebarOpen}
           onClose={() => setIsSidebarOpen(false)}
-          user={currentUserData || { name: user.displayName || 'Usuário', role: 'WAITER', avatar: user.photoURL || undefined } as any}
+          user={currentUserData ? {
+            ...currentUserData,
+            permissions: getUserPermissions(currentUserData)
+          } : { name: user.displayName || 'Usuário', role: 'WAITER', avatar: user.photoURL || undefined, permissions: [] } as any}
           onLogout={handleLogout}
           allowedModules={effectiveAllowedModules}
           isSuperAdmin={isSuperAdmin}
@@ -4750,7 +4753,7 @@ const App: React.FC = () => {
                  )
                ) : <Login onLoginSuccess={() => {}} />
             } />
-            {["/marketplace", "/marketplace/:tenantId", "/perfil"].map((path) => (
+            {["/marketplace", "/marketplace/:tenantId", "/cardapio/:tenantId", "/perfil"].map((path) => (
               <Route 
                 key={path}
                 path={path} 
