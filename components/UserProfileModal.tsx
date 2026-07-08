@@ -21,7 +21,7 @@ import {
   reauthenticateWithCredential, 
   EmailAuthProvider 
 } from 'firebase/auth';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, updateDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { User } from '../types';
 
@@ -258,6 +258,26 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         }
 
         await updateDoc(userDocRef, updatedData);
+
+        // Se o usuário for entregador, atualizar também o documento na coleção 'couriers'
+        if (currentUserData.role === 'COURIER') {
+          try {
+            const courierDocRef = doc(db, 'couriers', fbUser.uid);
+            const courierUpdatedData: any = {
+              name,
+              email: cleanEmail,
+              updatedAt: new Date()
+            };
+            if (password) {
+              courierUpdatedData.password = password;
+            }
+            await setDoc(courierDocRef, courierUpdatedData, { merge: true });
+            console.log("Perfil de entregador atualizado na coleção 'couriers' com sucesso.");
+          } catch (courierErr) {
+            console.error("Erro ao atualizar entregador na coleção 'couriers':", courierErr);
+          }
+        }
+
         onUpdateUser({
           ...currentUserData,
           ...updatedData

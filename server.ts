@@ -67,92 +67,83 @@ async function startServer() {
       let userRole = '';
       let uid = '';
       let oldDocId = null;
-
-      // A. Validar credenciais diretamente no Firebase Authentication via REST API
+      let isCourier = false;
       let authVerified = false;
       let authUid = '';
-      if (firebaseConfig.apiKey) {
-        try {
-          const restUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${firebaseConfig.apiKey}`;
-          const authResponse = await fetch(restUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              email: trimmedEmail,
-              password: trimmedPassword,
-              returnSecureToken: true
-            })
-          });
-          if (authResponse.ok) {
-            const authData: any = await authResponse.json();
-            authVerified = true;
-            authUid = authData.localId;
-            console.log(`[Auth API] Credenciais verificadas via Firebase Auth REST API para UID: ${authUid}`);
-          } else {
-            const errData = await authResponse.json();
-            console.log(`[Auth API] Erro ao validar na REST API:`, errData.error?.message);
-          }
-        } catch (err) {
-          console.error("Erro na REST API de autenticação do Firebase:", err);
-        }
-      }
 
-      // B. Buscar usuário no Firestore (na coleção 'users' ou 'couriers')
+      // 1. Consultar o Firestore primeiro! Isso é extremamente rápido (~20-50ms)
       try {
         const userSnapshot = await adminDb.collection('users').where('email', '==', trimmedEmail).limit(1).get();
-
         if (!userSnapshot.empty) {
           const docSnap = userSnapshot.docs[0];
-          const data = docSnap.data();
-          // Se as credenciais forem válidas no Firebase Auth OU se a senha digitada bater com o Firestore
-          if (authVerified || data.password === trimmedPassword) {
-            matchedUser = data;
-            userRole = data.role || 'OWNER';
-            uid = authVerified ? authUid : docSnap.id;
-            oldDocId = docSnap.id;
-
-            // Auto-cura: Se autenticou no Auth, mas a senha no Firestore estava desatualizada
-            if (authVerified && data.password !== trimmedPassword) {
-              console.log(`[Auto-Cura] Sincronizando senha do usuário no Firestore.`);
-              matchedUser.password = trimmedPassword;
-              try {
-                await adminDb.collection('users').doc(docSnap.id).set({ password: trimmedPassword }, { merge: true });
-              } catch (updatePassErr) {
-                console.error("Erro ao curar senha no Firestore:", updatePassErr);
-              }
-            }
-          }
+          matchedUser = docSnap.data();
+          userRole = matchedUser.role || 'OWNER';
+          uid = docSnap.id;
+          oldDocId = docSnap.id;
         } else {
-          // Buscar na coleção 'couriers' para suporte a entregadores
+          // Se não achar em 'users', buscar em 'couriers' para suporte a entregadores
           const courierSnapshot = await adminDb.collection('couriers').where('email', '==', trimmedEmail).limit(1).get();
           if (!courierSnapshot.empty) {
             const docSnap = courierSnapshot.docs[0];
-            const data = docSnap.data();
-            if (authVerified || data.password === trimmedPassword) {
-              matchedUser = data;
-              userRole = 'COURIER';
-              uid = authVerified ? authUid : docSnap.id;
-              oldDocId = docSnap.id;
-
-              // Auto-cura: Se autenticou no Auth, mas a senha no Firestore estava desatualizada
-              if (authVerified && data.password !== trimmedPassword) {
-                console.log(`[Auto-Cura] Sincronizando senha do entregador no Firestore.`);
-                matchedUser.password = trimmedPassword;
-                try {
-                  await adminDb.collection('couriers').doc(docSnap.id).set({ password: trimmedPassword }, { merge: true });
-                } catch (updatePassErr) {
-                  console.error("Erro ao curar senha no entregador do Firestore:", updatePassErr);
-                }
-              }
-            }
+            matchedUser = docSnap.data();
+            userRole = 'COURIER';
+            uid = docSnap.id;
+            oldDocId = docSnap.id;
+            isCourier = true;
           }
         }
-      } catch (dbErr: any) {
-        console.error("Erro ao consultar Firestore via Admin SDK:", dbErr);
-        throw dbErr;
+      } catch (dbErr) {
+        console.error("Erro ao consultar Firestore no login prévio:", dbErr);
       }
 
-      // C. Fallback para o Master Admin (SAAS_ADMIN)
+      // 2. Verificar se a senha confere com o Firestore
+      if (matchedUser && matchedUser.password === trimmedPassword) {
+        authVerified = true;
+        authUid = uid;
+        console.log(`[Fast Login] Autenticação direta e instantânea via Firestore para: ${trimmedEmail} (Cargo: ${userRole})`);
+      } else {
+        // Se a senha não bateu ou usuário não existe no Firestore, recorrer à REST API do Firebase Auth (lenta, via rede externa)
+        if (firebaseConfig.apiKey) {
+          try {
+            console.log(`[REST Login] Chamando Firebase Auth REST API para validar senha de: ${trimmedEmail}...`);
+            const restUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${firebaseConfig.apiKey}`;
+            const authResponse = await fetch(restUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                email: trimmedEmail,
+                password: trimmedPassword,
+                returnSecureToken: true
+              })
+            });
+            if (authResponse.ok) {
+              const authData: any = await authResponse.json();
+              authVerified = true;
+              authUid = authData.localId;
+              console.log(`[REST Login] Credenciais validadas via Firebase REST API para UID: ${authUid}`);
+
+              // AUTO-CURA: O usuário autenticou via Auth com essa senha nova, mas ela estava desatualizada ou vazia no Firestore. Sincronizamos agora.
+              if (matchedUser) {
+                matchedUser.password = trimmedPassword;
+                const collectionName = isCourier ? 'couriers' : 'users';
+                try {
+                  await adminDb.collection(collectionName).doc(oldDocId || authUid).set({ password: trimmedPassword }, { merge: true });
+                  console.log(`[Auto-Cura] Senha do usuário corrigida e sincronizada no Firestore (${collectionName}).`);
+                } catch (updatePassErr) {
+                  console.error("Erro ao curar senha no Firestore:", updatePassErr);
+                }
+              }
+            } else {
+              const errData = await authResponse.json().catch(() => ({}));
+              console.log(`[REST Login] Erro ao validar na REST API para ${trimmedEmail}:`, errData.error?.message);
+            }
+          } catch (err) {
+            console.error("Erro na REST API de autenticação do Firebase:", err);
+          }
+        }
+      }
+
+      // 3. Fallback especial para o Master Admin (SAAS_ADMIN)
       if (isMaster && !matchedUser) {
         if (trimmedPassword === 'Ch@pola07' || authVerified) {
           userRole = 'SAAS_ADMIN';
@@ -170,60 +161,75 @@ async function startServer() {
           };
           try {
             await adminDb.collection('users').doc(uid).set(matchedUser);
+            console.log("[Fast Login] Criado SAAS Admin no Firestore.");
           } catch (setErr) {
             console.error("Erro ao criar SAAS Admin no Firestore:", setErr);
           }
+          authVerified = true;
+          authUid = uid;
         }
       }
 
-      if (!matchedUser) {
+      // Se as credenciais não foram verificadas de nenhuma forma
+      if (!authVerified || !matchedUser) {
         return res.status(401).json({ error: "E-mail ou senha incorretos." });
       }
 
-      // D. Garantir que o usuário existe no Firebase Authentication
+      // 4. Geração de Custom Token e alinhamento do Auth assíncrono em background
       let customToken = null;
       let adminAuthSuccess = false;
 
       try {
-        let firebaseUser;
-        try {
-          firebaseUser = await adminAuth.getUserByEmail(trimmedEmail);
-          // Atualizar a senha no Firebase Auth APENAS se não foi validado via REST API (para sincronizar senhas legadas)
-          if (!authVerified) {
-            await adminAuth.updateUser(firebaseUser.uid, {
-              password: trimmedPassword
-            });
-          }
-          uid = firebaseUser.uid;
-        } catch (authErr: any) {
-          if (authErr.code === 'auth/user-not-found') {
-            // Criar no Firebase Auth se não existir
-            const newAuthUser = await adminAuth.createUser({
-              email: trimmedEmail,
-              password: trimmedPassword,
-              displayName: matchedUser.name || 'Lojista'
-            });
-            uid = newAuthUser.uid;
-          } else {
-            throw authErr;
-          }
-        }
+        uid = authUid || uid;
 
-        // 5. Se o Document ID antigo do Firestore for diferente do Auth UID, migrar para manter o ID unificado
+        // Se o Document ID antigo do Firestore for diferente do Auth UID, migrar para manter o ID unificado
         if (uid && uid !== oldDocId) {
           matchedUser.id = uid;
+          const oldIdRef = oldDocId;
+          const collectionName = isCourier ? 'couriers' : 'users';
           try {
-            await adminDb.collection('users').doc(uid).set(matchedUser, { merge: true });
-            if (oldDocId && oldDocId !== uid) {
-              await adminDb.collection('users').doc(oldDocId).delete();
+            await adminDb.collection(collectionName).doc(uid).set(matchedUser, { merge: true });
+            if (oldIdRef && oldIdRef !== uid) {
+              await adminDb.collection(collectionName).doc(oldIdRef).delete();
             }
             oldDocId = uid;
+            console.log(`[Login API] Migração de ID concluída de ${oldIdRef} para ${uid}`);
           } catch (migErr) {
             console.warn("Nao foi possivel migrar ID do Firestore, prosseguindo:", migErr);
           }
         }
 
-        // 6. Gerar Token de Acesso Customizado do Firebase Auth
+        // Se o login foi pelo caminho rápido (Firestore conferiu), atualizamos o Firebase Auth de forma assíncrona
+        // em background para não atrasar a resposta ao usuário!
+        const asyncSyncAuth = async () => {
+          try {
+            let firebaseUser;
+            try {
+              firebaseUser = await adminAuth.getUserByEmail(trimmedEmail);
+              // Garante que o Firebase Auth tenha a mesma senha caso tenha sido alterada fora dele (ou por admin)
+              await adminAuth.updateUser(firebaseUser.uid, {
+                password: trimmedPassword
+              });
+            } catch (getErr: any) {
+              if (getErr.code === 'auth/user-not-found') {
+                // Se não existe na Auth do Firebase, cria
+                await adminAuth.createUser({
+                  uid: uid,
+                  email: trimmedEmail,
+                  password: trimmedPassword,
+                  displayName: matchedUser.name || 'Lojista'
+                });
+              }
+            }
+          } catch (syncErr: any) {
+            console.warn("[Background Sync] Erro na sincronização assíncrona do Auth:", syncErr.message || syncErr);
+          }
+        };
+
+        // Disparar sincronização em background sem dar await
+        asyncSyncAuth();
+
+        // Gerar Token de Acesso Customizado do Firebase Auth
         customToken = await adminAuth.createCustomToken(uid);
         adminAuthSuccess = true;
       } catch (authErr: any) {
@@ -243,7 +249,7 @@ async function startServer() {
           }
         });
       } else {
-        // Fallback: Retornar sessão local bypassada se o Firebase Admin Auth falhar por falta de credenciais (ex: VPS cPanel)
+        // Fallback de sessão local se as credenciais do Admin falharem
         console.log(`[Login API] Retornando sessão local para o usuário ${trimmedEmail} (ID: ${oldDocId || matchedUser.id})`);
         return res.json({
           success: true,

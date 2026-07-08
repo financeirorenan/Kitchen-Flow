@@ -3868,8 +3868,14 @@ const App: React.FC = () => {
           if (finalUpdates.password) {
             await updatePassword(auth.currentUser, finalUpdates.password);
           }
-        } catch (authErr) {
-          console.warn("Could not sync current user auth credentials directly:", authErr);
+        } catch (authErr: any) {
+          console.error("Could not sync current user auth credentials directly:", authErr);
+          if (authErr.code === 'auth/requires-recent-login' || authErr.message?.includes('requires-recent-login')) {
+            showToast("Por segurança, você precisa fazer logout e login novamente para alterar sua própria senha ou e-mail.", "error");
+          } else {
+            showToast(`Erro ao atualizar no Firebase Auth: ${authErr.message || authErr}`, "error");
+          }
+          throw authErr;
         }
       }
     } else {
