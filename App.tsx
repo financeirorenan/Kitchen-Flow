@@ -4532,7 +4532,18 @@ const App: React.FC = () => {
     }
   };
 
-  const isMarketplace = location.pathname.startsWith('/marketplace') || location.pathname.startsWith('/perfil') || location.pathname === '/';
+  const effectivePath = useMemo(() => {
+    let path = location.pathname;
+    if (typeof window !== 'undefined' && window.location.hash) {
+      path = window.location.hash.substring(1).split('?')[0];
+      if (path && !path.startsWith('/')) {
+        path = '/' + path;
+      }
+    }
+    return path || '/';
+  }, [location.pathname]);
+
+  const isMarketplace = effectivePath.startsWith('/marketplace') || effectivePath.startsWith('/perfil') || effectivePath.startsWith('/cardapio') || effectivePath === '/';
 
   if (authLoading || (hasApiKey === null && !isMarketplace)) {
     return (
@@ -4573,13 +4584,13 @@ const App: React.FC = () => {
     );
   }
 
-  const isMarketplaceRoute = location.pathname.startsWith('/marketplace') || location.pathname.startsWith('/perfil') || location.pathname.startsWith('/cardapio');
-  const isWebsiteRoute = location.pathname.startsWith('/site') || location.pathname.startsWith('/kitchenflow') || location.pathname === '/';
+  const isMarketplaceRoute = effectivePath.startsWith('/marketplace') || effectivePath.startsWith('/perfil') || effectivePath.startsWith('/cardapio');
+  const isWebsiteRoute = effectivePath.startsWith('/site') || effectivePath.startsWith('/kitchenflow') || effectivePath === '/';
   const isPublicRoute = isMarketplaceRoute || isWebsiteRoute;
 
   // 1. Se o usuário NÃO está autenticado no Firebase Auth
   // e tenta acessar uma rota privada/privilegiada (não pública):
-  if (!user && !isPublicRoute && location.pathname !== '/') {
+  if (!user && !isPublicRoute && effectivePath !== '/') {
     return <Login onLoginSuccess={() => {}} />;
   }
 
@@ -4598,7 +4609,7 @@ const App: React.FC = () => {
 
   // 3. Se já carregou o login (authLoading é falso), mas o usuário logado NÃO possui cadastro correspondente (currentUserData é null) ainda:
   // Carrega em segundo plano ou aguarda a conclusão da sincronização do auto-cadastro.
-  if (user && !currentUserData && !authLoading && !isPublicRoute && location.pathname !== '/') {
+  if (user && !currentUserData && !authLoading && !isPublicRoute && effectivePath !== '/') {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
@@ -4610,7 +4621,7 @@ const App: React.FC = () => {
   }
 
   // 4. Se o usuário está logado mas tem role CUSTOMER e tenta acessar painel restrito administrativo:
-  if (user && currentUserData && currentUserData.role === 'CUSTOMER' && !isPublicRoute && location.pathname !== '/') {
+  if (user && currentUserData && currentUserData.role === 'CUSTOMER' && !isPublicRoute && effectivePath !== '/') {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
         <div className="bg-white p-8 sm:p-10 rounded-[2.5rem] border border-slate-100 shadow-2xl max-w-sm w-full text-center space-y-6">
@@ -4832,17 +4843,30 @@ const App: React.FC = () => {
 
               <div className={`flex-1 custom-scrollbar ${isKDSOnlyUser ? 'h-screen max-h-screen overflow-hidden flex flex-col p-0' : (activeTab === 'kds' || activeTab === 'kds-kitchen-only' || activeTab === 'order-monitor') ? 'h-[calc(100vh-64px)] lg:h-[calc(100vh-20px)] overflow-hidden flex flex-col p-1' : 'overflow-y-auto max-h-screen p-1'}`}>
           {currentProject === 'PLATFORM' ? (
-            <SaaSAdmin 
-              activeTab={activeTab}
-              onViewTenant={handleViewTenant} 
-              onNavigate={(tab) => {
-                if (tab === 'marketplace') {
-                  navigate('/marketplace');
-                } else {
-                  setActiveTab(tab);
-                }
-              }}
-            />
+            isSuperAdmin ? (
+              <SaaSAdmin 
+                activeTab={activeTab}
+                onViewTenant={handleViewTenant} 
+                onNavigate={(tab) => {
+                  if (tab === 'marketplace') {
+                    navigate('/marketplace');
+                  } else {
+                    setActiveTab(tab);
+                  }
+                }}
+              />
+            ) : (
+              <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6 text-center w-full">
+                 <div className="bg-white p-8 rounded-[2.5rem] shadow-xl max-w-sm border border-slate-100">
+                   <div className="w-16 h-16 bg-rose-50 text-rose-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                     <Lock size={32} />
+                   </div>
+                   <h2 className="text-xl font-black text-slate-800 mb-2">Acesso Negado</h2>
+                   <p className="text-sm text-slate-500 mb-6">Esta área é exclusiva para administradores globais do sistema.</p>
+                   <button onClick={() => navigate('/lojista')} className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold uppercase text-[10px] tracking-wider">Ir para o Painel da Loja</button>
+                 </div>
+              </div>
+            )
           ) : (
             <>
               {/* Alertas de Consumo de Assinatura */}
