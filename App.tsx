@@ -555,6 +555,32 @@ const App: React.FC = () => {
           return;
         }
       }
+
+      // Extração inteligente de tenant ID da URL /lojista/:tenantId
+      const parts = path.split('/');
+      const segment = parts[2]; // ex: /lojista/HCL1177LRQVPEKCTYRAHU7IGBQ42 -> segment = "HCL1177LRQVPEKCTYRAHU7IGBQ42"
+      const standardTabs = [
+        'merchant-copilot', 'pos', 'orders', 'tables', 'kds', 'delivery', 
+        'menu', 'stock', 'financial', 'customers', 'users', 'reports', 'settings'
+      ];
+      if (segment && !standardTabs.includes(segment)) {
+        if (viewingTenantId !== segment) {
+          setViewingTenantId(segment);
+          getDoc(doc(db, 'tenants', segment)).then((tDoc) => {
+            if (tDoc.exists()) {
+              const tData = tDoc.data();
+              setViewingTenantName(tData.name || null);
+              setViewingTenantLogo(tData.logoUrl || null);
+            }
+          }).catch(err => console.warn("Erro ao buscar dados do tenant da URL:", err));
+        }
+      } else if (!segment && currentUserData?.tenantId) {
+        // Redireciona de /lojista simples para /lojista/:tenantId para manter o ID visível na URL!
+        const targetTenantId = viewingTenantId || currentUserData.tenantId;
+        navigate(`/lojista/${targetTenantId}`, { replace: true });
+        return;
+      }
+
       if (currentProject !== 'RESTAURANT') setCurrentProject('RESTAURANT');
       if (activeTab === 'saas-admin' || activeTab === 'courier-app') setActiveTab('merchant-copilot');
     } else if (path.startsWith('/entregador')) {
@@ -563,7 +589,7 @@ const App: React.FC = () => {
     } else if (path.startsWith('/marketplace') || path.startsWith('/perfil') || path.startsWith('/cardapio')) {
       if (currentProject !== 'MARKETPLACE') setCurrentProject('MARKETPLACE');
     }
-  }, [location.pathname, isSuperAdmin, currentProject, activeTab, navigate, currentUserData]);
+  }, [location.pathname, isSuperAdmin, currentProject, activeTab, navigate, currentUserData, viewingTenantId]);
 
   useEffect(() => {
     (window as any).setActiveTab = (tab: string) => {
@@ -582,7 +608,7 @@ const App: React.FC = () => {
     setViewingTenantLogo(logo || null);
     setCurrentProject('RESTAURANT');
     setActiveTab('merchant-copilot');
-    navigate('/lojista');
+    navigate(`/lojista/${tenantId}`);
     
     if (currentUserData) {
       addLog(currentUserData.id, 'SAAS_AUDIT', `Super Admin iniciou suporte/visualização do parceiro: ${name || tenantId}`);

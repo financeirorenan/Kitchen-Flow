@@ -199,35 +199,33 @@ async function startServer() {
           }
         }
 
-        // Se o login foi pelo caminho rápido (Firestore conferiu), atualizamos o Firebase Auth de forma assíncrona
-        // em background para não atrasar a resposta ao usuário!
-        const asyncSyncAuth = async () => {
+        // Sincronização garantida e síncrona com o Firebase Auth
+        try {
+          let firebaseUser;
           try {
-            let firebaseUser;
-            try {
-              firebaseUser = await adminAuth.getUserByEmail(trimmedEmail);
-              // Garante que o Firebase Auth tenha a mesma senha caso tenha sido alterada fora dele (ou por admin)
-              await adminAuth.updateUser(firebaseUser.uid, {
-                password: trimmedPassword
+            firebaseUser = await adminAuth.getUserByEmail(trimmedEmail);
+            // Garante que o Firebase Auth tenha a mesma senha caso tenha sido alterada fora dele (ou por admin)
+            await adminAuth.updateUser(firebaseUser.uid, {
+              password: trimmedPassword
+            });
+            console.log(`[Sync Auth] Senha do usuário atualizada com sucesso no Firebase Auth para: ${trimmedEmail}`);
+          } catch (getErr: any) {
+            if (getErr.code === 'auth/user-not-found' || getErr.message?.includes('user-not-found')) {
+              // Se não existe na Auth do Firebase, cria
+              await adminAuth.createUser({
+                uid: uid,
+                email: trimmedEmail,
+                password: trimmedPassword,
+                displayName: matchedUser.name || 'Lojista'
               });
-            } catch (getErr: any) {
-              if (getErr.code === 'auth/user-not-found') {
-                // Se não existe na Auth do Firebase, cria
-                await adminAuth.createUser({
-                  uid: uid,
-                  email: trimmedEmail,
-                  password: trimmedPassword,
-                  displayName: matchedUser.name || 'Lojista'
-                });
-              }
+              console.log(`[Sync Auth] Novo usuário registrado com sucesso no Firebase Auth para: ${trimmedEmail}`);
+            } else {
+              throw getErr;
             }
-          } catch (syncErr: any) {
-            console.warn("[Background Sync] Erro na sincronização assíncrona do Auth:", syncErr.message || syncErr);
           }
-        };
-
-        // Disparar sincronização em background sem dar await
-        asyncSyncAuth();
+        } catch (syncErr: any) {
+          console.warn("[Sync Auth] Falha ao sincronizar Firebase Auth com o Firestore:", syncErr.message || syncErr);
+        }
 
         // Gerar Token de Acesso Customizado do Firebase Auth
         customToken = await adminAuth.createCustomToken(uid);
