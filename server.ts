@@ -8,14 +8,50 @@ import { getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 
+import { fileURLToPath } from 'url';
+
 dotenv.config();
 
 const isProduction = process.env.NODE_ENV === "production";
 
-// Safely read and parse the Firebase Applet Config to avoid experimental JSON import assertions in ESM
-const firebaseConfig = JSON.parse(
-  fs.readFileSync(path.resolve("firebase-applet-config.json"), "utf8")
-);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Safely read and parse the Firebase Applet Config with robust multi-path searching
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let firebaseConfig: any;
+try {
+  const possiblePaths = [
+    path.resolve("firebase-applet-config.json"),
+    path.resolve("../firebase-applet-config.json"),
+    path.join(__dirname, "firebase-applet-config.json"),
+    path.join(__dirname, "../firebase-applet-config.json")
+  ];
+  
+  let configPath = "";
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) {
+      configPath = p;
+      break;
+    }
+  }
+  
+  if (!configPath) {
+    throw new Error("firebase-applet-config.json not found in any of the search paths.");
+  }
+  
+  firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  console.log(`[Firebase Config] Loaded successfully from: ${configPath}`);
+} catch (err: any) {
+  console.error("Critical error loading firebase-applet-config.json:", err.message);
+  // Fallback to empty/env config to prevent server crash
+  firebaseConfig = {
+    projectId: process.env.FIREBASE_PROJECT_ID || process.env.GCLOUD_PROJECT || "",
+    apiKey: process.env.FIREBASE_API_KEY || "",
+    authDomain: process.env.FIREBASE_AUTH_DOMAIN || "",
+    firestoreDatabaseId: process.env.FIREBASE_DATABASE_ID || ""
+  };
+}
 
 import { FiscalService } from "./server/fiscalService";
 
@@ -102,12 +138,9 @@ async function startServer() {
         authUid = uid;
         console.log(`[Fast Login] Autenticação direta e instantânea via Firestore para: ${trimmedEmail} (Cargo: ${userRole})`);
       } else {
-        // Recorrer à REST API do Firebase Auth APENAS se o usuário não possuir senha cadastrada no Firestore
-        // (por exemplo, registros históricos ou de acessos sem credenciais locais) ou se o usuário não existe no Firestore.
-        // Se o usuário já existe no Firestore e possui senha cadastrada, a nova senha é soberana e rejeitamos o login direto se incorreta.
-        const hasFirestorePassword = matchedUser && typeof matchedUser.password === 'string' && matchedUser.password.trim() !== '';
-
-        if (!hasFirestorePassword && firebaseConfig.apiKey) {
+        // Recorrer à REST API do Firebase Auth se a senha do Firestore falhou ou o usuário não foi localizado no Firestore.
+        // Isso resolve conflitos quando a senha é redefinida via Firebase Auth ou se o cadastro é externo.
+        if (firebaseConfig.apiKey) {
           try {
             console.log(`[REST Login] Chamando Firebase Auth REST API para validar senha de: ${trimmedEmail}...`);
             const restUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${firebaseConfig.apiKey}`;
@@ -121,6 +154,7 @@ async function startServer() {
               })
             });
             if (authResponse.ok) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const authData: any = await authResponse.json();
               authVerified = true;
               authUid = authData.localId;
@@ -144,8 +178,6 @@ async function startServer() {
           } catch (err) {
             console.error("Erro na REST API de autenticação do Firebase:", err);
           }
-        } else {
-          console.log(`[Login API] Rejeitando login para ${trimmedEmail} pois a senha fornecida não confere com a senha soberana registrada no Firestore.`);
         }
       }
 
@@ -161,7 +193,7 @@ async function startServer() {
             role: 'SAAS_ADMIN',
             password: trimmedPassword,
             name: 'Renan SAAS Admin',
-            tenantId: '',
+            tenantId: 'HCL1177LRQVPEKCTYRAHU7IGBQ42',
             active: true,
             createdAt: new Date()
           };
@@ -173,6 +205,65 @@ async function startServer() {
           }
           authVerified = true;
           authUid = uid;
+        }
+      }
+
+      // AUTO-CRIAÇÃO: Se o usuário foi verificado pelo Firebase Auth, mas seu perfil está ausente no Firestore,
+      // nós o criamos automaticamente para evitar erro de credenciais inválidas em migrações ou redefinições.
+      if (authVerified && !matchedUser) {
+        console.log(`[Auto-Criação] Usuário autenticado no Auth mas ausente no Firestore: ${trimmedEmail}. Criando perfil...`);
+        const isMasterUser = trimmedEmail === 'financeirorenanuk@gmail.com';
+        userRole = isMasterUser ? 'SAAS_ADMIN' : 'OWNER';
+        uid = authUid;
+        
+        matchedUser = {
+          id: uid,
+          email: trimmedEmail,
+          role: userRole,
+          password: trimmedPassword,
+          name: trimmedEmail.split('@')[0] || 'Lojista',
+          tenantId: isMasterUser ? 'HCL1177LRQVPEKCTYRAHU7IGBQ42' : `tenant_${Date.now()}`,
+          active: true,
+          status: 'online',
+          createdAt: new Date()
+        };
+
+        try {
+          await adminDb.collection('users').doc(uid).set(matchedUser);
+          console.log(`[Auto-Criação] Perfil criado com sucesso no Firestore para UID: ${uid}`);
+          
+          if (userRole === 'OWNER') {
+            await adminDb.collection('tenants').doc(matchedUser.tenantId).set({
+              id: matchedUser.tenantId,
+              name: `Restaurante de ${matchedUser.name}`,
+              category: 'Geral',
+              ownerId: uid,
+              ownerEmail: trimmedEmail,
+              active: true,
+              autoAcceptOrders: false,
+              createdAt: new Date()
+            });
+
+            await adminDb.collection('settings').doc(matchedUser.tenantId).set({
+              id: matchedUser.tenantId,
+              admin: {
+                companyName: `Restaurante de ${matchedUser.name}`,
+                cnpj: '',
+                phone: '',
+                address: '',
+                logoUrl: '',
+                taxRate: 0,
+                deliveryFee: 0,
+                freeDeliveryOver: 0,
+                workingHours: '08:00 - 22:00',
+                isActive: true
+              },
+              createdAt: new Date()
+            });
+            console.log(`[Auto-Criação] Tenant e configurações criadas com sucesso.`);
+          }
+        } catch (createErr) {
+          console.error("Erro ao auto-criar perfil no Firestore:", createErr);
         }
       }
 
