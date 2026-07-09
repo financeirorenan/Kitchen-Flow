@@ -199,88 +199,144 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
       const fbUser = auth.currentUser;
       if (!fbUser) throw new Error('Usuário não autenticado.');
 
-      // 1. Update Profile (DisplayName and Photo)
       const selectedAvatar = useCustomUrl ? customAvatarUrl : avatar;
-      await updateProfile(fbUser, {
-        displayName: name,
-        photoURL: selectedAvatar || null
-      });
-
-      // 2. Update Email locally if changed
-      let emailChanged = false;
       const cleanEmail = email.trim().toLowerCase();
-      if (cleanEmail !== fbUser.email) {
+      const isLocalSession = !!localStorage.getItem('kitchenflow_demo_user');
+
+      let useFallback = isLocalSession;
+
+      if (!isLocalSession) {
         try {
-          await updateEmail(fbUser, cleanEmail);
-          emailChanged = true;
-        } catch (err: any) {
-          if (err.code === 'auth/requires-recent-login') {
-            setReauthRequired(true);
-            setLoading(false);
-            showToast('Por motivos de segurança, você precisa confirmar sua senha atual antes de alterar o e-mail.', 'info');
-            return;
+          const idToken = await fbUser.getIdToken(true);
+          const response = await fetch('/api/auth/update-profile', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${idToken}`
+            },
+            body: JSON.stringify({
+              name,
+              email: cleanEmail,
+              avatar: selectedAvatar,
+              password: password || undefined
+            })
+          });
+
+          if (!response.ok) {
+            const errData = await response.json();
+            throw new Error(errData.error || 'Erro ao atualizar perfil no servidor.');
           }
-          throw err;
+
+          const data = await response.json();
+          console.log('[API Profile Update] Perfil atualizado via API com sucesso:', data);
+
+          // Sincronizar o display name e photoURL localmente no objeto Auth do cliente
+          try {
+            await updateProfile(fbUser, {
+              displayName: name,
+              photoURL: selectedAvatar || null
+            });
+          } catch (syncLocalErr) {
+            console.warn('[API Profile Update] Não foi possível sincronizar o perfil local do Auth (comum em sessões personalizadas):', syncLocalErr);
+          }
+
+        } catch (apiErr: any) {
+          console.warn('[API Profile Update] Falha na chamada da API de atualização de perfil. Tentando fluxo direto client-side...', apiErr.message || apiErr);
+          useFallback = true;
         }
       }
 
-      // 3. Update Password if changed
-      let passwordChanged = false;
-      if (password) {
-        try {
-          const authPassword = password;
-          await updatePassword(fbUser, authPassword);
-          passwordChanged = true;
-        } catch (err: any) {
-          if (err.code === 'auth/requires-recent-login') {
-            setReauthRequired(true);
-            setLoading(false);
-            showToast('Por motivos de segurança, você precisa confirmar sua senha atual antes de alterar a senha.', 'info');
-            return;
+      if (useFallback) {
+        // Fluxo de Fallback (Direto no cliente): Útil para sessões locais / offline ou falhas de rede na API
+        // 1. Update Profile (DisplayName and Photo)
+        await updateProfile(fbUser, {
+          displayName: name,
+          photoURL: selectedAvatar || null
+        });
+
+        // 2. Update Email locally if changed
+        if (cleanEmail !== fbUser.email) {
+          try {
+            await updateEmail(fbUser, cleanEmail);
+          } catch (err: any) {
+            if (err.code === 'auth/requires-recent-login') {
+              setReauthRequired(true);
+              setLoading(false);
+              showToast('Por motivos de segurança, você precisa confirmar sua senha atual antes de alterar o e-mail.', 'info');
+              return;
+            }
+            throw err;
           }
-          throw err;
+        }
+
+        // 3. Update Password if changed
+        if (password) {
+          try {
+            await updatePassword(fbUser, password);
+          } catch (err: any) {
+            if (err.code === 'auth/requires-recent-login') {
+              setReauthRequired(true);
+              setLoading(false);
+              showToast('Por motivos de segurança, você precisa confirmar sua senha atual antes de alterar a senha.', 'info');
+              return;
+            }
+            throw err;
+          }
+        }
+
+        // 4. Update user document on Firestore
+        if (currentUserData) {
+          const userDocRef = doc(db, 'users', fbUser.uid);
+          const updatedData: any = {
+            name,
+            email: cleanEmail,
+            avatar: selectedAvatar || '',
+            photoURL: selectedAvatar || '',
+            updatedAt: new Date()
+          };
+
+          if (password) {
+            updatedData.password = password;
+          }
+
+          await updateDoc(userDocRef, updatedData);
+
+          // Se o usuário for entregador, atualizar também o documento na coleção 'couriers'
+          if (currentUserData.role === 'COURIER') {
+            try {
+              const courierDocRef = doc(db, 'couriers', fbUser.uid);
+              const courierUpdatedData: any = {
+                name,
+                email: cleanEmail,
+                updatedAt: new Date()
+              };
+              if (password) {
+                courierUpdatedData.password = password;
+              }
+              await setDoc(courierDocRef, courierUpdatedData, { merge: true });
+            } catch (courierErr) {
+              console.error("Erro ao atualizar entregador na coleção 'couriers' no fallback:", courierErr);
+            }
+          }
         }
       }
 
-      // 4. Update user document on Firestore
+      // Sincronizar dados de estado local do usuário
       if (currentUserData) {
-        const userDocRef = doc(db, 'users', fbUser.uid);
-        const updatedData: any = {
+        const updatedLocalData: any = {
           name,
           email: cleanEmail,
           avatar: selectedAvatar || '',
           photoURL: selectedAvatar || '',
           updatedAt: new Date()
         };
-
         if (password) {
-          updatedData.password = password;
-        }
-
-        await updateDoc(userDocRef, updatedData);
-
-        // Se o usuário for entregador, atualizar também o documento na coleção 'couriers'
-        if (currentUserData.role === 'COURIER') {
-          try {
-            const courierDocRef = doc(db, 'couriers', fbUser.uid);
-            const courierUpdatedData: any = {
-              name,
-              email: cleanEmail,
-              updatedAt: new Date()
-            };
-            if (password) {
-              courierUpdatedData.password = password;
-            }
-            await setDoc(courierDocRef, courierUpdatedData, { merge: true });
-            console.log("Perfil de entregador atualizado na coleção 'couriers' com sucesso.");
-          } catch (courierErr) {
-            console.error("Erro ao atualizar entregador na coleção 'couriers':", courierErr);
-          }
+          updatedLocalData.password = password;
         }
 
         onUpdateUser({
           ...currentUserData,
-          ...updatedData
+          ...updatedLocalData
         } as User);
       }
 

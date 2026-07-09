@@ -2311,6 +2311,29 @@ const App: React.FC = () => {
         ...updates,
         updatedAt: new Date()
       }), { merge: true });
+
+      // Sincronizar de volta com a coleção 'users'
+      try {
+        const userDocRef = doc(db, 'users', id);
+        const userDocSnap = await getDoc(userDocRef);
+        if (userDocSnap.exists()) {
+          const userUpdates: any = {};
+          if (updates.name !== undefined) userUpdates.name = updates.name;
+          if (updates.email !== undefined) userUpdates.email = updates.email;
+          if (updates.active !== undefined) userUpdates.active = updates.active;
+          /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+          if ((updates as any).password !== undefined) userUpdates.password = (updates as any).password;
+          
+          if (Object.keys(userUpdates).length > 0) {
+            await setDoc(userDocRef, {
+              ...userUpdates,
+              updatedAt: new Date()
+            }, { merge: true });
+          }
+        }
+      } catch (syncErr) {
+        console.error("Erro ao sincronizar update de courier com users:", syncErr);
+      }
     } else {
       await localDb.couriers.update(id, updates);
       setCouriers(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
@@ -3777,10 +3800,12 @@ const App: React.FC = () => {
 
         // Se for entregador, criar registro na coleção de couriers também
         if (newUser.role === 'COURIER') {
-          const newCourier: Courier = {
+          const newCourier: Courier & { password?: string } = {
             id: newUser.id,
             tenantId: newUser.tenantId,
             name: newUser.name,
+            email: newUser.email,
+            password: newUser.password,
             phone: '', // Pode ser preenchido depois
             status: 'available',
             active: true,
@@ -3846,17 +3871,18 @@ const App: React.FC = () => {
         updatedAt: new Date()
       }));
 
-      // Sincronizar com couriers se houver mudança de nome ou role
-      if (updates.role === 'COURIER' || (updates.name && users.find(u => u.id === id)?.role === 'COURIER')) {
-        const user = users.find(u => u.id === id);
-        if (user) {
-          const courierUpdate: any = { 
-            name: updates.name || user.name,
-            updatedAt: new Date()
-          };
-          if (updates.active !== undefined) courierUpdate.active = updates.active;
-          await setDoc(doc(db, 'couriers', id), courierUpdate, { merge: true });
-        }
+      // Sincronizar com couriers se o usuário atual for entregador ou o novo cargo for entregador
+      const existingUser = users.find(u => u.id === id);
+      const isCourier = updates.role === 'COURIER' || existingUser?.role === 'COURIER';
+      if (isCourier && existingUser) {
+        const courierUpdate: any = { 
+          name: finalUpdates.name !== undefined ? finalUpdates.name : existingUser.name,
+          email: finalUpdates.email !== undefined ? finalUpdates.email : (existingUser.email || ''),
+          updatedAt: new Date()
+        };
+        if (finalUpdates.password !== undefined) courierUpdate.password = finalUpdates.password;
+        if (finalUpdates.active !== undefined) courierUpdate.active = finalUpdates.active;
+        await setDoc(doc(db, 'couriers', id), courierUpdate, { merge: true });
       }
 
       // Se for o próprio usuário logado, tentar atualizar também no Firebase Auth diretamente
@@ -4652,6 +4678,107 @@ const App: React.FC = () => {
               className="w-full py-3.5 bg-slate-100 text-slate-600 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-200 transition-all"
             >
               Fazer Logout / Outra Conta
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --- SEGURANÇA MÁXIMA CONTRA INVASÃO DE URLS (SYNCHRONOUS ROUTING LOCKS) ---
+  const isSaasPath = effectivePath.startsWith('/saas');
+  const isLojistaPath = effectivePath.startsWith('/lojista');
+  const isEntregadorPath = effectivePath.startsWith('/entregador');
+
+  // A. Bloqueio para caminhos do SaaS (/saas) se não for Super Admin
+  if (isSaasPath && currentUserData && !isSuperAdmin) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <div className="bg-white p-8 sm:p-10 rounded-[2.5rem] border border-slate-100 shadow-2xl max-w-sm w-full text-center space-y-6">
+          <div className="w-20 h-20 bg-rose-50 border border-rose-100 text-rose-600 rounded-3xl flex items-center justify-center mx-auto">
+            <Lock size={40} />
+          </div>
+          <div>
+            <h2 className="text-2xl font-black text-slate-800 tracking-tighter">Acesso Negado</h2>
+            <p className="text-slate-500 font-medium text-sm mt-3 leading-relaxed">
+              Você não possui credenciais de <strong className="text-indigo-600">Super Administrador</strong> para visualizar ou editar as configurações centrais do SaaS.
+            </p>
+          </div>
+          <div className="space-y-3">
+            <button 
+              onClick={() => {
+                if (currentUserData.role === 'COURIER') {
+                  navigate('/entregador');
+                } else if (currentUserData.role === 'CUSTOMER') {
+                  navigate('/marketplace');
+                } else {
+                  navigate('/lojista');
+                }
+              }}
+              className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-opacity-90 transition-all shadow-xl shadow-indigo-100"
+            >
+              Voltar para Área Principal
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // B. Bloqueio para caminhos do Lojista (/lojista) se o cargo não pertencer ao painel da loja
+  const allowedLojistaRoles = ['OWNER', 'ADMIN', 'MANAGER', 'CHEF', 'CASHIER', 'WAITER', 'KDS', 'STOCK_ANALYST'];
+  if (isLojistaPath && currentUserData && !allowedLojistaRoles.includes(currentUserData.role) && !isSuperAdmin) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <div className="bg-white p-8 sm:p-10 rounded-[2.5rem] border border-slate-100 shadow-2xl max-w-sm w-full text-center space-y-6">
+          <div className="w-20 h-20 bg-rose-50 border border-rose-100 text-rose-600 rounded-3xl flex items-center justify-center mx-auto">
+            <Lock size={40} />
+          </div>
+          <div>
+            <h2 className="text-2xl font-black text-slate-800 tracking-tighter">Acesso Restrito</h2>
+            <p className="text-slate-500 font-medium text-sm mt-3 leading-relaxed">
+              O cargo de <strong className="text-indigo-600">{currentUserData.role}</strong> não tem autorização para gerenciar ou acessar o painel administrativo da loja.
+            </p>
+          </div>
+          <div className="space-y-3">
+            <button 
+              onClick={() => {
+                if (currentUserData.role === 'COURIER') {
+                  navigate('/entregador');
+                } else {
+                  navigate('/marketplace');
+                }
+              }}
+              className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-opacity-90 transition-all shadow-xl shadow-indigo-100"
+            >
+              Voltar para Área Principal
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // C. Bloqueio para caminhos do Entregador (/entregador) se não for Courier ou possuir permissão
+  if (isEntregadorPath && currentUserData && currentUserData.role !== 'COURIER' && !getUserPermissions(currentUserData).includes('courier_app_access') && !isSuperAdmin) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <div className="bg-white p-8 sm:p-10 rounded-[2.5rem] border border-slate-100 shadow-2xl max-w-sm w-full text-center space-y-6">
+          <div className="w-20 h-20 bg-rose-50 border border-rose-100 text-rose-600 rounded-3xl flex items-center justify-center mx-auto">
+            <Lock size={40} />
+          </div>
+          <div>
+            <h2 className="text-2xl font-black text-slate-800 tracking-tighter">Acesso Negado</h2>
+            <p className="text-slate-500 font-medium text-sm mt-3 leading-relaxed">
+              Esta área de entregas é de uso exclusivo para entregadores e parceiros logísticos registrados.
+            </p>
+          </div>
+          <div className="space-y-3">
+            <button 
+              onClick={() => navigate('/marketplace')}
+              className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-opacity-90 transition-all shadow-xl shadow-indigo-100"
+            >
+              Ir para o Marketplace
             </button>
           </div>
         </div>

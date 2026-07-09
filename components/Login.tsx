@@ -312,41 +312,26 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
         let signedInUser = null;
         let loginSuccess = false;
 
-        // 1. Primeiro tenta o login direto padrão via Firebase Auth (rápido, direto na máquina do cliente)
+        // 1. Prioridade Máxima: Tentar o login seguro, inteligente e ultra-rápido via servidor API primeiro (consulta Firestore em ~30ms)
         try {
-          console.log(`Tentando login client-side padrão para ${trimmedEmail}...`);
-          const loginCred = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
-          signedInUser = loginCred.user;
-          loginSuccess = true;
-          console.log(`Login client-side bem-sucedido.`);
-        } catch (clientErr: any) {
-          console.log(`Login client-side falhou: ${clientErr.code || clientErr.message}. Acionando sincronização via servidor...`);
-        }
+          console.log(`Tentando login ultra-rápido via servidor API para ${trimmedEmail}...`);
+          const response = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ email: trimmedEmail, password: trimmedPassword }),
+          });
 
-        // 2. Se falhar por qualquer desalinhamento, aciona a sincronização inteligente com o banco de dados via API
-        if (!loginSuccess) {
-          try {
-            const response = await fetch('/api/auth/login', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({ email: trimmedEmail, password: trimmedPassword }),
-            });
-
-            if (!response.ok) {
-              const errData = await response.json();
-              throw new Error(errData.error || 'Credenciais inválidas. Verifique seu e-mail e senha.');
-            }
-
+          if (response.ok) {
             const data = await response.json();
             if (data.success) {
               if (data.customToken) {
-                console.log("Token de acesso recebido do servidor. Autenticando na sessão local...");
+                console.log("Token de acesso recebido do servidor. Autenticando com Token Customizado...");
                 const loginCred = await signInWithCustomToken(auth, data.customToken);
                 signedInUser = loginCred.user;
                 loginSuccess = true;
-                console.log("Sessão autenticada via Token Customizado com sucesso!");
+                console.log("Autenticado via Token Customizado com sucesso!");
               } else if (data.isLocalSession) {
                 console.log("Sessão de bypass local autorizada pelo servidor.");
                 const simulatedFirebaseUser = {
@@ -394,9 +379,32 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
                 return;
               }
             }
-          } catch (serverErr: any) {
-            console.error("Erro na sincronização segura do servidor:", serverErr);
-            throw new Error(serverErr.message || 'Credenciais inválidas. Verifique seu e-mail e senha.');
+          } else {
+            const errData = await response.json().catch(() => ({}));
+            // Se o servidor explicitamente retornou erro de credenciais inválidas, não precisamos tentar o fallback cliente lento
+            if (response.status === 401 || errData.error?.includes('incorretos') || errData.error?.includes('inválidas') || errData.error?.includes('E-mail ou senha')) {
+              throw new Error(errData.error || 'Credenciais inválidas. Verifique seu e-mail e senha.');
+            }
+          }
+        } catch (apiErr: any) {
+          console.warn("Login via servidor API falhou ou está offline, aplicando fallback client-side direto...", apiErr.message || apiErr);
+          // Se for erro de credenciais incorretas vindo da nossa própria API, repassa
+          if (apiErr.message?.includes('incorretos') || apiErr.message?.includes('inválidas') || apiErr.message?.includes('E-mail ou senha')) {
+            throw apiErr;
+          }
+        }
+
+        // 2. Fallback de Segurança: Se a API falhou por timeout, offline ou rede, tentar o login tradicional direto via Firebase Client Auth
+        if (!loginSuccess) {
+          try {
+            console.log(`Tentando fallback client-side padrão direto via Firebase Auth para ${trimmedEmail}...`);
+            const loginCred = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
+            signedInUser = loginCred.user;
+            loginSuccess = true;
+            console.log(`Login client-side bem-sucedido.`);
+          } catch (clientErr: any) {
+            console.error("Login de fallback client-side também falhou:", clientErr);
+            throw new Error('E-mail ou senha incorretos. Verifique seus dados.');
           }
         }
 

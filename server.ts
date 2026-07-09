@@ -270,6 +270,106 @@ async function startServer() {
     }
   });
 
+  app.post("/api/auth/update-profile", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({ error: "Não autorizado." });
+      }
+
+      const idToken = authHeader.split("Bearer ")[1];
+      let decodedToken;
+      try {
+        decodedToken = await adminAuth.verifyIdToken(idToken);
+      } catch {
+        return res.status(401).json({ error: "Sessão inválida ou expirada." });
+      }
+
+      const uid = decodedToken.uid;
+      const { name, email, avatar, password } = req.body;
+
+      const trimmedEmail = email ? (email as string).trim().toLowerCase() : undefined;
+      const trimmedPassword = password ? (password as string).trim() : undefined;
+
+      // 1. Obter usuário atual do Firestore
+      const userRef = adminDb.collection("users").doc(uid);
+      const userDoc = await userRef.get();
+      if (!userDoc.exists) {
+        return res.status(404).json({ error: "Usuário não encontrado." });
+      }
+
+      const userData = userDoc.data();
+
+      // 2. Atualizar no Firebase Auth via Admin SDK
+      /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+      const authUpdates: any = {};
+      if (name) authUpdates.displayName = name;
+      if (trimmedEmail && trimmedEmail !== decodedToken.email) {
+        // Verificar duplicidade de e-mail no Firestore antes de mudar
+        const duplicateCheck = await adminDb.collection("users").where("email", "==", trimmedEmail).get();
+        if (!duplicateCheck.empty && duplicateCheck.docs[0].id !== uid) {
+          return res.status(400).json({ error: "Este e-mail já está em uso por outro usuário." });
+        }
+        authUpdates.email = trimmedEmail;
+      }
+      if (trimmedPassword) {
+        if (trimmedPassword.length < 6) {
+          return res.status(400).json({ error: "A nova senha deve ter pelo menos 6 caracteres." });
+        }
+        authUpdates.password = trimmedPassword;
+      }
+
+      if (Object.keys(authUpdates).length > 0) {
+        await adminAuth.updateUser(uid, authUpdates);
+      }
+
+      // 3. Atualizar no Firestore 'users'
+      /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+      const firestoreUpdates: any = {
+        updatedAt: new Date()
+      };
+      if (name) firestoreUpdates.name = name;
+      if (trimmedEmail) firestoreUpdates.email = trimmedEmail;
+      if (avatar !== undefined) {
+        firestoreUpdates.avatar = avatar;
+        firestoreUpdates.photoURL = avatar;
+      }
+      if (trimmedPassword) firestoreUpdates.password = trimmedPassword;
+
+      await userRef.update(firestoreUpdates);
+
+      // 4. Se for Courier, sincronizar com a coleção 'couriers'
+      if (userData?.role === "COURIER") {
+        const courierRef = adminDb.collection("couriers").doc(uid);
+        /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+        const courierUpdates: any = {
+          updatedAt: new Date()
+        };
+        if (name) courierUpdates.name = name;
+        if (trimmedEmail) courierUpdates.email = trimmedEmail;
+        if (trimmedPassword) courierUpdates.password = trimmedPassword;
+        
+        await courierRef.set(courierUpdates, { merge: true });
+      }
+
+      return res.json({
+        success: true,
+        message: "Perfil atualizado com sucesso no Firestore, Auth e coleções correspondentes.",
+        user: {
+          id: uid,
+          name: name || userData?.name,
+          email: trimmedEmail || userData?.email,
+          role: userData?.role,
+          tenantId: userData?.tenantId
+        }
+      });
+
+    } catch (err: any) {
+      console.error("Erro ao atualizar perfil via API:", err);
+      return res.status(500).json({ error: err.message || "Erro interno ao atualizar perfil." });
+    }
+  });
+
   app.post("/api/auth/first-access", async (req, res) => {
     try {
       const { email, tempPassword, newPassword } = req.body;
