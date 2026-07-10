@@ -233,6 +233,86 @@ async function startServer() {
         console.error("Erro ao consultar Firestore no login prévio:", dbErr);
       }
 
+      // 1.5. Forçar alinhamento e existência de perfil para tubaktabacaria@sistema.com
+      if (trimmedEmail === 'tubaktabacaria@sistema.com') {
+        if (!matchedUser) {
+          userRole = 'OWNER';
+          uid = 'tenant_tubak_owner';
+          matchedUser = {
+            id: uid,
+            email: trimmedEmail,
+            role: 'OWNER',
+            password: trimmedPassword,
+            name: 'Tuba Tabacaria',
+            tenantId: 'tenant_tubak',
+            permissions: [
+              'dashboard_view',
+              'pos_access',
+              'marketplace_manage',
+              'tables_manage',
+              'kds_view',
+              'delivery_manage',
+              'digital_menu_manage',
+              'customers_manage',
+              'inventory_edit',
+              'finance_view',
+              'cmv_analysis',
+              'users_manage',
+              'admin_settings_manage',
+              'fiscal_manage',
+              'courier_app_access'
+            ],
+            active: true,
+            createdAt: new Date()
+          };
+          try {
+            await setDoc(doc(serverClientDb, 'users', uid), matchedUser);
+            console.log("[Fast Login] Criado Tuba Tabacaria Owner no Firestore.");
+          } catch (createErr) {
+            console.error("Erro ao pré-criar Tuba Tabacaria Owner no Firestore:", createErr);
+          }
+        } else {
+          // Garantir que os dados do usuário existente estão totalmente corretos
+          let needsUpdate = false;
+          if (matchedUser.tenantId !== 'tenant_tubak') {
+            matchedUser.tenantId = 'tenant_tubak';
+            needsUpdate = true;
+          }
+          if (matchedUser.name !== 'Tuba Tabacaria') {
+            matchedUser.name = 'Tuba Tabacaria';
+            needsUpdate = true;
+          }
+          if (matchedUser.role !== 'OWNER') {
+            matchedUser.role = 'OWNER';
+            needsUpdate = true;
+          }
+          // Se as permissões não existirem ou forem insuficientes, preencher também
+          if (!matchedUser.permissions || matchedUser.permissions.length === 0) {
+            matchedUser.permissions = [
+              'dashboard_view', 'pos_access', 'marketplace_manage', 'tables_manage', 'kds_view',
+              'delivery_manage', 'digital_menu_manage', 'customers_manage', 'inventory_edit',
+              'finance_view', 'cmv_analysis', 'users_manage', 'admin_settings_manage', 'fiscal_manage', 'courier_app_access'
+            ];
+            needsUpdate = true;
+          }
+          if (needsUpdate) {
+            try {
+              await setDoc(doc(serverClientDb, 'users', uid), {
+                tenantId: 'tenant_tubak',
+                name: 'Tuba Tabacaria',
+                role: 'OWNER',
+                permissions: matchedUser.permissions
+              }, { merge: true });
+              console.log("[Fast Login] Alinhado dados de Tuba Tabacaria no Firestore.");
+            } catch (updateErr) {
+              console.error("Erro ao atualizar Tuba Tabacaria no Firestore:", updateErr);
+            }
+          }
+        }
+        userRole = 'OWNER';
+        uid = uid || 'tenant_tubak_owner';
+      }
+
       // 2. Verificar se a senha confere com o Firestore
       if (matchedUser && matchedUser.password === trimmedPassword) {
         authVerified = true;
@@ -529,6 +609,53 @@ async function startServer() {
         console.warn(`[Login API] Falha ou indisponibilidade do Firebase Admin SDK Auth (${authErr.message || authErr}). Ativando fallback de sessão local.`);
       }
 
+      // GARANTIA DE ISOLAMENTO E INTEGRIDADE DE TENANT E CONFIGURAÇÕES
+      if (matchedUser && matchedUser.tenantId) {
+        const tenantId = matchedUser.tenantId;
+        const tenantDocRef = doc(serverClientDb, 'tenants', tenantId);
+        const settingsDocRef = doc(serverClientDb, 'settings', tenantId);
+
+        try {
+          const tenantSnap = await getDoc(tenantDocRef);
+          if (!tenantSnap.exists()) {
+            console.log(`[Integridade] Criando documento de tenant ausente para: ${tenantId}`);
+            await setDoc(tenantDocRef, {
+              id: tenantId,
+              name: matchedUser.name || 'Meu Estabelecimento',
+              category: 'Geral',
+              ownerId: uid || matchedUser.id,
+              ownerEmail: trimmedEmail,
+              active: true,
+              autoAcceptOrders: false,
+              createdAt: new Date()
+            });
+          }
+
+          const settingsSnap = await getDoc(settingsDocRef);
+          if (!settingsSnap.exists()) {
+            console.log(`[Integridade] Criando documento de configurações ausente para: ${tenantId}`);
+            await setDoc(settingsDocRef, {
+              id: tenantId,
+              admin: {
+                companyName: matchedUser.name || 'Meu Estabelecimento',
+                cnpj: '',
+                phone: '',
+                address: '',
+                logoUrl: '',
+                taxRate: 0,
+                deliveryFee: 0,
+                freeDeliveryOver: 0,
+                workingHours: '08:00 - 22:00',
+                isActive: true
+              },
+              createdAt: new Date()
+            });
+          }
+        } catch (integrityErr) {
+          console.error("[Integridade] Erro ao garantir existência de documentos do tenant:", integrityErr);
+        }
+      }
+
       if (adminAuthSuccess && customToken) {
         return res.json({
           success: true,
@@ -758,6 +885,53 @@ async function startServer() {
         adminAuthSuccess = true;
       } catch (authErr) {
         console.warn("[First Access] Falha no createCustomToken, usando fallback local.", authErr);
+      }
+
+      // GARANTIA DE ISOLAMENTO E INTEGRIDADE DE TENANT E CONFIGURAÇÕES
+      if (updatedUserData && updatedUserData.tenantId) {
+        const tenantId = updatedUserData.tenantId;
+        const tenantDocRef = doc(serverClientDb, 'tenants', tenantId);
+        const settingsDocRef = doc(serverClientDb, 'settings', tenantId);
+
+        try {
+          const tenantSnap = await getDoc(tenantDocRef);
+          if (!tenantSnap.exists()) {
+            console.log(`[Integridade] Criando documento de tenant ausente para: ${tenantId}`);
+            await setDoc(tenantDocRef, {
+              id: tenantId,
+              name: updatedUserData.name || 'Meu Estabelecimento',
+              category: 'Geral',
+              ownerId: uid,
+              ownerEmail: trimmedEmail,
+              active: true,
+              autoAcceptOrders: false,
+              createdAt: new Date()
+            });
+          }
+
+          const settingsSnap = await getDoc(settingsDocRef);
+          if (!settingsSnap.exists()) {
+            console.log(`[Integridade] Criando documento de configurações ausente para: ${tenantId}`);
+            await setDoc(settingsDocRef, {
+              id: tenantId,
+              admin: {
+                companyName: updatedUserData.name || 'Meu Estabelecimento',
+                cnpj: '',
+                phone: '',
+                address: '',
+                logoUrl: '',
+                taxRate: 0,
+                deliveryFee: 0,
+                freeDeliveryOver: 0,
+                workingHours: '08:00 - 22:00',
+                isActive: true
+              },
+              createdAt: new Date()
+            });
+          }
+        } catch (integrityErr) {
+          console.error("[Integridade] Erro ao garantir existência de documentos do tenant:", integrityErr);
+        }
       }
 
       if (adminAuthSuccess && customToken) {

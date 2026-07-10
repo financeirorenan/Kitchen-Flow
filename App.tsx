@@ -4603,12 +4603,28 @@ const App: React.FC = () => {
 
   const isMarketplace = effectivePath.startsWith('/marketplace') || effectivePath.startsWith('/perfil') || effectivePath.startsWith('/cardapio') || effectivePath === '/';
 
+  const loadingText = (() => {
+    try {
+      const cachedTenant = localStorage.getItem('kitchenflow_cached_tenant_data');
+      if (cachedTenant) {
+        const parsed = JSON.parse(cachedTenant);
+        if (parsed?.name) return `Carregando ${parsed.name}...`;
+      }
+      const cachedUser = localStorage.getItem('kitchenflow_cached_user');
+      if (cachedUser) {
+        const parsed = JSON.parse(cachedUser);
+        if (parsed?.name) return `Carregando ${parsed.name}...`;
+      }
+    } catch {}
+    return "Carregando o sistema...";
+  })();
+
   if (authLoading || (hasApiKey === null && !isMarketplace)) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-slate-400 font-black text-[10px] uppercase tracking-widest animate-pulse">Carregando Viva Lá Fome...</p>
+          <p className="text-slate-400 font-black text-[10px] uppercase tracking-widest animate-pulse">{loadingText}</p>
         </div>
       </div>
     );
