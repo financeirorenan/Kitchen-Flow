@@ -387,77 +387,81 @@ async function startServer() {
         // Executar sincronização com Firebase Auth com timeout de 1500ms para evitar travamentos
         await Promise.race([
           (async () => {
-            let firebaseUser;
-            let userExists = false;
-            
-            // Busca primeiro pelo UID para ver se o usuário já existe
             try {
-              firebaseUser = await adminAuth.getUser(uid);
-              userExists = true;
-              console.log(`[Sync Auth] Encontrou usuário por UID no Firebase Auth: ${uid}`);
-            } catch {
-              // Se não encontrou por UID, tenta buscar por email
+              let firebaseUser;
+              let userExists = false;
+              
+              // Busca primeiro pelo UID para ver se o usuário já existe
               try {
-                firebaseUser = await adminAuth.getUserByEmail(trimmedEmail);
+                firebaseUser = await adminAuth.getUser(uid);
                 userExists = true;
-                console.log(`[Sync Auth] Encontrou usuário por e-mail no Firebase Auth: ${trimmedEmail}`);
-                
-                // Se achou por email mas com UID diferente, alinha o UID no login
-                if (firebaseUser.uid && firebaseUser.uid !== uid) {
-                  console.log(`[Sync Auth] Alinhando UID do login: alterando ID do Firestore de ${uid} para ${firebaseUser.uid} (UID do Firebase Auth)`);
-                  authUid = firebaseUser.uid;
-                  uid = firebaseUser.uid;
-                }
+                console.log(`[Sync Auth] Encontrou usuário por UID no Firebase Auth: ${uid}`);
               } catch {
-                // Não existe por UID nem por email
-                console.log(`[Sync Auth] Usuário não localizado por UID nem por e-mail no Firebase Auth.`);
-              }
-            }
-
-            if (userExists && firebaseUser) {
-              // Garante que o Firebase Auth tenha as credenciais corretas e atualizadas
-              const updates: any = {};
-              if (firebaseUser.email !== trimmedEmail) {
-                updates.email = trimmedEmail;
-              }
-              updates.password = trimmedPassword;
-              if (matchedUser.name && firebaseUser.displayName !== matchedUser.name) {
-                updates.displayName = matchedUser.name;
-              }
-
-              await adminAuth.updateUser(firebaseUser.uid, updates);
-              console.log(`[Sync Auth] Perfil e credenciais do usuário atualizados com sucesso no Firebase Auth.`);
-            } else {
-              // Se não existe na Auth do Firebase, cria com o UID correspondente do Firestore
-              await adminAuth.createUser({
-                uid: uid,
-                email: trimmedEmail,
-                password: trimmedPassword,
-                displayName: matchedUser.name || 'Lojista'
-              });
-              console.log(`[Sync Auth] Novo usuário registrado com sucesso no Firebase Auth para: ${trimmedEmail} com UID: ${uid}`);
-            }
-
-            // B. Se o Document ID antigo do Firestore for diferente do Auth UID unificado, migrar para manter o ID unificado
-            if (uid && uid !== oldDocId) {
-              matchedUser.id = uid;
-              const oldIdRef = oldDocId;
-              const collectionName = isCourier ? 'couriers' : 'users';
-              try {
-                await setDoc(doc(serverClientDb, collectionName, uid), matchedUser, { merge: true });
-                if (oldIdRef && oldIdRef !== uid) {
-                  await deleteDoc(doc(serverClientDb, collectionName, oldIdRef));
+                // Se não encontrou por UID, tenta buscar por email
+                try {
+                  firebaseUser = await adminAuth.getUserByEmail(trimmedEmail);
+                  userExists = true;
+                  console.log(`[Sync Auth] Encontrou usuário por e-mail no Firebase Auth: ${trimmedEmail}`);
+                  
+                  // Se achou por email mas com UID diferente, alinha o UID no login
+                  if (firebaseUser.uid && firebaseUser.uid !== uid) {
+                    console.log(`[Sync Auth] Alinhando UID do login: alterando ID do Firestore de ${uid} para ${firebaseUser.uid} (UID do Firebase Auth)`);
+                    authUid = firebaseUser.uid;
+                    uid = firebaseUser.uid;
+                  }
+                } catch {
+                  // Não existe por UID nem por email
+                  console.log(`[Sync Auth] Usuário não localizado por UID nem por e-mail no Firebase Auth.`);
                 }
-                oldDocId = uid;
-                console.log(`[Login API] Migração de ID concluída de ${oldIdRef} para ${uid}`);
-              } catch (migErr) {
-                console.warn("Nao foi possivel migrar ID do Firestore, prosseguindo:", migErr);
               }
-            }
 
-            // C. Gerar Token de Acesso Customizado do Firebase Auth com o UID unificado definitivo
-            customToken = await adminAuth.createCustomToken(uid);
-            adminAuthSuccess = true;
+              if (userExists && firebaseUser) {
+                // Garante que o Firebase Auth tenha as credenciais corretas e atualizadas
+                const updates: any = {};
+                if (firebaseUser.email !== trimmedEmail) {
+                  updates.email = trimmedEmail;
+                }
+                updates.password = trimmedPassword;
+                if (matchedUser.name && firebaseUser.displayName !== matchedUser.name) {
+                  updates.displayName = matchedUser.name;
+                }
+
+                await adminAuth.updateUser(firebaseUser.uid, updates);
+                console.log(`[Sync Auth] Perfil e credenciais do usuário atualizados com sucesso no Firebase Auth.`);
+              } else {
+                // Se não existe na Auth do Firebase, cria com o UID correspondente do Firestore
+                await adminAuth.createUser({
+                  uid: uid,
+                  email: trimmedEmail,
+                  password: trimmedPassword,
+                  displayName: matchedUser.name || 'Lojista'
+                });
+                console.log(`[Sync Auth] Novo usuário registrado com sucesso no Firebase Auth para: ${trimmedEmail} com UID: ${uid}`);
+              }
+
+              // B. Se o Document ID antigo do Firestore for diferente do Auth UID unificado, migrar para manter o ID unificado
+              if (uid && uid !== oldDocId) {
+                matchedUser.id = uid;
+                const oldIdRef = oldDocId;
+                const collectionName = isCourier ? 'couriers' : 'users';
+                try {
+                  await setDoc(doc(serverClientDb, collectionName, uid), matchedUser, { merge: true });
+                  if (oldIdRef && oldIdRef !== uid) {
+                    await deleteDoc(doc(serverClientDb, collectionName, oldIdRef));
+                  }
+                  oldDocId = uid;
+                  console.log(`[Login API] Migração de ID concluída de ${oldIdRef} para ${uid}`);
+                } catch (migErr) {
+                  console.warn("Nao foi possivel migrar ID do Firestore, prosseguindo:", migErr);
+                }
+              }
+
+              // C. Gerar Token de Acesso Customizado do Firebase Auth com o UID unificado definitivo
+              customToken = await adminAuth.createCustomToken(uid);
+              adminAuthSuccess = true;
+            } catch (innerErr: any) {
+              console.warn(`[Sync Auth] Erro interno durante sincronização assíncrona: ${innerErr.message || innerErr}`);
+            }
           })(),
           new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout Firebase Admin SDK")), 1500))
         ]);
