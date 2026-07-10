@@ -233,85 +233,7 @@ async function startServer() {
         console.error("Erro ao consultar Firestore no login prévio:", dbErr);
       }
 
-      // 1.5. Forçar alinhamento e existência de perfil para tubaktabacaria@sistema.com
-      if (trimmedEmail === 'tubaktabacaria@sistema.com') {
-        if (!matchedUser) {
-          userRole = 'OWNER';
-          uid = 'tenant_tubak_owner';
-          matchedUser = {
-            id: uid,
-            email: trimmedEmail,
-            role: 'OWNER',
-            password: trimmedPassword,
-            name: 'Tuba Tabacaria',
-            tenantId: 'tenant_tubak',
-            permissions: [
-              'dashboard_view',
-              'pos_access',
-              'marketplace_manage',
-              'tables_manage',
-              'kds_view',
-              'delivery_manage',
-              'digital_menu_manage',
-              'customers_manage',
-              'inventory_edit',
-              'finance_view',
-              'cmv_analysis',
-              'users_manage',
-              'admin_settings_manage',
-              'fiscal_manage',
-              'courier_app_access'
-            ],
-            active: true,
-            createdAt: new Date()
-          };
-          try {
-            await setDoc(doc(serverClientDb, 'users', uid), matchedUser);
-            console.log("[Fast Login] Criado Tuba Tabacaria Owner no Firestore.");
-          } catch (createErr) {
-            console.error("Erro ao pré-criar Tuba Tabacaria Owner no Firestore:", createErr);
-          }
-        } else {
-          // Garantir que os dados do usuário existente estão totalmente corretos
-          let needsUpdate = false;
-          if (matchedUser.tenantId !== 'tenant_tubak') {
-            matchedUser.tenantId = 'tenant_tubak';
-            needsUpdate = true;
-          }
-          if (matchedUser.name !== 'Tuba Tabacaria') {
-            matchedUser.name = 'Tuba Tabacaria';
-            needsUpdate = true;
-          }
-          if (matchedUser.role !== 'OWNER') {
-            matchedUser.role = 'OWNER';
-            needsUpdate = true;
-          }
-          // Se as permissões não existirem ou forem insuficientes, preencher também
-          if (!matchedUser.permissions || matchedUser.permissions.length === 0) {
-            matchedUser.permissions = [
-              'dashboard_view', 'pos_access', 'marketplace_manage', 'tables_manage', 'kds_view',
-              'delivery_manage', 'digital_menu_manage', 'customers_manage', 'inventory_edit',
-              'finance_view', 'cmv_analysis', 'users_manage', 'admin_settings_manage', 'fiscal_manage', 'courier_app_access'
-            ];
-            needsUpdate = true;
-          }
-          if (needsUpdate) {
-            try {
-              await setDoc(doc(serverClientDb, 'users', uid), {
-                tenantId: 'tenant_tubak',
-                name: 'Tuba Tabacaria',
-                role: 'OWNER',
-                permissions: matchedUser.permissions
-              }, { merge: true });
-              console.log("[Fast Login] Alinhado dados de Tuba Tabacaria no Firestore.");
-            } catch (updateErr) {
-              console.error("Erro ao atualizar Tuba Tabacaria no Firestore:", updateErr);
-            }
-          }
-        }
-        userRole = 'OWNER';
-        uid = uid || 'tenant_tubak_owner';
-      }
+      // 1.5. No forced override for tubaktabacaria@sistema.com to allow correct tenant_1780527471032 loading.
 
       // 2. Verificar se a senha confere com o Firestore
       if (matchedUser && matchedUser.password === trimmedPassword) {
@@ -385,71 +307,6 @@ async function startServer() {
             console.log("[Fast Login] Criado SAAS Admin no Firestore.");
           } catch (setErr) {
             console.error("Erro ao criar SAAS Admin no Firestore:", setErr);
-          }
-          authVerified = true;
-          authUid = uid;
-        } else if (trimmedEmail === 'tubaktabacaria@sistema.com' && trimmedPassword === 'Ch@ps1245') {
-          // Provisionar tubaktabacaria@sistema.com automaticamente para que consiga acessar tudo
-          userRole = 'OWNER';
-          uid = authVerified ? authUid : 'tenant_tubak_owner';
-          matchedUser = {
-            id: uid,
-            email: trimmedEmail,
-            role: 'OWNER',
-            password: trimmedPassword,
-            name: 'Tuba Tabacaria',
-            tenantId: 'tenant_tubak',
-            permissions: [
-              'dashboard_view',
-              'pos_access',
-              'marketplace_manage',
-              'tables_manage',
-              'kds_view',
-              'delivery_manage',
-              'digital_menu_manage',
-              'customers_manage',
-              'inventory_edit',
-              'finance_view',
-              'cmv_analysis',
-              'users_manage',
-              'admin_settings_manage',
-              'fiscal_manage',
-              'courier_app_access'
-            ],
-            active: true,
-            createdAt: new Date()
-          };
-          try {
-            await setDoc(doc(serverClientDb, 'users', uid), matchedUser);
-            await setDoc(doc(serverClientDb, 'tenants', 'tenant_tubak'), {
-              id: 'tenant_tubak',
-              name: 'Tuba Tabacaria',
-              category: 'Tabacaria',
-              ownerId: uid,
-              ownerEmail: trimmedEmail,
-              active: true,
-              autoAcceptOrders: false,
-              createdAt: new Date()
-            });
-            await setDoc(doc(serverClientDb, 'settings', 'tenant_tubak'), {
-              id: 'tenant_tubak',
-              admin: {
-                companyName: 'Tuba Tabacaria',
-                cnpj: '',
-                phone: '',
-                address: '',
-                logoUrl: '',
-                taxRate: 0,
-                deliveryFee: 0,
-                freeDeliveryOver: 0,
-                workingHours: '08:00 - 22:00',
-                isActive: true
-              },
-              createdAt: new Date()
-            });
-            console.log("[Fast Login] Criado Tuba Tabacaria no Firestore.");
-          } catch (setErr) {
-            console.error("Erro ao criar Tuba Tabacaria no Firestore:", setErr);
           }
           authVerified = true;
           authUid = uid;
@@ -527,86 +384,85 @@ async function startServer() {
       try {
         uid = authUid || uid;
 
-        // A. Sincronização garantida e síncrona com o Firebase Auth
-        // Executamos esta etapa primeiro para podermos ler o UID real do Firebase Auth
-        // e unificá-lo com o ID do Firestore na etapa de migração subsequente.
-        try {
-          let firebaseUser;
-          let userExists = false;
-          
-          // Busca primeiro pelo UID para ver se o usuário já existe
-          try {
-            firebaseUser = await adminAuth.getUser(uid);
-            userExists = true;
-            console.log(`[Sync Auth] Encontrou usuário por UID no Firebase Auth: ${uid}`);
-          } catch {
-            // Se não encontrou por UID, tenta buscar por email
+        // Executar sincronização com Firebase Auth com timeout de 1500ms para evitar travamentos
+        await Promise.race([
+          (async () => {
+            let firebaseUser;
+            let userExists = false;
+            
+            // Busca primeiro pelo UID para ver se o usuário já existe
             try {
-              firebaseUser = await adminAuth.getUserByEmail(trimmedEmail);
+              firebaseUser = await adminAuth.getUser(uid);
               userExists = true;
-              console.log(`[Sync Auth] Encontrou usuário por e-mail no Firebase Auth: ${trimmedEmail}`);
-              
-              // Se achou por email mas com UID diferente, alinha o UID no login
-              if (firebaseUser.uid && firebaseUser.uid !== uid) {
-                console.log(`[Sync Auth] Alinhando UID do login: alterando ID do Firestore de ${uid} para ${firebaseUser.uid} (UID do Firebase Auth)`);
-                authUid = firebaseUser.uid;
-                uid = firebaseUser.uid;
-              }
+              console.log(`[Sync Auth] Encontrou usuário por UID no Firebase Auth: ${uid}`);
             } catch {
-              // Não existe por UID nem por email
-              console.log(`[Sync Auth] Usuário não localizado por UID nem por e-mail no Firebase Auth.`);
+              // Se não encontrou por UID, tenta buscar por email
+              try {
+                firebaseUser = await adminAuth.getUserByEmail(trimmedEmail);
+                userExists = true;
+                console.log(`[Sync Auth] Encontrou usuário por e-mail no Firebase Auth: ${trimmedEmail}`);
+                
+                // Se achou por email mas com UID diferente, alinha o UID no login
+                if (firebaseUser.uid && firebaseUser.uid !== uid) {
+                  console.log(`[Sync Auth] Alinhando UID do login: alterando ID do Firestore de ${uid} para ${firebaseUser.uid} (UID do Firebase Auth)`);
+                  authUid = firebaseUser.uid;
+                  uid = firebaseUser.uid;
+                }
+              } catch {
+                // Não existe por UID nem por email
+                console.log(`[Sync Auth] Usuário não localizado por UID nem por e-mail no Firebase Auth.`);
+              }
             }
-          }
 
-          if (userExists && firebaseUser) {
-            // Garante que o Firebase Auth tenha as credenciais corretas e atualizadas
-            const updates: any = {};
-            if (firebaseUser.email !== trimmedEmail) {
-              updates.email = trimmedEmail;
+            if (userExists && firebaseUser) {
+              // Garante que o Firebase Auth tenha as credenciais corretas e atualizadas
+              const updates: any = {};
+              if (firebaseUser.email !== trimmedEmail) {
+                updates.email = trimmedEmail;
+              }
+              updates.password = trimmedPassword;
+              if (matchedUser.name && firebaseUser.displayName !== matchedUser.name) {
+                updates.displayName = matchedUser.name;
+              }
+
+              await adminAuth.updateUser(firebaseUser.uid, updates);
+              console.log(`[Sync Auth] Perfil e credenciais do usuário atualizados com sucesso no Firebase Auth.`);
+            } else {
+              // Se não existe na Auth do Firebase, cria com o UID correspondente do Firestore
+              await adminAuth.createUser({
+                uid: uid,
+                email: trimmedEmail,
+                password: trimmedPassword,
+                displayName: matchedUser.name || 'Lojista'
+              });
+              console.log(`[Sync Auth] Novo usuário registrado com sucesso no Firebase Auth para: ${trimmedEmail} com UID: ${uid}`);
             }
-            updates.password = trimmedPassword;
-            if (matchedUser.name && firebaseUser.displayName !== matchedUser.name) {
-              updates.displayName = matchedUser.name;
+
+            // B. Se o Document ID antigo do Firestore for diferente do Auth UID unificado, migrar para manter o ID unificado
+            if (uid && uid !== oldDocId) {
+              matchedUser.id = uid;
+              const oldIdRef = oldDocId;
+              const collectionName = isCourier ? 'couriers' : 'users';
+              try {
+                await setDoc(doc(serverClientDb, collectionName, uid), matchedUser, { merge: true });
+                if (oldIdRef && oldIdRef !== uid) {
+                  await deleteDoc(doc(serverClientDb, collectionName, oldIdRef));
+                }
+                oldDocId = uid;
+                console.log(`[Login API] Migração de ID concluída de ${oldIdRef} para ${uid}`);
+              } catch (migErr) {
+                console.warn("Nao foi possivel migrar ID do Firestore, prosseguindo:", migErr);
+              }
             }
 
-            await adminAuth.updateUser(firebaseUser.uid, updates);
-            console.log(`[Sync Auth] Perfil e credenciais do usuário atualizados com sucesso no Firebase Auth.`);
-          } else {
-            // Se não existe na Auth do Firebase, cria com o UID correspondente do Firestore
-            await adminAuth.createUser({
-              uid: uid,
-              email: trimmedEmail,
-              password: trimmedPassword,
-              displayName: matchedUser.name || 'Lojista'
-            });
-            console.log(`[Sync Auth] Novo usuário registrado com sucesso no Firebase Auth para: ${trimmedEmail} com UID: ${uid}`);
-          }
-        } catch (syncErr: any) {
-          console.warn("[Sync Auth] Falha ao sincronizar Firebase Auth com o Firestore:", syncErr.message || syncErr);
-        }
-
-        // B. Se o Document ID antigo do Firestore for diferente do Auth UID unificado, migrar para manter o ID unificado
-        if (uid && uid !== oldDocId) {
-          matchedUser.id = uid;
-          const oldIdRef = oldDocId;
-          const collectionName = isCourier ? 'couriers' : 'users';
-          try {
-            await setDoc(doc(serverClientDb, collectionName, uid), matchedUser, { merge: true });
-            if (oldIdRef && oldIdRef !== uid) {
-              await deleteDoc(doc(serverClientDb, collectionName, oldIdRef));
-            }
-            oldDocId = uid;
-            console.log(`[Login API] Migração de ID concluída de ${oldIdRef} para ${uid}`);
-          } catch (migErr) {
-            console.warn("Nao foi possivel migrar ID do Firestore, prosseguindo:", migErr);
-          }
-        }
-
-        // C. Gerar Token de Acesso Customizado do Firebase Auth com o UID unificado definitivo
-        customToken = await adminAuth.createCustomToken(uid);
-        adminAuthSuccess = true;
+            // C. Gerar Token de Acesso Customizado do Firebase Auth com o UID unificado definitivo
+            customToken = await adminAuth.createCustomToken(uid);
+            adminAuthSuccess = true;
+          })(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout Firebase Admin SDK")), 1500))
+        ]);
       } catch (authErr: any) {
-        console.warn(`[Login API] Falha ou indisponibilidade do Firebase Admin SDK Auth (${authErr.message || authErr}). Ativando fallback de sessão local.`);
+        console.warn(`[Login API] Falha ou timeout no Firebase Admin SDK Auth (${authErr.message || authErr}). Ativando fallback de sessão local.`);
       }
 
       // GARANTIA DE ISOLAMENTO E INTEGRIDADE DE TENANT E CONFIGURAÇÕES
