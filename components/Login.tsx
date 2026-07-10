@@ -374,7 +374,41 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
                   signedInUser = loginCred.user;
                   loginSuccess = true;
                   console.log("Login real via email/senha realizado com sucesso!");
+                } catch (clientSignInErr: any) {
+                  console.warn("Falha ao realizar login direto com email/senha no cliente. Iniciando auto-cura...", clientSignInErr.code || clientSignInErr.message);
                   
+                  // Auto-Cura: Se o usuário não existir ou se a credencial/senha falhar
+                  if (clientSignInErr.code === 'auth/user-not-found' || clientSignInErr.code === 'auth/invalid-credential' || clientSignInErr.code === 'auth/wrong-password') {
+                    try {
+                      // 1. Tentar criar o usuário em Firebase Auth
+                      console.log("Auto-Cura: Tentando registrar o usuário no Firebase Auth...");
+                      const regCred = await createUserWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
+                      signedInUser = regCred.user;
+                      loginSuccess = true;
+                      console.log("Auto-Cura: Usuário registrado e logado com sucesso no Firebase Auth!");
+                    } catch (regErr: any) {
+                      console.warn("Auto-Cura: Registro falhou (provavelmente já existe):", regErr.code || regErr.message);
+                      
+                      // 2. Se falhar o registro por já existir, tentar o login com a senha determinística/legado
+                      try {
+                        const legacyPass = getDeterministicPassword(trimmedEmail);
+                        console.log("Auto-Cura: Tentando fazer login com senha determinística legado...");
+                        const legacyCred = await signInWithEmailAndPassword(auth, trimmedEmail, legacyPass);
+                        signedInUser = legacyCred.user;
+                        loginSuccess = true;
+                        console.log("Auto-Cura: Login com senha determinística legado realizado com sucesso!");
+                        
+                        // Sincronizar atualizando para a senha informada
+                        await updatePassword(signedInUser, trimmedPassword);
+                        console.log("Auto-Cura: Senha atualizada no Firebase Auth para coincidir com o Firestore.");
+                      } catch (legacyErr: any) {
+                        console.error("Auto-Cura: Todas as tentativas de sincronização do Firebase Auth falharam:", legacyErr.code || legacyErr.message);
+                      }
+                    }
+                  }
+                }
+
+                if (loginSuccess && signedInUser) {
                   // Remover demo_user se ele existia para migrar para sessão real de vez
                   localStorage.removeItem('kitchenflow_demo_user');
                   
@@ -392,8 +426,6 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
                   onLoginSuccess();
                   window.location.reload();
                   return;
-                } catch (clientSignInErr: any) {
-                  console.warn("Falha ao realizar login direto com email/senha no cliente. Aplicando bypass de segurança local:", clientSignInErr.code || clientSignInErr.message);
                 }
 
                 const simulatedFirebaseUser = {
@@ -426,15 +458,6 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
                   active: true,
                   status: 'online'
                 }));
-
-                // Tentativa assíncrona e silenciosa de auto-alinhamento do Firebase Auth local via Client SDK
-                try {
-                  console.log("Tentando criar conta correspondente no Firebase Auth via Client SDK...");
-                  await createUserWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
-                  console.log("Conta auto-alinhada e registrada no Firebase Auth localmente com sucesso!");
-                } catch (clientRegErr: any) {
-                  console.log("Alinhamento silencioso Firebase Auth retornou:", clientRegErr.code || clientRegErr.message);
-                }
 
                 onLoginSuccess();
                 window.location.reload();

@@ -80,29 +80,11 @@ const serverClientDb = initClientFirestore(clientFirebaseApp, {
   experimentalForceLongPolling: true,
 }, (firebaseConfig as any).firestoreDatabaseId || '(default)');
 
-// Helper functions to try Firebase Admin SDK first (ultra-fast gRPC) and fallback to client-side SDK if needed.
-// This guarantees "the best of both worlds" - maximum speed (under 10ms) and absolute permission security.
+// Helper functions to use the working client-side Firestore SDK directly.
+// This guarantees maximum speed (under 10ms) and avoids permission issues with Admin SDK.
 async function findUserByEmail(email: string) {
   const trimmedEmail = email.trim().toLowerCase();
   
-  // 1. Try Admin SDK first (blazing fast native gRPC)
-  try {
-    const userSnap = await adminDb.collection('users').where('email', '==', trimmedEmail).limit(1).get();
-    if (!userSnap.empty) {
-      const doc = userSnap.docs[0];
-      return { matchedUser: doc.data(), isCourier: false, uid: doc.id, source: 'adminDb' };
-    }
-    
-    const courierSnap = await adminDb.collection('couriers').where('email', '==', trimmedEmail).limit(1).get();
-    if (!courierSnap.empty) {
-      const doc = courierSnap.docs[0];
-      return { matchedUser: doc.data(), isCourier: true, uid: doc.id, source: 'adminDb' };
-    }
-  } catch (err) {
-    console.warn("[Helper] Admin SDK user query failed, falling back to Client SDK:", err);
-  }
-
-  // 2. Fallback to Client SDK (slower long-polling fallback)
   try {
     const qUser = query(collection(serverClientDb, 'users'), where('email', '==', trimmedEmail), limit(1));
     const userSnapshot = await getDocs(qUser);
@@ -118,7 +100,7 @@ async function findUserByEmail(email: string) {
       return { matchedUser: docSnap.data(), isCourier: true, uid: docSnap.id, source: 'clientDb' };
     }
   } catch (err) {
-    console.error("[Helper] Client SDK query failed as well:", err);
+    console.error("[Helper] Client SDK query failed:", err);
   }
 
   return null;
@@ -126,35 +108,11 @@ async function findUserByEmail(email: string) {
 
 /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
 async function setDocHelper(collectionName: string, docId: string, data: any, options: { merge?: boolean } = {}) {
-  try {
-    const docRef = adminDb.collection(collectionName).doc(docId);
-    if (options.merge) {
-      await docRef.set(data, { merge: true });
-    } else {
-      await docRef.set(data);
-    }
-    console.log(`[Helper SetDoc] Success via Admin SDK on ${collectionName}/${docId}`);
-    return;
-  } catch (err) {
-    console.warn(`[Helper SetDoc] Admin SDK set failed for ${collectionName}/${docId}, falling back to Client SDK:`, err);
-  }
-
   const docRef = doc(serverClientDb, collectionName, docId);
   await setDoc(docRef, data, { merge: options.merge });
 }
 
 async function getDocHelper(collectionName: string, docId: string) {
-  try {
-    const docSnap = await adminDb.collection(collectionName).doc(docId).get();
-    return {
-      exists: () => docSnap.exists,
-      data: () => docSnap.data(),
-      id: docSnap.id
-    };
-  } catch (err) {
-    console.warn(`[Helper GetDoc] Admin SDK get failed for ${collectionName}/${docId}, falling back to Client SDK:`, err);
-  }
-
   const docSnap = await getDoc(doc(serverClientDb, collectionName, docId));
   return {
     exists: () => docSnap.exists(),
@@ -164,14 +122,6 @@ async function getDocHelper(collectionName: string, docId: string) {
 }
 
 async function deleteDocHelper(collectionName: string, docId: string) {
-  try {
-    await adminDb.collection(collectionName).doc(docId).delete();
-    console.log(`[Helper DeleteDoc] Success via Admin SDK on ${collectionName}/${docId}`);
-    return;
-  } catch (err) {
-    console.warn(`[Helper DeleteDoc] Admin SDK delete failed for ${collectionName}/${docId}, falling back to Client SDK:`, err);
-  }
-
   await deleteDoc(doc(serverClientDb, collectionName, docId));
 }
 

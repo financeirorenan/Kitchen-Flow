@@ -3934,7 +3934,7 @@ const App: React.FC = () => {
       }
 
       // Se for o próprio usuário logado, tentar atualizar também no Firebase Auth diretamente
-      if (id === auth.currentUser?.uid) {
+      if (id === auth.currentUser?.uid && auth.currentUser) {
         try {
           if (finalUpdates.email && finalUpdates.email !== auth.currentUser.email) {
             await updateEmail(auth.currentUser, finalUpdates.email);
