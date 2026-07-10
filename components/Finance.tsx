@@ -4589,7 +4589,7 @@ const Finance: React.FC<FinanceProps> = memo(
                     >
                       {selectedFiado.history?.find((t) => t.type === "debit")
                         ?.expectedPaymentDate
-                        ? `Previsto para: ${new Date(selectedFiado.history?.find((t) => t.type === "debit")!.expectedPaymentDate!).toLocaleDateString("pt-BR")}`
+                        ? `Previsto para: ${new Date(selectedFiado.history.find((t) => t.type === "debit")?.expectedPaymentDate as string).toLocaleDateString("pt-BR")}`
                         : "Definir Previsão de Pagamento"}
                     </button>
                   </div>

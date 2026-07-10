@@ -1209,7 +1209,7 @@ const Inventory: React.FC<InventoryProps> = memo(({
       </div>
 
       {/* Stats Header */}
-      {true && (
+      <div className="w-full">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-white p-5 rounded-[1.5rem] border border-slate-100 shadow-sm flex items-center gap-4 group hover:shadow-md transition-all">
             <div className="p-3 bg-teal-50 text-teal-600 rounded-2xl group-hover:scale-110 transition-transform">
@@ -1259,7 +1259,7 @@ const Inventory: React.FC<InventoryProps> = memo(({
             </div>
           </div>
         </div>
-      )}
+      </div>
 
       {/* Main Content Area */}
       {activeSubTab === 'products' ? (
