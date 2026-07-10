@@ -247,46 +247,67 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
       }
 
       if (useFallback) {
-        // Fluxo de Fallback (Direto no cliente): Útil para sessões locais / offline ou falhas de rede na API
-        // 1. Update Profile (DisplayName and Photo)
-        await updateProfile(fbUser, {
-          displayName: name,
-          photoURL: selectedAvatar || null
-        });
+        if (!isLocalSession) {
+          // Fluxo de Fallback (Direto no cliente): Útil para sessões locais / offline ou falhas de rede na API
+          // 1. Update Profile (DisplayName and Photo)
+          await updateProfile(fbUser, {
+            displayName: name,
+            photoURL: selectedAvatar || null
+          });
 
-        // 2. Update Email locally if changed
-        if (cleanEmail !== fbUser.email) {
-          try {
-            await updateEmail(fbUser, cleanEmail);
-          } catch (err: any) {
-            if (err.code === 'auth/requires-recent-login') {
-              setReauthRequired(true);
-              setLoading(false);
-              showToast('Por motivos de segurança, você precisa confirmar sua senha atual antes de alterar o e-mail.', 'info');
-              return;
+          // 2. Update Email locally if changed
+          if (cleanEmail !== fbUser.email) {
+            try {
+              await updateEmail(fbUser, cleanEmail);
+            } catch (err: any) {
+              if (err.code === 'auth/requires-recent-login') {
+                setReauthRequired(true);
+                setLoading(false);
+                showToast('Por motivos de segurança, você precisa confirmar sua senha atual antes de alterar o e-mail.', 'info');
+                return;
+              }
+              throw err;
             }
-            throw err;
           }
-        }
 
-        // 3. Update Password if changed
-        if (password) {
-          try {
-            await updatePassword(fbUser, password);
-          } catch (err: any) {
-            if (err.code === 'auth/requires-recent-login') {
-              setReauthRequired(true);
-              setLoading(false);
-              showToast('Por motivos de segurança, você precisa confirmar sua senha atual antes de alterar a senha.', 'info');
-              return;
+          // 3. Update Password if changed
+          if (password) {
+            try {
+              await updatePassword(fbUser, password);
+            } catch (err: any) {
+              if (err.code === 'auth/requires-recent-login') {
+                setReauthRequired(true);
+                setLoading(false);
+                showToast('Por motivos de segurança, você precisa confirmar sua senha atual antes de alterar a senha.', 'info');
+                return;
+              }
+              throw err;
             }
-            throw err;
+          }
+        } else {
+          // Se for sessão de bypass local, atualiza também os dados salvos em localStorage
+          const demoUserRaw = localStorage.getItem('kitchenflow_demo_user');
+          if (demoUserRaw) {
+            try {
+              const parsed = JSON.parse(demoUserRaw);
+              parsed.firebaseUser.displayName = name;
+              parsed.firebaseUser.email = cleanEmail;
+              parsed.userData.name = name;
+              parsed.userData.email = cleanEmail;
+              parsed.userData.avatar = selectedAvatar;
+              if (password) {
+                parsed.userData.password = password;
+              }
+              localStorage.setItem('kitchenflow_demo_user', JSON.stringify(parsed));
+            } catch (e) {
+              console.error("Erro ao atualizar demo user em localStorage:", e);
+            }
           }
         }
 
         // 4. Update user document on Firestore
         if (currentUserData) {
-          const userDocRef = doc(db, 'users', fbUser.uid);
+          const userDocRef = doc(db, 'users', currentUserData.id || fbUser.uid);
           const updatedData: any = {
             name,
             email: cleanEmail,
@@ -304,7 +325,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           // Se o usuário for entregador, atualizar também o documento na coleção 'couriers'
           if (currentUserData.role === 'COURIER') {
             try {
-              const courierDocRef = doc(db, 'couriers', fbUser.uid);
+              const courierDocRef = doc(db, 'couriers', currentUserData.id || fbUser.uid);
               const courierUpdatedData: any = {
                 name,
                 email: cleanEmail,

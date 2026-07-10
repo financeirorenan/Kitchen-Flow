@@ -192,6 +192,37 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
         onLoginSuccess();
       } else if (data.isLocalSession) {
         console.log("Sessão de bypass local autorizada para primeiro acesso.");
+        
+        // Tenta realizar um login REAL com email/senha primeiro, já que o servidor garantiu que
+        // a conta já foi criada/sincronizada no Firebase Auth no backend com a nova senha permanente!
+        try {
+          console.log("Fazendo login real via email/senha após ativação de primeiro acesso pelo backend...");
+          const loginCred = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedNewPassword);
+          const signedInUser = loginCred.user;
+          await updateProfile(signedInUser, { displayName: data.user.name || 'Lojista' });
+          console.log("Login real via email/senha de primeiro acesso realizado com sucesso!");
+          
+          // Remover demo_user se ele existia para migrar para sessão real de vez
+          localStorage.removeItem('kitchenflow_demo_user');
+          
+          // Salvar dados no cached_user
+          localStorage.setItem('kitchenflow_cached_user', JSON.stringify({
+            id: data.user.id,
+            email: data.user.email,
+            role: data.user.role,
+            name: data.user.name,
+            tenantId: data.user.tenantId,
+            active: true,
+            status: 'online'
+          }));
+          
+          onLoginSuccess();
+          window.location.reload();
+          return;
+        } catch (clientSignInErr: any) {
+          console.warn("Falha ao realizar login direto com email/senha no primeiro acesso. Aplicando bypass de segurança local:", clientSignInErr.code || clientSignInErr.message);
+        }
+
         const simulatedFirebaseUser = {
           uid: data.user.id,
           email: data.user.email,
@@ -334,6 +365,37 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
                 console.log("Autenticado via Token Customizado com sucesso!");
               } else if (data.isLocalSession) {
                 console.log("Sessão de bypass local autorizada pelo servidor.");
+                
+                // Tenta realizar um login REAL com email/senha primeiro, já que o servidor garantiu que
+                // a conta já foi criada/sincronizada no Firebase Auth no backend!
+                try {
+                  console.log("Fazendo login real via email/senha após validação de sessão pelo backend...");
+                  const loginCred = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
+                  signedInUser = loginCred.user;
+                  loginSuccess = true;
+                  console.log("Login real via email/senha realizado com sucesso!");
+                  
+                  // Remover demo_user se ele existia para migrar para sessão real de vez
+                  localStorage.removeItem('kitchenflow_demo_user');
+                  
+                  // Salvar dados no cached_user
+                  localStorage.setItem('kitchenflow_cached_user', JSON.stringify({
+                    id: data.user.id,
+                    email: data.user.email,
+                    role: data.user.role,
+                    name: data.user.name,
+                    tenantId: data.user.tenantId,
+                    active: true,
+                    status: 'online'
+                  }));
+                  
+                  onLoginSuccess();
+                  window.location.reload();
+                  return;
+                } catch (clientSignInErr: any) {
+                  console.warn("Falha ao realizar login direto com email/senha no cliente. Aplicando bypass de segurança local:", clientSignInErr.code || clientSignInErr.message);
+                }
+
                 const simulatedFirebaseUser = {
                   uid: data.user.id,
                   email: data.user.email,

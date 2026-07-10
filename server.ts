@@ -284,33 +284,54 @@ async function startServer() {
         // e unificá-lo com o ID do Firestore na etapa de migração subsequente.
         try {
           let firebaseUser;
+          let userExists = false;
+          
+          // Busca primeiro pelo UID para ver se o usuário já existe
           try {
-            firebaseUser = await adminAuth.getUserByEmail(trimmedEmail);
-            // Garante que o Firebase Auth tenha a mesma senha caso tenha sido alterada fora dele (ou por admin)
-            await adminAuth.updateUser(firebaseUser.uid, {
-              password: trimmedPassword
-            });
-            console.log(`[Sync Auth] Senha do usuário atualizada com sucesso no Firebase Auth para: ${trimmedEmail}`);
+            firebaseUser = await adminAuth.getUser(uid);
+            userExists = true;
+            console.log(`[Sync Auth] Encontrou usuário por UID no Firebase Auth: ${uid}`);
+          } catch {
+            // Se não encontrou por UID, tenta buscar por email
+            try {
+              firebaseUser = await adminAuth.getUserByEmail(trimmedEmail);
+              userExists = true;
+              console.log(`[Sync Auth] Encontrou usuário por e-mail no Firebase Auth: ${trimmedEmail}`);
+              
+              // Se achou por email mas com UID diferente, alinha o UID no login
+              if (firebaseUser.uid && firebaseUser.uid !== uid) {
+                console.log(`[Sync Auth] Alinhando UID do login: alterando ID do Firestore de ${uid} para ${firebaseUser.uid} (UID do Firebase Auth)`);
+                authUid = firebaseUser.uid;
+                uid = firebaseUser.uid;
+              }
+            } catch {
+              // Não existe por UID nem por email
+              console.log(`[Sync Auth] Usuário não localizado por UID nem por e-mail no Firebase Auth.`);
+            }
+          }
 
-            // Unificação de UID caso haja discrepância entre Firebase Auth e Firestore ID
-            if (firebaseUser.uid && firebaseUser.uid !== uid) {
-              console.log(`[Sync Auth] Alinhando UID do login: alterando ID do Firestore de ${uid} para ${firebaseUser.uid} (UID do Firebase Auth)`);
-              authUid = firebaseUser.uid;
-              uid = firebaseUser.uid;
+          if (userExists && firebaseUser) {
+            // Garante que o Firebase Auth tenha as credenciais corretas e atualizadas
+            const updates: any = {};
+            if (firebaseUser.email !== trimmedEmail) {
+              updates.email = trimmedEmail;
             }
-          } catch (getErr: any) {
-            if (getErr.code === 'auth/user-not-found' || getErr.message?.includes('user-not-found')) {
-              // Se não existe na Auth do Firebase, cria com o UID correspondente do Firestore
-              await adminAuth.createUser({
-                uid: uid,
-                email: trimmedEmail,
-                password: trimmedPassword,
-                displayName: matchedUser.name || 'Lojista'
-              });
-              console.log(`[Sync Auth] Novo usuário registrado com sucesso no Firebase Auth para: ${trimmedEmail} com UID correspondente: ${uid}`);
-            } else {
-              throw getErr;
+            updates.password = trimmedPassword;
+            if (matchedUser.name && firebaseUser.displayName !== matchedUser.name) {
+              updates.displayName = matchedUser.name;
             }
+
+            await adminAuth.updateUser(firebaseUser.uid, updates);
+            console.log(`[Sync Auth] Perfil e credenciais do usuário atualizados com sucesso no Firebase Auth.`);
+          } else {
+            // Se não existe na Auth do Firebase, cria com o UID correspondente do Firestore
+            await adminAuth.createUser({
+              uid: uid,
+              email: trimmedEmail,
+              password: trimmedPassword,
+              displayName: matchedUser.name || 'Lojista'
+            });
+            console.log(`[Sync Auth] Novo usuário registrado com sucesso no Firebase Auth para: ${trimmedEmail} com UID: ${uid}`);
           }
         } catch (syncErr: any) {
           console.warn("[Sync Auth] Falha ao sincronizar Firebase Auth com o Firestore:", syncErr.message || syncErr);
