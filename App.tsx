@@ -564,6 +564,28 @@ const App: React.FC = () => {
         'menu', 'stock', 'financial', 'customers', 'users', 'reports', 'settings'
       ];
       if (segment && !standardTabs.includes(segment)) {
+        // SEGURANÇA MÁXIMA CONTRA INVASÃO DE URLS (TENANT ISOLATION BARRIER):
+        // Lojistas comuns que NÃO forem Super Admins estão estritamente travados em seu próprio tenantId.
+        let resolvedUserTenantId = currentUserData?.tenantId;
+        let resolvedIsSuperAdmin = isSuperAdmin;
+
+        if (!resolvedUserTenantId) {
+          try {
+            const cachedUserRaw = localStorage.getItem('kitchenflow_cached_user');
+            if (cachedUserRaw) {
+              const parsedCachedUser = JSON.parse(cachedUserRaw);
+              resolvedUserTenantId = parsedCachedUser?.tenantId;
+              resolvedIsSuperAdmin = parsedCachedUser?.email?.toLowerCase() === 'financeirorenanuk@gmail.com' || parsedCachedUser?.role === 'SAAS_ADMIN';
+            }
+          } catch {}
+        }
+
+        if (resolvedUserTenantId && !resolvedIsSuperAdmin && segment !== resolvedUserTenantId) {
+          console.warn(`[Segurança] Acesso negado ao tenant: ${segment}. Redirecionando lojista para o seu próprio tenant: ${resolvedUserTenantId}`);
+          navigate(`/lojista/${resolvedUserTenantId}`, { replace: true });
+          return;
+        }
+
         if (viewingTenantId !== segment) {
           setViewingTenantId(segment);
           getDoc(doc(db, 'tenants', segment)).then((tDoc) => {
