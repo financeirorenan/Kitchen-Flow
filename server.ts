@@ -233,16 +233,19 @@ async function startServer() {
   });
 
   app.post("/api/auth/login", async (req, res) => {
+    const startTime = Date.now();
+    console.log(`\n=== [LOGS] Início de Processo de Login ===`);
     try {
       const { email, password } = req.body;
       if (!email || !password) {
+        console.log(`[LOGS] Erro encontrado: Email e senha são obrigatórios. (Tempo: ${Date.now() - startTime}ms)`);
         return res.status(400).json({ error: "E-mail e senha são obrigatórios." });
       }
 
       const trimmedEmail = email.trim().toLowerCase();
       const trimmedPassword = password.trim();
 
-      const isMaster = trimmedEmail === 'financeirorenanuk@gmail.com';
+      console.log(`[LOGS] Consulta Banco: Buscando usuário no Firestore para o email: ${trimmedEmail}`);
       let matchedUser: any = null;
       let userRole = '';
       let uid = '';
@@ -251,7 +254,7 @@ async function startServer() {
       let authVerified = false;
       let authUid = '';
 
-      // 1. Consultar o Firestore primeiro! Isso é extremamente rápido (~10ms) com nosso helper que tenta Admin SDK primeiro
+      // 1. Consultar o Firestore primeiro (Fonte de Verdade)
       try {
         const found = await findUserByEmail(trimmedEmail);
         if (found) {
@@ -260,25 +263,31 @@ async function startServer() {
           userRole = isCourier ? 'COURIER' : (matchedUser.role || 'OWNER');
           uid = found.uid;
           oldDocId = found.uid;
-          console.log(`[Fast Login] Usuário localizado via ${found.source}: ${trimmedEmail} (Cargo: ${userRole})`);
+          console.log(`[LOGS] Usuário encontrado no Firestore: ${trimmedEmail} (Cargo: ${userRole}, UID: ${uid})`);
+        } else {
+          console.log(`[LOGS] Erro encontrado: Email inexistente (${trimmedEmail}) (Tempo: ${Date.now() - startTime}ms)`);
+          return res.status(404).json({ error: "E-mail inexistente no sistema.", code: "auth/user-not-found" });
         }
-      } catch (dbErr) {
-        console.error("Erro ao consultar Firestore no login prévio:", dbErr);
+      } catch (dbErr: any) {
+        console.error("[LOGS] Erro ao consultar Firestore no login prévio:", dbErr);
       }
 
-      // 1.5. No forced override for tubaktabacaria@sistema.com to allow correct tenant_1780527471032 loading.
+      // 1.1. Validar se a conta de usuário está ativa no Banco de Dados (Fonte de Verdade)
+      if (matchedUser && matchedUser.active === false) {
+        console.log(`[LOGS] Erro encontrado: Conta desativada no Firestore para o usuário: ${uid} (Tempo: ${Date.now() - startTime}ms)`);
+        return res.status(403).json({ error: "Sua conta está desativada no sistema. Entre em contato com o administrador.", code: "auth/user-disabled" });
+      }
 
-      // 2. Verificar se a senha confere com o Firestore
+      // 2. Verificar se a senha confere com o Firestore (Fonte de Verdade)
       if (matchedUser && matchedUser.password === trimmedPassword) {
         authVerified = true;
         authUid = uid;
-        console.log(`[Fast Login] Autenticação direta e instantânea via Firestore para: ${trimmedEmail} (Cargo: ${userRole})`);
+        console.log(`[LOGS] Senha validada diretamente contra o Firestore para: ${trimmedEmail}`);
       } else {
         // Recorrer à REST API do Firebase Auth se a senha do Firestore falhou ou o usuário não foi localizado no Firestore.
-        // Isso resolve conflitos quando a senha é redefinida via Firebase Auth ou se o cadastro é externo.
         if (firebaseConfig.apiKey) {
           try {
-            console.log(`[REST Login] Chamando Firebase Auth REST API para validar senha de: ${trimmedEmail}...`);
+            console.log(`[LOGS] Consulta Firebase: Chamando Firebase Auth REST API para validar senha de: ${trimmedEmail}...`);
             const restUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${firebaseConfig.apiKey}`;
             const authResponse = await fetch(restUrl, {
               method: 'POST',
@@ -290,246 +299,73 @@ async function startServer() {
               })
             });
             if (authResponse.ok) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const authData: any = await authResponse.json();
               authVerified = true;
               authUid = authData.localId;
-              console.log(`[REST Login] Credenciais validadas via Firebase REST API para UID: ${authUid}`);
+              console.log(`[LOGS] Credenciais validadas via Firebase REST API para UID: ${authUid}`);
 
-              // AUTO-CURA: O usuário autenticou via Auth com essa senha nova, mas ela estava desatualizada ou vazia no Firestore. Sincronizamos agora.
+              // AUTO-CURA: O usuário autenticou via Auth com essa senha nova, sincronizamos no Firestore.
               if (matchedUser) {
                 matchedUser.password = trimmedPassword;
                 const collectionName = isCourier ? 'couriers' : 'users';
                 try {
                   await setDocHelper(collectionName, oldDocId || authUid, { password: trimmedPassword }, { merge: true });
-                  console.log(`[Auto-Cura] Senha do usuário corrigida e sincronizada no Firestore (${collectionName}).`);
+                  console.log(`[LOGS] [Auto-Cura] Senha do usuário corrigida e sincronizada no Firestore (${collectionName}).`);
                 } catch (updatePassErr) {
-                  console.error("Erro ao curar senha no Firestore:", updatePassErr);
+                  console.error("[LOGS] Erro ao curar senha no Firestore:", updatePassErr);
                 }
               }
             } else {
               const errData = await authResponse.json().catch(() => ({}));
-              console.log(`[REST Login] Erro ao validar na REST API para ${trimmedEmail}:`, errData.error?.message);
+              console.log(`[LOGS] Erro encontrado: Senha incorreta via REST API para ${trimmedEmail}:`, errData.error?.message);
             }
           } catch (err) {
-            console.error("Erro na REST API de autenticação do Firebase:", err);
+            console.error("[LOGS] Erro na REST API de autenticação do Firebase:", err);
           }
         }
       }
 
-      // 3. Fallback especial para o Master Admin (SAAS_ADMIN) ou Lojistas específicos (Bypass de Auto-Criação)
-      // Se não existir o usuário no Firestore, mas as credenciais batem (ou se for o email tubaktabacaria@sistema.com com senha Ch@ps1245, ou se o banco estiver vazio),
-      // nós podemos provisionar automaticamente para que eles façam o login perfeitamente!
-      if (!matchedUser) {
-        if (trimmedEmail === 'financeirorenanuk@gmail.com' && (trimmedPassword === 'Ch@pola07' || authVerified)) {
-          userRole = 'SAAS_ADMIN';
-          uid = authVerified ? authUid : 'saas_admin_renan';
-          
-          matchedUser = {
-            id: uid,
-            email: trimmedEmail,
-            role: 'SAAS_ADMIN',
-            password: trimmedPassword,
-            name: 'Renan SAAS Admin',
-            tenantId: 'HCL1177LRQVPEKCTYRAHU7IGBQ42',
-            active: true,
-            createdAt: new Date()
-          };
-          try {
-            await setDocHelper('users', uid, matchedUser);
-            console.log("[Fast Login] Criado SAAS Admin no Firestore.");
-          } catch (setErr) {
-            console.error("Erro ao criar SAAS Admin no Firestore:", setErr);
-          }
-          authVerified = true;
-          authUid = uid;
-        }
-      }
-
-      // AUTO-CRIAÇÃO: Se o usuário foi verificado pelo Firebase Auth, mas seu perfil está ausente no Firestore,
-      // nós o criamos automaticamente para evitar erro de credenciais inválidas em migrações ou redefinições.
-      if (authVerified && !matchedUser) {
-        console.log(`[Auto-Criação] Usuário autenticado no Auth mas ausente no Firestore: ${trimmedEmail}. Criando perfil...`);
-        const isMasterUser = trimmedEmail === 'financeirorenanuk@gmail.com';
-        userRole = isMasterUser ? 'SAAS_ADMIN' : 'OWNER';
-        uid = authUid;
-        
-        matchedUser = {
-          id: uid,
-          email: trimmedEmail,
-          role: userRole,
-          password: trimmedPassword,
-          name: trimmedEmail.split('@')[0] || 'Lojista',
-          tenantId: isMasterUser ? 'HCL1177LRQVPEKCTYRAHU7IGBQ42' : `tenant_${Date.now()}`,
-          active: true,
-          status: 'online',
-          createdAt: new Date()
-        };
-
-        try {
-          await setDocHelper('users', uid, matchedUser);
-          console.log(`[Auto-Criação] Perfil criado com sucesso no Firestore para UID: ${uid}`);
-          
-          if (userRole === 'OWNER') {
-            await setDocHelper('tenants', matchedUser.tenantId, {
-              id: matchedUser.tenantId,
-              name: `Restaurante de ${matchedUser.name}`,
-              category: 'Geral',
-              ownerId: uid,
-              ownerEmail: trimmedEmail,
-              active: true,
-              autoAcceptOrders: false,
-              createdAt: new Date()
-            });
-
-            await setDocHelper('settings', matchedUser.tenantId, {
-              id: matchedUser.tenantId,
-              admin: {
-                companyName: `Restaurante de ${matchedUser.name}`,
-                cnpj: '',
-                phone: '',
-                address: '',
-                logoUrl: '',
-                taxRate: 0,
-                deliveryFee: 0,
-                freeDeliveryOver: 0,
-                workingHours: '08:00 - 22:00',
-                isActive: true
-              },
-              createdAt: new Date()
-            });
-            console.log(`[Auto-Criação] Tenant e configurações criadas com sucesso.`);
-          }
-        } catch (createErr) {
-          console.error("Erro ao auto-criar perfil no Firestore:", createErr);
-        }
-      }
-
-      // Se as credenciais não foram verificadas de nenhuma forma
+      // Se não autenticou de nenhuma forma
       if (!authVerified || !matchedUser) {
-        return res.status(401).json({ error: "E-mail ou senha incorretos." });
+        console.log(`[LOGS] Erro encontrado: Senha incorreta para o usuário: ${trimmedEmail} (Tempo: ${Date.now() - startTime}ms)`);
+        return res.status(401).json({ error: "E-mail ou senha incorretos.", code: "auth/wrong-password" });
       }
 
-      // 4. Geração de Custom Token e alinhamento do Auth assíncrono/síncrono
-      let customToken = null;
-      let adminAuthSuccess = false;
-
-      try {
-        uid = authUid || uid;
-
-        // Executar sincronização com Firebase Auth com timeout de 3000ms para evitar travamentos
-        await Promise.race([
-          (async () => {
-            try {
-              let firebaseUser;
-              let userExists = false;
-              
-              // Busca primeiro pelo UID para ver se o usuário já existe
-              try {
-                firebaseUser = await adminAuth.getUser(uid);
-                userExists = true;
-                console.log(`[Sync Auth] Encontrou usuário por UID no Firebase Auth: ${uid}`);
-              } catch {
-                // Se não encontrou por UID, tenta buscar por email
-                try {
-                  firebaseUser = await adminAuth.getUserByEmail(trimmedEmail);
-                  userExists = true;
-                  console.log(`[Sync Auth] Encontrou usuário por e-mail no Firebase Auth: ${trimmedEmail}`);
-                  
-                  // Se achou por email mas com UID diferente, alinha o UID no login
-                  if (firebaseUser.uid && firebaseUser.uid !== uid) {
-                    console.log(`[Sync Auth] Alinhando UID do login: alterando ID do Firestore de ${uid} para ${firebaseUser.uid} (UID do Firebase Auth)`);
-                    authUid = firebaseUser.uid;
-                    uid = firebaseUser.uid;
-                  }
-                } catch {
-                  // Não existe por UID nem por email
-                  console.log(`[Sync Auth] Usuário não localizado por UID nem por e-mail no Firebase Auth.`);
-                }
-              }
-
-              if (userExists && firebaseUser) {
-                // Garante que o Firebase Auth tenha as credenciais e senha atualizadas em simetria com o Firestore
-                // de modo que o Client SDK tradicional (signInWithEmailAndPassword) sempre funcione com sucesso.
-                const updates: any = {};
-                let needsUpdate = false;
-
-                if (firebaseUser.email !== trimmedEmail) {
-                  updates.email = trimmedEmail;
-                  needsUpdate = true;
-                }
-                if (matchedUser.name && firebaseUser.displayName !== matchedUser.name) {
-                  updates.displayName = matchedUser.name;
-                  needsUpdate = true;
-                }
-                
-                // Sempre sincroniza a senha em segundo plano para garantir login client-side perfeito no fallback
-                updates.password = trimmedPassword;
-                needsUpdate = true;
-
-                if (needsUpdate) {
-                  await adminAuth.updateUser(firebaseUser.uid, updates);
-                  console.log(`[Sync Auth] Perfil e senha do usuário atualizados com sucesso no Firebase Auth.`);
-                } else {
-                  console.log(`[Sync Auth] Perfil já em conformidade. Nenhuma chamada desnecessária ao Firebase Auth.`);
-                }
-              } else {
-                // Se não existe na Auth do Firebase, cria com o UID correspondente do Firestore e a senha correta
-                await adminAuth.createUser({
-                  uid: uid,
-                  email: trimmedEmail,
-                  password: trimmedPassword,
-                  displayName: matchedUser.name || 'Lojista'
-                });
-                console.log(`[Sync Auth] Novo usuário registrado com sucesso no Firebase Auth para: ${trimmedEmail} com UID: ${uid}`);
-              }
-
-              // B. Se o Document ID antigo do Firestore for diferente do Auth UID unificado, migrar para manter o ID unificado
-              if (uid && uid !== oldDocId) {
-                matchedUser.id = uid;
-                const oldIdRef = oldDocId;
-                const collectionName = isCourier ? 'couriers' : 'users';
-                try {
-                  await setDocHelper(collectionName, uid, matchedUser, { merge: true });
-                  if (oldIdRef && oldIdRef !== uid) {
-                    await deleteDocHelper(collectionName, oldIdRef);
-                  }
-                  oldDocId = uid;
-                  console.log(`[Login API] Migração de ID concluída de ${oldIdRef} para ${uid}`);
-                } catch (migErr) {
-                  console.warn("Nao foi possivel migrar ID do Firestore, prosseguindo:", migErr);
-                }
-              }
-
-              // C. Gerar Token de Acesso Customizado do Firebase Auth com o UID unificado definitivo se possível
-              try {
-                customToken = await adminAuth.createCustomToken(uid);
-                console.log(`[Sync Auth] Token customizado gerado com sucesso para UID: ${uid}`);
-              } catch (tokenErr: any) {
-                console.warn(`[Sync Auth] Não foi possível assinar customToken (comum em ambientes serverless sem Service Account Token Creator): ${tokenErr.message || tokenErr}`);
-                // Não marcamos falha geral, pois o usuário já está sincronizado no Firebase Auth e o cliente pode logar via email/senha diretamente!
-              }
-              adminAuthSuccess = true;
-            } catch (innerErr: any) {
-              console.warn(`[Sync Auth] Erro interno durante sincronização assíncrona: ${innerErr.message || innerErr}`);
-            }
-          })(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout Firebase Admin SDK")), 3000))
-        ]);
-      } catch (authErr: any) {
-        console.warn(`[Login API] Falha ou timeout no Firebase Admin SDK Auth (${authErr.message || authErr}). Ativando fallback seguro de sessão.`);
-        // Garante que mesmo com timeout ou erro de rede do Firebase, permitimos o login para que não fiquem travados
-        adminAuthSuccess = true;
-      }
-
-      // GARANTIA DE ISOLAMENTO E INTEGRIDADE DE TENANT E CONFIGURAÇÕES
-      if (matchedUser && matchedUser.tenantId) {
+      // 3. Garantir integridade de Tenant e Configurações e validar Tenant + Plano
+      let tenant: any = null;
+      if (matchedUser && matchedUser.tenantId && matchedUser.role !== 'SAAS_ADMIN') {
         const tenantId = matchedUser.tenantId;
+        console.log(`[LOGS] Tenant encontrado na conta do usuário: ${tenantId}. Buscando dados no banco...`);
 
         try {
           const tenantSnap = await getDocHelper('tenants', tenantId);
-          if (!tenantSnap.exists()) {
-            console.log(`[Integridade] Criando documento de tenant ausente para: ${tenantId}`);
+          if (tenantSnap.exists()) {
+            tenant = tenantSnap.data();
+            console.log(`[LOGS] Tenant carregado com sucesso: ${tenant.name || tenantId}`);
+
+            // Validar se o Tenant está ativo (Conta/SaaS ativo)
+            if (tenant.active === false) {
+              console.log(`[LOGS] Erro encontrado: Tenant bloqueado (${tenantId}) (Tempo: ${Date.now() - startTime}ms)`);
+              return res.status(403).json({ error: "Esta conta está bloqueada ou suspensa. Entre em contato com o suporte.", code: "tenant/blocked" });
+            }
+
+            // Validar plano ativo e data de validade da assinatura
+            if (tenant.subscription) {
+              const sub = tenant.subscription;
+              const expiryDate = sub.expiryDate ? new Date(sub.expiryDate) : null;
+              const status = sub.status;
+              
+              const isExpired = expiryDate && new Date() > expiryDate;
+              const isCanceled = status === 'canceled';
+
+              if (isExpired || isCanceled) {
+                console.log(`[LOGS] Erro encontrado: Plano vencido ou inativo para o tenant: ${tenantId} (Tempo: ${Date.now() - startTime}ms)`);
+                return res.status(403).json({ error: "Sua assinatura do plano está vencida ou foi cancelada. Regularize para acessar.", code: "subscription/expired" });
+              }
+              console.log(`[LOGS] Plano validado com sucesso: ${sub.plan || 'FREE'} (Status: ${status}, Expira em: ${expiryDate ? expiryDate.toLocaleDateString() : 'Sem Expiração'})`);
+            }
+          } else {
+            console.log(`[LOGS] [Integridade] Criando documento de tenant ausente para: ${tenantId}`);
             await setDocHelper('tenants', tenantId, {
               id: tenantId,
               name: matchedUser.name || 'Meu Estabelecimento',
@@ -544,7 +380,7 @@ async function startServer() {
 
           const settingsSnap = await getDocHelper('settings', tenantId);
           if (!settingsSnap.exists()) {
-            console.log(`[Integridade] Criando documento de configurações ausente para: ${tenantId}`);
+            console.log(`[LOGS] [Integridade] Criando documento de configurações ausente para: ${tenantId}`);
             await setDocHelper('settings', tenantId, {
               id: tenantId,
               admin: {
@@ -562,10 +398,137 @@ async function startServer() {
               createdAt: new Date()
             });
           }
-        } catch (integrityErr) {
-          console.error("[Integridade] Erro ao garantir existência de documentos do tenant:", integrityErr);
+        } catch (integrityErr: any) {
+          console.error("[LOGS] Erro na integridade de tenant:", integrityErr);
         }
       }
+
+      // Carregar permissões do usuário
+      const permissions = matchedUser.permissions || [];
+      console.log(`[LOGS] Permissões carregadas: [${permissions.join(', ')}]`);
+
+      // 4. Geração de Custom Token do Firebase Auth para o Client SDK
+      let customToken = null;
+      let adminAuthSuccess = false;
+
+      try {
+        uid = authUid || uid;
+
+        await Promise.race([
+          (async () => {
+            try {
+              let firebaseUser;
+              let userExists = false;
+              
+              try {
+                firebaseUser = await adminAuth.getUser(uid);
+                userExists = true;
+                console.log(`[LOGS] Consulta Firebase: Encontrou usuário por UID no Firebase Auth: ${uid}`);
+              } catch {
+                try {
+                  firebaseUser = await adminAuth.getUserByEmail(trimmedEmail);
+                  userExists = true;
+                  console.log(`[LOGS] Consulta Firebase: Encontrou usuário por e-mail no Firebase Auth: ${trimmedEmail}`);
+                  if (firebaseUser.uid && firebaseUser.uid !== uid) {
+                    authUid = firebaseUser.uid;
+                    uid = firebaseUser.uid;
+                  }
+                } catch {
+                  console.log(`[LOGS] Consulta Firebase: Usuário não localizado por UID nem por e-mail no Firebase Auth.`);
+                }
+              }
+
+              if (userExists && firebaseUser) {
+                const updates: any = {};
+                let needsUpdate = false;
+
+                if (firebaseUser.email !== trimmedEmail) {
+                  updates.email = trimmedEmail;
+                  needsUpdate = true;
+                }
+                if (matchedUser.name && firebaseUser.displayName !== matchedUser.name) {
+                  updates.displayName = matchedUser.name;
+                  needsUpdate = true;
+                }
+                updates.password = trimmedPassword;
+                needsUpdate = true;
+
+                if (needsUpdate) {
+                  await adminAuth.updateUser(firebaseUser.uid, updates);
+                  console.log(`[LOGS] Perfil e senha do usuário atualizados no Firebase Auth.`);
+                }
+              } else {
+                await adminAuth.createUser({
+                  uid: uid,
+                  email: trimmedEmail,
+                  password: trimmedPassword,
+                  displayName: matchedUser.name || 'Lojista'
+                });
+                console.log(`[LOGS] Novo usuário registrado com sucesso no Firebase Auth para: ${trimmedEmail}`);
+              }
+
+              if (uid && uid !== oldDocId) {
+                matchedUser.id = uid;
+                const oldIdRef = oldDocId;
+                const collectionName = isCourier ? 'couriers' : 'users';
+                try {
+                  await setDocHelper(collectionName, uid, matchedUser, { merge: true });
+                  if (oldIdRef && oldIdRef !== uid) {
+                    await deleteDocHelper(collectionName, oldIdRef);
+                  }
+                  oldDocId = uid;
+                } catch (migErr) {
+                  console.warn("Não foi possível migrar ID do Firestore:", migErr);
+                }
+              }
+
+              try {
+                customToken = await adminAuth.createCustomToken(uid);
+                console.log(`[LOGS] Token criado (Custom Token): Gerado com sucesso`);
+              } catch (tokenErr: any) {
+                console.warn(`[LOGS] Não foi possível assinar customToken: ${tokenErr.message}`);
+              }
+              adminAuthSuccess = true;
+            } catch (innerErr: any) {
+              console.warn(`[LOGS] Erro interno na sincronização do Firebase Auth: ${innerErr.message}`);
+            }
+          })(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout Firebase Admin SDK")), 3000))
+        ]);
+      } catch (authErr: any) {
+        console.warn(`[LOGS] Falha ou timeout no Firebase Admin SDK Auth (${authErr.message}). Ativando fallback de sessão.`);
+        adminAuthSuccess = true;
+      }
+
+      // 5. Gerar Sessão de Autenticação segura e durável no Banco de Dados
+      const crypto = await import("crypto");
+      const accessToken = crypto.randomBytes(32).toString("hex");
+      const refreshToken = crypto.randomBytes(64).toString("hex");
+      const expiration = Date.now() + 3600 * 1000; // 1 hora de expiração
+
+      const sessionData = {
+        accessToken,
+        refreshToken,
+        expiration,
+        tenantId: matchedUser.tenantId || "",
+        userId: uid || matchedUser.id,
+        role: userRole,
+        permissions: permissions,
+        plan: tenant?.subscription?.plan || "FREE",
+        empresa: tenant?.name || "KitchenFlow AI",
+        createdAt: new Date(),
+        active: true
+      };
+
+      // Gravar sessão de verdade no banco de dados para que seja a Fonte de Verdade incontestável
+      try {
+        await setDocHelper("sessions", accessToken, sessionData);
+        console.log(`[LOGS] Sessão criada: Gravada no Firestore ('sessions/${accessToken}') com sucesso.`);
+      } catch (sessSaveErr: any) {
+        console.error("[LOGS] Falha ao salvar sessão durável no banco:", sessSaveErr);
+      }
+
+      console.log(`=== [LOGS] Fim do Processo de Login. Sucesso! Tempo Total: ${Date.now() - startTime}ms ===\n`);
 
       if (adminAuthSuccess && customToken) {
         return res.json({
@@ -577,10 +540,10 @@ async function startServer() {
             role: userRole,
             name: matchedUser.name || 'Lojista',
             tenantId: matchedUser.tenantId || ''
-          }
+          },
+          session: sessionData
         });
       } else {
-        // Fallback de sessão local se as credenciais do Admin falharem
         console.log(`[Login API] Retornando sessão local para o usuário ${trimmedEmail} (ID: ${oldDocId || matchedUser.id})`);
         return res.json({
           success: true,
@@ -591,13 +554,14 @@ async function startServer() {
             role: userRole,
             name: matchedUser.name || 'Lojista',
             tenantId: matchedUser.tenantId || ''
-          }
+          },
+          session: sessionData
         });
       }
 
     } catch (err: any) {
-      console.error("Erro no login seguro via API:", err);
-      return res.status(500).json({ error: "Erro interno no servidor de autenticação." });
+      console.error("[LOGS] Erro no login seguro via API:", err);
+      return res.status(500).json({ error: "Erro interno no servidor de autenticação.", code: "server/internal-error" });
     }
   });
 
@@ -688,6 +652,89 @@ async function startServer() {
         await setDoc(courierRef, courierUpdates, { merge: true });
       }
 
+      // 4.1 Sincronizar com as outras coleções se existirem para manter a integridade total por UID
+      if (trimmedEmail) {
+        // Tabela Profiles
+        try {
+          const profileRef = doc(serverClientDb, "profiles", uid);
+          await setDoc(profileRef, { email: trimmedEmail, updatedAt: new Date() }, { merge: true });
+        } catch (err) {
+          console.warn("[Sync Profile] Profiles collection update bypassed:", err);
+        }
+
+        // Tabela Employees
+        try {
+          const employeeRef = doc(serverClientDb, "employees", uid);
+          await setDoc(employeeRef, { email: trimmedEmail, updatedAt: new Date() }, { merge: true });
+        } catch (err) {
+          console.warn("[Sync Profile] Employees collection update bypassed:", err);
+        }
+
+        // Tabela Owners
+        try {
+          const ownerRef = doc(serverClientDb, "owners", uid);
+          await setDoc(ownerRef, { email: trimmedEmail, updatedAt: new Date() }, { merge: true });
+        } catch (err) {
+          console.warn("[Sync Profile] Owners collection update bypassed:", err);
+        }
+
+        // Tabela Tenants (onde o usuário é dono/vinculado)
+        try {
+          if (userData?.tenantId) {
+            const tenantRef = doc(serverClientDb, "tenants", userData.tenantId);
+            await setDoc(tenantRef, { ownerEmail: trimmedEmail, updatedAt: new Date() }, { merge: true });
+          }
+        } catch (err) {
+          console.warn("[Sync Profile] Tenants collection update bypassed:", err);
+        }
+      }
+
+      // 5. Revogar sessões antigas e gerar nova sessão segura
+      try {
+        const qSessions = query(collection(serverClientDb, "sessions"), where("userId", "==", uid));
+        const sessionsSnap = await getDocs(qSessions);
+        for (const docSnap of sessionsSnap.docs) {
+          await deleteDoc(docSnap.ref);
+        }
+        console.log(`[Sessions Revoked] Revoked ${sessionsSnap.size} session documents for user: ${uid}`);
+      } catch (sessErr) {
+        console.error("Error revoking sessions during profile update:", sessErr);
+      }
+
+      // Gerar nova sessão segura e durável
+      const crypto = await import("crypto");
+      const newAccessToken = crypto.randomBytes(32).toString("hex");
+      const newRefreshToken = crypto.randomBytes(64).toString("hex");
+      const newExpiration = Date.now() + 3600 * 1000; // 1 hora
+
+      let planName = "FREE";
+      let empresaName = "KitchenFlow AI";
+      if (userData?.tenantId && userData?.role !== 'SAAS_ADMIN') {
+        const tenantSnap = await getDocHelper('tenants', userData.tenantId);
+        if (tenantSnap.exists()) {
+          const tenantData = tenantSnap.data();
+          planName = tenantData.subscription?.plan || "FREE";
+          empresaName = tenantData.name || "KitchenFlow AI";
+        }
+      }
+
+      const sessionData = {
+        accessToken: newAccessToken,
+        refreshToken: newRefreshToken,
+        expiration: newExpiration,
+        tenantId: userData?.tenantId || "",
+        userId: uid,
+        role: userData?.role || "OWNER",
+        permissions: userData?.permissions || [],
+        plan: planName,
+        empresa: empresaName,
+        createdAt: new Date(),
+        active: true
+      };
+
+      // Gravar nova sessão no banco de dados
+      await setDocHelper("sessions", newAccessToken, sessionData);
+
       return res.json({
         success: true,
         message: "Perfil atualizado com sucesso no Firestore, Auth e coleções correspondentes.",
@@ -697,12 +744,111 @@ async function startServer() {
           email: trimmedEmail || userData?.email,
           role: userData?.role,
           tenantId: userData?.tenantId
-        }
+        },
+        session: sessionData
       });
 
     } catch (err: any) {
       console.error("Erro ao atualizar perfil via API:", err);
       return res.status(500).json({ error: err.message || "Erro interno ao atualizar perfil." });
+    }
+  });
+ 
+  app.post("/api/auth/refresh", async (req, res) => {
+    const startTime = Date.now();
+    console.log(`\n=== [LOGS] Início de Refresh de Sessão ===`);
+    try {
+      const { refreshToken } = req.body;
+      if (!refreshToken) {
+        console.log(`[LOGS] Erro no Refresh: refreshToken não fornecido.`);
+        return res.status(400).json({ error: "Refresh token é obrigatório." });
+      }
+
+      console.log(`[LOGS] Consulta Banco: Buscando sessão pelo refreshToken...`);
+      const qSessions = query(collection(serverClientDb, "sessions"), where("refreshToken", "==", refreshToken));
+      const sessionsSnap = await getDocs(qSessions);
+      if (sessionsSnap.empty) {
+        console.log(`[LOGS] Erro no Refresh: Sessão não encontrada para o refreshToken fornecido.`);
+        return res.status(401).json({ error: "Sessão inválida ou expirada.", code: "auth/session-not-found" });
+      }
+
+      const sessionDoc = sessionsSnap.docs[0];
+      const sessionData = sessionDoc.data();
+
+      if (!sessionData.active) {
+        console.log(`[LOGS] Erro no Refresh: Sessão está inativa.`);
+        return res.status(401).json({ error: "Sessão inativa.", code: "auth/session-inactive" });
+      }
+
+      const userId = sessionData.userId;
+      console.log(`[LOGS] Consulta Banco: Verificando status do usuário no Firestore (UID: ${userId})...`);
+      const userRef = doc(serverClientDb, "users", userId);
+      const userDoc = await getDoc(userRef);
+      if (!userDoc.exists()) {
+        console.log(`[LOGS] Erro no Refresh: Usuário ${userId} não existe.`);
+        return res.status(401).json({ error: "Usuário não encontrado.", code: "auth/user-not-found" });
+      }
+
+      const userData = userDoc.data();
+      if (userData.active === false) {
+        console.log(`[LOGS] Erro no Refresh: Usuário ${userId} está inativo.`);
+        return res.status(401).json({ error: "Sua conta está desativada no sistema.", code: "auth/user-disabled" });
+      }
+
+      let tenant: any = null;
+      if (userData.tenantId && userData.role !== 'SAAS_ADMIN') {
+        const tenantId = userData.tenantId;
+        console.log(`[LOGS] Consulta Banco: Verificando status do tenant ${tenantId}...`);
+        const tenantSnap = await getDocHelper('tenants', tenantId);
+        if (tenantSnap.exists()) {
+          tenant = tenantSnap.data();
+          if (tenant.active === false) {
+            console.log(`[LOGS] Erro no Refresh: Tenant ${tenantId} está bloqueado.`);
+            return res.status(403).json({ error: "Esta conta está bloqueada ou suspensa.", code: "tenant/blocked" });
+          }
+
+          if (tenant.subscription) {
+            const sub = tenant.subscription;
+            const expiryDate = sub.expiryDate ? new Date(sub.expiryDate) : null;
+            const status = sub.status;
+            const isExpired = expiryDate && new Date() > expiryDate;
+            const isCanceled = status === 'canceled';
+
+            if (isExpired || isCanceled) {
+              console.log(`[LOGS] Erro no Refresh: Plano vencido ou cancelado para o tenant ${tenantId}.`);
+              return res.status(403).json({ error: "Sua assinatura do plano está vencida ou foi cancelada.", code: "subscription/expired" });
+            }
+          }
+        }
+      }
+
+      const crypto = await import("crypto");
+      const newAccessToken = crypto.randomBytes(32).toString("hex");
+      const newRefreshToken = crypto.randomBytes(64).toString("hex");
+      const newExpiration = Date.now() + 3600 * 1000; // 1 hora de expiração
+
+      const updatedSession = {
+        ...sessionData,
+        accessToken: newAccessToken,
+        refreshToken: newRefreshToken,
+        expiration: newExpiration,
+        plan: tenant?.subscription?.plan || sessionData.plan || "FREE",
+        empresa: tenant?.name || sessionData.empresa || "KitchenFlow AI",
+        updatedAt: new Date()
+      };
+
+      await deleteDoc(sessionDoc.ref);
+      await setDocHelper("sessions", newAccessToken, updatedSession);
+
+      console.log(`[LOGS] Refresh Concluído com Sucesso! Novo accessToken gerado (Tempo Total: ${Date.now() - startTime}ms)`);
+      return res.json({
+        success: true,
+        session: updatedSession
+      });
+
+    } catch (err: any) {
+      console.error("[LOGS] Erro no endpoint /api/auth/refresh:", err);
+      return res.status(500).json({ error: "Erro interno no servidor ao renovar sessão.", code: "server/internal-error" });
     }
   });
 

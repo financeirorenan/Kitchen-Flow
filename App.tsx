@@ -1395,6 +1395,7 @@ const App: React.FC = () => {
         setCurrentUserData(null);
         setTenantData(null);
         try {
+          localStorage.removeItem('kitchenflow_session');
           localStorage.removeItem('kitchenflow_cached_user');
           localStorage.removeItem('kitchenflow_cached_tenant_data');
           localStorage.removeItem('gastroai_cached_user');
@@ -1406,9 +1407,55 @@ const App: React.FC = () => {
       setAuthLoading(false);
     });
 
+    // 3. Gerenciamento de Sessão Durável (Banco de Dados Fonte de Verdade)
+    // Valida o status do usuário, do tenant e da assinatura a cada 30 segundos em background.
+    const sessionInterval = setInterval(async () => {
+      const sessionRaw = localStorage.getItem('kitchenflow_session');
+      if (!sessionRaw) return;
+
+      try {
+        const session = JSON.parse(sessionRaw);
+        if (!session || !session.refreshToken) return;
+
+        const isExpiringSoon = session.expiration - Date.now() < 300000; // Expira em menos de 5 min ou já expirou
+        if (isExpiringSoon) {
+          console.log('[Session Manager] Token expirando ou vencido, renovando contra o Banco de Dados (Fonte de Verdade)...');
+          const response = await fetch('/api/auth/refresh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refreshToken: session.refreshToken })
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.session) {
+              localStorage.setItem('kitchenflow_session', JSON.stringify(data.session));
+              console.log('[Session Manager] Token de sessão renovado com sucesso via banco de dados!');
+            }
+          } else {
+            const errData = await response.json().catch(() => ({}));
+            console.error('[Session Manager] Erro crítico de validação contra o Banco de Dados:', errData.error || response.statusText);
+
+            if (response.status === 401 || response.status === 403) {
+              console.error('[Session Manager] Sessão inválida, usuário suspenso ou plano expirado. Expulsando usuário...');
+              localStorage.removeItem('kitchenflow_session');
+              localStorage.removeItem('kitchenflow_cached_user');
+              localStorage.removeItem('kitchenflow_cached_tenant_data');
+              await signOut(auth);
+              showToast(errData.error || 'Sua sessão expirou ou sua conta foi suspensa temporariamente.', 'error');
+              window.location.reload();
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[Session Manager] Falha no parseamento da sessão ativa:', err);
+      }
+    }, 30000);
+
     return () => {
       unsubscribe();
       if (userUnsubscribe) userUnsubscribe();
+      clearInterval(sessionInterval);
     };
   }, [navigate]);
 
