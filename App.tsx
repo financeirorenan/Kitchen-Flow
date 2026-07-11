@@ -32,6 +32,7 @@ import { onAuthStateChanged, signOut, User as FirebaseUser, updateEmail, updateP
 import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, onSnapshot, query, where, orderBy, limit, addDoc, writeBatch } from 'firebase/firestore';
 import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import Login from './components/Login';
+import ErrorBoundary from './components/ErrorBoundary';
 import { UserProfileModal } from './components/UserProfileModal';
 import { PrintPreviewModal } from './components/PrintPreviewModal';
 import { 
@@ -5553,60 +5554,66 @@ const App: React.FC = () => {
           />
         )}
         {activeTab === 'inventory' && hasPermission('inventory_edit') && (
-          <Inventory 
-            products={products} 
-            rawMaterials={rawMaterials} 
-            onUpdateProduct={handleUpdateProduct} 
-            onAddProduct={handleAddProduct} 
-            onDeleteProduct={handleDeleteProduct}
-            onUpdateRawMaterial={handleUpdateRawMaterial} 
-            onAddRawMaterial={handleAddRawMaterial}
-            onDeleteRawMaterial={handleDeleteRawMaterial}
-            digitalMenuSettings={digitalMenuSettings}
-            onUpdateDigitalMenuSettings={setDigitalMenuSettings}
-            productCategories={productCategories}
-            setProductCategories={handleUpdateProductCategories}
-            rawMaterialCategories={rawMaterialCategories}
-            setRawMaterialCategories={handleUpdateRawMaterialCategories}
-            onSyncCloud={handleSaveSettings}
-            orders={orders}
-          />
+          <ErrorBoundary>
+            <Inventory 
+              products={products} 
+              rawMaterials={rawMaterials} 
+              onUpdateProduct={handleUpdateProduct} 
+              onAddProduct={handleAddProduct} 
+              onDeleteProduct={handleDeleteProduct}
+              onUpdateRawMaterial={handleUpdateRawMaterial} 
+              onAddRawMaterial={handleAddRawMaterial}
+              onDeleteRawMaterial={handleDeleteRawMaterial}
+              digitalMenuSettings={digitalMenuSettings}
+              onUpdateDigitalMenuSettings={setDigitalMenuSettings}
+              productCategories={productCategories}
+              setProductCategories={handleUpdateProductCategories}
+              rawMaterialCategories={rawMaterialCategories}
+              setRawMaterialCategories={handleUpdateRawMaterialCategories}
+              onSyncCloud={handleSaveSettings}
+              orders={orders}
+            />
+          </ErrorBoundary>
         )}
         {activeTab === 'finance' && hasPermission('finance_view') && (
-          <Finance 
-            orders={orders} 
-            products={products}
-            customers={customers} 
-            couriers={couriers} 
-            manualRecords={financialRecords} 
-            cashClosings={cashClosings} 
-            bankAccounts={bankAccounts}
-            adminSettings={adminSettings}
-            cashSession={cashSession}
-            onAddRecord={handleAddFinancialRecord} 
-            onUpdateRecord={handleUpdateFinancialRecord} 
-            onDeleteRecord={handleDeleteFinancialRecord}
-            onUpdateCustomer={handleUpdateCustomer} 
-            onAddBank={handleAddBankAccount}
-            onUpdateBank={handleUpdateBankAccount}
-            onDeleteBank={handleDeleteBankAccount}
-            onSettleOrders={handleSettleOrders}
-            onUpdateAdminSettings={handleSaveSettings}
-          />
+          <ErrorBoundary>
+            <Finance 
+              orders={orders} 
+              products={products}
+              customers={customers} 
+              couriers={couriers} 
+              manualRecords={financialRecords} 
+              cashClosings={cashClosings} 
+              bankAccounts={bankAccounts}
+              adminSettings={adminSettings}
+              cashSession={cashSession}
+              onAddRecord={handleAddFinancialRecord} 
+              onUpdateRecord={handleUpdateFinancialRecord} 
+              onDeleteRecord={handleDeleteFinancialRecord}
+              onUpdateCustomer={handleUpdateCustomer} 
+              onAddBank={handleAddBankAccount}
+              onUpdateBank={handleUpdateBankAccount}
+              onDeleteBank={handleDeleteBankAccount}
+              onSettleOrders={handleSettleOrders}
+              onUpdateAdminSettings={handleSaveSettings}
+            />
+          </ErrorBoundary>
         )}
         {activeTab === 'merchant-copilot' && hasPermission('finance_view') && (
-          <LojistaCopilot 
-            orders={orders}
-            products={products}
-            manualRecords={financialRecords}
-            adminSettings={adminSettings}
-            rawMaterials={rawMaterials}
-            onUpdateProduct={handleUpdateProduct}
-            onNavigateToInventory={() => setActiveTab('inventory')}
-            tenantData={tenantData}
-            plans={plans}
-            saasConfig={saasConfig}
-          />
+          <ErrorBoundary>
+            <LojistaCopilot 
+              orders={orders}
+              products={products}
+              manualRecords={financialRecords}
+              adminSettings={adminSettings}
+              rawMaterials={rawMaterials}
+              onUpdateProduct={handleUpdateProduct}
+              onNavigateToInventory={() => setActiveTab('inventory')}
+              tenantData={tenantData}
+              plans={plans}
+              saasConfig={saasConfig}
+            />
+          </ErrorBoundary>
         )}
         {activeTab === 'users' && hasPermission('users_manage') && (
           <UsersPanel 
