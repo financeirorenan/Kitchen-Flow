@@ -13,16 +13,20 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function hasUserData() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
     function getUserData() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
     function isSaasAdmin() {
-      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == "SAAS_ADMIN";
+      return hasUserData() && getUserData().role == "SAAS_ADMIN";
     }
 
     function userTenantId() {
-      return getUserData().tenantId;
+      return hasUserData() ? getUserData().tenantId : "";
     }
 
     function isValidId(id) {
@@ -38,27 +42,27 @@ service cloud.firestore {
 
     // Tenants Collection
     match /tenants/{tenantId} {
-      allow read: if isSignedIn() && (isSaasAdmin() || resource.data.ownerId == request.auth.uid || tenantId == userTenantId());
+      allow read: if true; // Publicly readable for digital menu/marketplace/public visitors
       allow create, update: if isSignedIn() && (isSaasAdmin() || request.resource.data.ownerId == request.auth.uid);
       allow delete: if isSaasAdmin();
     }
 
     // Products Collection
     match /products/{productId} {
-      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
+      allow read: if true; // Publicly readable for digital menu/marketplace/public visitors
       allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
     }
 
     // Dining Tables Collection
     match /diningTables/{tableId} {
-      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
+      allow read: if true; // Publicly readable for digital menu/marketplace/public visitors
       allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
     }
 
     // Orders Collection
     match /orders/{orderId} {
-      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
-      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+      allow read: if true; // Anyone can read orders to support client-side status tracking and guest ordering
+      allow write: if true; // Anyone can place and update guest orders
     }
 
     // Customers Collection
@@ -111,13 +115,13 @@ service cloud.firestore {
 
     // Settings Collection
     match /settings/{settingsId} {
-      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId() || settingsId == userTenantId()));
+      allow read: if true; // Publicly readable for digital menu/marketplace/public visitors
       allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId() || settingsId == userTenantId()));
     }
 
     // Plans Collection
     match /plans/{planId} {
-      allow read: if isSignedIn();
+      allow read: if true; // Publicly readable so prospective clients can view available plans
       allow write: if isSaasAdmin();
     }
 
@@ -140,7 +144,23 @@ service cloud.firestore {
 
     // Commerce Categories Collection
     match /commerceCategories/{categoryId} {
-      allow read: if isSignedIn();
+      allow read: if true; // Publicly readable for marketplace categories filtering
+      allow write: if isSaasAdmin();
+    }
+
+    // Sessions Collection (used by the login refresh-token flow)
+    match /sessions/{sessionId} {
+      allow read, write: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid);
+    }
+
+    // SaaS Ledger Collection (platform's own accounts payable/receivable)
+    match /saasLedger/{entryId} {
+      allow read, write: if isSaasAdmin();
+    }
+
+    // SaaS Payments Collection (tenant billing payments)
+    match /saasPayments/{paymentId} {
+      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
       allow write: if isSaasAdmin();
     }
   }

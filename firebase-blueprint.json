@@ -308,6 +308,9 @@
     "marketplaceInvoices": { "schema": "MarketplaceInvoice", "description": "Collection of marketplace fee invoices" },
     "leads": { "schema": { "type": "object" }, "description": "Collection of business leads" },
     "tickets": { "schema": { "type": "object" }, "description": "Collection of support tickets" },
-    "commerceCategories": { "schema": "CommerceCategory", "description": "Collection of commerce trade categories" }
+    "commerceCategories": { "schema": "CommerceCategory", "description": "Collection of commerce trade categories" },
+    "sessions": { "schema": { "type": "object" }, "description": "Collection of login sessions" },
+    "saasLedger": { "schema": { "type": "object" }, "description": "Platform ledger entries" },
+    "saasPayments": { "schema": { "type": "object" }, "description": "SaaS billing payment records" }
   }
 }

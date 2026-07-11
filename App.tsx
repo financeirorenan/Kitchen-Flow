@@ -920,19 +920,26 @@ const App: React.FC = () => {
     let activeTenantName: string | null = null;
     let activeTenantLogo: string | null = null;
 
+    const hasAdminAccess = isSuperAdmin || (currentUserData && ['SAAS_ADMIN', 'OWNER', 'MANAGER', 'CASHIER', 'WAITER', 'KITCHEN', 'KDS'].includes(currentUserData.role));
+
     const collectionsToSync = [
       { name: 'products', setter: setProducts, syncType: 'snapshot', limit: 300 },
-      { name: 'diningTables', setter: setTables, syncType: 'snapshot' },
-      { name: 'customers', setter: setCustomers, syncType: 'snapshot', limit: 200 },
-      { name: 'orders', setter: setOrders, syncType: 'snapshot', recentOnly: true, limit: 150 },
-      { name: 'financialRecords', setter: setFinancialRecords, syncType: 'snapshot', limit: 100, recentOnly: true },
-      { name: 'rawMaterials', setter: setRawMaterials, syncType: 'snapshot', limit: 200 },
-      { name: 'bankAccounts', setter: setBankAccounts, syncType: 'snapshot', limit: 50 },
-      { name: 'couriers', setter: setCouriers, syncType: 'snapshot', limit: 50 },
-      { name: 'auditLogs', setter: setAuditLogs, syncType: 'snapshot', limit: 30 },
-      { name: 'users', setter: setUsers, syncType: 'snapshot', limit: 50 },
-      { name: 'cashClosings', setter: setCashClosings, syncType: 'snapshot', limit: 20 }
+      { name: 'diningTables', setter: setTables, syncType: 'snapshot' }
     ];
+
+    if (hasAdminAccess) {
+      collectionsToSync.push(
+        { name: 'customers', setter: setCustomers, syncType: 'snapshot', limit: 200 },
+        { name: 'orders', setter: setOrders, syncType: 'snapshot', recentOnly: true, limit: 150 },
+        { name: 'financialRecords', setter: setFinancialRecords, syncType: 'snapshot', limit: 100, recentOnly: true },
+        { name: 'rawMaterials', setter: setRawMaterials, syncType: 'snapshot', limit: 200 },
+        { name: 'bankAccounts', setter: setBankAccounts, syncType: 'snapshot', limit: 50 },
+        { name: 'couriers', setter: setCouriers, syncType: 'snapshot', limit: 50 },
+        { name: 'auditLogs', setter: setAuditLogs, syncType: 'snapshot', limit: 30 },
+        { name: 'users', setter: setUsers, syncType: 'snapshot', limit: 50 },
+        { name: 'cashClosings', setter: setCashClosings, syncType: 'snapshot', limit: 20 }
+      );
+    }
 
     const unsubscribes = collectionsToSync.map(col => {
       // Usar uma query simples de igualdade por tenantId para evitar dependência de índices compostos no Firestore
@@ -1201,7 +1208,7 @@ const App: React.FC = () => {
       plansUnsub();
       saasConfigUnsub();
     };
-  }, [currentUserData?.tenantId, viewingTenantId, isSuperAdmin]);
+  }, [currentUserData?.tenantId, currentUserData?.role, viewingTenantId, isSuperAdmin]);
 
   // Monitorar estado de autenticação
   useEffect(() => {
@@ -1877,6 +1884,9 @@ const App: React.FC = () => {
 
   // Real-time Cloud Order Listener (Marketplace Integration)
   useEffect(() => {
+    const hasAdminAccess = isSuperAdmin || (currentUserData && ['SAAS_ADMIN', 'OWNER', 'MANAGER', 'CASHIER', 'WAITER', 'KITCHEN', 'KDS'].includes(currentUserData.role));
+    if (!hasAdminAccess) return;
+
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
     
     if (effectiveTenantId) {
@@ -1972,7 +1982,7 @@ const App: React.FC = () => {
 
       return () => unsubscribe();
     }
-  }, [currentUserData?.tenantId, viewingTenantId, adminSettings.autoAcceptOrders, globalDeliveryFee]);
+  }, [currentUserData?.tenantId, currentUserData?.role, viewingTenantId, isSuperAdmin, adminSettings.autoAcceptOrders, globalDeliveryFee]);
 
   const [mockWhatsAppNotify, setMockWhatsAppNotify] = useState<{title: string, msg: string} | null>(null);
 
