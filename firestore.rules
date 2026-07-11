@@ -2,10 +2,146 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Permissive development sandbox rules to unblock testing without Identity Toolkit API
+
+    // 1. Standalone Global Safety Net
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
+    }
+
+    // STANDALONE SECURITY PRIMITIVES (Phase 3)
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isSaasAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == "SAAS_ADMIN";
+    }
+
+    function userTenantId() {
+      return getUserData().tenantId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // 2. Collection Rules
+    
+    // Users Collection
+    match /users/{userId} {
+      allow read, write: if isSignedIn() && (request.auth.uid == userId || isSaasAdmin());
+    }
+
+    // Tenants Collection
+    match /tenants/{tenantId} {
+      allow read: if isSignedIn() && (isSaasAdmin() || resource.data.ownerId == request.auth.uid || tenantId == userTenantId());
+      allow create, update: if isSignedIn() && (isSaasAdmin() || request.resource.data.ownerId == request.auth.uid);
+      allow delete: if isSaasAdmin();
+    }
+
+    // Products Collection
+    match /products/{productId} {
+      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+    }
+
+    // Dining Tables Collection
+    match /diningTables/{tableId} {
+      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+    }
+
+    // Orders Collection
+    match /orders/{orderId} {
+      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+    }
+
+    // Customers Collection
+    match /customers/{customerId} {
+      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+    }
+
+    // Financial Records Collection
+    match /financialRecords/{recordId} {
+      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+    }
+
+    // Couriers Collection
+    match /couriers/{courierId} {
+      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+    }
+
+    // Audit Logs Collection
+    match /auditLogs/{logId} {
+      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+    }
+
+    // Raw Materials Collection
+    match /rawMaterials/{materialId} {
+      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+    }
+
+    // Cash Closings Collection
+    match /cashClosings/{closingId} {
+      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+    }
+
+    // Fiscal Notes Collection
+    match /fiscalNotes/{noteId} {
+      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+    }
+
+    // Certificates Collection
+    match /certificates/{certId} {
+      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+    }
+
+    // Settings Collection
+    match /settings/{settingsId} {
+      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId() || settingsId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId() || settingsId == userTenantId()));
+    }
+
+    // Plans Collection
+    match /plans/{planId} {
+      allow read: if isSignedIn();
+      allow write: if isSaasAdmin();
+    }
+
+    // Marketplace Invoices Collection
+    match /marketplaceInvoices/{invoiceId} {
+      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+    }
+
+    // Leads Collection
+    match /leads/{leadId} {
+      allow read, write: if isSaasAdmin() || isSignedIn();
+    }
+
+    // Tickets Collection
+    match /tickets/{ticketId} {
+      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+    }
+
+    // Commerce Categories Collection
+    match /commerceCategories/{categoryId} {
+      allow read: if isSignedIn();
+      allow write: if isSaasAdmin();
     }
   }
 }
-

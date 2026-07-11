@@ -19,6 +19,7 @@ import {
   FinancialRecord,
 } from "../types";
 import { getObservationSuggestions } from "../services/gemini";
+import { auth } from "../firebase";
 import {
   handlePrintOrder,
   generateReceiptHtml,
@@ -1528,9 +1529,21 @@ const Tables: React.FC<TablesProps> = memo(
           createdAt: new Date(),
         };
 
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json"
+        };
+        if (auth.currentUser) {
+          try {
+            const idToken = await auth.currentUser.getIdToken(true);
+            headers["Authorization"] = `Bearer ${idToken}`;
+          } catch (tokenErr) {
+            console.error("Error getting idToken for fiscal issue:", tokenErr);
+          }
+        }
+
         const response = await fetch("/api/fiscal/issue", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify({
             order: virtualOrder,
             settings: adminSettings.fiscal,

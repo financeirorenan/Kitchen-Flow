@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Order, Product, FinancialRecord, AdminSettings, RawMaterial, Tenant, Plan } from "../types";
-import { db } from "../firebase";
+import { db, auth } from "../firebase";
 import { doc, updateDoc } from "firebase/firestore";
 import {
   TrendingUp,
@@ -1162,11 +1162,21 @@ Sua operação está classificada hoje como **${classificacao}** com uma taxa de
       const slicedHistory = chatMessages.slice(-6).map(m => ({ sender: m.sender, text: m.text }));
 
       // 2. Fetch response from server-side endpoint
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json"
+      };
+      if (auth.currentUser) {
+        try {
+          const idToken = await auth.currentUser.getIdToken(true);
+          headers["Authorization"] = `Bearer ${idToken}`;
+        } catch (tokenErr) {
+          console.error("Error getting idToken for chat:", tokenErr);
+        }
+      }
+
       const response = await fetch("/api/gemini/chat-copilot", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers,
         body: JSON.stringify({
           message: textToSend,
           history: slicedHistory,

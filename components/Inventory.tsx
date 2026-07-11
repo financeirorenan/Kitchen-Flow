@@ -16,6 +16,7 @@ import { Reorder, AnimatePresence, motion } from 'framer-motion';
 import { maskCurrency, parseCurrency } from '../utils/masks';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { compressImage } from '../lib/imageUtils';
+import { auth } from '../firebase';
 
 interface InventoryProps {
   products: Product[];
@@ -574,9 +575,21 @@ const Inventory: React.FC<InventoryProps> = memo(({
     setIsParsingInvoice(true);
     setIsUsingLocalParser(false);
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json'
+      };
+      if (auth.currentUser) {
+        try {
+          const idToken = await auth.currentUser.getIdToken(true);
+          headers['Authorization'] = `Bearer ${idToken}`;
+        } catch (tokenErr) {
+          console.error("Error getting idToken for invoice:", tokenErr);
+        }
+      }
+
       const response = await fetch('/api/gemini/parse-invoice', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           text: invoiceText || undefined,
           fileBase64: uploadedFile?.base64 || undefined,

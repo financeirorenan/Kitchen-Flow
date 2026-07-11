@@ -57,6 +57,7 @@ try {
 }
 
 import { FiscalService } from "./server/fiscalService";
+import { requireAuth } from "./server/middleware/auth";
 
 // Admin Firebase
 if (!getApps().length) {
@@ -142,95 +143,7 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  app.get("/api/auth/debug-user", async (req, res) => {
-    try {
-      const email = "tubaktabacaria@sistema.com";
-      
-      const debugInfo = {
-        envGoogleCloudProject: process.env.GOOGLE_CLOUD_PROJECT,
-        envGcloudProject: process.env.GCLOUD_PROJECT,
-        envFirebaseProjectId: process.env.FIREBASE_PROJECT_ID,
-        configProjectId: firebaseConfig.projectId,
-        configDatabaseId: firebaseConfig.firestoreDatabaseId
-      };
-
-      let users: any[] = [];
-      let couriers: any[] = [];
-      let dbError: any = null;
-      let clientDbUsers: any[] = [];
-      let clientDbCouriers: any[] = [];
-      let clientDbError: any = null;
-      let defaultDbUsers: any[] = [];
-      let defaultDbError: any = null;
-
-      try {
-        const userSnap = await adminDb.collection('users').where('email', '==', email).get();
-        userSnap.forEach(d => users.push({ id: d.id, ...d.data() }));
-
-        const courierSnap = await adminDb.collection('couriers').where('email', '==', email).get();
-        courierSnap.forEach(d => couriers.push({ id: d.id, ...d.data() }));
-      } catch (err: any) {
-        dbError = { message: err.message, stack: err.stack, code: err.code };
-      }
-
-      try {
-        const qUser = query(collection(serverClientDb, 'users'), limit(50));
-        const userSnap = await getDocs(qUser);
-        userSnap.forEach(d => clientDbUsers.push({ id: d.id, ...d.data() }));
-
-        const qCourier = query(collection(serverClientDb, 'couriers'), limit(50));
-        const courierSnap = await getDocs(qCourier);
-        courierSnap.forEach(d => clientDbCouriers.push({ id: d.id, ...d.data() }));
-      } catch (err: any) {
-        clientDbError = { message: err.message, stack: err.stack };
-      }
-
-      try {
-        const defaultDb = initClientFirestore(clientFirebaseApp, { experimentalForceLongPolling: true }, '(default)');
-        const qUser = query(collection(defaultDb, 'users'), limit(50));
-        const userSnap = await getDocs(qUser);
-        userSnap.forEach(d => defaultDbUsers.push({ id: d.id, ...d.data() }));
-      } catch (err: any) {
-        defaultDbError = { message: err.message, stack: err.stack };
-      }
-
-      let authUser: any = null;
-      try {
-        const signInUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${firebaseConfig.apiKey}`;
-        const signInResponse = await fetch(signInUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email: "tubaktabacaria@sistema.com",
-            password: "Ch@ps1245",
-            returnSecureToken: true
-          })
-        });
-        authUser = {
-          status: signInResponse.status,
-          statusText: signInResponse.statusText,
-          body: await signInResponse.json().catch(() => ({}))
-        };
-      } catch (authErr: any) {
-        authUser = { error: authErr.message || authErr };
-      }
-
-      return res.json({
-        debugInfo,
-        dbError,
-        clientDbError,
-        defaultDbError,
-        users,
-        couriers,
-        clientDbUsers,
-        clientDbCouriers,
-        defaultDbUsers,
-        authUser
-      });
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message });
-    }
-  });
+  // Endpoint de debug removido para conformidade de segurança (Hardening de Segurança)
 
   app.post("/api/auth/login", async (req, res) => {
     const startTime = Date.now();
@@ -1186,7 +1099,7 @@ async function startServer() {
   };
 
   // Inteligência do Módulo Lojista (Copiloto Financeiro)
-  app.post("/api/gemini/explain-merchant", async (req, res) => {
+  app.post("/api/gemini/explain-merchant", requireAuth, async (req, res) => {
     const { summaryData } = req.body;
     try {
       const apiKey = process.env.GEMINI_API_KEY;
@@ -1279,7 +1192,7 @@ REQUISITOS DA RESPOSTA:
   });
 
   // Chat Inteligente com o Copiloto Kai
-  app.post("/api/gemini/chat-copilot", async (req, res) => {
+  app.post("/api/gemini/chat-copilot", requireAuth, async (req, res) => {
     const { message, history, summaryData, kaiMetrics } = req.body;
     
     if (!message) {
@@ -1499,7 +1412,7 @@ Você DEVE responder rigorosamente no formato JSON com as chaves:
   });
 
   // Rota inteligente para processamento e interpretação de Notas Fiscais e Cupons de compra
-  app.post("/api/gemini/parse-invoice", async (req, res) => {
+  app.post("/api/gemini/parse-invoice", requireAuth, async (req, res) => {
     const { text, fileBase64, fileMimeType } = req.body;
     try {
       const apiKey = process.env.GEMINI_API_KEY;
@@ -1607,7 +1520,7 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
   });
 
   // Fiscal routes
-  app.post("/api/fiscal/issue", async (req, res) => {
+  app.post("/api/fiscal/issue", requireAuth, async (req, res) => {
     try {
       const { order, certificate, config, nfceNumber, series, settings } = req.body;
       
@@ -1654,7 +1567,7 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
     }
   });
 
-  app.post("/api/fiscal/validate-certificate", async (req, res) => {
+  app.post("/api/fiscal/validate-certificate", requireAuth, async (req, res) => {
     try {
       const { pfxBase64, password } = req.body;
       // Simple validation by trying to instantiate the service
