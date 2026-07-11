@@ -61,8 +61,22 @@ service cloud.firestore {
 
     // Orders Collection
     match /orders/{orderId} {
-      allow read: if true; // Anyone can read orders to support client-side status tracking and guest ordering
-      allow write: if true; // Anyone can place and update guest orders
+      // Guest checkout (cardápio digital/marketplace): permite CRIAR um pedido
+      // novo sem login, mas valida a forma do documento para impedir que um
+      // estranho injete campos arbitrários ou sobrescreva um pedido existente.
+      allow create: if request.resource.data.tenantId is string
+                    && request.resource.data.tenantId.size() > 0
+                    && request.resource.data.keys().hasAll(['tenantId', 'items', 'total', 'type', 'status'])
+                    && request.resource.data.total is number
+                    && request.resource.data.total >= 0
+                    && request.resource.data.status in ['pending', 'preparing'];
+
+      // Ler ou alterar um pedido já existente exige ser da equipe do próprio
+      // tenant (ou SAAS_ADMIN). Isso fecha a leitura/edição pública em massa,
+      // mantendo o fluxo interno (KDS, Admin, etc.) funcionando normalmente.
+      allow read: if isSaasAdmin() || (isSignedIn() && resource.data.tenantId == userTenantId());
+      allow update: if isSaasAdmin() || (isSignedIn() && resource.data.tenantId == userTenantId());
+      allow delete: if isSaasAdmin() || (isSignedIn() && resource.data.tenantId == userTenantId());
     }
 
     // Customers Collection

@@ -484,7 +484,7 @@ const App: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const isSuperAdmin = user?.email?.toLowerCase() === 'financeirorenanuk@gmail.com' || currentUserData?.role === 'SAAS_ADMIN';
+  const isSuperAdmin = !!user && (user?.email?.toLowerCase() === 'financeirorenanuk@gmail.com' || currentUserData?.role === 'SAAS_ADMIN');
 
   const effectiveAllowedModules = isSuperAdmin ? undefined : (tenantData?.customModules || tenantData?.subscription?.allowedModules);
 
@@ -920,7 +920,7 @@ const App: React.FC = () => {
     let activeTenantName: string | null = null;
     let activeTenantLogo: string | null = null;
 
-    const hasAdminAccess = isSuperAdmin || (currentUserData && ['SAAS_ADMIN', 'OWNER', 'MANAGER', 'CASHIER', 'WAITER', 'KITCHEN', 'KDS'].includes(currentUserData.role));
+    const hasAdminAccess = !!user && !!currentUserData && (isSuperAdmin || ['SAAS_ADMIN', 'OWNER', 'MANAGER', 'CASHIER', 'WAITER', 'KITCHEN', 'KDS'].includes(currentUserData.role));
 
     const collectionsToSync = [
       { name: 'products', setter: setProducts, syncType: 'snapshot', limit: 300 },
@@ -1208,7 +1208,7 @@ const App: React.FC = () => {
       plansUnsub();
       saasConfigUnsub();
     };
-  }, [currentUserData?.tenantId, currentUserData?.role, viewingTenantId, isSuperAdmin]);
+  }, [currentUserData?.tenantId, currentUserData?.role, viewingTenantId, isSuperAdmin, user]);
 
   // Monitorar estado de autenticação
   useEffect(() => {
@@ -1884,7 +1884,7 @@ const App: React.FC = () => {
 
   // Real-time Cloud Order Listener (Marketplace Integration)
   useEffect(() => {
-    const hasAdminAccess = isSuperAdmin || (currentUserData && ['SAAS_ADMIN', 'OWNER', 'MANAGER', 'CASHIER', 'WAITER', 'KITCHEN', 'KDS'].includes(currentUserData.role));
+    const hasAdminAccess = !!user && !!currentUserData && (isSuperAdmin || ['SAAS_ADMIN', 'OWNER', 'MANAGER', 'CASHIER', 'WAITER', 'KITCHEN', 'KDS'].includes(currentUserData.role));
     if (!hasAdminAccess) return;
 
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
@@ -1982,7 +1982,7 @@ const App: React.FC = () => {
 
       return () => unsubscribe();
     }
-  }, [currentUserData?.tenantId, currentUserData?.role, viewingTenantId, isSuperAdmin, adminSettings.autoAcceptOrders, globalDeliveryFee]);
+  }, [currentUserData?.tenantId, currentUserData?.role, viewingTenantId, isSuperAdmin, adminSettings.autoAcceptOrders, globalDeliveryFee, user]);
 
   const [mockWhatsAppNotify, setMockWhatsAppNotify] = useState<{title: string, msg: string} | null>(null);
 
