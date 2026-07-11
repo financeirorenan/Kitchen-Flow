@@ -91,6 +91,12 @@ service cloud.firestore {
       allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
     }
 
+    // Bank Accounts Collection
+    match /bankAccounts/{accountId} {
+      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+    }
+
     // Couriers Collection
     match /couriers/{courierId} {
       allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
