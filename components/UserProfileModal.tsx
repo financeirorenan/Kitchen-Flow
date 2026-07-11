@@ -24,6 +24,7 @@ import {
 import { doc, updateDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { User } from '../types';
+import { authService } from '../services/authService';
 
 interface UserProfileModalProps {
   isOpen: boolean;
@@ -365,58 +366,27 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         } as User);
       }
 
-      // Invalidação e Limpeza automática de caches obsoletos (exigência síncrona pós-alteração)
+      // Invalidação e Limpeza automática de caches obsoletos via AuthService
       try {
-        console.log('[Cache Invalidation] Iniciando limpeza completa de caches pós-alteração...');
+        console.log('[Cache Invalidation] Iniciando limpeza completa de caches pós-alteração via AuthService...');
         const activeSessionBackup = localStorage.getItem('kitchenflow_session');
         const activeDemoSessionBackup = localStorage.getItem('kitchenflow_demo_user');
-        
-        // 1. Limpar localStorage
-        localStorage.clear();
-        
-        // Restaurar sessão ativa para que o usuário não seja deslogado abruptamente
+        const activeUserBackup = localStorage.getItem('kitchenflow_cached_user');
+
+        await authService.purgeAllCachesAndStorages();
+
+        // Restaurar sessão, demo user e dados cache do usuário para manter autenticado
         if (activeSessionBackup) {
           localStorage.setItem('kitchenflow_session', activeSessionBackup);
         }
         if (activeDemoSessionBackup) {
           localStorage.setItem('kitchenflow_demo_user', activeDemoSessionBackup);
         }
-
-        // 2. Limpar sessionStorage
-        sessionStorage.clear();
-
-        // 3. Limpar bancos de dados do IndexedDB se houver
-        if (window.indexedDB && window.indexedDB.databases) {
-          window.indexedDB.databases().then((databases) => {
-            databases.forEach((dbInfo) => {
-              if (dbInfo.name) {
-                console.log(`[Cache Invalidation] Excluindo IndexedDB obsoleto: ${dbInfo.name}`);
-                window.indexedDB.deleteDatabase(dbInfo.name);
-              }
-            });
-          }).catch((e) => console.warn('Erro ao obter bancos IndexedDB:', e));
-        }
-
-        // 4. Limpar caches de service workers / cache storage do browser
-        if (window.caches) {
-          window.caches.keys().then((keys) => {
-            keys.forEach((key) => {
-              console.log(`[Cache Invalidation] Removendo Cache Storage: ${key}`);
-              window.caches.delete(key);
-            });
-          }).catch((e) => console.warn('Erro ao obter caches do CacheStorage:', e));
-        }
-
-        // 5. Invalidação de caches de bibliotecas conhecidas injetadas ou globais (React Query, Zustand)
-        const anyWindow = window as any;
-        if (anyWindow.__REACT_QUERY_STATE__) anyWindow.__REACT_QUERY_STATE__ = undefined;
-        if (anyWindow.queryClient) {
-          try {
-            anyWindow.queryClient.clear();
-          } catch {}
+        if (activeUserBackup) {
+          localStorage.setItem('kitchenflow_cached_user', activeUserBackup);
         }
       } catch (cacheErr) {
-        console.warn('Erro ao limpar caches de bibliotecas:', cacheErr);
+        console.warn('Erro ao limpar caches de bibliotecas via AuthService:', cacheErr);
       }
 
       showToast('Perfil atualizado com sucesso!', 'success');

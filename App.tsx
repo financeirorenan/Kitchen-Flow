@@ -26,6 +26,7 @@ import IntelligentReports from './components/IntelligentReports';
 import LojistaCopilot from './components/LojistaCopilot';
 import { db as localDb } from './services/db';
 import { auth, db } from './firebase';
+import { authService } from './services/authService';
 import { handlePrintOrder } from './services/printService';
 import { onAuthStateChanged, signOut, User as FirebaseUser, updateEmail, updatePassword } from 'firebase/auth';
 import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, onSnapshot, query, where, orderBy, limit, addDoc, writeBatch } from 'firebase/firestore';
@@ -1395,11 +1396,7 @@ const App: React.FC = () => {
         setCurrentUserData(null);
         setTenantData(null);
         try {
-          localStorage.removeItem('kitchenflow_session');
-          localStorage.removeItem('kitchenflow_cached_user');
-          localStorage.removeItem('kitchenflow_cached_tenant_data');
-          localStorage.removeItem('gastroai_cached_user');
-          localStorage.removeItem('gastroai_cached_tenant_data');
+          await authService.purgeAllCachesAndStorages();
         } catch (e) {
           console.warn(e);
         }
@@ -1419,32 +1416,16 @@ const App: React.FC = () => {
 
         const isExpiringSoon = session.expiration - Date.now() < 300000; // Expira em menos de 5 min ou já expirou
         if (isExpiringSoon) {
-          console.log('[Session Manager] Token expirando ou vencido, renovando contra o Banco de Dados (Fonte de Verdade)...');
-          const response = await fetch('/api/auth/refresh', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refreshToken: session.refreshToken })
-          });
-
-          if (response.ok) {
-            const data = await response.json();
-            if (data.success && data.session) {
-              localStorage.setItem('kitchenflow_session', JSON.stringify(data.session));
-              console.log('[Session Manager] Token de sessão renovado com sucesso via banco de dados!');
-            }
-          } else {
-            const errData = await response.json().catch(() => ({}));
-            console.error('[Session Manager] Erro crítico de validação contra o Banco de Dados:', errData.error || response.statusText);
-
-            if (response.status === 401 || response.status === 403) {
-              console.error('[Session Manager] Sessão inválida, usuário suspenso ou plano expirado. Expulsando usuário...');
-              localStorage.removeItem('kitchenflow_session');
-              localStorage.removeItem('kitchenflow_cached_user');
-              localStorage.removeItem('kitchenflow_cached_tenant_data');
-              await signOut(auth);
-              showToast(errData.error || 'Sua sessão expirou ou sua conta foi suspensa temporariamente.', 'error');
-              window.location.reload();
-            }
+          console.log('[Session Manager] Token expirando ou vencido, renovando contra o Banco de Dados via AuthService (Fonte de Verdade)...');
+          try {
+            await authService.refreshSession(session.refreshToken);
+            console.log('[Session Manager] Token de sessão renovado com sucesso via AuthService!');
+          } catch (refreshErr: any) {
+            console.error('[Session Manager] Erro crítico de validação contra o Banco de Dados:', refreshErr.message);
+            console.error('[Session Manager] Sessão inválida, usuário suspenso ou plano expirado. Expulsando usuário...');
+            await authService.logout();
+            showToast(refreshErr.message || 'Sua sessão expirou ou sua conta foi suspensa temporariamente.', 'error');
+            window.location.reload();
           }
         }
       } catch (err) {

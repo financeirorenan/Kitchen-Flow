@@ -1,5 +1,6 @@
 import React, { useState, memo } from 'react';
 import { auth, db } from '../firebase';
+import { authService } from '../services/authService';
 import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword, updateProfile, updatePassword, sendPasswordResetEmail, signInWithCustomToken } from 'firebase/auth';
 import { doc, setDoc, getDoc, collection, query, where, getDocs, limit, deleteDoc } from 'firebase/firestore';
 import { LogIn, Mail, Lock, Sparkles, Loader2, UserPlus, Phone, User, Store, Bike, Shield, Check, Eye, EyeOff } from 'lucide-react';
@@ -343,136 +344,17 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
         let signedInUser = null;
         let loginSuccess = false;
 
-        // 1. Prioridade Máxima: Tentar o login seguro, inteligente e ultra-rápido via servidor API primeiro (consulta Firestore em ~30ms)
+        // 1. Prioridade Máxima: Tentar o login seguro via AuthService e API (purga caches e reconstrói via UID automaticamente)
         try {
-          console.log(`Tentando login ultra-rápido via servidor API para ${trimmedEmail}...`);
-          const response = await fetch('/api/auth/login', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ email: trimmedEmail, password: trimmedPassword }),
-          });
-
-          if (response.ok) {
-            const data = await response.json();
-            if (data.success) {
-              if (data.customToken) {
-                console.log("Token de acesso recebido do servidor. Autenticando com Token Customizado...");
-                const loginCred = await signInWithCustomToken(auth, data.customToken);
-                signedInUser = loginCred.user;
-                loginSuccess = true;
-                console.log("Autenticado via Token Customizado com sucesso!");
-              } else if (data.isLocalSession) {
-                console.log("Sessão de bypass local autorizada pelo servidor.");
-                
-                // Tenta realizar um login REAL com email/senha primeiro, já que o servidor garantiu que
-                // a conta já foi criada/sincronizada no Firebase Auth no backend!
-                try {
-                  console.log("Fazendo login real via email/senha após validação de sessão pelo backend...");
-                  const loginCred = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
-                  signedInUser = loginCred.user;
-                  loginSuccess = true;
-                  console.log("Login real via email/senha realizado com sucesso!");
-                } catch (clientSignInErr: any) {
-                  console.warn("Falha ao realizar login direto com email/senha no cliente. Iniciando auto-cura...", clientSignInErr.code || clientSignInErr.message);
-                  
-                  // Auto-Cura: Se o usuário não existir ou se a credencial/senha falhar
-                  if (clientSignInErr.code === 'auth/user-not-found' || clientSignInErr.code === 'auth/invalid-credential' || clientSignInErr.code === 'auth/wrong-password') {
-                    try {
-                      // 1. Tentar criar o usuário em Firebase Auth
-                      console.log("Auto-Cura: Tentando registrar o usuário no Firebase Auth...");
-                      const regCred = await createUserWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
-                      signedInUser = regCred.user;
-                      loginSuccess = true;
-                      console.log("Auto-Cura: Usuário registrado e logado com sucesso no Firebase Auth!");
-                    } catch (regErr: any) {
-                      console.warn("Auto-Cura: Registro falhou (provavelmente já existe):", regErr.code || regErr.message);
-                      
-                      // 2. Se falhar o registro por já existir, tentar o login com a senha determinística/legado
-                      try {
-                        const legacyPass = getDeterministicPassword(trimmedEmail);
-                        console.log("Auto-Cura: Tentando fazer login com senha determinística legado...");
-                        const legacyCred = await signInWithEmailAndPassword(auth, trimmedEmail, legacyPass);
-                        signedInUser = legacyCred.user;
-                        loginSuccess = true;
-                        console.log("Auto-Cura: Login com senha determinística legado realizado com sucesso!");
-                        
-                        // Sincronizar atualizando para a senha informada
-                        await updatePassword(signedInUser, trimmedPassword);
-                        console.log("Auto-Cura: Senha atualizada no Firebase Auth para coincidir com o Firestore.");
-                      } catch (legacyErr: any) {
-                        console.error("Auto-Cura: Todas as tentativas de sincronização do Firebase Auth falharam:", legacyErr.code || legacyErr.message);
-                      }
-                    }
-                  }
-                }
-
-                if (loginSuccess && signedInUser) {
-                  // Remover demo_user se ele existia para migrar para sessão real de vez
-                  localStorage.removeItem('kitchenflow_demo_user');
-                  
-                  // Salvar dados no cached_user
-                  localStorage.setItem('kitchenflow_cached_user', JSON.stringify({
-                    id: data.user.id,
-                    email: data.user.email,
-                    role: data.user.role,
-                    name: data.user.name,
-                    tenantId: data.user.tenantId,
-                    active: true,
-                    status: 'online'
-                  }));
-                  
-                  onLoginSuccess();
-                  window.location.reload();
-                  return;
-                }
-
-                const simulatedFirebaseUser = {
-                  uid: data.user.id,
-                  email: data.user.email,
-                  displayName: data.user.name,
-                  isLocalSession: true
-                };
-
-                // Sincronizar o localStorage para o App inicializar corretamente com esse usuário local
-                localStorage.setItem('kitchenflow_demo_user', JSON.stringify({
-                  firebaseUser: simulatedFirebaseUser,
-                  userData: {
-                    id: data.user.id,
-                    email: data.user.email,
-                    role: data.user.role,
-                    name: data.user.name,
-                    tenantId: data.user.tenantId,
-                    active: true,
-                    status: 'online'
-                  }
-                }));
-
-                localStorage.setItem('kitchenflow_cached_user', JSON.stringify({
-                  id: data.user.id,
-                  email: data.user.email,
-                  role: data.user.role,
-                  name: data.user.name,
-                  tenantId: data.user.tenantId,
-                  active: true,
-                  status: 'online'
-                }));
-
-                onLoginSuccess();
-                window.location.reload();
-                return;
-              }
-            }
-          } else {
-            const errData = await response.json().catch(() => ({}));
-            // Se o servidor explicitamente retornou erro de credenciais inválidas, não precisamos tentar o fallback cliente lento
-            if (response.status === 401 || errData.error?.includes('incorretos') || errData.error?.includes('inválidas') || errData.error?.includes('E-mail ou senha')) {
-              throw new Error(errData.error || 'Credenciais inválidas. Verifique seu e-mail e senha.');
-            }
+          console.log(`Tentando login ultra-rápido via AuthService para ${trimmedEmail}...`);
+          const authResult = await authService.loginWithAPI(trimmedEmail, trimmedPassword);
+          if (authResult.success) {
+            loginSuccess = true;
+            signedInUser = auth.currentUser || { uid: authResult.user.id, email: authResult.user.email };
+            console.log("Login via AuthService realizado com sucesso!");
           }
         } catch (apiErr: any) {
-          console.warn("Login via servidor API falhou ou está offline, aplicando fallback client-side direto...", apiErr.message || apiErr);
+          console.warn("Login via AuthService falhou ou está offline, aplicando fallback client-side direto...", apiErr.message || apiErr);
           // Se for erro de credenciais incorretas vindo da nossa própria API, repassa
           if (apiErr.message?.includes('incorretos') || apiErr.message?.includes('inválidas') || apiErr.message?.includes('E-mail ou senha')) {
             throw apiErr;
@@ -487,6 +369,45 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
             signedInUser = loginCred.user;
             loginSuccess = true;
             console.log(`Login client-side bem-sucedido.`);
+
+            // Buscar dados básicos do Firestore para reconstruir a sessão
+            const userDocRef = doc(db, 'users', signedInUser.uid);
+            const userDocSnap = await getDoc(userDocRef);
+            let uData = userDocSnap.exists() ? userDocSnap.data() : null;
+
+            if (!uData) {
+              const courierDocRef = doc(db, 'couriers', signedInUser.uid);
+              const courierDocSnap = await getDoc(courierDocRef);
+              uData = courierDocSnap.exists() ? courierDocSnap.data() : null;
+            }
+
+            const mockSession = {
+              accessToken: 'fallback-token',
+              refreshToken: 'fallback-refresh',
+              expiration: Date.now() + 3600000,
+              tenantId: uData?.tenantId || 'GLOBAL',
+              userId: signedInUser.uid,
+              role: uData?.role || 'CUSTOMER',
+              permissions: uData?.permissions || [],
+              plan: 'free',
+              empresa: uData?.restaurantName || 'KitchenFlow App',
+              createdAt: new Date().toISOString(),
+              active: true
+            };
+
+            const authenticatedUser = {
+              id: signedInUser.uid,
+              email: trimmedEmail,
+              role: uData?.role || 'CUSTOMER',
+              name: uData?.name || signedInUser.displayName || trimmedEmail.split('@')[0],
+              tenantId: uData?.tenantId || 'GLOBAL',
+              active: true,
+              status: 'online'
+            };
+
+            // Purge and rebuild session properly via AuthService
+            await authService.initiateSession(mockSession, authenticatedUser);
+
           } catch (clientErr: any) {
             console.error("Login de fallback client-side também falhou:", clientErr);
             throw new Error('E-mail ou senha incorretos. Verifique seus dados.');
@@ -521,6 +442,7 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
           }
 
           onLoginSuccess();
+          window.location.reload();
           return;
         } else {
           throw new Error('Não foi possível realizar a autenticação. Verifique os dados fornecidos.');
