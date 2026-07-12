@@ -65,7 +65,7 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
           name: 'Renan (Demo)',
           email: 'financeirorenanuk@gmail.com',
           role: 'SAAS_ADMIN',
-          tenantId: 'HCL1177LRQVPEKCTYRAHU7IGBQ42',
+          tenantId: '',
           permissions: ["dashboard_view", "orders_view", "menu_view", "stock_view", "finance_view", "couriers_view", "users_view", "integrations_view", "marketing_view", "reports_view", "saas_admin_view"],
           status: 'online',
           active: true,

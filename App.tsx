@@ -212,7 +212,8 @@ const App: React.FC = () => {
     try {
       const demoUser = localStorage.getItem('kitchenflow_demo_user');
       if (demoUser) {
-        return JSON.parse(demoUser).userData;
+        const uData = JSON.parse(demoUser).userData;
+        return { ...uData, tenantId: '' };
       }
       const cached = localStorage.getItem('kitchenflow_cached_user') || localStorage.getItem('gastroai_cached_user');
       return cached ? JSON.parse(cached) : null;
@@ -788,6 +789,10 @@ const App: React.FC = () => {
 
   // Carregar dados de todas as coleções do tenant quando mudar (Suporte SaaS / Multi-tenant)
   useEffect(() => {
+    const isDemoMode = !!localStorage.getItem('kitchenflow_demo_user');
+    if (isDemoMode) {
+      return;
+    }
     // Reset states when switching tenants to avoid leaking previous tenant data or placeholders
     setProducts([]);
     setTables([]);
@@ -1452,8 +1457,9 @@ const App: React.FC = () => {
   useEffect(() => {
     let isMounted = true;
     if (!user) return;
+    const isDemoMode = !!localStorage.getItem('kitchenflow_demo_user');
     // Se estivermos visualizando um tenant específico em nuvem, não carregamos o mock local para não poluir o estado
-    if (viewingTenantId || (currentUserData && currentUserData.tenantId)) {
+    if (!isDemoMode && (viewingTenantId || (currentUserData && currentUserData.tenantId))) {
       setIsDbLoaded(true);
       return;
     }
@@ -1486,7 +1492,7 @@ const App: React.FC = () => {
         }
 
         // CARREGA APENAS SE NÃO ESTIVERMOS NO MODO NUVEM/TENANT (Para evitar sobrescrita)
-        if (!currentUserData?.tenantId && !viewingTenantId && isMounted) {
+        if ((isDemoMode || (!currentUserData?.tenantId && !viewingTenantId)) && isMounted) {
           const [p, t, c, o, u, l, f, s, rm, cc, ba] = await Promise.all([
             localDb.products.toArray(),
             localDb.diningTables.toArray(),
