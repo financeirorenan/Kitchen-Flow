@@ -3,6 +3,7 @@ import path from "path";
 import cors from "cors";
 import dotenv from "dotenv";
 import fs from "fs";
+import bcrypt from "bcryptjs";
 
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
@@ -70,6 +71,22 @@ const adminDb = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDa
   ? getFirestore(firebaseConfig.firestoreDatabaseId)
   : getFirestore();
 const adminAuth = getAuth();
+
+function isBcryptHash(value: unknown): value is string {
+  return typeof value === "string" && /^\$2[aby]?\$\d{2}\$/.test(value);
+}
+
+async function hashPassword(plainText: string): Promise<string> {
+  return bcrypt.hash(plainText, 12);
+}
+
+async function verifyPassword(plainText: string, stored: unknown): Promise<boolean> {
+  if (!stored || typeof stored !== "string") return false;
+  if (isBcryptHash(stored)) {
+    return bcrypt.compare(plainText, stored);
+  }
+  return stored === plainText;
+}
 
 // Client Firebase
 // We use the Admin SDK directly under the clientDb name to optimize server performance and gRPC channels
@@ -192,10 +209,21 @@ async function startServer() {
       }
 
       // 2. Verificar se a senha confere com o Firestore (Fonte de Verdade)
-      if (matchedUser && matchedUser.password === trimmedPassword) {
+      if (matchedUser && (await verifyPassword(trimmedPassword, matchedUser.password))) {
         authVerified = true;
         authUid = uid;
         console.log(`[LOGS] Senha validada diretamente contra o Firestore para: ${trimmedEmail}`);
+
+        if (!isBcryptHash(matchedUser.password)) {
+          try {
+            const collectionName = isCourier ? 'couriers' : 'users';
+            const hashed = await hashPassword(trimmedPassword);
+            await setDocHelper(collectionName, oldDocId || uid, { password: hashed }, { merge: true });
+            console.log(`[LOGS] [Migração] Senha em texto puro convertida para hash bcrypt (${collectionName}).`);
+          } catch (hashMigrateErr) {
+            console.error("[LOGS] Falha ao migrar senha legada para hash:", hashMigrateErr);
+          }
+        }
       } else {
         // Recorrer à REST API do Firebase Auth se a senha do Firestore falhou ou o usuário não foi localizado no Firestore.
         if (firebaseConfig.apiKey) {
@@ -219,11 +247,12 @@ async function startServer() {
 
               // AUTO-CURA: O usuário autenticou via Auth com essa senha nova, sincronizamos no Firestore.
               if (matchedUser) {
-                matchedUser.password = trimmedPassword;
+                const hashedForSync = await hashPassword(trimmedPassword);
+                matchedUser.password = hashedForSync;
                 const collectionName = isCourier ? 'couriers' : 'users';
                 try {
-                  await setDocHelper(collectionName, oldDocId || authUid, { password: trimmedPassword }, { merge: true });
-                  console.log(`[LOGS] [Auto-Cura] Senha do usuário corrigida e sincronizada no Firestore (${collectionName}).`);
+                  await setDocHelper(collectionName, oldDocId || authUid, { password: hashedForSync }, { merge: true });
+                  console.log(`[LOGS] [Auto-Cura] Senha do usuário corrigida e sincronizada no Firestore (${collectionName}, como hash).`);
                 } catch (updatePassErr) {
                   console.error("[LOGS] Erro ao curar senha no Firestore:", updatePassErr);
                 }
@@ -536,6 +565,8 @@ async function startServer() {
         }
       }
 
+      const hashedPasswordForUpdate = trimmedPassword ? await hashPassword(trimmedPassword) : undefined;
+
       // 3. Atualizar no Firestore 'users'
       /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
       const firestoreUpdates: any = {
@@ -547,7 +578,7 @@ async function startServer() {
         firestoreUpdates.avatar = avatar;
         firestoreUpdates.photoURL = avatar;
       }
-      if (trimmedPassword) firestoreUpdates.password = trimmedPassword;
+      if (trimmedPassword) firestoreUpdates.password = hashedPasswordForUpdate;
 
       await updateDoc(userRef, firestoreUpdates);
 
@@ -560,7 +591,7 @@ async function startServer() {
         };
         if (name) courierUpdates.name = name;
         if (trimmedEmail) courierUpdates.email = trimmedEmail;
-        if (trimmedPassword) courierUpdates.password = trimmedPassword;
+        if (trimmedPassword) courierUpdates.password = hashedPasswordForUpdate;
         
         await setDoc(courierRef, courierUpdates, { merge: true });
       }
@@ -793,7 +824,7 @@ async function startServer() {
       const oldDocId = docSnap.id;
 
       // 2. Validar se a senha temporária confere com a do DB
-      if (!userData.password || userData.password !== trimmedTempPassword) {
+      if (!(await verifyPassword(trimmedTempPassword, userData.password))) {
         return res.status(401).json({ error: "A senha temporária fornecida é inválida. Verifique os dados." });
       }
 
@@ -828,10 +859,11 @@ async function startServer() {
       }
 
       // 4. Salvar dados atualizados no Firestore sob o novo UID gerado
+      const hashedNewPassword = await hashPassword(trimmedNewPassword);
       const updatedUserData = {
         ...userData,
         id: uid,
-        password: trimmedNewPassword,
+        password: hashedNewPassword,
         active: true,
         updatedAt: new Date()
       };
