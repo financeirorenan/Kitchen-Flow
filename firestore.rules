@@ -85,17 +85,34 @@ service cloud.firestore {
                     && request.resource.data.status in ['pending', 'preparing'];
 
       // Ler ou alterar um pedido já existente exige ser da equipe do próprio
-      // tenant (ou SAAS_ADMIN). Isso fecha a leitura/edição pública em massa,
-      // mantendo o fluxo interno (KDS, Admin, etc.) funcionando normalmente.
-      allow read: if isSaasAdmin() || (isSignedIn() && resource.data.tenantId == userTenantId());
-      allow update: if isSaasAdmin() || (isSignedIn() && resource.data.tenantId == userTenantId());
+      // tenant (ou SAAS_ADMIN), ou ser o cliente proprietário do pedido.
+      allow read: if isSaasAdmin() || (isSignedIn() && (
+        resource.data.tenantId == userTenantId() ||
+        ('phone' in getUserData() && resource.data.customerPhone == getUserData().phone) ||
+        ('email' in request.auth.token && resource.data.customerEmail == request.auth.token.email)
+      ));
+      allow update: if isSaasAdmin() || (isSignedIn() && (
+        resource.data.tenantId == userTenantId() ||
+        ('phone' in getUserData() && resource.data.customerPhone == getUserData().phone) ||
+        ('email' in request.auth.token && resource.data.customerEmail == request.auth.token.email)
+      ));
       allow delete: if isSaasAdmin() || (isSignedIn() && resource.data.tenantId == userTenantId());
     }
 
     // Customers Collection
     match /customers/{customerId} {
-      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
-      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+      allow read: if isSaasAdmin() || (isSignedIn() && (
+        resource == null || 
+        resource.data.tenantId == userTenantId() ||
+        ('phone' in getUserData() && resource.data.phone == getUserData().phone) ||
+        ('email' in request.auth.token && resource.data.email == request.auth.token.email)
+      ));
+      allow write: if isSaasAdmin() || (isSignedIn() && (
+        request.resource == null || 
+        request.resource.data.tenantId == userTenantId() ||
+        ('phone' in getUserData() && request.resource.data.phone == getUserData().phone) ||
+        ('email' in request.auth.token && request.resource.data.email == request.auth.token.email)
+      ));
     }
 
     // Financial Records Collection
@@ -161,7 +178,7 @@ service cloud.firestore {
     // Marketplace Invoices Collection
     match /marketplaceInvoices/{invoiceId} {
       allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
-      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || isSignedIn();
     }
 
     // Leads Collection
@@ -172,7 +189,7 @@ service cloud.firestore {
     // Tickets Collection
     match /tickets/{ticketId} {
       allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
-      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || isSignedIn();
     }
 
     // Commerce Categories Collection

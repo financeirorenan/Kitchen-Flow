@@ -516,9 +516,25 @@ const App: React.FC = () => {
     if (saved) setMarketplaceProfile(JSON.parse(saved));
   }, []);
 
-  const handleUpdateMarketplaceProfile = (data: {name: string, phone: string}) => {
+  const handleUpdateMarketplaceProfile = async (data: {name: string, phone: string}) => {
     setMarketplaceProfile(data);
     localStorage.setItem('marketplace_profile', JSON.stringify(data));
+
+    // Sincronizar com o Firestore se o usuário estiver logado
+    if (auth.currentUser) {
+      try {
+        await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+          name: data.name,
+          phone: data.phone,
+          updatedAt: new Date()
+        });
+        if (currentUserData) {
+          setCurrentUserData(prev => prev ? { ...prev, name: data.name, phone: data.phone } : null);
+        }
+      } catch (err) {
+        console.warn("Could not sync marketplace profile to firestore users collection:", err);
+      }
+    }
   };
 
   useEffect(() => {
@@ -1300,10 +1316,21 @@ const App: React.FC = () => {
             console.warn("Could not query couriers by email from client side (rules restriction):", courierQueryErr);
           }
 
+          let savedProfile: { name: string, phone: string } | null = null;
+          try {
+            const savedProfileStr = localStorage.getItem('marketplace_profile');
+            if (savedProfileStr) {
+              savedProfile = JSON.parse(savedProfileStr);
+            }
+          } catch (e) {
+            console.warn("Could not read saved profile from localStorage:", e);
+          }
+
           const newUser: User = {
             id: firebaseUser.uid,
-            name: defaultName,
+            name: savedProfile?.name || defaultName,
             email: firebaseUser.email,
+            phone: savedProfile?.phone || '',
             role: role,
             tenantId: tenantId,
             permissions: isMaster 
