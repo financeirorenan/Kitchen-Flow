@@ -425,7 +425,7 @@ async function startServer() {
               }
 
               try {
-                customToken = await adminAuth.createCustomToken(uid);
+                customToken = await adminAuth.createCustomToken(uid, { email: trimmedEmail });
                 console.log(`[LOGS] Token criado (Custom Token): Gerado com sucesso`);
               } catch (tokenErr: any) {
                 console.warn(`[LOGS] Não foi possível assinar customToken: ${tokenErr.message}`);
@@ -883,7 +883,7 @@ async function startServer() {
       let customToken = null;
       let adminAuthSuccess = false;
       try {
-        customToken = await adminAuth.createCustomToken(uid);
+        customToken = await adminAuth.createCustomToken(uid, { email: trimmedEmail });
         adminAuthSuccess = true;
       } catch (authErr) {
         console.warn("[First Access] Falha no createCustomToken, usando fallback local.", authErr);

@@ -271,12 +271,16 @@ interface SaaSAdminProps {
   activeTab: string;
   onViewTenant: (tenantId: string, name?: string, logo?: string) => void;
   onNavigate: (tab: string) => void;
+  currentUser?: any;
+  currentUserData?: any;
 }
 
 const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({ 
   activeTab: parentActiveTab, 
   onViewTenant,
-  onNavigate
+  onNavigate,
+  currentUser,
+  currentUserData
 }) => {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [loading, setLoading] = useState(true);
@@ -342,6 +346,9 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   }, [parentActiveTab]);
 
   useEffect(() => {
+    if (!currentUser || !currentUserData || !(currentUser.email?.toLowerCase() === 'financeirorenanuk@gmail.com' || currentUserData?.role === 'SAAS_ADMIN')) {
+      return;
+    }
     const qLeads = query(collection(db, 'leads'), orderBy('createdAt', 'desc'));
     const unsubscribeLeads = onSnapshot(qLeads, (snapshot) => {
       setLeads(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })));
@@ -368,13 +375,16 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
       unsubscribeTickets();
       unsubscribeUsers();
     };
-  }, []);
+  }, [currentUser, currentUserData]);
 
   const [marketplaceInvoices, setMarketplaceInvoices] = useState<MarketplaceInvoice[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
   const [marketplaceFixedFee, setMarketplaceFixedFee] = useState(1.50); // Default R$ 1.50
 
   useEffect(() => {
+    if (!currentUser || !currentUserData || !(currentUser.email?.toLowerCase() === 'financeirorenanuk@gmail.com' || currentUserData?.role === 'SAAS_ADMIN')) {
+      return;
+    }
     const qPayments = query(collection(db, 'saasPayments'), orderBy('createdAt', 'desc'));
     const unsubscribePayments = onSnapshot(qPayments, (snapshot) => {
       setSaasPayments(snapshot.docs.map(doc => {
@@ -391,7 +401,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     });
 
     return () => unsubscribePayments();
-  }, []);
+  }, [currentUser, currentUserData]);
 
   useEffect(() => {
     const qCategories = query(collection(db, 'commerceCategories'), orderBy('name', 'asc'));
@@ -427,6 +437,9 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   }, []);
 
   useEffect(() => {
+    if (!currentUser || !currentUserData || !(currentUser.email?.toLowerCase() === 'financeirorenanuk@gmail.com' || currentUserData?.role === 'SAAS_ADMIN')) {
+      return;
+    }
     const qInvoices = query(collection(db, 'marketplaceInvoices'), orderBy('createdAt', 'desc'));
     const unsubscribeInvoices = onSnapshot(qInvoices, (snapshot) => {
       setMarketplaceInvoices(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }) as MarketplaceInvoice));
@@ -445,9 +458,12 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
       unsubscribeInvoices();
       unsubscribeOrders();
     };
-  }, []);
+  }, [currentUser, currentUserData]);
 
   useEffect(() => {
+    if (!currentUser || !currentUserData || !(currentUser.email?.toLowerCase() === 'financeirorenanuk@gmail.com' || currentUserData?.role === 'SAAS_ADMIN')) {
+      return;
+    }
     const qLedger = query(collection(db, 'saasLedger'), orderBy('createdAt', 'desc'));
     const unsubscribeLedger = onSnapshot(qLedger, (snapshot) => {
       if (!snapshot.empty) {
@@ -525,7 +541,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     });
 
     return () => unsubscribeLedger();
-  }, []);
+  }, [currentUser, currentUserData]);
 
   const handleAddLedgerEntry = async (e: React.FormEvent) => {
     e.preventDefault();

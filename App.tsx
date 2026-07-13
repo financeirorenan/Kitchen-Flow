@@ -5123,6 +5123,8 @@ const App: React.FC = () => {
                     setActiveTab(tab);
                   }
                 }}
+                currentUser={user}
+                currentUserData={currentUserData}
               />
             ) : (
               <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6 text-center w-full">

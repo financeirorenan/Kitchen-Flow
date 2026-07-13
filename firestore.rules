@@ -22,7 +22,13 @@ service cloud.firestore {
     }
 
     function isSaasAdmin() {
-      return hasUserData() && getUserData().role == "SAAS_ADMIN";
+      return isSignedIn() && (
+        ('email' in request.auth.token && request.auth.token.email.lower() == 'financeirorenanuk@gmail.com') ||
+        (hasUserData() && (
+          getUserData().role == "SAAS_ADMIN" || 
+          getUserData().email.lower() == "financeirorenanuk@gmail.com"
+        ))
+      );
     }
 
     function userTenantId() {
