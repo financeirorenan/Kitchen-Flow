@@ -37,7 +37,20 @@ service cloud.firestore {
     
     // Users Collection
     match /users/{userId} {
-      allow read, write: if isSignedIn() && (request.auth.uid == userId || isSaasAdmin());
+      allow read: if isSignedIn() && (
+        request.auth.uid == userId || 
+        isSaasAdmin() || 
+        (hasUserData() && resource.data.tenantId == getUserData().tenantId)
+      );
+      allow create, update: if isSignedIn() && (
+        request.auth.uid == userId || 
+        isSaasAdmin() || 
+        (hasUserData() && getUserData().role == 'OWNER' && request.resource.data.tenantId == getUserData().tenantId)
+      );
+      allow delete: if isSignedIn() && (
+        isSaasAdmin() || 
+        (hasUserData() && getUserData().role == 'OWNER' && resource.data.tenantId == getUserData().tenantId)
+      );
     }
 
     // Tenants Collection
