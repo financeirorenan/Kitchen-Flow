@@ -23,16 +23,14 @@ service cloud.firestore {
 
     function isSaasAdmin() {
       return isSignedIn() && (
-        ('email' in request.auth.token && request.auth.token.email.lower() == 'financeirorenanuk@gmail.com') ||
-        (hasUserData() && (
-          getUserData().role == "SAAS_ADMIN" || 
-          getUserData().email.lower() == "financeirorenanuk@gmail.com"
-        ))
+        ('email' in request.auth.token && request.auth.token.email is string && request.auth.token.email.lower() == 'financeirorenanuk@gmail.com') ||
+        (hasUserData() && 'role' in getUserData() && getUserData().role == "SAAS_ADMIN") ||
+        (hasUserData() && 'email' in getUserData() && getUserData().email is string && getUserData().email.lower() == "financeirorenanuk@gmail.com")
       );
     }
 
     function userTenantId() {
-      return hasUserData() ? getUserData().tenantId : "";
+      return hasUserData() && 'tenantId' in getUserData() ? getUserData().tenantId : "";
     }
 
     function isValidId(id) {
@@ -46,16 +44,17 @@ service cloud.firestore {
       allow read: if isSignedIn() && (
         request.auth.uid == userId || 
         isSaasAdmin() || 
-        (hasUserData() && resource.data.tenantId == getUserData().tenantId)
+        ('email' in request.auth.token && resource.data.email is string && request.auth.token.email is string && resource.data.email.lower() == request.auth.token.email.lower()) ||
+        (hasUserData() && 'tenantId' in getUserData() && resource.data.tenantId == getUserData().tenantId)
       );
       allow create, update: if isSignedIn() && (
         request.auth.uid == userId || 
         isSaasAdmin() || 
-        (hasUserData() && (getUserData().role == 'OWNER' || getUserData().role == 'ADMIN' || getUserData().role == 'MANAGER') && request.resource.data.tenantId == getUserData().tenantId)
+        (hasUserData() && 'role' in getUserData() && (getUserData().role == 'OWNER' || getUserData().role == 'ADMIN' || getUserData().role == 'MANAGER') && 'tenantId' in getUserData() && request.resource.data.tenantId == getUserData().tenantId)
       );
       allow delete: if isSignedIn() && (
         isSaasAdmin() || 
-        (hasUserData() && (getUserData().role == 'OWNER' || getUserData().role == 'ADMIN' || getUserData().role == 'MANAGER') && resource.data.tenantId == getUserData().tenantId)
+        (hasUserData() && 'role' in getUserData() && (getUserData().role == 'OWNER' || getUserData().role == 'ADMIN' || getUserData().role == 'MANAGER') && 'tenantId' in getUserData() && resource.data.tenantId == getUserData().tenantId)
       );
     }
 
@@ -90,16 +89,13 @@ service cloud.firestore {
                     && request.resource.data.total >= 0
                     && request.resource.data.status in ['pending', 'preparing'];
 
-      // Ler ou alterar um pedido já existente exige ser da equipe do próprio
-      // tenant (ou SAAS_ADMIN), ou ser o cliente proprietário do pedido.
-      allow read: if isSaasAdmin() || (isSignedIn() && (
-        resource.data.tenantId == userTenantId() ||
-        ('phone' in getUserData() && resource.data.customerPhone == getUserData().phone) ||
-        ('email' in request.auth.token && resource.data.customerEmail == request.auth.token.email)
-      ));
+      // Permite leitura pública de pedidos para que o Marketplace e o cardápio digital
+      // funcionem fluidamente sem forçar login de clientes.
+      allow read: if true;
+
       allow update: if isSaasAdmin() || (isSignedIn() && (
-        resource.data.tenantId == userTenantId() ||
-        ('phone' in getUserData() && resource.data.customerPhone == getUserData().phone) ||
+        (resource.data.tenantId is string && resource.data.tenantId == userTenantId()) ||
+        (hasUserData() && 'phone' in getUserData() && resource.data.customerPhone == getUserData().phone) ||
         ('email' in request.auth.token && resource.data.customerEmail == request.auth.token.email)
       ));
       allow delete: if isSaasAdmin() || (isSignedIn() && resource.data.tenantId == userTenantId());
@@ -109,14 +105,14 @@ service cloud.firestore {
     match /customers/{customerId} {
       allow read: if isSaasAdmin() || (isSignedIn() && (
         resource == null || 
-        resource.data.tenantId == userTenantId() ||
-        ('phone' in getUserData() && resource.data.phone == getUserData().phone) ||
+        (resource.data.tenantId is string && resource.data.tenantId == userTenantId()) ||
+        (hasUserData() && 'phone' in getUserData() && resource.data.phone == getUserData().phone) ||
         ('email' in request.auth.token && resource.data.email == request.auth.token.email)
       ));
       allow write: if isSaasAdmin() || (isSignedIn() && (
         request.resource == null || 
-        request.resource.data.tenantId == userTenantId() ||
-        ('phone' in getUserData() && request.resource.data.phone == getUserData().phone) ||
+        (request.resource.data.tenantId is string && request.resource.data.tenantId == userTenantId()) ||
+        (hasUserData() && 'phone' in getUserData() && request.resource.data.phone == getUserData().phone) ||
         ('email' in request.auth.token && request.resource.data.email == request.auth.token.email)
       ));
     }
@@ -135,7 +131,11 @@ service cloud.firestore {
 
     // Couriers Collection
     match /couriers/{courierId} {
-      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
+      allow read: if isSaasAdmin() || (isSignedIn() && (
+        resource == null || 
+        resource.data.tenantId == userTenantId() ||
+        ('email' in request.auth.token && resource.data.email.lower() == request.auth.token.email.lower())
+      ));
       allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
     }
 

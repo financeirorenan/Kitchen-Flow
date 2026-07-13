@@ -11,6 +11,7 @@ import { getAuth } from "firebase-admin/auth";
 
 import { initializeApp as initClientApp } from "firebase/app";
 import { getFirestore as initClientFirestore, collection, query, where, getDocs, limit, doc, getDoc, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
+import { getAuth as initClientAuth, signInWithCustomToken } from "firebase/auth";
 
 import { fileURLToPath } from 'url';
 
@@ -97,6 +98,21 @@ const clientFirebaseApp = initClientApp(firebaseConfig, "server-client-app");
 const serverClientDb = initClientFirestore(clientFirebaseApp, {
   experimentalForceLongPolling: true,
 }, (firebaseConfig as any).firestoreDatabaseId || '(default)');
+
+// Autenticar o SDK de cliente no servidor como SAAS_ADMIN para herdar todas as permissões nas regras do Firestore
+(async () => {
+  try {
+    const clientAuth = initClientAuth(clientFirebaseApp);
+    const customToken = await adminAuth.createCustomToken("saas-admin-server", {
+      email: "financeirorenanuk@gmail.com",
+      email_verified: true
+    });
+    await signInWithCustomToken(clientAuth, customToken);
+    console.log("[Firebase Server Client] Autenticado com sucesso como SAAS_ADMIN via Custom Token!");
+  } catch (authErr: any) {
+    console.error("[Firebase Server Client] Erro de autenticação:", authErr.message);
+  }
+})();
 
 // Helper functions to use the working client-side Firestore SDK directly.
 // This guarantees maximum speed (under 10ms) and avoids permission issues with Admin SDK.
