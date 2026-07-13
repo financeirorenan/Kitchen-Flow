@@ -1243,33 +1243,37 @@ const App: React.FC = () => {
           // Usuário já vinculado via UID
           finalUserData = convertTimestamps(userDoc.data()) as User;
         } else if (firebaseUser.email) {
-          // 2. Se não encontrou pelo UID, tentar encontrar por EMAIL (Pré-cadastro ou alterado)
-          const searchEmail = firebaseUser.email.toLowerCase().trim();
-          const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', searchEmail), limit(1));
-          let usersByEmailSnap = await getDocs(usersByEmailQuery);
-          
-          if (usersByEmailSnap.empty && searchEmail !== firebaseUser.email) {
-            const exactQuery = query(collection(db, 'users'), where('email', '==', firebaseUser.email), limit(1));
-            usersByEmailSnap = await getDocs(exactQuery);
-          }
-          
-          if (!usersByEmailSnap.empty) {
-            // Encontrou um pré-cadastro ou cadastro coincidente por email
-            const existingUserDoc = usersByEmailSnap.docs[0];
-            const existingUserData = existingUserDoc.data() as User;
+          try {
+            // 2. Se não encontrou pelo UID, tentar encontrar por EMAIL (Pré-cadastro ou alterado)
+            const searchEmail = firebaseUser.email.toLowerCase().trim();
+            const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', searchEmail), limit(1));
+            let usersByEmailSnap = await getDocs(usersByEmailQuery);
             
-            // Vincular o UID do Auth ao documento do Firestore (Convertendo random ID p/ UID)
-            finalUserData = {
-              ...existingUserData,
-              id: firebaseUser.uid,
-              updatedAt: new Date()
-            } as any;
-
-            // Criar novo documento com UID e remover o antigo
-            await setDoc(userDocRef, finalUserData);
-            if (existingUserDoc.id !== firebaseUser.uid) {
-              await deleteDoc(existingUserDoc.ref);
+            if (usersByEmailSnap.empty && searchEmail !== firebaseUser.email) {
+              const exactQuery = query(collection(db, 'users'), where('email', '==', firebaseUser.email), limit(1));
+              usersByEmailSnap = await getDocs(exactQuery);
             }
+            
+            if (!usersByEmailSnap.empty) {
+              // Encontrou um pré-cadastro ou cadastro coincidente por email
+              const existingUserDoc = usersByEmailSnap.docs[0];
+              const existingUserData = existingUserDoc.data() as User;
+              
+              // Vincular o UID do Auth ao documento do Firestore (Convertendo random ID p/ UID)
+              finalUserData = {
+                ...existingUserData,
+                id: firebaseUser.uid,
+                updatedAt: new Date()
+              } as any;
+
+              // Criar novo documento com UID e remover o antigo
+              await setDoc(userDocRef, finalUserData);
+              if (existingUserDoc.id !== firebaseUser.uid) {
+                await deleteDoc(existingUserDoc.ref);
+              }
+            }
+          } catch (queryErr) {
+            console.warn("Could not query user by email from client side (rules restriction):", queryErr);
           }
         }
 
@@ -1284,12 +1288,16 @@ const App: React.FC = () => {
           let defaultName = firebaseUser.displayName || firebaseUser.email.split('@')[0] || (isMarketplaceRoute ? 'Cliente' : 'Lojista');
 
           // Verificar se é entregador cadastrado na coleção de couriers
-          const courierQuery = query(collection(db, 'couriers'), where('email', '==', firebaseUser.email.toLowerCase().trim()), limit(1));
-          const courierSnap = await getDocs(courierQuery);
-          if (!courierSnap.empty) {
-            role = 'COURIER';
-            tenantId = courierSnap.docs[0].data().tenantId || 'HCL1177LRQVPEKCTYRAHU7IGBQ42';
-            defaultName = courierSnap.docs[0].data().name || defaultName;
+          try {
+            const courierQuery = query(collection(db, 'couriers'), where('email', '==', firebaseUser.email.toLowerCase().trim()), limit(1));
+            const courierSnap = await getDocs(courierQuery);
+            if (!courierSnap.empty) {
+              role = 'COURIER';
+              tenantId = courierSnap.docs[0].data().tenantId || 'HCL1177LRQVPEKCTYRAHU7IGBQ42';
+              defaultName = courierSnap.docs[0].data().name || defaultName;
+            }
+          } catch (courierQueryErr) {
+            console.warn("Could not query couriers by email from client side (rules restriction):", courierQueryErr);
           }
 
           const newUser: User = {
@@ -2769,17 +2777,15 @@ const App: React.FC = () => {
     if (effectiveTenantId) {
        if (newCourier.email) {
          const trimmedEmail = newCourier.email.trim().toLowerCase();
-         // Validação ativa de duplicidade de e-mail na plataforma
-         const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', trimmedEmail));
-         const usersByEmailSnap = await getDocs(usersByEmailQuery);
-         if (!usersByEmailSnap.empty) {
+         // Validação ativa de duplicidade de e-mail na plataforma (usando dados na memória para evitar erros de regras do Firestore)
+         const emailExistsInUsers = users.some(u => u.email?.trim().toLowerCase() === trimmedEmail);
+         if (emailExistsInUsers) {
            showToast(`Erro: O e-mail de acesso "${trimmedEmail}" já está cadastrado em nossa plataforma!`, "error");
            return;
          }
 
-         const couriersQuery = query(collection(db, 'couriers'), where('email', '==', trimmedEmail));
-         const couriersSnap = await getDocs(couriersQuery);
-         if (!couriersSnap.empty) {
+         const emailExistsInCouriers = couriers.some(c => c.email?.trim().toLowerCase() === trimmedEmail);
+         if (emailExistsInCouriers) {
            showToast(`Erro: O e-mail de acesso "${trimmedEmail}" já está cadastrado como entregador em nossa plataforma!`, "error");
            return;
          }
@@ -3871,17 +3877,15 @@ const App: React.FC = () => {
 
     if (effectiveTenantId) {
       try {
-        // Validação ativa de duplicidade de e-mail na plataforma
-        const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', trimmedEmail));
-        const usersByEmailSnap = await getDocs(usersByEmailQuery);
-        if (!usersByEmailSnap.empty) {
+        // Validação ativa de duplicidade de e-mail na plataforma (usando dados na memória para evitar erros de regras do Firestore)
+        const emailExistsInUsers = users.some(u => u.email?.trim().toLowerCase() === trimmedEmail);
+        if (emailExistsInUsers) {
           showToast(`Erro: O e-mail "${trimmedEmail}" já está cadastrado em nossa plataforma!`, "error");
           throw new Error(`O e-mail "${trimmedEmail}" já está cadastrado em nossa plataforma.`);
         }
 
-        const couriersQuery = query(collection(db, 'couriers'), where('email', '==', trimmedEmail));
-        const couriersSnap = await getDocs(couriersQuery);
-        if (!couriersSnap.empty) {
+        const emailExistsInCouriers = couriers.some(c => c.email?.trim().toLowerCase() === trimmedEmail);
+        if (emailExistsInCouriers) {
           showToast(`Erro: O e-mail "${trimmedEmail}" já está cadastrado como entregador em nossa plataforma!`, "error");
           throw new Error(`O e-mail "${trimmedEmail}" já está cadastrado como entregador.`);
         }
@@ -3942,17 +3946,13 @@ const App: React.FC = () => {
     if (effectiveTenantId) {
       // Dobra check se alterou e-mail para um duplicado de outra pessoa
       if (finalUpdates.email) {
-        const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', finalUpdates.email));
-        const usersByEmailSnap = await getDocs(usersByEmailQuery);
-        const duplicate = usersByEmailSnap.docs.some(doc => doc.id !== id);
+        const duplicate = users.some(u => u.id !== id && u.email?.trim().toLowerCase() === finalUpdates.email?.trim().toLowerCase());
         if (duplicate) {
           showToast(`Erro: O e-mail "${finalUpdates.email}" já está cadastrado em nossa plataforma!`, "error");
           throw new Error(`O e-mail "${finalUpdates.email}" já está cadastrado.`);
         }
 
-        const couriersQuery = query(collection(db, 'couriers'), where('email', '==', finalUpdates.email));
-        const couriersSnap = await getDocs(couriersQuery);
-        const courierDuplicate = couriersSnap.docs.some(doc => doc.id !== id);
+        const courierDuplicate = couriers.some(c => c.id !== id && c.email?.trim().toLowerCase() === finalUpdates.email?.trim().toLowerCase());
         if (courierDuplicate) {
           showToast(`Erro: O e-mail "${finalUpdates.email}" já está cadastrado como entregador!`, "error");
           throw new Error(`O e-mail "${finalUpdates.email}" já está cadastrado como entregador.`);
