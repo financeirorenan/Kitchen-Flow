@@ -45,11 +45,11 @@ service cloud.firestore {
       allow create, update: if isSignedIn() && (
         request.auth.uid == userId || 
         isSaasAdmin() || 
-        (hasUserData() && getUserData().role == 'OWNER' && request.resource.data.tenantId == getUserData().tenantId)
+        (hasUserData() && (getUserData().role == 'OWNER' || getUserData().role == 'ADMIN' || getUserData().role == 'MANAGER') && request.resource.data.tenantId == getUserData().tenantId)
       );
       allow delete: if isSignedIn() && (
         isSaasAdmin() || 
-        (hasUserData() && getUserData().role == 'OWNER' && resource.data.tenantId == getUserData().tenantId)
+        (hasUserData() && (getUserData().role == 'OWNER' || getUserData().role == 'ADMIN' || getUserData().role == 'MANAGER') && resource.data.tenantId == getUserData().tenantId)
       );
     }
 
