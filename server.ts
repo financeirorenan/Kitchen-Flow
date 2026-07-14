@@ -6,7 +6,7 @@ import fs from "fs";
 import bcrypt from "bcryptjs";
 import { rateLimit } from "express-rate-limit";
 
-import { getApps, initializeApp } from "firebase-admin/app";
+import { getApps, initializeApp, cert } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 
@@ -64,9 +64,38 @@ import { requireAuth } from "./server/middleware/auth";
 
 // Admin Firebase
 if (!getApps().length) {
-  initializeApp({
+  let adminCredential;
+  
+  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    try {
+      const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+      adminCredential = cert(sa);
+      console.log("[Firebase Admin] Inicializado com Service Account JSON da variável de ambiente.");
+    } catch (e: any) {
+      console.error("[Firebase Admin] Erro ao parsear FIREBASE_SERVICE_ACCOUNT:", e.message);
+    }
+  } else if (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
+    try {
+      const sa = {
+        projectId: firebaseConfig.projectId,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+      };
+      adminCredential = cert(sa);
+      console.log("[Firebase Admin] Inicializado com chave privada e email de cliente individuais.");
+    } catch (e: any) {
+      console.error("[Firebase Admin] Erro ao carregar credenciais individuais do Firebase Admin:", e.message);
+    }
+  }
+
+  const adminOptions: any = {
     projectId: firebaseConfig.projectId,
-  });
+  };
+  if (adminCredential) {
+    adminOptions.credential = adminCredential;
+  }
+
+  initializeApp(adminOptions);
 }
 
 const adminDb = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== "(default)"
@@ -208,33 +237,51 @@ async function startServer() {
   const app = express();
   const port = Number(process.env.PORT) || 3000;
 
-  // Configure CORS securely using ALLOWED_ORIGINS
+  // Configure CORS securely using ALLOWED_ORIGINS and same-origin detection
   const allowedOrigins = process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(",")
     : ["http://localhost:3000", "http://localhost:5173", "https://ai.studio/build"];
 
-  app.use(cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps, curl, etc.)
-      if (!origin) return callback(null, true);
-      
-      // Check if it's explicitly allowed
+  app.use(cors((req: any, callback: any) => {
+    const origin = req.header("Origin");
+    const host = req.header("Host");
+    
+    let isAllowed = false;
+    
+    if (!origin) {
+      isAllowed = true;
+    } else {
+      // Check explicitly allowed origins
       if (allowedOrigins.indexOf(origin) !== -1 || allowedOrigins.includes("*")) {
-        return callback(null, true);
+        isAllowed = true;
+      } else {
+        const isLocalhost = /^https?:\/\/localhost(:\d+)?$/.test(origin) || /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin);
+        const isCloudRun = /^https?:\/\/([a-zA-Z0-9-]+\.)+run\.app$/.test(origin);
+        const isAiStudio = /^https?:\/\/([a-zA-Z0-9-]+\.)*ai\.studio$/.test(origin);
+        
+        let isSameHost = false;
+        if (host) {
+          try {
+            const originUrl = new URL(origin);
+            // Compare origin host with the request host header
+            if (originUrl.host.toLowerCase() === host.toLowerCase()) {
+              isSameHost = true;
+            }
+          } catch (e) {}
+        }
+        
+        if (isLocalhost || isCloudRun || isAiStudio || isSameHost) {
+          isAllowed = true;
+        }
       }
-
-      // Dynamic patterns for safety and developer experience
-      const isLocalhost = /^https?:\/\/localhost(:\d+)?$/.test(origin) || /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin);
-      const isCloudRun = /^https?:\/\/([a-zA-Z0-9-]+\.)+run\.app$/.test(origin);
-      const isAiStudio = /^https?:\/\/([a-zA-Z0-9-]+\.)*ai\.studio$/.test(origin);
-
-      if (isLocalhost || isCloudRun || isAiStudio) {
-        return callback(null, true);
-      }
-
+    }
+    
+    if (isAllowed) {
+      callback(null, { origin: true, credentials: true });
+    } else {
+      console.warn(`[CORS] Request from origin ${origin} blocked. Host: ${host}`);
       callback(new Error("Request blocked by CORS (Origin not allowed)"));
-    },
-    credentials: true
+    }
   }));
 
   // Brute-force protection rate limiters
