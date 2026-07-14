@@ -124,10 +124,11 @@ async function verifyPassword(plainText: string, stored: unknown): Promise<boole
 const clientDb = adminDb;
 
 // Client-side Firebase instance on the server to bypass project-level IAM / Admin SDK permission issues
-const clientFirebaseApp = initClientApp(firebaseConfig, "server-client-app");
+const serverClientConfig = firebaseConfig.default || firebaseConfig;
+const clientFirebaseApp = initClientApp(serverClientConfig, "server-client-app");
 const serverClientDb = initializeFirestore(clientFirebaseApp, {
   experimentalForceLongPolling: true,
-}, (firebaseConfig as any).firestoreDatabaseId || '(default)');
+}, serverClientConfig.firestoreDatabaseId && serverClientConfig.firestoreDatabaseId !== '(default)' ? serverClientConfig.firestoreDatabaseId : undefined);
 
 // Autenticar o SDK de cliente no servidor como SAAS_ADMIN para herdar todas as permissões nas regras do Firestore
 (async () => {
