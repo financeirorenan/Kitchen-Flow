@@ -173,11 +173,22 @@ async function startServer() {
     origin: (origin, callback) => {
       // Allow requests with no origin (like mobile apps, curl, etc.)
       if (!origin) return callback(null, true);
+      
+      // Check if it's explicitly allowed
       if (allowedOrigins.indexOf(origin) !== -1 || allowedOrigins.includes("*")) {
-        callback(null, true);
-      } else {
-        callback(new Error("Request blocked by CORS (Origin not allowed)"));
+        return callback(null, true);
       }
+
+      // Dynamic patterns for safety and developer experience
+      const isLocalhost = /^https?:\/\/localhost(:\d+)?$/.test(origin) || /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin);
+      const isCloudRun = /^https?:\/\/([a-zA-Z0-9-]+\.)+run\.app$/.test(origin);
+      const isAiStudio = /^https?:\/\/([a-zA-Z0-9-]+\.)*ai\.studio$/.test(origin);
+
+      if (isLocalhost || isCloudRun || isAiStudio) {
+        return callback(null, true);
+      }
+
+      callback(new Error("Request blocked by CORS (Origin not allowed)"));
     },
     credentials: true
   }));
