@@ -4,6 +4,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import fs from "fs";
 import bcrypt from "bcryptjs";
+import { rateLimit } from "express-rate-limit";
 
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
@@ -163,7 +164,41 @@ async function startServer() {
   const app = express();
   const port = Number(process.env.PORT) || 3000;
 
-  app.use(cors());
+  // Configure CORS securely using ALLOWED_ORIGINS
+  const allowedOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(",")
+    : ["http://localhost:3000", "http://localhost:5173", "https://ai.studio/build"];
+
+  app.use(cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps, curl, etc.)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.indexOf(origin) !== -1 || allowedOrigins.includes("*")) {
+        callback(null, true);
+      } else {
+        callback(new Error("Request blocked by CORS (Origin not allowed)"));
+      }
+    },
+    credentials: true
+  }));
+
+  // Brute-force protection rate limiters
+  const loginRateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 15, // Limit each IP to 15 login requests per windowMs
+    message: { error: "Muitas tentativas de login a partir deste IP. Por favor, tente novamente após 15 minutos." },
+    standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+    legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  });
+
+  const firstAccessRateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // Limit each IP to 5 first-access requests per windowMs
+    message: { error: "Muitas tentativas de ativação de conta. Por favor, tente novamente após 15 minutos." },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true }));
 
@@ -178,7 +213,7 @@ async function startServer() {
 
   // Endpoint de debug removido para conformidade de segurança (Hardening de Segurança)
 
-  app.post("/api/auth/login", async (req, res) => {
+  app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
     const startTime = Date.now();
     console.log(`\n=== [LOGS] Início de Processo de Login ===`);
     try {
@@ -812,7 +847,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/auth/first-access", async (req, res) => {
+  app.post("/api/auth/first-access", firstAccessRateLimiter, async (req, res) => {
     try {
       const { email, tempPassword, newPassword } = req.body;
       if (!email || !tempPassword || !newPassword) {

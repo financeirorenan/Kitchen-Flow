@@ -389,6 +389,86 @@ const App: React.FC = () => {
   useEffect(() => {
     ordersRef.current = orders;
   }, [orders]);
+
+  // Hook de limpeza automática para os usuários mock (Julia, Carlos, Ricardo, Maria, Paulo)
+  // Remove permanentemente esses usuários tanto do Firestore quanto do IndexedDB local
+  useEffect(() => {
+    if (!user) return;
+    
+    const cleanupMockUsers = async () => {
+      try {
+        const mockEmails = [
+          'julia@kitchenflowai.com',
+          'carlos@kitchenflowai.com',
+          'ricardo@kitchenflowai.com',
+          'maria@kitchenflowai.com',
+          'paulo@kitchenflowai.com'
+        ];
+
+        // 1. Limpar da coleção 'users' no Firestore (nuvem)
+        for (const email of mockEmails) {
+          try {
+            const q = query(collection(db, 'users'), where('email', '==', email));
+            const snap = await getDocs(q);
+            if (!snap.empty) {
+              for (const docSnap of snap.docs) {
+                console.log(`[Database Cleanup] Deletando usuário da nuvem: ${docSnap.id} (${email})`);
+                await deleteDoc(doc(db, 'users', docSnap.id));
+              }
+            }
+          } catch (firestoreErr) {
+            // Silencia erros de permissão se o usuário logado não for admin/owner do tenant
+            console.debug(`[Database Cleanup] Sem permissão ou erro ao deletar usuário nuvem (${email}):`, firestoreErr);
+          }
+        }
+
+        // 2. Limpar da coleção 'couriers' no Firestore (nuvem)
+        for (const email of mockEmails) {
+          try {
+            const q = query(collection(db, 'couriers'), where('email', '==', email));
+            const snap = await getDocs(q);
+            if (!snap.empty) {
+              for (const docSnap of snap.docs) {
+                console.log(`[Database Cleanup] Deletando entregador da nuvem: ${docSnap.id} (${email})`);
+                await deleteDoc(doc(db, 'couriers', docSnap.id));
+              }
+            }
+          } catch (firestoreErr) {
+            console.debug(`[Database Cleanup] Sem permissão ou erro ao deletar entregador nuvem (${email}):`, firestoreErr);
+          }
+        }
+
+        // 3. Limpar do banco de dados IndexedDB local (Dexie)
+        try {
+          const localUsers = await localDb.users.toArray();
+          const localToDels = localUsers.filter(u => mockEmails.includes(u.email || ''));
+          if (localToDels.length > 0) {
+            for (const u of localToDels) {
+              console.log(`[Database Cleanup] Deletando usuário local (IndexedDB): ${u.id}`);
+              await localDb.users.delete(u.id);
+            }
+          }
+
+          const localCouriers = await localDb.couriers.toArray();
+          const localCouriersToDels = localCouriers.filter(c => mockEmails.includes(c.email || ''));
+          if (localCouriersToDels.length > 0) {
+            for (const c of localCouriersToDels) {
+              console.log(`[Database Cleanup] Deletando entregador local (IndexedDB): ${c.id}`);
+              await localDb.couriers.delete(c.id);
+            }
+          }
+        } catch (localErr) {
+          console.error("[Database Cleanup] Erro ao limpar banco local IndexedDB:", localErr);
+        }
+
+      } catch (err) {
+        console.error("Erro durante execução do cleanup de usuários mock:", err);
+      }
+    };
+
+    cleanupMockUsers();
+  }, [user]);
+
   const [tenantData, setTenantData] = useState<Tenant | null>(() => {
     try {
       const cached = localStorage.getItem('kitchenflow_cached_tenant_data') || localStorage.getItem('gastroai_cached_tenant_data');

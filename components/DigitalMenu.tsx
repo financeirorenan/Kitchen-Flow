@@ -596,7 +596,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
   };
 
   const handleFinishOrder = () => {
-    const orderId = `DIG-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+    const orderId = `DIG-${crypto.randomUUID()}`;
     const orderData = {
       id: orderId,
       items: cart.map(item => ({

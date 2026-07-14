@@ -8,29 +8,25 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // STANDALONE SECURITY PRIMITIVES (Phase 3)
+    // STANDALONE SECURITY PRIMITIVES
     function isSignedIn() {
       return request.auth != null;
     }
 
-    function hasUserData() {
-      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
-    }
-
-    function getUserData() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
-    }
-
     function isSaasAdmin() {
       return isSignedIn() && (
-        ('email' in request.auth.token && request.auth.token.email is string && request.auth.token.email.lower() == 'financeirorenanuk@gmail.com') ||
-        (hasUserData() && 'role' in getUserData() && getUserData().role == "SAAS_ADMIN") ||
-        (hasUserData() && 'email' in getUserData() && getUserData().email is string && getUserData().email.lower() == "financeirorenanuk@gmail.com")
+        ('email' in request.auth.token && request.auth.token.email == 'financeirorenanuk@gmail.com') ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         'role' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "SAAS_ADMIN") ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         'email' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.email == 'financeirorenanuk@gmail.com')
       );
     }
 
     function userTenantId() {
-      return hasUserData() && 'tenantId' in getUserData() ? getUserData().tenantId : "";
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId;
     }
 
     function isValidId(id) {
@@ -44,17 +40,16 @@ service cloud.firestore {
       allow read: if isSignedIn() && (
         request.auth.uid == userId || 
         isSaasAdmin() || 
-        ('email' in request.auth.token && resource.data.email is string && request.auth.token.email is string && resource.data.email.lower() == request.auth.token.email.lower()) ||
-        (hasUserData() && 'tenantId' in getUserData() && resource.data.tenantId == getUserData().tenantId)
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && resource != null && 'tenantId' in resource.data && resource.data.tenantId == userTenantId())
       );
       allow create, update: if isSignedIn() && (
         request.auth.uid == userId || 
         isSaasAdmin() || 
-        (hasUserData() && 'role' in getUserData() && (getUserData().role == 'OWNER' || getUserData().role == 'ADMIN' || getUserData().role == 'MANAGER') && 'tenantId' in getUserData() && request.resource.data.tenantId == getUserData().tenantId)
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 'role' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data && (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'OWNER' || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN' || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'MANAGER') && request.resource.data.tenantId == userTenantId())
       );
       allow delete: if isSignedIn() && (
         isSaasAdmin() || 
-        (hasUserData() && 'role' in getUserData() && (getUserData().role == 'OWNER' || getUserData().role == 'ADMIN' || getUserData().role == 'MANAGER') && 'tenantId' in getUserData() && resource.data.tenantId == getUserData().tenantId)
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 'role' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data && (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'OWNER' || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN' || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'MANAGER') && resource.data.tenantId == userTenantId())
       );
     }
 
@@ -68,20 +63,17 @@ service cloud.firestore {
     // Products Collection
     match /products/{productId} {
       allow read: if true; // Publicly readable for digital menu/marketplace/public visitors
-      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (request.resource == null || request.resource.data.tenantId == userTenantId()));
     }
 
     // Dining Tables Collection
     match /diningTables/{tableId} {
       allow read: if true; // Publicly readable for digital menu/marketplace/public visitors
-      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (request.resource == null || request.resource.data.tenantId == userTenantId()));
     }
 
     // Orders Collection
     match /orders/{orderId} {
-      // Guest checkout (cardápio digital/marketplace): permite CRIAR um pedido
-      // novo sem login, mas valida a forma do documento para impedir que um
-      // estranho injete campos arbitrários ou sobrescreva um pedido existente.
       allow create: if request.resource.data.tenantId is string
                     && request.resource.data.tenantId.size() > 0
                     && request.resource.data.keys().hasAll(['tenantId', 'items', 'total', 'type', 'status'])
@@ -89,90 +81,91 @@ service cloud.firestore {
                     && request.resource.data.total >= 0
                     && request.resource.data.status in ['pending', 'preparing'];
 
-      // Permite leitura pública de pedidos para que o Marketplace e o cardápio digital
-      // funcionem fluidamente sem forçar login de clientes.
-      allow read: if true;
+      allow get: if true;
+      allow list: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && resource.data.tenantId == userTenantId());
 
       allow update: if isSaasAdmin() || (isSignedIn() && (
-        (resource.data.tenantId is string && resource.data.tenantId == userTenantId()) ||
-        (hasUserData() && 'phone' in getUserData() && resource.data.customerPhone == getUserData().phone) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && resource.data.tenantId is string && resource.data.tenantId == userTenantId()) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 'phone' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data && resource.data.customerPhone == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.phone) ||
         ('email' in request.auth.token && resource.data.customerEmail == request.auth.token.email)
       ));
-      allow delete: if isSaasAdmin() || (isSignedIn() && resource.data.tenantId == userTenantId());
+      allow delete: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && resource.data.tenantId == userTenantId());
     }
 
     // Customers Collection
     match /customers/{customerId} {
       allow read: if isSaasAdmin() || (isSignedIn() && (
         resource == null || 
-        (resource.data.tenantId is string && resource.data.tenantId == userTenantId()) ||
-        (hasUserData() && 'phone' in getUserData() && resource.data.phone == getUserData().phone) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && resource.data.tenantId is string && resource.data.tenantId == userTenantId()) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 'phone' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data && resource.data.phone == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.phone) ||
         ('email' in request.auth.token && resource.data.email == request.auth.token.email)
       ));
-      allow write: if isSaasAdmin() || (isSignedIn() && (
-        request.resource == null || 
-        (request.resource.data.tenantId is string && request.resource.data.tenantId == userTenantId()) ||
-        (hasUserData() && 'phone' in getUserData() && request.resource.data.phone == getUserData().phone) ||
-        ('email' in request.auth.token && request.resource.data.email == request.auth.token.email)
-      ));
+      allow write: if isSaasAdmin() || 
+                   (request.resource.data.tenantId is string && request.resource.data.tenantId.size() > 0) ||
+                   (isSignedIn() && (
+                     request.resource == null || 
+                     (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && request.resource.data.tenantId is string && request.resource.data.tenantId == userTenantId()) ||
+                     (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 'phone' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data && request.resource.data.phone == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.phone) ||
+                     ('email' in request.auth.token && request.resource.data.email == request.auth.token.email)
+                   ));
     }
 
     // Financial Records Collection
     match /financialRecords/{recordId} {
-      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
-      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+      allow read: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (resource == null || resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (request.resource == null || request.resource.data.tenantId == userTenantId()));
     }
 
     // Bank Accounts Collection
     match /bankAccounts/{accountId} {
-      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
-      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+      allow read: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (resource == null || resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (request.resource == null || request.resource.data.tenantId == userTenantId()));
     }
 
     // Couriers Collection
     match /couriers/{courierId} {
       allow read: if isSaasAdmin() || (isSignedIn() && (
         resource == null || 
-        resource.data.tenantId == userTenantId() ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && resource.data.tenantId == userTenantId()) ||
         ('email' in request.auth.token && resource.data.email.lower() == request.auth.token.email.lower())
       ));
-      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (request.resource == null || request.resource.data.tenantId == userTenantId()));
     }
 
     // Audit Logs Collection
     match /auditLogs/{logId} {
-      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
-      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+      allow read: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (resource == null || resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (request.resource == null || request.resource.data.tenantId == userTenantId()));
     }
 
     // Raw Materials Collection
     match /rawMaterials/{materialId} {
-      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
-      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+      allow read: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (resource == null || resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (request.resource == null || request.resource.data.tenantId == userTenantId()));
     }
 
     // Cash Closings Collection
     match /cashClosings/{closingId} {
-      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
-      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+      allow read: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (resource == null || resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (request.resource == null || request.resource.data.tenantId == userTenantId()));
     }
 
     // Fiscal Notes Collection
     match /fiscalNotes/{noteId} {
-      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
-      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+      allow read: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (resource == null || resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (request.resource == null || request.resource.data.tenantId == userTenantId()));
     }
 
     // Certificates Collection
     match /certificates/{certId} {
-      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
-      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId()));
+      allow read: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (resource == null || resource.data.tenantId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (request.resource == null || request.resource.data.tenantId == userTenantId()));
     }
 
     // Settings Collection
     match /settings/{settingsId} {
       allow read: if true; // Publicly readable for digital menu/marketplace/public visitors
-      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || request.resource.data.tenantId == userTenantId() || settingsId == userTenantId()));
+      allow write: if isSaasAdmin() || (isSignedIn() && (request.resource == null || (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && request.resource.data.tenantId == userTenantId()) || settingsId == userTenantId()));
     }
 
     // Plans Collection
@@ -183,7 +176,7 @@ service cloud.firestore {
 
     // Marketplace Invoices Collection
     match /marketplaceInvoices/{invoiceId} {
-      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
+      allow read: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (resource == null || resource.data.tenantId == userTenantId()));
       allow write: if isSaasAdmin() || isSignedIn();
     }
 
@@ -194,7 +187,7 @@ service cloud.firestore {
 
     // Tickets Collection
     match /tickets/{ticketId} {
-      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
+      allow read: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (resource == null || resource.data.tenantId == userTenantId()));
       allow write: if isSaasAdmin() || isSignedIn();
     }
 
@@ -216,7 +209,7 @@ service cloud.firestore {
 
     // SaaS Payments Collection (tenant billing payments)
     match /saasPayments/{paymentId} {
-      allow read: if isSaasAdmin() || (isSignedIn() && (resource == null || resource.data.tenantId == userTenantId()));
+      allow read: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (resource == null || resource.data.tenantId == userTenantId()));
       allow write: if isSaasAdmin();
     }
   }
