@@ -11,7 +11,7 @@ import { getFirestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 
 import { initializeApp as initClientApp } from "firebase/app";
-import { getFirestore as initClientFirestore, collection, query, where, getDocs, limit, doc, getDoc, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
+import { initializeFirestore, collection, query, where, getDocs, limit, doc, getDoc, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
 import { getAuth as initClientAuth, signInWithCustomToken, signInWithEmailAndPassword } from "firebase/auth";
 
 import { fileURLToPath } from 'url';
@@ -125,7 +125,7 @@ const clientDb = adminDb;
 
 // Client-side Firebase instance on the server to bypass project-level IAM / Admin SDK permission issues
 const clientFirebaseApp = initClientApp(firebaseConfig, "server-client-app");
-const serverClientDb = initClientFirestore(clientFirebaseApp, {
+const serverClientDb = initializeFirestore(clientFirebaseApp, {
   experimentalForceLongPolling: true,
 }, (firebaseConfig as any).firestoreDatabaseId || '(default)');
 
@@ -142,45 +142,57 @@ const serverClientDb = initClientFirestore(clientFirebaseApp, {
       await signInWithEmailAndPassword(clientAuth, systemAdminEmail, systemAdminPassword);
       console.log("[Firebase Server Client] Autenticado com sucesso como SAAS_ADMIN!");
     } catch (signInErr: any) {
-      if (signInErr.code === 'auth/user-not-found' || signInErr.message?.includes('user-not-found') || signInErr.code === 'auth/invalid-credential' || signInErr.message?.includes('invalid-credential') || signInErr.code === 'auth/wrong-password' || signInErr.message?.includes('wrong-password')) {
-        console.log("[Firebase Server Client] System Admin não autenticado. Criando ou atualizando usuário...");
+      console.warn("[Firebase Server Client] Primeira tentativa de autenticação falhou:", signInErr.message);
+      console.log("[Firebase Server Client] Tentando registrar/atualizar o System Admin no Firebase Auth...");
+      
+      // Tentar criar via Admin SDK, mas capturar erros individualmente para que falhas de credenciais no Admin SDK não interrompam o fluxo do cliente
+      let adminAuthSuccess = false;
+      try {
+        await adminAuth.createUser({
+          uid: systemAdminUid,
+          email: systemAdminEmail,
+          password: systemAdminPassword,
+          displayName: "System Admin"
+        });
+        console.log("[Firebase Server Client] Usuário System Admin criado com sucesso no Firebase Auth!");
+        adminAuthSuccess = true;
+      } catch (createAuthErr: any) {
+        console.log("[Firebase Server Client] Erro ao criar via Admin SDK, tentando atualizar senha:", createAuthErr.message);
         try {
-          // Criar no Firebase Auth usando Admin SDK (que ignora regras do Firestore e sempre funciona)
-          try {
-            await adminAuth.createUser({
-              uid: systemAdminUid,
-              email: systemAdminEmail,
-              password: systemAdminPassword,
-              displayName: "System Admin"
-            });
-            console.log("[Firebase Server Client] Usuário System Admin criado com sucesso no Firebase Auth!");
-          } catch (createAuthErr: any) {
-            console.log("[Firebase Server Client] Usuário já pode existir no Auth, atualizando senha:", createAuthErr.message);
-            await adminAuth.updateUser(systemAdminUid, {
-              password: systemAdminPassword,
-              displayName: "System Admin"
-            });
-          }
-
-          // Criar/atualizar documento no Firestore 'users'
-          await setDoc(doc(serverClientDb, "users", systemAdminUid), {
-            id: systemAdminUid,
-            email: systemAdminEmail,
-            role: "SAAS_ADMIN",
-            active: true,
-            name: "System Admin",
-            updatedAt: new Date()
+          await adminAuth.updateUser(systemAdminUid, {
+            password: systemAdminPassword,
+            displayName: "System Admin"
           });
-          console.log("[Firebase Server Client] Documento do System Admin sincronizado no Firestore!");
-
-          // Agora tentar login
-          await signInWithEmailAndPassword(clientAuth, systemAdminEmail, systemAdminPassword);
-          console.log("[Firebase Server Client] Autenticado com sucesso como SAAS_ADMIN após criação/atualização!");
-        } catch (createErr: any) {
-          console.error("[Firebase Server Client] Erro ao criar ou inicializar System Admin:", createErr.message);
+          console.log("[Firebase Server Client] Usuário System Admin atualizado com sucesso no Firebase Auth!");
+          adminAuthSuccess = true;
+        } catch (updateAuthErr: any) {
+          console.error("[Firebase Server Client] Falha completa no Admin Auth ao registrar/atualizar System Admin:", updateAuthErr.message);
         }
-      } else {
-        console.error("[Firebase Server Client] Erro ao autenticar System Admin:", signInErr.message);
+      }
+
+      // Sincronizar documento no Firestore 'users'
+      // Se o Admin Auth falhou (por exemplo, falta de credenciais do Service Account no Hostinger),
+      // ainda tentamos criar o doc e fazer login, pois o usuário pode já ter sido criado na nuvem anteriormente.
+      try {
+        await setDoc(doc(serverClientDb, "users", systemAdminUid), {
+          id: systemAdminUid,
+          email: systemAdminEmail,
+          role: "SAAS_ADMIN",
+          active: true,
+          name: "System Admin",
+          updatedAt: new Date()
+        });
+        console.log("[Firebase Server Client] Documento do System Admin sincronizado no Firestore!");
+      } catch (firestoreSyncErr: any) {
+        console.warn("[Firebase Server Client] Não foi possível sincronizar documento no Firestore (provavelmente aguardando login):", firestoreSyncErr.message);
+      }
+
+      // Agora tentar login final de qualquer forma (pois o usuário pode já existir na nuvem)
+      try {
+        await signInWithEmailAndPassword(clientAuth, systemAdminEmail, systemAdminPassword);
+        console.log("[Firebase Server Client] Autenticado com sucesso como SAAS_ADMIN após fluxo de contingência!");
+      } catch (finalLoginErr: any) {
+        console.error("[Firebase Server Client] Falha definitiva na autenticação do System Admin via Client SDK:", finalLoginErr.message);
       }
     }
   } catch (err: any) {

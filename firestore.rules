@@ -25,7 +25,9 @@ service cloud.firestore {
     }
 
     function userTenantId() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId;
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('tenantId', '')
+        : '';
     }
 
     function isValidId(id) {
@@ -44,11 +46,11 @@ service cloud.firestore {
       allow create, update: if (userId == 'system-admin-server' || request.resource.data.get('email', '') == 'system-admin@kitchenflow.ai') || (isSignedIn() && (
         request.auth.uid == userId || 
         isSaasAdmin() || 
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'OWNER' || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'ADMIN' || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'MANAGER') && request.resource.data.tenantId == userTenantId())
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'OWNER' || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'ADMIN' || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'MANAGER') && request.resource.data.get('tenantId', '') == userTenantId())
       ));
       allow delete: if isSignedIn() && (
         isSaasAdmin() || 
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'OWNER' || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'ADMIN' || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'MANAGER') && resource.data.tenantId == userTenantId())
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'OWNER' || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'ADMIN' || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'MANAGER') && resource.data.get('tenantId', '') == userTenantId())
       );
     }
 

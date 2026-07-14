@@ -487,45 +487,8 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
           // Lojista Parceiro: criar um novo Tenant (empresa) exclusivo para segregar dados
           const newTenantId = `tenant_${Date.now()}`;
 
-          // 1. Cadastrar Tenant
-          await setDoc(doc(db, 'tenants', newTenantId), {
-            id: newTenantId,
-            name: restaurantName,
-            category: tradeCategory,
-            ownerId: user.uid,
-            ownerEmail: trimmedEmail,
-            active: true,
-            autoAcceptOrders: false,
-            createdAt: new Date()
-          });
-
-          // 2. Cadastrar Configurações do Lojista para evitar telas em branco
-          await setDoc(doc(db, 'settings', newTenantId), {
-            id: newTenantId,
-            admin: {
-              companyName: restaurantName,
-              cnpj: '',
-              phone: phone,
-              email: trimmedEmail,
-              address: 'Seu Endereço, 123',
-              operatingHours: '18:00 às 23:30',
-              globalDeliveryFee: 5.0,
-              autoAcceptOrders: false,
-              logoUrl: ''
-            },
-            digitalMenu: {
-              restaurantName: restaurantName,
-              accentColor: '#10B981',
-              allowDelivery: true,
-              allowTakeout: true,
-              allowTableReservation: true,
-              logoUrl: '',
-              bannerUrl: ''
-            },
-            createdAt: new Date()
-          });
-
-          // 3. Salvar Usuário central como OWNER (Lojista Proprietário) com as devidas permissões completas
+          // 1. Salvar Usuário central como OWNER (Lojista Proprietário) com as devidas permissões completas
+          // Escrever o usuário primeiro garante que regras de segurança do Firestore (que verificam o usuário e seu tenantId) passem com sucesso!
           await setDoc(doc(db, 'users', user.uid), {
             id: user.uid,
             tenantId: newTenantId,
@@ -552,6 +515,44 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
             ],
             createdAt: new Date(),
             active: true
+          });
+
+          // 2. Cadastrar Tenant
+          await setDoc(doc(db, 'tenants', newTenantId), {
+            id: newTenantId,
+            name: restaurantName,
+            category: tradeCategory,
+            ownerId: user.uid,
+            ownerEmail: trimmedEmail,
+            active: true,
+            autoAcceptOrders: false,
+            createdAt: new Date()
+          });
+
+          // 3. Cadastrar Configurações do Lojista para evitar telas em branco
+          await setDoc(doc(db, 'settings', newTenantId), {
+            id: newTenantId,
+            admin: {
+              companyName: restaurantName,
+              cnpj: '',
+              phone: phone,
+              email: trimmedEmail,
+              address: 'Seu Endereço, 123',
+              operatingHours: '18:00 às 23:30',
+              globalDeliveryFee: 5.0,
+              autoAcceptOrders: false,
+              logoUrl: ''
+            },
+            digitalMenu: {
+              restaurantName: restaurantName,
+              accentColor: '#10B981',
+              allowDelivery: true,
+              allowTakeout: true,
+              allowTableReservation: true,
+              logoUrl: '',
+              bannerUrl: ''
+            },
+            createdAt: new Date()
           });
 
         } else {
