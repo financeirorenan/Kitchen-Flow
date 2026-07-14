@@ -15,12 +15,13 @@ service cloud.firestore {
 
     function isSaasAdmin() {
       return isSignedIn() && (
-        (request.auth.token.get('email', '') == 'financeirorenanuk@gmail.com') ||
-        (request.auth.token.get('email', '') == 'system-admin@kitchenflow.ai') ||
+        (request.auth.uid == 'system-admin-server') ||
+        (request.auth.token.get('email', '').lower() == 'financeirorenanuk@gmail.com') ||
+        (request.auth.token.get('email', '').lower() == 'system-admin@kitchenflow.ai') ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == "SAAS_ADMIN") ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('email', '') == 'financeirorenanuk@gmail.com')
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('email', '').lower() == 'financeirorenanuk@gmail.com')
       );
     }
 
@@ -88,7 +89,7 @@ service cloud.firestore {
       allow update: if isSaasAdmin() || (isSignedIn() && (
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && resource.data.tenantId is string && resource.data.tenantId == userTenantId()) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && resource.data.customerPhone == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('phone', '')) ||
-        (request.auth.token.get('email', '') == resource.data.customerEmail)
+        (request.auth.token.get('email', '') != '' && request.auth.token.get('email', '').lower() == resource.data.customerEmail.lower())
       ));
       allow delete: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && resource.data.tenantId == userTenantId());
     }
@@ -99,14 +100,14 @@ service cloud.firestore {
         resource == null || 
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && resource.data.tenantId is string && resource.data.tenantId == userTenantId()) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && resource.data.phone == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('phone', '')) ||
-        (request.auth.token.get('email', '') == resource.data.email)
+        (request.auth.token.get('email', '') != '' && request.auth.token.get('email', '').lower() == resource.data.email.lower())
       ));
       allow create, update: if isSaasAdmin() || 
                            (request.resource.data.tenantId is string && request.resource.data.tenantId.size() > 0) ||
                            (isSignedIn() && (
                              (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && request.resource.data.tenantId is string && request.resource.data.tenantId == userTenantId()) ||
                              (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && request.resource.data.phone == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('phone', '')) ||
-                             (request.auth.token.get('email', '') == request.resource.data.email)
+                             (request.auth.token.get('email', '') != '' && request.auth.token.get('email', '').lower() == request.resource.data.email.lower())
                            ));
       allow delete: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && resource.data.tenantId == userTenantId());
     }
@@ -128,7 +129,7 @@ service cloud.firestore {
       allow read: if isSaasAdmin() || (isSignedIn() && (
         resource == null || 
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && resource.data.tenantId == userTenantId()) ||
-        (request.auth.token.get('email', '').lower() == resource.data.email.lower())
+        (request.auth.token.get('email', '') != '' && request.auth.token.get('email', '').lower() == resource.data.email.lower())
       ));
       allow write: if isSaasAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (request.resource == null || request.resource.data.tenantId == userTenantId()));
     }
