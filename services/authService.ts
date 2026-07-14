@@ -171,8 +171,16 @@ export class AuthService {
       } catch (clientErr) {
         console.warn('[AuthService] Client SDK custom token login skipped or failed, using API session:', clientErr);
       }
-    } else if (data.isLocalSession) {
-      console.log('[AuthService] Local session authorized. Bypassing client-side sign-in.');
+    } else {
+      // Robust Fallback: If customToken is not provided or signing key is missing on the server,
+      // perform standard email/password sign-in in the Client SDK to sync auth state and allow Firestore access.
+      try {
+        console.log('[AuthService] Authenticating Client SDK via email/password fallback...');
+        await signInWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
+        console.log('[AuthService] Client SDK email/password fallback login successful!');
+      } catch (clientErr: any) {
+        console.warn('[AuthService] Client SDK fallback login failed:', clientErr.message);
+      }
     }
 
     return { success: true, user, session };

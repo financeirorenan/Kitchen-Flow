@@ -24,7 +24,7 @@
     "@types/xml-crypto": "^1.4.6",
     "@vis.gl/react-google-maps": "^1.8.3",
     "@vitejs/plugin-react": "^5.0.0",
-    "axios": "^1.16.0",
+    "axios": "^1.14.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dexie": "^4.0.1",
@@ -44,7 +44,7 @@
     "recharts": "^3.6.0",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
-    "vite": "^6.4.3",
+    "vite": "^6.2.0",
     "xml-crypto": "^6.1.2",
     "xmlbuilder2": "^4.0.3"
   },
