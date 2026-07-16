@@ -565,7 +565,7 @@ const App: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const isSuperAdmin = !!user && (user?.email?.toLowerCase() === 'financeirorenanuk@gmail.com' || currentUserData?.role === 'SAAS_ADMIN');
+  const isSuperAdmin = (!!user && user?.email?.toLowerCase() === 'financeirorenanuk@gmail.com') || currentUserData?.role === 'SAAS_ADMIN';
 
   const effectiveAllowedModules = isSuperAdmin ? undefined : (tenantData?.customModules || tenantData?.subscription?.allowedModules);
 

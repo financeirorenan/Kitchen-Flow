@@ -591,8 +591,12 @@ async function startServer() {
               }
 
               try {
-                customToken = await adminAuth.createCustomToken(uid, { email: trimmedEmail });
-                console.log(`[LOGS] Token criado (Custom Token): Gerado com sucesso`);
+                customToken = await adminAuth.createCustomToken(uid, {
+                  email: trimmedEmail,
+                  role: userRole,
+                  tenantId: matchedUser.tenantId || ""
+                });
+                console.log(`[LOGS] Token criado (Custom Token): Gerado com sucesso com claims de role e tenantId`);
               } catch (tokenErr: any) {
                 console.warn(`[LOGS] Não foi possível assinar customToken: ${tokenErr.message}`);
               }

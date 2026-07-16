@@ -164,20 +164,26 @@ export class AuthService {
     await this.initiateSession(session, user);
 
     // Authenticate client-side via Custom Token or standard sign-in if needed for Firebase SDK sync
+    let firebaseAuthSuccess = false;
     if (data.customToken) {
       try {
         console.log('[AuthService] Authenticating Client SDK with custom token...');
         await signInWithCustomToken(auth, data.customToken);
+        firebaseAuthSuccess = true;
+        console.log('[AuthService] Client SDK custom token login successful!');
       } catch (clientErr) {
-        console.warn('[AuthService] Client SDK custom token login skipped or failed, using API session:', clientErr);
+        console.warn('[AuthService] Client SDK custom token login failed, attempting email/password fallback:', clientErr);
       }
-    } else {
-      // Robust Fallback: If customToken is not provided or signing key is missing on the server,
+    }
+
+    if (!firebaseAuthSuccess) {
+      // Robust Fallback: If customToken is not provided or failed,
       // perform standard email/password sign-in in the Client SDK to sync auth state and allow Firestore access.
       try {
         console.log('[AuthService] Authenticating Client SDK via email/password fallback...');
         await signInWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
         console.log('[AuthService] Client SDK email/password fallback login successful!');
+        firebaseAuthSuccess = true;
       } catch (clientErr: any) {
         console.warn('[AuthService] Client SDK fallback login failed:', clientErr.message);
       }
