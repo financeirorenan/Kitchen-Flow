@@ -600,10 +600,6 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
   };
 
   const handleGoogleLogin = async () => {
-    if (!isMarketplace) {
-      setError('Acesso negado. O login via Google é permitido apenas na área do Marketplace.');
-      return;
-    }
     setLoading(true);
     setError(null);
     try {
@@ -1033,16 +1029,14 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
 
 
           {/* Social Sign-In */}
-          {isMarketplace && (
-            <button
-              onClick={handleGoogleLogin}
-              disabled={loading}
-              className="w-full mt-6 bg-white border-2 border-slate-100 text-slate-600 py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-50 active:scale-98 transition-all flex items-center justify-center gap-3 shadow-sm"
-            >
-              <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google Logo" className="w-5 h-5 select-none" />
-              Entrar de forma segura com o Google
-            </button>
-          )}
+          <button
+            onClick={handleGoogleLogin}
+            disabled={loading}
+            className="w-full mt-6 bg-white border-2 border-slate-100 text-slate-600 py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-50 active:scale-98 transition-all flex items-center justify-center gap-3 shadow-sm"
+          >
+            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google Logo" className="w-5 h-5 select-none" />
+            Entrar de forma segura com o Google
+          </button>
 
           {/* Defensive text footer */}
           <p className="mt-8 text-center text-slate-400 text-[10px] font-semibold uppercase tracking-wider leading-relaxed">

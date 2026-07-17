@@ -189,6 +189,30 @@ export class AuthService {
       }
     }
 
+    if (!firebaseAuthSuccess) {
+      console.log('[AuthService] Client-side Firebase Auth failed or was skipped. Establishing persistent local bypass session.');
+      const simulatedFirebaseUser = {
+        uid: user.id,
+        email: user.email,
+        displayName: user.name,
+        isLocalSession: true
+      };
+      localStorage.setItem('kitchenflow_demo_user', JSON.stringify({
+        firebaseUser: simulatedFirebaseUser,
+        userData: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          tenantId: user.tenantId,
+          active: true,
+          status: 'online'
+        }
+      }));
+    } else {
+      localStorage.removeItem('kitchenflow_demo_user');
+    }
+
     return { success: true, user, session };
   }
 

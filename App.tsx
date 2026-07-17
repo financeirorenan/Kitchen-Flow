@@ -213,7 +213,7 @@ const App: React.FC = () => {
       const demoUser = localStorage.getItem('kitchenflow_demo_user');
       if (demoUser) {
         const uData = JSON.parse(demoUser).userData;
-        return { ...uData, tenantId: '' };
+        return { ...uData, tenantId: uData.role === 'SAAS_ADMIN' ? '' : (uData.tenantId || '') };
       }
       const cached = localStorage.getItem('kitchenflow_cached_user') || localStorage.getItem('gastroai_cached_user');
       return cached ? JSON.parse(cached) : null;
