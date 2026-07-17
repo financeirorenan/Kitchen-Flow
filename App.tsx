@@ -5070,7 +5070,7 @@ const App: React.FC = () => {
           </motion.div>
         )}
       </AnimatePresence>
-      {currentProject !== 'MARKETPLACE' && currentProject !== 'COURIER' && currentProject !== 'WEBSITE' && !isKDSOnlyUser && (
+      {currentProject !== 'PLATFORM' && currentProject !== 'MARKETPLACE' && currentProject !== 'COURIER' && currentProject !== 'WEBSITE' && !isKDSOnlyUser && (
         <Sidebar 
           activeTab={activeTab} 
           setActiveTab={(tab) => {
@@ -5138,7 +5138,7 @@ const App: React.FC = () => {
           ) : (
             <>
               {/* Header Mobile */}
-              {!isKDSOnlyUser && (
+              {!isKDSOnlyUser && currentProject !== 'PLATFORM' && (
                 <header className="lg:hidden bg-white border-b p-2 flex items-center justify-between sticky top-0 z-30">
                   <button 
                     onClick={() => setIsSidebarOpen(true)}
@@ -5190,7 +5190,7 @@ const App: React.FC = () => {
                 </header>
               )}
 
-              <div className={`flex-1 custom-scrollbar ${isKDSOnlyUser ? 'h-screen max-h-screen overflow-hidden flex flex-col p-0' : (activeTab === 'kds' || activeTab === 'kds-kitchen-only' || activeTab === 'order-monitor') ? 'h-[calc(100vh-64px)] lg:h-[calc(100vh-20px)] overflow-hidden flex flex-col p-1' : 'overflow-y-auto max-h-screen p-1'}`}>
+              <div className={`flex-1 custom-scrollbar ${isKDSOnlyUser || currentProject === 'PLATFORM' ? 'h-screen max-h-screen overflow-hidden flex flex-col p-0' : (activeTab === 'kds' || activeTab === 'kds-kitchen-only' || activeTab === 'order-monitor') ? 'h-[calc(100vh-64px)] lg:h-[calc(100vh-20px)] overflow-hidden flex flex-col p-1' : 'overflow-y-auto max-h-screen p-1'}`}>
           {currentProject === 'PLATFORM' ? (
             isSuperAdmin ? (
               <SaaSAdmin 
@@ -5205,6 +5205,7 @@ const App: React.FC = () => {
                 }}
                 currentUser={user}
                 currentUserData={currentUserData}
+                onLogout={handleLogout}
               />
             ) : (
               <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6 text-center w-full">

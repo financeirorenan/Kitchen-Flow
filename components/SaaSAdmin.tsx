@@ -68,7 +68,10 @@ import {
   MessageSquare,
   Phone,
   Mail,
-  MapPin
+  MapPin,
+  Store,
+  LogOut,
+  Menu
 } from 'lucide-react';
 
 const ALL_MODULES: { id: Permission; label: string }[] = [
@@ -273,6 +276,7 @@ interface SaaSAdminProps {
   onNavigate: (tab: string) => void;
   currentUser?: any;
   currentUserData?: any;
+  onLogout?: () => void;
 }
 
 const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({ 
@@ -280,13 +284,15 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   onViewTenant,
   onNavigate,
   currentUser,
-  currentUserData
+  currentUserData,
+  onLogout
 }) => {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'tenants' | 'plans' | 'financial' | 'support' | 'leads' | 'team' | 'marketplace_config' | 'suppliers' | 'subscription_rules'>('dashboard');
 
   // Commerce Categories States
@@ -1471,10 +1477,15 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
       return;
     }
 
+    let resolvedOwnerId = ownerId.trim();
+    if (!resolvedOwnerId) {
+      resolvedOwnerId = `owner_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+    }
+
     const tenantData: Partial<Tenant> = {
       id: tenantId,
       name,
-      ownerId,
+      ownerId: resolvedOwnerId,
       planId: selectedPlanId,
       active: true,
       logoUrl,
@@ -1517,7 +1528,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         const password = generateStrongRandomPassword();
         
         const firstUser: Partial<User> = {
-          id: ownerId, // Assume que o ownerId é o UID do usuário já criado ou a ser criado
+          id: resolvedOwnerId, // Assume que o resolvedOwnerId é o UID do usuário já criado ou a ser criado
           tenantId: tenantId,
           name: `Admin ${name}`,
           email: email,
@@ -1528,7 +1539,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
           password: password,
           createdAt: new Date()
         };
-        await setDoc(doc(db, 'users', ownerId), firstUser, { merge: true });
+        await setDoc(doc(db, 'users', resolvedOwnerId), firstUser, { merge: true });
 
         // Inicializar configurações padrão para o novo tenant (Isso habilita o sistema para o cliente)
         await setDoc(doc(db, 'settings', tenantId), {
@@ -1916,89 +1927,218 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   };
 
   return (
-    <div className="p-6 space-y-6 animate-in fade-in duration-500">
-      <header className="flex justify-between items-center">
-        <div>
-          <h2 className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.2em] mb-1">Platform Manager</h2>
-          <h1 className="text-2xl font-black text-slate-800 tracking-tighter">
-            {activeTab === 'tenants' ? 'Gestão de Clientes' : 
-             activeTab === 'plans' ? 'Planos e Preços' :
-             activeTab === 'financial' ? 'Financeiro da Plataforma' :
-             activeTab === 'subscription_rules' ? 'Regras de Assinatura' :
-             'Dashboard da Plataforma'}
-          </h1>
+    <div className="flex flex-col lg:flex-row min-h-screen bg-[#f8fafc] w-full text-slate-800 font-sans">
+      {/* OVERLAY BACKGROUND FOR MOBILE DRAWER */}
+      {isMobileMenuOpen && (
+        <div 
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] lg:hidden"
+          onClick={() => setIsMobileMenuOpen(false)}
+        />
+      )}
+
+      {/* SIDEBAR DE GESTÃO SAAS ULTRA POLIDA */}
+      <aside className={`fixed inset-y-0 left-0 w-80 bg-slate-950 text-slate-100 flex flex-col shrink-0 border-r border-slate-800 shadow-2xl transition-transform duration-300 ease-in-out z-[110] lg:translate-x-0 lg:static lg:h-screen lg:z-20 ${
+        isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
+      }`}>
+        <div className="p-6 border-b border-slate-800/60 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20 shadow-lg shadow-emerald-500/5">
+              <Rocket className="text-emerald-400 w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <h1 className="text-sm font-black tracking-wider uppercase text-white">KitchenFlow</h1>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+              </div>
+              <p className="text-[10px] font-semibold text-emerald-400/80 uppercase tracking-widest">SaaS Terminal</p>
+            </div>
+          </div>
+          {/* Close button on mobile */}
+          <button 
+            type="button"
+            className="lg:hidden p-2 text-slate-400 hover:text-white hover:bg-slate-900 rounded-xl transition-all cursor-pointer"
+            onClick={() => setIsMobileMenuOpen(false)}
+          >
+            <X size={20} />
+          </button>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="flex bg-slate-100 p-1 rounded-2xl border shadow-inner">
-            {[
-              { id: 'dashboard', label: 'Dashboard' },
-              { id: 'tenants', label: 'Clientes' },
-              { id: 'plans', label: 'Planos' },
-              { id: 'subscription_rules', label: 'Regras SaaS' },
-              { id: 'financial', label: 'Financeiro' },
-              { id: 'leads', label: 'Leads' },
-              { id: 'support', label: 'Suporte' },
-              { id: 'team', label: 'Equipe SaaS' },
-              { id: 'marketplace_config', label: 'Marketplace Nova' },
-              { id: 'suppliers', label: 'Fornecedores B2B' },
-            ].map(tab => (
+
+        {/* Lista de Navegação no Sidebar */}
+        <div className="flex-grow p-4 space-y-1 overflow-y-auto custom-scrollbar">
+          <p className="text-[9px] font-black uppercase text-slate-500 tracking-widest px-3 mb-2">Painéis & Métricas</p>
+          {[
+            { id: 'dashboard', label: 'Painel Geral', icon: LayoutDashboard, desc: 'Indicadores e faturamento' },
+            { id: 'tenants', label: 'Clientes (Lojas)', icon: Users, desc: 'Lojas e acessos lojistas' },
+            { id: 'plans', label: 'Planos & Preços', icon: Package, desc: 'Gestão de ofertas SaaS' },
+            { id: 'subscription_rules', label: 'Regras SaaS', icon: Shield, desc: 'Limites de segurança' },
+            { id: 'financial', label: 'Financeiro', icon: CreditCard, desc: 'Baixas e faturas de lojistas' },
+            { id: 'leads', label: 'Pipeline de Leads', icon: Target, desc: 'Negociações e conversões' },
+            { id: 'support', label: 'Central de Tickets', icon: LifeBuoy, desc: 'Respostas a chamados' },
+            { id: 'team', label: 'Equipe Admin', icon: Crown, desc: 'Gerenciamento de acessos' },
+            { id: 'marketplace_config', label: 'Marketplace Nova', icon: Zap, desc: 'Comissões e categorias B2C' },
+            { id: 'suppliers', label: 'Fornecedores B2B', icon: Sparkles, desc: 'Insumos e tabelas de preços' },
+          ].map(tab => {
+            const IconComponent = tab.icon;
+            const isSelected = activeTab === tab.id;
+            return (
               <button 
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`relative px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
-                  activeTab === tab.id ? 'text-white' : 'text-slate-500 hover:bg-white/50'
+                onClick={() => {
+                  setActiveTab(tab.id as any);
+                  setIsMobileMenuOpen(false);
+                }}
+                className={`w-full relative px-4 py-3 rounded-2xl flex items-center gap-3.5 transition-all text-left group cursor-pointer ${
+                  isSelected ? 'text-white' : 'text-slate-400 hover:text-white hover:bg-white/5'
                 }`}
               >
-                {activeTab === tab.id && (
+                {isSelected && (
                   <motion.div 
-                    layoutId="saasHeaderTabPill"
-                    className="absolute inset-0 bg-emerald-600 rounded-xl shadow-lg shadow-emerald-100"
-                    transition={{ type: "spring", bounce: 0.15, duration: 0.5 }}
+                    layoutId="saasSidebarActiveBg"
+                    className="absolute inset-0 bg-gradient-to-r from-emerald-600 to-indigo-600 rounded-2xl shadow-lg shadow-emerald-500/10"
+                    transition={{ type: "spring", bounce: 0.1, duration: 0.4 }}
                   />
                 )}
-                <span className="relative z-10">{tab.label}</span>
+                <div className={`relative z-10 p-1.5 rounded-xl transition-all ${isSelected ? 'bg-white/10 text-emerald-300' : 'text-slate-400 group-hover:text-slate-200'}`}>
+                  <IconComponent size={18} />
+                </div>
+                <div className="relative z-10 flex flex-col min-w-0">
+                  <span className="text-[11px] font-black tracking-wide uppercase">{tab.label}</span>
+                  <span className="text-[9px] font-medium text-slate-500/90 truncate">{tab.desc}</span>
+                </div>
               </button>
-            ))}
+            )
+          })}
+        </div>
+
+        {/* Info do Usuário no Rodapé */}
+        <div className="p-4 border-t border-slate-900 bg-slate-950 space-y-3">
+          <div className="flex items-center gap-3 p-2 rounded-xl bg-slate-900/60 border border-slate-800">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-500 to-indigo-600 flex items-center justify-center text-white font-black text-xs">
+              R
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] font-black tracking-wide text-white truncate">Renan (Super Admin)</p>
+              <p className="text-[8px] font-medium text-emerald-400 truncate tracking-widest uppercase">Max Admin Autorizado</p>
+            </div>
           </div>
-          {activeTab === 'tenants' && (
-            <div className="flex gap-2">
+          
+          <div className="flex gap-2">
+            <button 
+              onClick={() => { window.location.hash = '#/lojista'; }}
+              className="flex-1 py-2.5 px-3 bg-slate-900 hover:bg-slate-800 text-[9px] font-black uppercase tracking-widest text-slate-300 rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer border border-slate-800/80"
+              title="Voltar ao Painel da Loja"
+            >
+              <Store size={12} className="text-emerald-400" />
+              Lojista
+            </button>
+            <button 
+              onClick={() => onLogout?.()}
+              className="py-2.5 px-3 bg-rose-500/10 hover:bg-rose-500/20 text-[9px] font-black uppercase tracking-widest text-rose-400 rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer border border-rose-500/15"
+              title="Sair da Conta"
+            >
+              <LogOut size={12} />
+              Sair
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* WORKSPACE PRINCIPAL SCROLLÁVEL */}
+      <main className="flex-grow overflow-y-auto p-4 lg:p-8 space-y-8 max-h-screen">
+        {/* MOBILE TOP BAR */}
+        <div className="lg:hidden flex items-center justify-between bg-slate-900 text-white p-4 rounded-3xl mb-4 border border-slate-800 shadow-lg">
+          <div className="flex items-center gap-3">
+            <button 
+              type="button"
+              onClick={() => setIsMobileMenuOpen(true)}
+              className="p-3 bg-slate-800 hover:bg-slate-700 text-white rounded-2xl transition-all border border-slate-700 shadow-md cursor-pointer animate-pulse"
+              title="Abrir Menu Lateral"
+            >
+              <Menu size={18} />
+            </button>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <h1 className="text-xs font-black tracking-wider uppercase text-white">KitchenFlow</h1>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+              </div>
+              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-widest">SaaS Console</p>
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            <button 
+              onClick={() => { window.location.hash = '#/lojista'; }}
+              className="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-[8px] font-black uppercase tracking-widest text-slate-300 rounded-xl flex items-center gap-1.5 transition-all cursor-pointer border border-slate-700"
+              title="Ir para a Loja"
+            >
+              <Store size={10} className="text-emerald-400" />
+              Loja
+            </button>
+            <button 
+              onClick={() => onLogout?.()}
+              className="py-2 px-3 bg-rose-500/10 hover:bg-rose-500/20 text-[8px] font-black uppercase tracking-widest text-rose-400 rounded-xl flex items-center gap-1.5 transition-all cursor-pointer border border-rose-500/15"
+              title="Sair"
+            >
+              <LogOut size={10} />
+            </button>
+          </div>
+        </div>
+        <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-100 pb-6">
+          <div>
+            <h2 className="text-[9px] font-black text-emerald-600 uppercase tracking-[0.2em] mb-1">Platform Console</h2>
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+              {activeTab === 'tenants' ? 'Gestão de Clientes' : 
+               activeTab === 'plans' ? 'Planos e Preços' :
+               activeTab === 'financial' ? 'Financeiro da Plataforma' :
+               activeTab === 'subscription_rules' ? 'Regras de Assinatura' :
+               activeTab === 'leads' ? 'Pipeline de Vendas & Leads' :
+               activeTab === 'support' ? 'Suporte & Chamados Técnicos' :
+               activeTab === 'team' ? 'Equipe de Administração' :
+               activeTab === 'marketplace_config' ? 'Configurações de Redes & Marketplace' :
+               activeTab === 'suppliers' ? 'Fornecedores e Insumos B2B' :
+               'Dashboard Executivo'}
+            </h1>
+          </div>
+          <div className="flex items-center gap-3">
+            {activeTab === 'tenants' && (
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => {
+                    setEditingCategory(null);
+                    setNewCategoryName('');
+                    setNewCategoryDescription('');
+                    setShowCategoryModal(true);
+                  }}
+                  className="bg-white text-slate-700 border border-slate-200 px-5 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 shadow-sm hover:bg-slate-50 transition-all cursor-pointer"
+                >
+                  <Settings size={14} className="text-slate-400" />
+                  Categorias de Comércio
+                </button>
+                <button 
+                  onClick={() => { resetForm(); setEditingTenant(null); setShowAddModal(true); }}
+                  className="bg-gradient-to-r from-emerald-600 to-indigo-600 text-white px-5 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 shadow-lg shadow-emerald-500/10 hover:opacity-90 transition-all cursor-pointer"
+                >
+                  <Plus size={14} />
+                  Novo Cliente
+                </button>
+              </div>
+            )}
+            {activeTab === 'plans' && (
               <button 
                 onClick={() => {
-                  setEditingCategory(null);
-                  setNewCategoryName('');
-                  setNewCategoryDescription('');
-                  setShowCategoryModal(true);
+                  setActiveTab('plans');
+                  resetPlanForm();
+                  setEditingPlan(null);
+                  setShowPlanModal(true);
                 }}
-                className="bg-slate-800 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 shadow-xl shadow-slate-200 hover:bg-slate-900 transition-all border border-slate-700"
+                className="bg-gradient-to-r from-emerald-600 to-indigo-600 text-white px-5 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 shadow-lg shadow-emerald-500/10 hover:opacity-90 transition-all cursor-pointer"
               >
-                <Settings size={18} />
-                Reg. Categorias de Comércio
+                <Plus size={14} />
+                Criar Novo Plano
               </button>
-              <button 
-                onClick={() => { resetForm(); setEditingTenant(null); setShowAddModal(true); }}
-                className="bg-indigo-600 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all"
-              >
-                <Plus size={18} />
-                Novo Cliente
-              </button>
-            </div>
-          )}
-          {activeTab === 'plans' && (
-            <button 
-              onClick={() => {
-                setActiveTab('plans');
-                resetPlanForm();
-                setEditingPlan(null);
-                setShowPlanModal(true);
-              }}
-              className="bg-emerald-600 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 shadow-xl shadow-emerald-100 hover:bg-emerald-700 transition-all"
-            >
-              <Plus size={18} />
-              Criar Novo Plano
-            </button>
-          )}
-        </div>
-      </header>
+            )}
+          </div>
+        </header>
 
       {activeTab === 'dashboard' ? (
         <div className="space-y-8 animate-in fade-in duration-700">
@@ -4685,6 +4825,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
            <p className="font-black text-[10px] uppercase tracking-[0.2em]">Selecione uma aba para gerenciar</p>
         </div>
       )}
+      </main>
 
       {showAddSupplierModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
@@ -5103,7 +5244,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
       {/* Tenant User Creation Modal */}
       {showTenantUserModal && selectedTenantForUser && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4 shadow-2xl">
-          <div className="bg-white w-full max-m-md rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+          <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
              <div className="p-8 border-b border-slate-50 flex justify-between items-center bg-indigo-600 text-white">
                 <div>
                    <h2 className="text-xl font-black tracking-tighter">Novo Usuário Admin</h2>
@@ -5169,12 +5310,20 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">ID do Proprietário (UID Firebase)</label>
+                  <div className="flex justify-between items-center">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">ID do Proprietário (UID Firebase)</label>
+                    <button 
+                      type="button"
+                      onClick={() => setOwnerId(`owner_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`)}
+                      className="text-[9px] font-black uppercase text-indigo-600 hover:text-indigo-800 tracking-wider bg-indigo-50 px-2 py-1 rounded-lg transition-all"
+                    >
+                      Gerar ID
+                    </button>
+                  </div>
                   <input 
                     type="text" 
-                    required
                     className="w-full px-4 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold outline-none focus:border-indigo-500 transition-all"
-                    placeholder="Cole o UID do usuário aqui"
+                    placeholder="Cole o UID ou deixe vazio para gerar automático"
                     value={ownerId}
                     onChange={(e) => setOwnerId(e.target.value)}
                   />

@@ -268,6 +268,93 @@ const serverClientDb = initializeFirestore(clientFirebaseApp, {
           console.error("[Firebase Server Client] Falha definitiva na autenticação do System Admin via Client SDK:", finalLoginErr.message);
         }
       }
+
+      // Seeding financeirorenanuk@gmail.com (Super Admin)
+      try {
+        const finEmail = "financeirorenanuk@gmail.com";
+        const finPassword = "Ch@pola07";
+        const finUid = "financeiro-renan-uk-admin";
+        let finCreated = false;
+
+        console.log("[Firebase Server Client] Tentando verificar/criar Max Admin financeirorenanuk@gmail.com...");
+
+        if (isAdminAuthAvailable) {
+          try {
+            await adminAuth.createUser({
+              uid: finUid,
+              email: finEmail,
+              password: finPassword,
+              displayName: "Renan (Super Admin)"
+            });
+            console.log("[Firebase Server Client] Max Admin criado com sucesso via Admin SDK!");
+            finCreated = true;
+          } catch (createAuthErr: any) {
+            if (createAuthErr.code === 'auth/email-already-exists') {
+              console.log("[Firebase Server Client] Max Admin já cadastrado no Auth, atualizando senha...");
+              try {
+                await adminAuth.updateUser(finUid, {
+                  password: finPassword,
+                  displayName: "Renan (Super Admin)"
+                });
+                finCreated = true;
+              } catch (updErr) {
+                console.log("[Firebase Server Client] Não foi possível atualizar usuário por ID fixo. Buscando por email...");
+                try {
+                  const userRecord = await adminAuth.getUserByEmail(finEmail);
+                  await adminAuth.updateUser(userRecord.uid, {
+                    password: finPassword,
+                    displayName: "Renan (Super Admin)"
+                  });
+                  console.log("[Firebase Server Client] Senha do Max Admin atualizada via email!");
+                  finCreated = true;
+                } catch (updByEmailErr) {
+                  console.error("[Firebase Server Client] Falha ao atualizar senha do Max Admin pelo Admin SDK:", updByEmailErr);
+                }
+              }
+            } else {
+              console.log("[Firebase Server Client] Erro ao criar Max Admin via Admin SDK, tentando Client SDK...", createAuthErr.message);
+            }
+          }
+        }
+
+        if (!finCreated) {
+          try {
+            await createUserWithEmailAndPassword(clientAuth, finEmail, finPassword);
+            console.log("[Firebase Server Client] Max Admin criado via Client SDK!");
+            finCreated = true;
+          } catch (clientCreateErr: any) {
+            console.log("[Firebase Server Client] Max Admin já existe ou erro na criação via Client SDK:", clientCreateErr.message);
+          }
+        }
+
+        // Sincronizar documento no Firestore 'users'
+        try {
+          const hashedPass = await hashPassword(finPassword);
+          let actualUid = finUid;
+          if (isAdminAuthAvailable) {
+            try {
+              const userRecord = await adminAuth.getUserByEmail(finEmail);
+              actualUid = userRecord.uid;
+            } catch (e) {}
+          }
+
+          await setDoc(doc(serverClientDb, "users", actualUid), {
+            id: actualUid,
+            email: finEmail,
+            password: hashedPass,
+            role: "SAAS_ADMIN",
+            active: true,
+            name: "Renan (Super Admin)",
+            updatedAt: new Date(),
+            tenantId: "HCL1177LRQVPEKCTYRAHU7IGBQ42"
+          }, { merge: true });
+          console.log("[Firebase Server Client] Documento do Max Admin sincronizado no Firestore!");
+        } catch (firestoreSyncErr: any) {
+          console.log("[Firebase Server Client] Não foi possível sincronizar documento do Max Admin no Firestore:", firestoreSyncErr.message);
+        }
+      } catch (finErr: any) {
+        console.error("[Firebase Server Client] Erro no seeding do Max Admin:", finErr.message);
+      }
     }
   } catch (err: any) {
     console.error("[Firebase Server Client] Erro crítico no processo de inicialização do System Admin:", err.message);
