@@ -1376,7 +1376,7 @@ const App: React.FC = () => {
         // Se após as buscas o usuário ainda não possuir perfil no Firestore, nós auto-criamos
         // um perfil padrão (CUSTOMER se for no marketplace, OWNER se for no painel) associado ao tenant correspondente
         if (!finalUserData && firebaseUser.email) {
-          const isMaster = firebaseUser.email === 'financeirorenanuk@gmail.com';
+          const isMaster = firebaseUser.email.toLowerCase() === 'financeirorenanuk@gmail.com';
           const isMarketplaceRoute = window.location.pathname.startsWith('/marketplace') || window.location.hash.startsWith('#/marketplace');
           
           let role: UserRole = isMaster ? 'SAAS_ADMIN' : (isMarketplaceRoute ? 'CUSTOMER' : 'OWNER');
@@ -1427,7 +1427,7 @@ const App: React.FC = () => {
 
         if (finalUserData) {
           // Se for o gestor/admin principal (financeirorenanuk@gmail.com ou SAAS_ADMIN), garante vínculo a 'HCL1177LRQVPEKCTYRAHU7IGBQ42' (Viva la fome) e o cargo SAAS_ADMIN
-          const isMasterUser = firebaseUser.email === 'financeirorenanuk@gmail.com' || finalUserData.role === 'SAAS_ADMIN';
+          const isMasterUser = firebaseUser.email.toLowerCase() === 'financeirorenanuk@gmail.com' || finalUserData.role === 'SAAS_ADMIN';
           if (isMasterUser) {
             let needsUpdate = false;
             const updatePayload: any = {};
