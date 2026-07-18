@@ -198,17 +198,28 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
         // a conta já foi criada/sincronizada no Firebase Auth no backend com a nova senha permanente!
         try {
           console.log("Fazendo login real via email/senha após ativação de primeiro acesso pelo backend...");
-          const loginCred = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedNewPassword);
-          const signedInUser = loginCred.user;
+          let signedInUser = null;
+          try {
+            const loginCred = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedNewPassword);
+            signedInUser = loginCred.user;
+            console.log("Login real via email/senha de primeiro acesso realizado com sucesso com a nova senha!");
+          } catch (firstTryErr: any) {
+            console.log("Nova senha falhou no Client Auth, tentando entrar com a senha temporária para atualizar...");
+            const tempLoginCred = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedTempPassword);
+            signedInUser = tempLoginCred.user;
+            console.log("Entrou com a senha temporária. Atualizando para a nova senha no Firebase Auth...");
+            await updatePassword(signedInUser, trimmedNewPassword);
+            console.log("Nova senha cadastrada com sucesso no Firebase Auth!");
+          }
+
           await updateProfile(signedInUser, { displayName: data.user.name || 'Lojista' });
-          console.log("Login real via email/senha de primeiro acesso realizado com sucesso!");
           
           // Remover demo_user se ele existia para migrar para sessão real de vez
           localStorage.removeItem('kitchenflow_demo_user');
           
           // Salvar dados no cached_user
           localStorage.setItem('kitchenflow_cached_user', JSON.stringify({
-            id: data.user.id,
+            id: signedInUser.uid || data.user.id,
             email: data.user.email,
             role: data.user.role,
             name: data.user.name,
@@ -221,7 +232,7 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
           window.location.reload();
           return;
         } catch (clientSignInErr: any) {
-          console.warn("Falha ao realizar login direto com email/senha no primeiro acesso. Aplicando bypass de segurança local:", clientSignInErr.code || clientSignInErr.message);
+          console.warn("Falha ao realizar login direto ou atualização de senha no primeiro acesso. Aplicando bypass de segurança local:", clientSignInErr.code || clientSignInErr.message);
         }
 
         const simulatedFirebaseUser = {

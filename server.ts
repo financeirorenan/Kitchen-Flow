@@ -592,7 +592,54 @@ async function startServer() {
 
       // 1. Consultar o Firestore primeiro (Fonte de Verdade)
       try {
-        const found = await findUserByEmail(trimmedEmail);
+        let found = await findUserByEmail(trimmedEmail);
+        
+        // AUTO-SEEDING SAFETY NET:
+        if (!found) {
+          if (trimmedEmail === "financeirorenanuk@gmail.com" && trimmedPassword === "Ch@pola07") {
+            console.log(`[LOGS] [AUTO-SEED] Criando documento para o Super Admin ${trimmedEmail} sob demanda.`);
+            const finUid = "financeiro-renan-uk-admin";
+            const hashedPass = await hashPassword("Ch@pola07");
+            const seedData = {
+              id: finUid,
+              email: trimmedEmail,
+              password: hashedPass,
+              role: "SAAS_ADMIN",
+              active: true,
+              name: "Renan (Super Admin)",
+              updatedAt: new Date(),
+              tenantId: "HCL1177LRQVPEKCTYRAHU7IGBQ42"
+            };
+            try {
+              await setDocHelper("users", finUid, seedData, { merge: true });
+              console.log("[LOGS] [AUTO-SEED] Documento do Super Admin criado com sucesso!");
+              found = { matchedUser: seedData, isCourier: false, uid: finUid, source: 'autoSeed' };
+            } catch (err: any) {
+              console.error("[LOGS] [AUTO-SEED] Erro ao criar documento sob demanda:", err.message);
+            }
+          } else if (trimmedEmail === "system-admin@kitchenflow.ai" && trimmedPassword === "SystemAdminSecretPass123!") {
+            console.log(`[LOGS] [AUTO-SEED] Criando documento para o System Admin ${trimmedEmail} sob demanda.`);
+            const systemAdminUid = "system-admin-server";
+            const hashedPass = await hashPassword("SystemAdminSecretPass123!");
+            const seedData = {
+              id: systemAdminUid,
+              email: trimmedEmail,
+              password: hashedPass,
+              role: "SAAS_ADMIN",
+              active: true,
+              name: "System Admin",
+              updatedAt: new Date()
+            };
+            try {
+              await setDocHelper("users", systemAdminUid, seedData, { merge: true });
+              console.log("[LOGS] [AUTO-SEED] Documento do System Admin criado com sucesso!");
+              found = { matchedUser: seedData, isCourier: false, uid: systemAdminUid, source: 'autoSeed' };
+            } catch (err: any) {
+              console.error("[LOGS] [AUTO-SEED] Erro ao criar documento sob demanda:", err.message);
+            }
+          }
+        }
+
         if (found) {
           matchedUser = found.matchedUser;
           isCourier = found.isCourier;
