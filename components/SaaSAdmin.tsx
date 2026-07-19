@@ -356,24 +356,51 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
       return;
     }
     const qLeads = query(collection(db, 'leads'), orderBy('createdAt', 'desc'));
+    const processLeads = (docs: any[]) => {
+      setLeads(docs.map(doc => ({ ...doc.data(), id: doc.id })));
+    };
     const unsubscribeLeads = onSnapshot(qLeads, (snapshot) => {
-      setLeads(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })));
-    }, (error) => {
+      processLeads(snapshot.docs);
+    }, async (error) => {
       console.error("SaaSAdmin leads error:", error);
+      try {
+        const directSnap = await getDocs(qLeads);
+        processLeads(directSnap.docs);
+      } catch (err) {
+        console.error("Fallback getDocs failed for leads:", err);
+      }
     });
 
     const qTickets = query(collection(db, 'tickets'), orderBy('createdAt', 'desc'));
+    const processTickets = (docs: any[]) => {
+      setSupportTickets(docs.map(doc => ({ ...doc.data(), id: doc.id })));
+    };
     const unsubscribeTickets = onSnapshot(qTickets, (snapshot) => {
-      setSupportTickets(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })));
-    }, (error) => {
+      processTickets(snapshot.docs);
+    }, async (error) => {
       console.error("SaaSAdmin tickets error:", error);
+      try {
+        const directSnap = await getDocs(qTickets);
+        processTickets(directSnap.docs);
+      } catch (err) {
+        console.error("Fallback getDocs failed for tickets:", err);
+      }
     });
 
     const qUsers = query(collection(db, 'users'), orderBy('createdAt', 'desc'));
+    const processUsers = (docs: any[]) => {
+      setSaasUsers(docs.map(doc => ({ ...doc.data(), id: doc.id }) as User).filter(u => u.role === 'SAAS_ADMIN'));
+    };
     const unsubscribeUsers = onSnapshot(qUsers, (snapshot) => {
-      setSaasUsers(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }) as User).filter(u => u.role === 'SAAS_ADMIN'));
-    }, (error) => {
+      processUsers(snapshot.docs);
+    }, async (error) => {
       console.error("SaaSAdmin users error:", error);
+      try {
+        const directSnap = await getDocs(qUsers);
+        processUsers(directSnap.docs);
+      } catch (err) {
+        console.error("Fallback getDocs failed for saasUsers:", err);
+      }
     });
 
     return () => {
@@ -1327,15 +1354,15 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
 
   useEffect(() => {
     const q = query(collection(db, 'tenants'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({
+    const processTenants = (docs: any[]) => {
+      const data = docs.map(doc => ({
         ...doc.data(),
         id: doc.id,
-        createdAt: doc.data().createdAt?.toDate(),
+        createdAt: doc.data().createdAt?.toDate ? doc.data().createdAt.toDate() : doc.data().createdAt ? new Date(doc.data().createdAt) : undefined,
         subscription: {
           ...doc.data().subscription,
-          startDate: doc.data().subscription?.startDate?.toDate(),
-          expiryDate: doc.data().subscription?.expiryDate?.toDate(),
+          startDate: doc.data().subscription?.startDate?.toDate ? doc.data().subscription.startDate.toDate() : doc.data().subscription?.startDate ? new Date(doc.data().subscription.startDate) : undefined,
+          expiryDate: doc.data().subscription?.expiryDate?.toDate ? doc.data().subscription.expiryDate.toDate() : doc.data().subscription?.expiryDate ? new Date(doc.data().subscription.expiryDate) : undefined,
         }
       })) as Tenant[];
       
@@ -1348,23 +1375,43 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
 
       setTenants(data);
       setLoading(false);
-    }, (error) => {
+    };
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      processTenants(snapshot.docs);
+    }, async (error) => {
       console.error("SaaSAdmin onSnapshot error (tenants):", error);
       setLoading(false);
+      try {
+        const directSnap = await getDocs(q);
+        processTenants(directSnap.docs);
+      } catch (err) {
+        console.error("Fallback getDocs failed for tenants:", err);
+      }
     });
     return () => unsubscribe();
   }, []);
 
   useEffect(() => {
     const q = query(collection(db, 'plans'), orderBy('price', 'asc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({
+    const processPlans = (docs: any[]) => {
+      const data = docs.map(doc => ({
         ...doc.data(),
         id: doc.id,
       })) as Plan[];
       setPlans(data);
-    }, (error) => {
+    };
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      processPlans(snapshot.docs);
+    }, async (error) => {
       console.error("SaaSAdmin plans onSnapshot error:", error);
+      try {
+        const directSnap = await getDocs(q);
+        processPlans(directSnap.docs);
+      } catch (err) {
+        console.error("Fallback getDocs failed for plans:", err);
+      }
     });
     return () => unsubscribe();
   }, []);

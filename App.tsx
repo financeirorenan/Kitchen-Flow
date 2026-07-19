@@ -1046,8 +1046,8 @@ const App: React.FC = () => {
       // Usar uma query simples de igualdade por tenantId para evitar dependência de índices compostos no Firestore
       const q = query(collection(db, col.name), where('tenantId', '==', effectiveTenantId));
 
-      return onSnapshot(q, (snapshot) => {
-        let items = snapshot.docs.map(doc => {
+      const processDocs = (snapshotDocs: any[]) => {
+        let items = snapshotDocs.map(doc => {
           const docData = doc.data();
           const item = convertTimestamps({ ...docData, _firestoreId: doc.id });
           // Use data's ID if present, otherwise fallback to Firestore doc ID
@@ -1165,11 +1165,24 @@ const App: React.FC = () => {
         } else {
           col.setter(items);
         }
-      }, (error) => {
+      };
+
+      return onSnapshot(q, (snapshot) => {
+        processDocs(snapshot.docs);
+      }, async (error) => {
         if (error.message?.includes("Quota exceeded") || error.message?.includes("quota")) {
           setQuotaExceeded(true);
         } else {
           handleFirestoreError(error, OperationType.LIST, col.name);
+        }
+
+        // Direct fallback query as safety measure
+        try {
+          console.log(`Resilience Fallback: Executing direct getDocs for ${col.name}...`);
+          const directSnapshot = await getDocs(q);
+          processDocs(directSnapshot.docs);
+        } catch (fallbackError) {
+          console.error(`Resilience Fallback: getDocs failed for ${col.name}:`, fallbackError);
         }
       });
     });
