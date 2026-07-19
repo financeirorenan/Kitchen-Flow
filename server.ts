@@ -810,6 +810,13 @@ async function startServer() {
         try {
           uid = authUid || uid;
 
+          let timeoutId: NodeJS.Timeout | undefined;
+          const timeoutPromise = new Promise((_, reject) => {
+            timeoutId = setTimeout(() => {
+              reject(new Error("Timeout Firebase Admin SDK"));
+            }, 3000);
+          });
+
           await Promise.race([
             (async () => {
               try {
@@ -893,8 +900,12 @@ async function startServer() {
                 console.warn(`[LOGS] Erro interno na sincronização do Firebase Auth: ${innerErr.message}`);
               }
             })(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout Firebase Admin SDK")), 3000))
-          ]);
+            timeoutPromise
+          ]).finally(() => {
+            if (timeoutId) {
+              clearTimeout(timeoutId);
+            }
+          });
         } catch (authErr: any) {
           console.warn(`[LOGS] Falha ou timeout no Firebase Admin SDK Auth (${authErr.message}). Ativando fallback de sessão.`);
           adminAuthSuccess = true;
