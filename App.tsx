@@ -1046,8 +1046,8 @@ const App: React.FC = () => {
       // Usar uma query simples de igualdade por tenantId para evitar dependência de índices compostos no Firestore
       const q = query(collection(db, col.name), where('tenantId', '==', effectiveTenantId));
 
-      const processDocs = (snapshotDocs: any[]) => {
-        let items = snapshotDocs.map(doc => {
+      return onSnapshot(q, (snapshot) => {
+        let items = snapshot.docs.map(doc => {
           const docData = doc.data();
           const item = convertTimestamps({ ...docData, _firestoreId: doc.id });
           // Use data's ID if present, otherwise fallback to Firestore doc ID
@@ -1165,24 +1165,11 @@ const App: React.FC = () => {
         } else {
           col.setter(items);
         }
-      };
-
-      return onSnapshot(q, (snapshot) => {
-        processDocs(snapshot.docs);
-      }, async (error) => {
+      }, (error) => {
         if (error.message?.includes("Quota exceeded") || error.message?.includes("quota")) {
           setQuotaExceeded(true);
         } else {
           handleFirestoreError(error, OperationType.LIST, col.name);
-        }
-
-        // Direct fallback query as safety measure
-        try {
-          console.log(`Resilience Fallback: Executing direct getDocs for ${col.name}...`);
-          const directSnapshot = await getDocs(q);
-          processDocs(directSnapshot.docs);
-        } catch (fallbackError) {
-          console.error(`Resilience Fallback: getDocs failed for ${col.name}:`, fallbackError);
         }
       });
     });
@@ -1341,229 +1328,208 @@ const App: React.FC = () => {
       }
 
       setUser(firebaseUser);
-      try {
-        if (firebaseUser) {
-          // 1. Buscar dados do usuário no Firestore pelo UID
-          const userDocRef = doc(db, 'users', firebaseUser.uid);
-          let userDoc = await getDoc(userDocRef);
+      if (firebaseUser) {
+        // 1. Buscar dados do usuário no Firestore pelo UID
+        const userDocRef = doc(db, 'users', firebaseUser.uid);
+        let userDoc = await getDoc(userDocRef);
 
-          let finalUserData: User | null = null;
+        let finalUserData: User | null = null;
 
-          if (userDoc.exists()) {
-            // Usuário já vinculado via UID
-            finalUserData = convertTimestamps(userDoc.data()) as User;
-          } else if (firebaseUser.email) {
-            try {
-              // 2. Se não encontrou pelo UID, tentar encontrar por EMAIL (Pré-cadastro ou alterado)
-              const searchEmail = firebaseUser.email.toLowerCase().trim();
-              const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', searchEmail), limit(1));
-              let usersByEmailSnap = await getDocs(usersByEmailQuery);
-              
-              if (usersByEmailSnap.empty && searchEmail !== firebaseUser.email) {
-                const exactQuery = query(collection(db, 'users'), where('email', '==', firebaseUser.email), limit(1));
-                usersByEmailSnap = await getDocs(exactQuery);
-              }
-              
-              if (!usersByEmailSnap.empty) {
-                // Encontrou um pré-cadastro ou cadastro coincidente por email
-                const existingUserDoc = usersByEmailSnap.docs[0];
-                const existingUserData = existingUserDoc.data() as User;
-                
-                // Vincular o UID do Auth ao documento do Firestore (Convertendo random ID p/ UID)
-                finalUserData = {
-                  ...existingUserData,
-                  id: firebaseUser.uid,
-                  updatedAt: new Date()
-                } as any;
-
-                // Criar novo documento com UID e remover o antigo
-                await setDoc(userDocRef, finalUserData);
-                if (existingUserDoc.id !== firebaseUser.uid) {
-                  await deleteDoc(existingUserDoc.ref);
-                }
-              }
-            } catch (queryErr) {
-              console.warn("Could not query user by email from client side (rules restriction):", queryErr);
-            }
-          }
-
-          // Se após as buscas o usuário ainda não possuir perfil no Firestore, nós auto-criamos
-          // um perfil padrão (CUSTOMER se for no marketplace, OWNER se for no painel) associado ao tenant correspondente
-          if (!finalUserData && firebaseUser.email) {
-            const isMaster = firebaseUser.email.toLowerCase() === 'financeirorenanuk@gmail.com';
-            const isMarketplaceRoute = window.location.pathname.startsWith('/marketplace') || window.location.hash.startsWith('#/marketplace');
-            
-            let role: UserRole = isMaster ? 'SAAS_ADMIN' : (isMarketplaceRoute ? 'CUSTOMER' : 'OWNER');
-            let tenantId = isMaster ? '' : (isMarketplaceRoute ? 'GLOBAL' : 'HCL1177LRQVPEKCTYRAHU7IGBQ42');
-            let defaultName = firebaseUser.displayName || firebaseUser.email.split('@')[0] || (isMarketplaceRoute ? 'Cliente' : 'Lojista');
-
-            // Verificar se é entregador cadastrado na coleção de couriers
-            try {
-              const courierQuery = query(collection(db, 'couriers'), where('email', '==', firebaseUser.email.toLowerCase().trim()), limit(1));
-              const courierSnap = await getDocs(courierQuery);
-              if (!courierSnap.empty) {
-                role = 'COURIER';
-                tenantId = courierSnap.docs[0].data().tenantId || 'HCL1177LRQVPEKCTYRAHU7IGBQ42';
-                defaultName = courierSnap.docs[0].data().name || defaultName;
-              }
-            } catch (courierQueryErr) {
-              console.warn("Could not query couriers by email from client side (rules restriction):", courierQueryErr);
-            }
-
-            let savedProfile: { name: string, phone: string } | null = null;
-            try {
-              const savedProfileStr = localStorage.getItem('marketplace_profile');
-              if (savedProfileStr) {
-                savedProfile = JSON.parse(savedProfileStr);
-              }
-            } catch (e) {
-              console.warn("Could not read saved profile from localStorage:", e);
-            }
-
-            const newUser: User = {
-              id: firebaseUser.uid,
-              name: savedProfile?.name || defaultName,
-              email: firebaseUser.email,
-              phone: savedProfile?.phone || '',
-              role: role,
-              tenantId: tenantId,
-              permissions: isMaster 
-                ? ALL_MODULES.map(m => m.id) 
-                : ['dashboard_view', 'orders_view', 'menu_view', 'stock_view', 'finance_view', 'couriers_view', 'users_view', 'integrations_view', 'marketing_view', 'reports_view'] as any,
-              status: 'online',
-              active: true,
-              createdAt: new Date()
-            };
-
-            await setDoc(userDocRef, newUser);
-            finalUserData = newUser;
-          }
-
-          if (finalUserData) {
-            // Se for o gestor/admin principal (financeirorenanuk@gmail.com ou SAAS_ADMIN), garante vínculo a 'HCL1177LRQVPEKCTYRAHU7IGBQ42' (Viva la fome) e o cargo SAAS_ADMIN
-            const isMasterUser = firebaseUser.email.toLowerCase() === 'financeirorenanuk@gmail.com' || finalUserData.role === 'SAAS_ADMIN';
-            if (isMasterUser) {
-              let needsUpdate = false;
-              const updatePayload: any = {};
-              
-              if (finalUserData.role !== 'SAAS_ADMIN') {
-                finalUserData.role = 'SAAS_ADMIN';
-                updatePayload.role = 'SAAS_ADMIN';
-                needsUpdate = true;
-              }
-              if (finalUserData.tenantId !== 'HCL1177LRQVPEKCTYRAHU7IGBQ42') {
-                finalUserData.tenantId = 'HCL1177LRQVPEKCTYRAHU7IGBQ42';
-                updatePayload.tenantId = 'HCL1177LRQVPEKCTYRAHU7IGBQ42';
-                needsUpdate = true;
-              }
-              
-              if (needsUpdate) {
-                try {
-                  await setDoc(userDocRef, updatePayload, { merge: true });
-                } catch (fsErr) {
-                  console.error("Erro ao sincronizar perfil do master no Firestore:", fsErr);
-                }
-              }
-            }
-
-            // Subscreve em tempo real a esse documento para que qualquer alteração de permissão,
-            // cargo ou status feita pelo lojista ou admin do SaaS seja refletida instantaneamente!
-            userUnsubscribe = onSnapshot(userDocRef, (snap) => {
-              if (snap.exists()) {
-                const liveUserData = convertTimestamps(snap.data()) as User;
-                
-                // Garante que o status do usuário seja online no Firestore
-                if (liveUserData.status !== 'online') {
-                  liveUserData.status = 'online';
-                  setDoc(userDocRef, { status: 'online', updatedAt: new Date() }, { merge: true }).catch(() => {});
-                }
-
-                setCurrentUserData(liveUserData);
-                try {
-                  localStorage.setItem('kitchenflow_cached_user', JSON.stringify(liveUserData));
-                } catch (e) {
-                  console.warn(e);
-                }
-
-                // Se o usuário pertence a um tenant, buscar dados do tenant
-                if (liveUserData.tenantId && liveUserData.tenantId !== 'GLOBAL') {
-                  getDoc(doc(db, 'tenants', liveUserData.tenantId)).then((tenantDoc) => {
-                    if (tenantDoc.exists()) {
-                      const tData = convertTimestamps(tenantDoc.data()) as Tenant;
-                      setTenantData(tData);
-                      try {
-                        localStorage.setItem('kitchenflow_cached_tenant_data', JSON.stringify(tData));
-                      } catch (e) {
-                        console.warn(e);
-                      }
-                    }
-                  }).catch((err: any) => {
-                    if (err.message?.includes("Quota exceeded")) {
-                      console.warn("Cota do Firebase atingida. Usando dados básicos do tenant.");
-                      const offlineTenant = { id: liveUserData.tenantId, name: 'Restaurante (Modo Offline)', plan: 'free' } as any;
-                      setTenantData(offlineTenant);
-                      try {
-                        localStorage.setItem('kitchenflow_cached_tenant_data', JSON.stringify(offlineTenant));
-                      } catch (e) {
-                        console.warn(e);
-                      }
-                    }
-                  });
-                }
-              }
-            }, (error) => {
-              handleFirestoreError(error, OperationType.GET, `users/${firebaseUser.uid}`);
-            });
-          }
-          
-          // Auto-redirect for specific roles if on a neutral path
-          const isNeutralPath = window.location.pathname === '/' && (!window.location.hash || window.location.hash === '#/');
-          const finalUserPerms = getUserPermissions(finalUserData);
-          const hasKDSKitchenOnly = finalUserPerms.includes('kds_kitchen_only_view');
-          const isKDSOnlyUserLocal = finalUserData && 
-            (hasKDSKitchenOnly || finalUserData.role === 'KDS') && 
-            !finalUserPerms.includes('admin_settings_manage') && 
-            !finalUserPerms.includes('finance_view') &&
-            !finalUserPerms.includes('pos_access') &&
-            !finalUserPerms.includes('tables_manage');
-
-          if (isKDSOnlyUserLocal) {
-            setActiveTab('kds-kitchen-only');
-          } else if (finalUserData?.role === 'COURIER' && isNeutralPath) {
-            setActiveTab('courier-app');
-          } else if (finalUserData?.role === 'SAAS_ADMIN' && isNeutralPath) {
-            navigate('/saas');
-          }
-        } else {
-          setCurrentUserData(null);
-          setTenantData(null);
+        if (userDoc.exists()) {
+          // Usuário já vinculado via UID
+          finalUserData = convertTimestamps(userDoc.data()) as User;
+        } else if (firebaseUser.email) {
           try {
-            await authService.purgeAllCachesAndStorages();
+            // 2. Se não encontrou pelo UID, tentar encontrar por EMAIL (Pré-cadastro ou alterado)
+            const searchEmail = firebaseUser.email.toLowerCase().trim();
+            const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', searchEmail), limit(1));
+            let usersByEmailSnap = await getDocs(usersByEmailQuery);
+            
+            if (usersByEmailSnap.empty && searchEmail !== firebaseUser.email) {
+              const exactQuery = query(collection(db, 'users'), where('email', '==', firebaseUser.email), limit(1));
+              usersByEmailSnap = await getDocs(exactQuery);
+            }
+            
+            if (!usersByEmailSnap.empty) {
+              // Encontrou um pré-cadastro ou cadastro coincidente por email
+              const existingUserDoc = usersByEmailSnap.docs[0];
+              const existingUserData = existingUserDoc.data() as User;
+              
+              // Vincular o UID do Auth ao documento do Firestore (Convertendo random ID p/ UID)
+              finalUserData = {
+                ...existingUserData,
+                id: firebaseUser.uid,
+                updatedAt: new Date()
+              } as any;
+
+              // Criar novo documento com UID e remover o antigo
+              await setDoc(userDocRef, finalUserData);
+              if (existingUserDoc.id !== firebaseUser.uid) {
+                await deleteDoc(existingUserDoc.ref);
+              }
+            }
+          } catch (queryErr) {
+            console.warn("Could not query user by email from client side (rules restriction):", queryErr);
+          }
+        }
+
+        // Se após as buscas o usuário ainda não possuir perfil no Firestore, nós auto-criamos
+        // um perfil padrão (CUSTOMER se for no marketplace, OWNER se for no painel) associado ao tenant correspondente
+        if (!finalUserData && firebaseUser.email) {
+          const isMaster = firebaseUser.email.toLowerCase() === 'financeirorenanuk@gmail.com';
+          const isMarketplaceRoute = window.location.pathname.startsWith('/marketplace') || window.location.hash.startsWith('#/marketplace');
+          
+          let role: UserRole = isMaster ? 'SAAS_ADMIN' : (isMarketplaceRoute ? 'CUSTOMER' : 'OWNER');
+          let tenantId = isMaster ? '' : (isMarketplaceRoute ? 'GLOBAL' : 'HCL1177LRQVPEKCTYRAHU7IGBQ42');
+          let defaultName = firebaseUser.displayName || firebaseUser.email.split('@')[0] || (isMarketplaceRoute ? 'Cliente' : 'Lojista');
+
+          // Verificar se é entregador cadastrado na coleção de couriers
+          try {
+            const courierQuery = query(collection(db, 'couriers'), where('email', '==', firebaseUser.email.toLowerCase().trim()), limit(1));
+            const courierSnap = await getDocs(courierQuery);
+            if (!courierSnap.empty) {
+              role = 'COURIER';
+              tenantId = courierSnap.docs[0].data().tenantId || 'HCL1177LRQVPEKCTYRAHU7IGBQ42';
+              defaultName = courierSnap.docs[0].data().name || defaultName;
+            }
+          } catch (courierQueryErr) {
+            console.warn("Could not query couriers by email from client side (rules restriction):", courierQueryErr);
+          }
+
+          let savedProfile: { name: string, phone: string } | null = null;
+          try {
+            const savedProfileStr = localStorage.getItem('marketplace_profile');
+            if (savedProfileStr) {
+              savedProfile = JSON.parse(savedProfileStr);
+            }
           } catch (e) {
-            console.warn(e);
+            console.warn("Could not read saved profile from localStorage:", e);
           }
+
+          const newUser: User = {
+            id: firebaseUser.uid,
+            name: savedProfile?.name || defaultName,
+            email: firebaseUser.email,
+            phone: savedProfile?.phone || '',
+            role: role,
+            tenantId: tenantId,
+            permissions: isMaster 
+              ? ALL_MODULES.map(m => m.id) 
+              : ['dashboard_view', 'orders_view', 'menu_view', 'stock_view', 'finance_view', 'couriers_view', 'users_view', 'integrations_view', 'marketing_view', 'reports_view'] as any,
+            status: 'online',
+            active: true,
+            createdAt: new Date()
+          };
+
+          await setDoc(userDocRef, newUser);
+          finalUserData = newUser;
         }
-      } catch (authProcErr: any) {
-        console.error("Resilient Auth Error: Failed resolving real-time auth details, recovering via cached session:", authProcErr);
+
+        if (finalUserData) {
+          // Se for o gestor/admin principal (financeirorenanuk@gmail.com ou SAAS_ADMIN), garante vínculo a 'HCL1177LRQVPEKCTYRAHU7IGBQ42' (Viva la fome) e o cargo SAAS_ADMIN
+          const isMasterUser = firebaseUser.email.toLowerCase() === 'financeirorenanuk@gmail.com' || finalUserData.role === 'SAAS_ADMIN';
+          if (isMasterUser) {
+            let needsUpdate = false;
+            const updatePayload: any = {};
+            
+            if (finalUserData.role !== 'SAAS_ADMIN') {
+              finalUserData.role = 'SAAS_ADMIN';
+              updatePayload.role = 'SAAS_ADMIN';
+              needsUpdate = true;
+            }
+            if (finalUserData.tenantId !== 'HCL1177LRQVPEKCTYRAHU7IGBQ42') {
+              finalUserData.tenantId = 'HCL1177LRQVPEKCTYRAHU7IGBQ42';
+              updatePayload.tenantId = 'HCL1177LRQVPEKCTYRAHU7IGBQ42';
+              needsUpdate = true;
+            }
+            
+            if (needsUpdate) {
+              try {
+                await setDoc(userDocRef, updatePayload, { merge: true });
+              } catch (fsErr) {
+                console.error("Erro ao sincronizar perfil do master no Firestore:", fsErr);
+              }
+            }
+          }
+
+          // Subscreve em tempo real a esse documento para que qualquer alteração de permissão,
+          // cargo ou status feita pelo lojista ou admin do SaaS seja refletida instantaneamente!
+          userUnsubscribe = onSnapshot(userDocRef, (snap) => {
+            if (snap.exists()) {
+              const liveUserData = convertTimestamps(snap.data()) as User;
+              
+              // Garante que o status do usuário seja online no Firestore
+              if (liveUserData.status !== 'online') {
+                liveUserData.status = 'online';
+                setDoc(userDocRef, { status: 'online', updatedAt: new Date() }, { merge: true }).catch(() => {});
+              }
+
+              setCurrentUserData(liveUserData);
+              try {
+                localStorage.setItem('kitchenflow_cached_user', JSON.stringify(liveUserData));
+              } catch (e) {
+                console.warn(e);
+              }
+
+              // Se o usuário pertence a um tenant, buscar dados do tenant
+              if (liveUserData.tenantId && liveUserData.tenantId !== 'GLOBAL') {
+                getDoc(doc(db, 'tenants', liveUserData.tenantId)).then((tenantDoc) => {
+                  if (tenantDoc.exists()) {
+                    const tData = convertTimestamps(tenantDoc.data()) as Tenant;
+                    setTenantData(tData);
+                    try {
+                      localStorage.setItem('kitchenflow_cached_tenant_data', JSON.stringify(tData));
+                    } catch (e) {
+                      console.warn(e);
+                    }
+                  }
+                }).catch((err: any) => {
+                  if (err.message?.includes("Quota exceeded")) {
+                    console.warn("Cota do Firebase atingida. Usando dados básicos do tenant.");
+                    const offlineTenant = { id: liveUserData.tenantId, name: 'Restaurante (Modo Offline)', plan: 'free' } as any;
+                    setTenantData(offlineTenant);
+                    try {
+                      localStorage.setItem('kitchenflow_cached_tenant_data', JSON.stringify(offlineTenant));
+                    } catch (e) {
+                      console.warn(e);
+                    }
+                  }
+                });
+              }
+            }
+          }, (error) => {
+            handleFirestoreError(error, OperationType.GET, `users/${firebaseUser.uid}`);
+          });
+        }
+        
+        // Auto-redirect for specific roles if on a neutral path
+        const isNeutralPath = window.location.pathname === '/' && (!window.location.hash || window.location.hash === '#/');
+        const finalUserPerms = getUserPermissions(finalUserData);
+        const hasKDSKitchenOnly = finalUserPerms.includes('kds_kitchen_only_view');
+        const isKDSOnlyUserLocal = finalUserData && 
+          (hasKDSKitchenOnly || finalUserData.role === 'KDS') && 
+          !finalUserPerms.includes('admin_settings_manage') && 
+          !finalUserPerms.includes('finance_view') &&
+          !finalUserPerms.includes('pos_access') &&
+          !finalUserPerms.includes('tables_manage');
+
+        if (isKDSOnlyUserLocal) {
+          setActiveTab('kds-kitchen-only');
+        } else if (finalUserData?.role === 'COURIER' && isNeutralPath) {
+          setActiveTab('courier-app');
+        } else if (finalUserData?.role === 'SAAS_ADMIN' && isNeutralPath) {
+          navigate('/saas');
+        }
+      } else {
+        setCurrentUserData(null);
+        setTenantData(null);
         try {
-          const cachedUserStr = localStorage.getItem('kitchenflow_cached_user');
-          if (cachedUserStr) {
-            const cachedUserData = JSON.parse(cachedUserStr);
-            setCurrentUserData(cachedUserData);
-            console.log("Resilient Auth: Restored cached user successfully:", cachedUserData);
-          }
-          const cachedTenantStr = localStorage.getItem('kitchenflow_cached_tenant_data');
-          if (cachedTenantStr) {
-            const cachedTenantData = JSON.parse(cachedTenantStr);
-            setTenantData(cachedTenantData);
-            console.log("Resilient Auth: Restored cached tenant successfully:", cachedTenantData);
-          }
-        } catch (storageErr) {
-          console.warn("Resilient Auth: Could not read cached user/tenant storage:", storageErr);
+          await authService.purgeAllCachesAndStorages();
+        } catch (e) {
+          console.warn(e);
         }
-      } finally {
-        setAuthLoading(false);
       }
+      setAuthLoading(false);
     });
 
     // 3. Gerenciamento de Sessão Durável (Banco de Dados Fonte de Verdade)
