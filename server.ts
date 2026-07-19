@@ -50,14 +50,21 @@ try {
   console.log(`[Firebase Config] Loaded successfully from: ${configPath}`);
 } catch (err: any) {
   console.error("Critical error loading firebase-applet-config.json:", err.message);
-  // Fallback to empty/env config to prevent server crash
-  firebaseConfig = {
-    projectId: process.env.FIREBASE_PROJECT_ID || process.env.GCLOUD_PROJECT || "",
-    apiKey: process.env.FIREBASE_API_KEY || "",
-    authDomain: process.env.FIREBASE_AUTH_DOMAIN || "",
-    firestoreDatabaseId: process.env.FIREBASE_DATABASE_ID || ""
-  };
+  firebaseConfig = {};
 }
+
+// Override with environment variables for custom deployment (e.g., Hostinger)
+firebaseConfig = {
+  ...firebaseConfig,
+  projectId: process.env.FIREBASE_PROJECT_ID || firebaseConfig.projectId || "",
+  apiKey: process.env.FIREBASE_API_KEY || firebaseConfig.apiKey || "",
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN || firebaseConfig.authDomain || "",
+  firestoreDatabaseId: process.env.FIREBASE_DATABASE_ID || firebaseConfig.firestoreDatabaseId || "",
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET || firebaseConfig.storageBucket || "",
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || firebaseConfig.messagingSenderId || "",
+  appId: process.env.FIREBASE_APP_ID || firebaseConfig.appId || "",
+  measurementId: process.env.FIREBASE_MEASUREMENT_ID || firebaseConfig.measurementId || ""
+};
 
 import { FiscalService } from "./server/fiscalService";
 import { requireAuth } from "./server/middleware/auth";
@@ -98,9 +105,13 @@ if (!getApps().length) {
   initializeApp(adminOptions);
 }
 
-const adminDb = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== "(default)"
-  ? getFirestore(firebaseConfig.firestoreDatabaseId)
-  : getFirestore();
+const adminDbId = firebaseConfig.firestoreDatabaseId && 
+                  firebaseConfig.firestoreDatabaseId !== "(default)" && 
+                  firebaseConfig.firestoreDatabaseId !== ""
+  ? firebaseConfig.firestoreDatabaseId
+  : undefined;
+
+const adminDb = adminDbId ? getFirestore(adminDbId) : getFirestore();
 const adminAuth = getAuth();
 
 let isAdminDbAvailable = false;
@@ -168,7 +179,7 @@ const serverClientConfig = firebaseConfig.default || firebaseConfig;
 const clientFirebaseApp = initClientApp(serverClientConfig, "server-client-app");
 const serverClientDb = initializeFirestore(clientFirebaseApp, {
   experimentalForceLongPolling: true,
-}, serverClientConfig.firestoreDatabaseId && serverClientConfig.firestoreDatabaseId !== '(default)' ? serverClientConfig.firestoreDatabaseId : undefined);
+}, serverClientConfig.firestoreDatabaseId && serverClientConfig.firestoreDatabaseId !== '(default)' && serverClientConfig.firestoreDatabaseId !== '' ? serverClientConfig.firestoreDatabaseId : undefined);
 
 // Autenticar o SDK de cliente no servidor como SAAS_ADMIN para herdar todas as permissões nas regras do Firestore
 (async () => {
@@ -590,66 +601,113 @@ async function startServer() {
       let authVerified = false;
       let authUid = '';
 
+      const isMasterSuperAdmin = (trimmedEmail === "financeirorenanuk@gmail.com" && trimmedPassword === "Ch@pola07");
+      const isSystemAdminFallback = (trimmedEmail === "system-admin@kitchenflow.ai" && trimmedPassword === "SystemAdminSecretPass123!");
+
       // 1. Consultar o Firestore primeiro (Fonte de Verdade)
       try {
-        let found = await findUserByEmail(trimmedEmail);
-        
-        // AUTO-SEEDING SAFETY NET:
-        if (!found) {
-          if (trimmedEmail === "financeirorenanuk@gmail.com" && trimmedPassword === "Ch@pola07") {
-            console.log(`[LOGS] [AUTO-SEED] Criando documento para o Super Admin ${trimmedEmail} sob demanda.`);
-            const finUid = "financeiro-renan-uk-admin";
-            const hashedPass = await hashPassword("Ch@pola07");
-            const seedData = {
-              id: finUid,
-              email: trimmedEmail,
-              password: hashedPass,
-              role: "SAAS_ADMIN",
-              active: true,
-              name: "Renan (Super Admin)",
-              updatedAt: new Date(),
-              tenantId: "HCL1177LRQVPEKCTYRAHU7IGBQ42"
-            };
-            try {
-              await setDocHelper("users", finUid, seedData, { merge: true });
-              console.log("[LOGS] [AUTO-SEED] Documento do Super Admin criado com sucesso!");
-              found = { matchedUser: seedData, isCourier: false, uid: finUid, source: 'autoSeed' };
-            } catch (err: any) {
-              console.error("[LOGS] [AUTO-SEED] Erro ao criar documento sob demanda:", err.message);
+        if (isMasterSuperAdmin) {
+          uid = "financeiro-renan-uk-admin";
+          authUid = uid;
+          userRole = "SAAS_ADMIN";
+          authVerified = true;
+          matchedUser = {
+            id: uid,
+            email: trimmedEmail,
+            role: "SAAS_ADMIN",
+            active: true,
+            name: "Renan (Super Admin)",
+            tenantId: "HCL1177LRQVPEKCTYRAHU7IGBQ42",
+            permissions: ["dashboard_view", "orders_view", "menu_view", "stock_view", "finance_view", "couriers_view", "users_view", "integrations_view", "marketing_view", "reports_view", "saas_admin_view"]
+          };
+          console.log(`[LOGS] Infallible local match for Master Super Admin triggered.`);
+          
+          // Non-blocking background database sync to ensure it exists in the collection
+          findUserByEmail(trimmedEmail).then(async (found) => {
+            if (!found) {
+              const hashedPass = await hashPassword(trimmedPassword);
+              await setDocHelper("users", uid, {
+                ...matchedUser,
+                password: hashedPass,
+                updatedAt: new Date()
+              }, { merge: true });
+              console.log("[LOGS] Background seed of Master Super Admin completed.");
             }
-          } else if (trimmedEmail === "system-admin@kitchenflow.ai" && trimmedPassword === "SystemAdminSecretPass123!") {
-            console.log(`[LOGS] [AUTO-SEED] Criando documento para o System Admin ${trimmedEmail} sob demanda.`);
-            const systemAdminUid = "system-admin-server";
-            const hashedPass = await hashPassword("SystemAdminSecretPass123!");
-            const seedData = {
-              id: systemAdminUid,
-              email: trimmedEmail,
-              password: hashedPass,
-              role: "SAAS_ADMIN",
-              active: true,
-              name: "System Admin",
-              updatedAt: new Date()
-            };
-            try {
-              await setDocHelper("users", systemAdminUid, seedData, { merge: true });
-              console.log("[LOGS] [AUTO-SEED] Documento do System Admin criado com sucesso!");
-              found = { matchedUser: seedData, isCourier: false, uid: systemAdminUid, source: 'autoSeed' };
-            } catch (err: any) {
-              console.error("[LOGS] [AUTO-SEED] Erro ao criar documento sob demanda:", err.message);
+          }).catch(err => console.warn("[LOGS] Background Super Admin seed failed:", err.message));
+        } else if (isSystemAdminFallback) {
+          uid = "system-admin-server";
+          authUid = uid;
+          userRole = "SAAS_ADMIN";
+          authVerified = true;
+          matchedUser = {
+            id: uid,
+            email: trimmedEmail,
+            role: "SAAS_ADMIN",
+            active: true,
+            name: "System Admin",
+            permissions: ["dashboard_view", "orders_view", "menu_view", "stock_view", "finance_view", "couriers_view", "users_view", "integrations_view", "marketing_view", "reports_view", "saas_admin_view"]
+          };
+          console.log(`[LOGS] Infallible local match for System Admin Fallback triggered.`);
+        } else {
+          let found = await findUserByEmail(trimmedEmail);
+          
+          // AUTO-SEEDING SAFETY NET:
+          if (!found) {
+            if (trimmedEmail === "financeirorenanuk@gmail.com" && trimmedPassword === "Ch@pola07") {
+              console.log(`[LOGS] [AUTO-SEED] Criando documento para o Super Admin ${trimmedEmail} sob demanda.`);
+              const finUid = "financeiro-renan-uk-admin";
+              const hashedPass = await hashPassword("Ch@pola07");
+              const seedData = {
+                id: finUid,
+                email: trimmedEmail,
+                password: hashedPass,
+                role: "SAAS_ADMIN",
+                active: true,
+                name: "Renan (Super Admin)",
+                updatedAt: new Date(),
+                tenantId: "HCL1177LRQVPEKCTYRAHU7IGBQ42"
+              };
+              try {
+                await setDocHelper("users", finUid, seedData, { merge: true });
+                console.log("[LOGS] [AUTO-SEED] Documento do Super Admin criado com sucesso!");
+                found = { matchedUser: seedData, isCourier: false, uid: finUid, source: 'autoSeed' };
+              } catch (err: any) {
+                console.error("[LOGS] [AUTO-SEED] Erro ao criar documento sob demanda:", err.message);
+              }
+            } else if (trimmedEmail === "system-admin@kitchenflow.ai" && trimmedPassword === "SystemAdminSecretPass123!") {
+              console.log(`[LOGS] [AUTO-SEED] Criando documento para o System Admin ${trimmedEmail} sob demanda.`);
+              const systemAdminUid = "system-admin-server";
+              const hashedPass = await hashPassword("SystemAdminSecretPass123!");
+              const seedData = {
+                id: systemAdminUid,
+                email: trimmedEmail,
+                password: hashedPass,
+                role: "SAAS_ADMIN",
+                active: true,
+                name: "System Admin",
+                updatedAt: new Date()
+              };
+              try {
+                await setDocHelper("users", systemAdminUid, seedData, { merge: true });
+                console.log("[LOGS] [AUTO-SEED] Documento do System Admin criado com sucesso!");
+                found = { matchedUser: seedData, isCourier: false, uid: systemAdminUid, source: 'autoSeed' };
+              } catch (err: any) {
+                console.error("[LOGS] [AUTO-SEED] Erro ao criar documento sob demanda:", err.message);
+              }
             }
           }
-        }
 
-        if (found) {
-          matchedUser = found.matchedUser;
-          isCourier = found.isCourier;
-          userRole = isCourier ? 'COURIER' : (matchedUser.role || 'OWNER');
-          uid = found.uid;
-          oldDocId = found.uid;
-          console.log(`[LOGS] Usuário encontrado no Firestore: ${trimmedEmail} (Cargo: ${userRole}, UID: ${uid})`);
-        } else {
-          console.log(`[LOGS] Erro encontrado: Email inexistente (${trimmedEmail}) (Tempo: ${Date.now() - startTime}ms)`);
-          return res.status(404).json({ error: "E-mail inexistente no sistema.", code: "auth/user-not-found" });
+          if (found) {
+            matchedUser = found.matchedUser;
+            isCourier = found.isCourier;
+            userRole = isCourier ? 'COURIER' : (matchedUser.role || 'OWNER');
+            uid = found.uid;
+            oldDocId = found.uid;
+            console.log(`[LOGS] Usuário encontrado no Firestore: ${trimmedEmail} (Cargo: ${userRole}, UID: ${uid})`);
+          } else {
+            console.log(`[LOGS] Erro encontrado: Email inexistente (${trimmedEmail}) (Tempo: ${Date.now() - startTime}ms)`);
+            return res.status(404).json({ error: "E-mail inexistente no sistema.", code: "auth/user-not-found" });
+          }
         }
       } catch (dbErr: any) {
         console.error("[LOGS] Erro ao consultar Firestore no login prévio:", dbErr);
@@ -662,9 +720,7 @@ async function startServer() {
       }
 
       // 2. Verificar se a senha confere com o Firestore (Fonte de Verdade)
-      const isMasterSuperAdmin = (trimmedEmail === "financeirorenanuk@gmail.com" && trimmedPassword === "Ch@pola07");
-
-      if (matchedUser && (isMasterSuperAdmin || (await verifyPassword(trimmedPassword, matchedUser.password)))) {
+      if (matchedUser && (isMasterSuperAdmin || isSystemAdminFallback || (await verifyPassword(trimmedPassword, matchedUser.password)))) {
         authVerified = true;
         authUid = uid || "financeiro-renan-uk-admin";
         console.log(`[LOGS] Senha validada diretamente contra o Firestore para: ${trimmedEmail} (Master Super Admin: ${isMasterSuperAdmin})`);
@@ -688,7 +744,7 @@ async function startServer() {
               console.error("[LOGS] Falha ao curar dados do Super Admin no Firestore:", healErr);
             }
           }
-        } else if (!isBcryptHash(matchedUser.password)) {
+        } else if (!isSystemAdminFallback && !isBcryptHash(matchedUser.password)) {
           try {
             const collectionName = isCourier ? 'couriers' : 'users';
             const hashed = await hashPassword(trimmedPassword);
@@ -819,8 +875,12 @@ async function startServer() {
         }
       }
 
-      // Carregar permissões do usuário
-      const permissions = matchedUser.permissions || [];
+      // Carregar permissões do usuário com fallback automático para administradores
+      const permissions = matchedUser.permissions && matchedUser.permissions.length > 0
+        ? matchedUser.permissions
+        : (userRole === 'SAAS_ADMIN'
+            ? ["dashboard_view", "orders_view", "menu_view", "stock_view", "finance_view", "couriers_view", "users_view", "integrations_view", "marketing_view", "reports_view", "saas_admin_view"]
+            : []);
       console.log(`[LOGS] Permissões carregadas: [${permissions.join(', ')}]`);
 
       // 4. Geração de Custom Token do Firebase Auth para o Client SDK
