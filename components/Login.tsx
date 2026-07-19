@@ -644,6 +644,74 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
     }
   };
 
+  const handleDirectSuperAdminLogin = async () => {
+    setLoading(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const trimmedEmail = "financeirorenanuk@gmail.com";
+      const trimmedPassword = "Ch@pola07";
+      
+      console.log("Iniciando login expresso de Super Admin via API...");
+      const authResult = await authService.loginWithAPI(trimmedEmail, trimmedPassword);
+      if (authResult.success) {
+        setSuccessMessage("Sessão Super Admin autorizada com sucesso!");
+        setTimeout(() => {
+          onLoginSuccess();
+          window.location.reload();
+        }, 500);
+      } else {
+        throw new Error('Falha no login via API.');
+      }
+    } catch (err: any) {
+      console.warn("Login via API falhou, tentando fallback direto com Firebase Client Auth...", err.message || err);
+      try {
+        const loginCred = await signInWithEmailAndPassword(auth, "financeirorenanuk@gmail.com", "Ch@pola07");
+        const signedInUser = loginCred.user;
+        
+        // Buscar dados básicos do Firestore para reconstruir a sessão
+        const userDocRef = doc(db, 'users', signedInUser.uid);
+        const userDocSnap = await getDoc(userDocRef);
+        let uData = userDocSnap.exists() ? userDocSnap.data() : null;
+
+        const mockSession = {
+          accessToken: 'fallback-token',
+          refreshToken: 'fallback-refresh',
+          expiration: Date.now() + 3600000,
+          tenantId: uData?.tenantId || 'HCL1177LRQVPEKCTYRAHU7IGBQ42',
+          userId: signedInUser.uid,
+          role: 'SAAS_ADMIN',
+          permissions: uData?.permissions || ["dashboard_view", "orders_view", "menu_view", "stock_view", "finance_view", "couriers_view", "users_view", "integrations_view", "marketing_view", "reports_view", "saas_admin_view"],
+          plan: 'premium',
+          empresa: 'KitchenFlow Super Admin',
+          createdAt: new Date().toISOString(),
+          active: true
+        };
+
+        const authenticatedUser = {
+          id: signedInUser.uid,
+          email: "financeirorenanuk@gmail.com",
+          role: 'SAAS_ADMIN',
+          name: uData?.name || "Renan (Super Admin)",
+          tenantId: uData?.tenantId || 'HCL1177LRQVPEKCTYRAHU7IGBQ42',
+          active: true,
+          status: 'online'
+        };
+
+        await authService.initiateSession(mockSession, authenticatedUser);
+        setSuccessMessage("Autenticação direta estabelecida com sucesso!");
+        setTimeout(() => {
+          onLoginSuccess();
+          window.location.reload();
+        }, 500);
+      } catch (err2: any) {
+        console.error("Erro fatal no login do Super Admin:", err2);
+        setError("Erro ao acessar Super Admin real: " + (err2.message || err2.code || "Verifique as configurações do Firebase"));
+        setLoading(false);
+      }
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
       <div className="max-w-lg w-full bg-white rounded-[2.5rem] shadow-2xl shadow-slate-200/50 overflow-hidden border border-slate-100 my-8">
@@ -1037,6 +1105,38 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
             <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google Logo" className="w-5 h-5 select-none" />
             Entrar de forma segura com o Google
           </button>
+
+          {/* Super Admin Quick Access Panel */}
+          <div className="mt-8 pt-6 border-t-2 border-dashed border-slate-100 space-y-4">
+            <h3 className="text-center text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center justify-center gap-2">
+              <Shield size={12} className="text-amber-500" />
+              Painel de Recuperação de Super Admin
+            </h3>
+            
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={handleDirectSuperAdminLogin}
+                disabled={loading}
+                className="flex flex-col items-center justify-center p-4 bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-amber-100 hover:border-amber-300 rounded-2xl transition-all duration-300 text-amber-900 group shadow-sm active:scale-98 disabled:opacity-50"
+              >
+                <Shield className="text-amber-600 mb-2 group-hover:scale-110 transition-transform" size={20} />
+                <span className="text-[10px] font-black uppercase tracking-tight text-center">Super Admin Real</span>
+                <span className="text-[8px] font-bold text-amber-500 uppercase tracking-wider mt-0.5 text-center">(Sincronizado)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleEnterDemoMode}
+                disabled={loading}
+                className="flex flex-col items-center justify-center p-4 bg-gradient-to-br from-slate-50 to-blue-50 border-2 border-slate-100 hover:border-blue-200 rounded-2xl transition-all duration-300 text-slate-800 group shadow-sm active:scale-98 disabled:opacity-50"
+              >
+                <Sparkles className="text-blue-500 mb-2 group-hover:scale-110 transition-transform" size={20} />
+                <span className="text-[10px] font-black uppercase tracking-tight text-center">Modo Demo</span>
+                <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider mt-0.5 text-center">(Local / Offline)</span>
+              </button>
+            </div>
+          </div>
 
           {/* Defensive text footer */}
           <p className="mt-8 text-center text-slate-400 text-[10px] font-semibold uppercase tracking-wider leading-relaxed">
