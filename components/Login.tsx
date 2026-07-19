@@ -110,7 +110,7 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
   };
 
   // States for Signup Roles
-  const [signupRole, setSignupRole] = useState<'CUSTOMER' | 'COURIER' | 'OWNER'>('CUSTOMER');
+  const [signupRole, setSignupRole] = useState<'CUSTOMER' | 'COURIER' | 'OWNER'>('OWNER');
   const [restaurantName, setRestaurantName] = useState('');
   const [tradeCategory, setTradeCategory] = useState('hamburgueria');
   const [vehicleType, setVehicleType] = useState<'bike' | 'moto' | 'car'>('moto');
@@ -122,6 +122,8 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
   React.useEffect(() => {
     if (isMarketplace) {
       setSignupRole('CUSTOMER');
+    } else {
+      setSignupRole('OWNER');
     }
   }, [isMarketplace]);
 
@@ -671,20 +673,7 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
             {mode === 'signup' && !isMarketplace && (
               <div className="space-y-3">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tipo de Acesso Requerido</label>
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setSignupRole('CUSTOMER')}
-                    className={`flex flex-col items-center justify-center p-3 rounded-2xl border-2 transition-all gap-1.5 ${
-                      signupRole === 'CUSTOMER'
-                        ? 'border-indigo-600 bg-indigo-50/50 text-indigo-700'
-                        : 'border-slate-100 bg-slate-50 text-slate-500 hover:border-slate-200'
-                    }`}
-                  >
-                    <User size={18} />
-                    <span className="text-[10px] font-black uppercase tracking-tight">Cliente</span>
-                  </button>
-
+                <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => setSignupRole('COURIER')}
