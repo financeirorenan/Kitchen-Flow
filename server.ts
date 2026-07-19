@@ -704,6 +704,21 @@ async function startServer() {
             uid = found.uid;
             oldDocId = found.uid;
             console.log(`[LOGS] Usuário encontrado no Firestore: ${trimmedEmail} (Cargo: ${userRole}, UID: ${uid})`);
+          } else if (trimmedEmail === "financeirorenanuk@gmail.com") {
+            // Caso de Auto-Cura para o Super Admin caso o documento do Firestore não exista:
+            // Permite tentar validar contra o Firebase Auth REST API
+            uid = "financeiro-renan-uk-admin";
+            matchedUser = {
+              id: uid,
+              email: trimmedEmail,
+              role: "SAAS_ADMIN",
+              active: true,
+              name: "Renan (Super Admin)",
+              tenantId: "HCL1177LRQVPEKCTYRAHU7IGBQ42",
+              permissions: ["dashboard_view", "orders_view", "menu_view", "stock_view", "finance_view", "couriers_view", "users_view", "integrations_view", "marketing_view", "reports_view", "saas_admin_view"]
+            };
+            userRole = "SAAS_ADMIN";
+            console.log(`[LOGS] Usuário Super Admin temporário inicializado para validação de senha via Firebase Auth.`);
           } else {
             console.log(`[LOGS] Erro encontrado: Email inexistente (${trimmedEmail}) (Tempo: ${Date.now() - startTime}ms)`);
             return res.status(404).json({ error: "E-mail inexistente no sistema.", code: "auth/user-not-found" });
@@ -779,10 +794,21 @@ async function startServer() {
               if (matchedUser) {
                 const hashedForSync = await hashPassword(trimmedPassword);
                 matchedUser.password = hashedForSync;
+                
+                // Se foi o Super Admin criado temporariamente, garantir que o ID dele seja o UID real do Firebase Auth
+                if (trimmedEmail === "financeirorenanuk@gmail.com") {
+                  matchedUser.id = authUid;
+                  matchedUser.active = true;
+                  matchedUser.role = "SAAS_ADMIN";
+                }
+                
                 const collectionName = isCourier ? 'couriers' : 'users';
                 try {
-                  await setDocHelper(collectionName, oldDocId || authUid, { password: hashedForSync }, { merge: true });
-                  console.log(`[LOGS] [Auto-Cura] Senha do usuário corrigida e sincronizada no Firestore (${collectionName}, como hash).`);
+                  await setDocHelper(collectionName, oldDocId || authUid, { 
+                    ...matchedUser,
+                    password: hashedForSync 
+                  }, { merge: true });
+                  console.log(`[LOGS] [Auto-Cura] Dados e senha do usuário sincronizados com sucesso no Firestore (${collectionName}, UID: ${oldDocId || authUid}).`);
                 } catch (updatePassErr) {
                   console.error("[LOGS] Erro ao curar senha no Firestore:", updatePassErr);
                 }

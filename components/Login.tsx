@@ -1106,38 +1106,6 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
             Entrar de forma segura com o Google
           </button>
 
-          {/* Super Admin Quick Access Panel */}
-          <div className="mt-8 pt-6 border-t-2 border-dashed border-slate-100 space-y-4">
-            <h3 className="text-center text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center justify-center gap-2">
-              <Shield size={12} className="text-amber-500" />
-              Painel de Recuperação de Super Admin
-            </h3>
-            
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={handleDirectSuperAdminLogin}
-                disabled={loading}
-                className="flex flex-col items-center justify-center p-4 bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-amber-100 hover:border-amber-300 rounded-2xl transition-all duration-300 text-amber-900 group shadow-sm active:scale-98 disabled:opacity-50"
-              >
-                <Shield className="text-amber-600 mb-2 group-hover:scale-110 transition-transform" size={20} />
-                <span className="text-[10px] font-black uppercase tracking-tight text-center">Super Admin Real</span>
-                <span className="text-[8px] font-bold text-amber-500 uppercase tracking-wider mt-0.5 text-center">(Sincronizado)</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleEnterDemoMode}
-                disabled={loading}
-                className="flex flex-col items-center justify-center p-4 bg-gradient-to-br from-slate-50 to-blue-50 border-2 border-slate-100 hover:border-blue-200 rounded-2xl transition-all duration-300 text-slate-800 group shadow-sm active:scale-98 disabled:opacity-50"
-              >
-                <Sparkles className="text-blue-500 mb-2 group-hover:scale-110 transition-transform" size={20} />
-                <span className="text-[10px] font-black uppercase tracking-tight text-center">Modo Demo</span>
-                <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider mt-0.5 text-center">(Local / Offline)</span>
-              </button>
-            </div>
-          </div>
-
           {/* Defensive text footer */}
           <p className="mt-8 text-center text-slate-400 text-[10px] font-semibold uppercase tracking-wider leading-relaxed">
             Sessões monitoradas e registradas em auditoria.<br />
