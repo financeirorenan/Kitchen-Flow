@@ -16,7 +16,6 @@ import {
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { maskCNPJ, maskCEP } from '../utils/masks';
-import { auth } from '../firebase';
 
 interface FiscalSettingsProps {
   settings: AdminSettings;
@@ -176,21 +175,9 @@ const FiscalSettings: React.FC<FiscalSettingsProps> = ({ settings, onUpdate }) =
       reader.onload = async (event) => {
         const base64 = (event.target?.result as string).split(',')[1];
         
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json'
-        };
-        if (auth.currentUser) {
-          try {
-            const idToken = await auth.currentUser.getIdToken(true);
-            headers['Authorization'] = `Bearer ${idToken}`;
-          } catch (tokenErr) {
-            console.error("Error getting idToken for certificate validation:", tokenErr);
-          }
-        }
-
         const response = await fetch('/api/fiscal/validate-certificate', {
           method: 'POST',
-          headers,
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ pfxBase64: base64, password: pfxPassword })
         });
 

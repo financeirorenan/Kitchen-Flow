@@ -145,7 +145,18 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<string, Permission[]> = {
   STOCK_ANALYST: ['dashboard_view', 'inventory_edit', 'cmv_analysis'],
 };
 
-export const INITIAL_USERS: User[] = [];
+export const INITIAL_USERS: User[] = [
+  { id: 'u1', name: 'Julia Silva', email: 'julia@kitchenflowai.com', role: 'ADMIN', status: 'online', permissions: ROLE_DEFAULT_PERMISSIONS.ADMIN, createdAt: new Date('2024-01-10'), active: true },
+  { id: 'u2', name: 'Carlos Santos', email: 'carlos@kitchenflowai.com', role: 'MANAGER', status: 'online', permissions: ROLE_DEFAULT_PERMISSIONS.MANAGER, createdAt: new Date('2024-01-15'), active: true },
+  { id: 'u3', name: 'Ricardo Chef', email: 'ricardo@kitchenflowai.com', role: 'CHEF', status: 'offline', permissions: ROLE_DEFAULT_PERMISSIONS.CHEF, createdAt: new Date('2024-02-01'), active: true },
+  { id: 'u4', name: 'Maria Garçom', email: 'maria@kitchenflowai.com', role: 'WAITER', status: 'online', permissions: ROLE_DEFAULT_PERMISSIONS.WAITER, createdAt: new Date('2024-02-10'), active: true },
+  { id: 'u5', name: 'Paulo Caixa', email: 'paulo@kitchenflowai.com', role: 'CASHIER', status: 'offline', permissions: ROLE_DEFAULT_PERMISSIONS.CASHIER, createdAt: new Date('2024-02-15'), active: true },
+];
 
-export const INITIAL_AUDIT_LOGS: AuditLog[] = [];
-
+export const INITIAL_AUDIT_LOGS: AuditLog[] = [
+  { id: '1', tenantId: 't1', userId: 'u1', userName: 'Julia Silva', userRole: 'ADMIN', action: 'LOGIN', description: 'Realizou login no sistema', timestamp: new Date(Date.now() - 1000 * 60 * 15) },
+  { id: '2', tenantId: 't1', userId: 'u5', userName: 'Paulo Caixa', userRole: 'CASHIER', action: 'VENDA', description: 'Finalizou pedido #34a1 (R$ 142.50)', timestamp: new Date(Date.now() - 1000 * 60 * 45) },
+  { id: '3', tenantId: 't1', userId: 'u2', userName: 'Carlos Santos', userRole: 'MANAGER', action: 'ESTOQUE', description: 'Ajustou estoque de Cerveja IPA (+24 un)', timestamp: new Date(Date.now() - 1000 * 60 * 120) },
+  { id: '4', tenantId: 't1', userId: 'u3', userName: 'Ricardo Chef', userRole: 'CHEF', action: 'KDS', description: 'Marcou pedido #bc22 como PRONTO', timestamp: new Date(Date.now() - 1000 * 60 * 180) },
+  { id: '5', tenantId: 't1', userId: 'u4', userName: 'Maria Garçom', userRole: 'WAITER', action: 'MESA', description: 'Abriu mesa #04', timestamp: new Date(Date.now() - 1000 * 60 * 240) },
+];

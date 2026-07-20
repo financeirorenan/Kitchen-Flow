@@ -26,13 +26,11 @@ import IntelligentReports from './components/IntelligentReports';
 import LojistaCopilot from './components/LojistaCopilot';
 import { db as localDb } from './services/db';
 import { auth, db } from './firebase';
-import { authService } from './services/authService';
 import { handlePrintOrder } from './services/printService';
 import { onAuthStateChanged, signOut, User as FirebaseUser, updateEmail, updatePassword } from 'firebase/auth';
 import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, onSnapshot, query, where, orderBy, limit, addDoc, writeBatch } from 'firebase/firestore';
 import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import Login from './components/Login';
-import ErrorBoundary from './components/ErrorBoundary';
 import { UserProfileModal } from './components/UserProfileModal';
 import { PrintPreviewModal } from './components/PrintPreviewModal';
 import { 
@@ -212,8 +210,7 @@ const App: React.FC = () => {
     try {
       const demoUser = localStorage.getItem('kitchenflow_demo_user');
       if (demoUser) {
-        const uData = JSON.parse(demoUser).userData;
-        return { ...uData, tenantId: uData.role === 'SAAS_ADMIN' ? '' : (uData.tenantId || '') };
+        return JSON.parse(demoUser).userData;
       }
       const cached = localStorage.getItem('kitchenflow_cached_user') || localStorage.getItem('gastroai_cached_user');
       return cached ? JSON.parse(cached) : null;
@@ -389,86 +386,6 @@ const App: React.FC = () => {
   useEffect(() => {
     ordersRef.current = orders;
   }, [orders]);
-
-  // Hook de limpeza automática para os usuários mock (Julia, Carlos, Ricardo, Maria, Paulo)
-  // Remove permanentemente esses usuários tanto do Firestore quanto do IndexedDB local
-  useEffect(() => {
-    if (!user) return;
-    
-    const cleanupMockUsers = async () => {
-      try {
-        const mockEmails = [
-          'julia@kitchenflowai.com',
-          'carlos@kitchenflowai.com',
-          'ricardo@kitchenflowai.com',
-          'maria@kitchenflowai.com',
-          'paulo@kitchenflowai.com'
-        ];
-
-        // 1. Limpar da coleção 'users' no Firestore (nuvem)
-        for (const email of mockEmails) {
-          try {
-            const q = query(collection(db, 'users'), where('email', '==', email));
-            const snap = await getDocs(q);
-            if (!snap.empty) {
-              for (const docSnap of snap.docs) {
-                console.log(`[Database Cleanup] Deletando usuário da nuvem: ${docSnap.id} (${email})`);
-                await deleteDoc(doc(db, 'users', docSnap.id));
-              }
-            }
-          } catch (firestoreErr) {
-            // Silencia erros de permissão se o usuário logado não for admin/owner do tenant
-            console.debug(`[Database Cleanup] Sem permissão ou erro ao deletar usuário nuvem (${email}):`, firestoreErr);
-          }
-        }
-
-        // 2. Limpar da coleção 'couriers' no Firestore (nuvem)
-        for (const email of mockEmails) {
-          try {
-            const q = query(collection(db, 'couriers'), where('email', '==', email));
-            const snap = await getDocs(q);
-            if (!snap.empty) {
-              for (const docSnap of snap.docs) {
-                console.log(`[Database Cleanup] Deletando entregador da nuvem: ${docSnap.id} (${email})`);
-                await deleteDoc(doc(db, 'couriers', docSnap.id));
-              }
-            }
-          } catch (firestoreErr) {
-            console.debug(`[Database Cleanup] Sem permissão ou erro ao deletar entregador nuvem (${email}):`, firestoreErr);
-          }
-        }
-
-        // 3. Limpar do banco de dados IndexedDB local (Dexie)
-        try {
-          const localUsers = await localDb.users.toArray();
-          const localToDels = localUsers.filter(u => mockEmails.includes(u.email || ''));
-          if (localToDels.length > 0) {
-            for (const u of localToDels) {
-              console.log(`[Database Cleanup] Deletando usuário local (IndexedDB): ${u.id}`);
-              await localDb.users.delete(u.id);
-            }
-          }
-
-          const localCouriers = await localDb.couriers.toArray();
-          const localCouriersToDels = localCouriers.filter(c => mockEmails.includes(c.email || ''));
-          if (localCouriersToDels.length > 0) {
-            for (const c of localCouriersToDels) {
-              console.log(`[Database Cleanup] Deletando entregador local (IndexedDB): ${c.id}`);
-              await localDb.couriers.delete(c.id);
-            }
-          }
-        } catch (localErr) {
-          console.error("[Database Cleanup] Erro ao limpar banco local IndexedDB:", localErr);
-        }
-
-      } catch (err) {
-        console.error("Erro durante execução do cleanup de usuários mock:", err);
-      }
-    };
-
-    cleanupMockUsers();
-  }, [user]);
-
   const [tenantData, setTenantData] = useState<Tenant | null>(() => {
     try {
       const cached = localStorage.getItem('kitchenflow_cached_tenant_data') || localStorage.getItem('gastroai_cached_tenant_data');
@@ -509,10 +426,7 @@ const App: React.FC = () => {
   }, [tenantData, plans, orders]);
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [currentProject, setCurrentProject] = useState<'PLATFORM' | 'RESTAURANT' | 'MARKETPLACE' | 'COURIER' | 'WEBSITE'>(() => {
-    let path = typeof window !== 'undefined' ? window.location.pathname : '/';
-    if (typeof window !== 'undefined' && window.location.hash) {
-      path = window.location.hash.substring(1).split('?')[0];
-    }
+    const path = typeof window !== 'undefined' ? window.location.pathname : '/';
     if (path === '/' || path.startsWith('/site') || path.startsWith('/kitchenflow')) {
       return 'WEBSITE';
     }
@@ -565,7 +479,7 @@ const App: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const isSuperAdmin = (!!user && user?.email?.toLowerCase() === 'financeirorenanuk@gmail.com') || currentUserData?.role === 'SAAS_ADMIN';
+  const isSuperAdmin = user?.email?.toLowerCase() === 'financeirorenanuk@gmail.com' || currentUserData?.role === 'SAAS_ADMIN';
 
   const effectiveAllowedModules = isSuperAdmin ? undefined : (tenantData?.customModules || tenantData?.subscription?.allowedModules);
 
@@ -596,25 +510,9 @@ const App: React.FC = () => {
     if (saved) setMarketplaceProfile(JSON.parse(saved));
   }, []);
 
-  const handleUpdateMarketplaceProfile = async (data: {name: string, phone: string}) => {
+  const handleUpdateMarketplaceProfile = (data: {name: string, phone: string}) => {
     setMarketplaceProfile(data);
     localStorage.setItem('marketplace_profile', JSON.stringify(data));
-
-    // Sincronizar com o Firestore se o usuário estiver logado
-    if (auth.currentUser) {
-      try {
-        await updateDoc(doc(db, 'users', auth.currentUser.uid), {
-          name: data.name,
-          phone: data.phone,
-          updatedAt: new Date()
-        });
-        if (currentUserData) {
-          setCurrentUserData(prev => prev ? { ...prev, name: data.name, phone: data.phone } : null);
-        }
-      } catch (err) {
-        console.warn("Could not sync marketplace profile to firestore users collection:", err);
-      }
-    }
   };
 
   useEffect(() => {
@@ -654,63 +552,15 @@ const App: React.FC = () => {
           return;
         }
       }
-
-      // Extração inteligente de tenant ID da URL /lojista/:tenantId
-      const parts = path.split('/');
-      const segment = parts[2]; // ex: /lojista/HCL1177LRQVPEKCTYRAHU7IGBQ42 -> segment = "HCL1177LRQVPEKCTYRAHU7IGBQ42"
-      const standardTabs = [
-        'merchant-copilot', 'pos', 'orders', 'tables', 'kds', 'delivery', 
-        'menu', 'stock', 'financial', 'customers', 'users', 'reports', 'settings'
-      ];
-      if (segment && !standardTabs.includes(segment)) {
-        // SEGURANÇA MÁXIMA CONTRA INVASÃO DE URLS (TENANT ISOLATION BARRIER):
-        // Lojistas comuns que NÃO forem Super Admins estão estritamente travados em seu próprio tenantId.
-        let resolvedUserTenantId = currentUserData?.tenantId;
-        let resolvedIsSuperAdmin = isSuperAdmin;
-
-        if (!resolvedUserTenantId) {
-          try {
-            const cachedUserRaw = localStorage.getItem('kitchenflow_cached_user');
-            if (cachedUserRaw) {
-              const parsedCachedUser = JSON.parse(cachedUserRaw);
-              resolvedUserTenantId = parsedCachedUser?.tenantId;
-              resolvedIsSuperAdmin = parsedCachedUser?.email?.toLowerCase() === 'financeirorenanuk@gmail.com' || parsedCachedUser?.role === 'SAAS_ADMIN';
-            }
-          } catch {}
-        }
-
-        if (resolvedUserTenantId && !resolvedIsSuperAdmin && segment !== resolvedUserTenantId) {
-          console.warn(`[Segurança] Acesso negado ao tenant: ${segment}. Redirecionando lojista para o seu próprio tenant: ${resolvedUserTenantId}`);
-          navigate(`/lojista/${resolvedUserTenantId}`, { replace: true });
-          return;
-        }
-
-        if (viewingTenantId !== segment) {
-          setViewingTenantId(segment);
-          getDoc(doc(db, 'tenants', segment)).then((tDoc) => {
-            if (tDoc.exists()) {
-              const tData = tDoc.data();
-              setViewingTenantName(tData.name || null);
-              setViewingTenantLogo(tData.logoUrl || null);
-            }
-          }).catch(err => console.warn("Erro ao buscar dados do tenant da URL:", err));
-        }
-      } else if (!segment && currentUserData?.tenantId) {
-        // Redireciona de /lojista simples para /lojista/:tenantId para manter o ID visível na URL!
-        const targetTenantId = viewingTenantId || currentUserData.tenantId;
-        navigate(`/lojista/${targetTenantId}`, { replace: true });
-        return;
-      }
-
       if (currentProject !== 'RESTAURANT') setCurrentProject('RESTAURANT');
       if (activeTab === 'saas-admin' || activeTab === 'courier-app') setActiveTab('merchant-copilot');
     } else if (path.startsWith('/entregador')) {
       if (currentProject !== 'COURIER') setCurrentProject('COURIER');
       setActiveTab('courier-app');
-    } else if (path.startsWith('/marketplace') || path.startsWith('/perfil') || path.startsWith('/cardapio')) {
+    } else if (path.startsWith('/marketplace') || path.startsWith('/perfil')) {
       if (currentProject !== 'MARKETPLACE') setCurrentProject('MARKETPLACE');
     }
-  }, [location.pathname, isSuperAdmin, currentProject, activeTab, navigate, currentUserData, viewingTenantId]);
+  }, [location.pathname, isSuperAdmin, currentProject, activeTab, navigate, currentUserData]);
 
   useEffect(() => {
     (window as any).setActiveTab = (tab: string) => {
@@ -729,7 +579,7 @@ const App: React.FC = () => {
     setViewingTenantLogo(logo || null);
     setCurrentProject('RESTAURANT');
     setActiveTab('merchant-copilot');
-    navigate(`/lojista/${tenantId}`);
+    navigate('/lojista');
     
     if (currentUserData) {
       addLog(currentUserData.id, 'SAAS_AUDIT', `Super Admin iniciou suporte/visualização do parceiro: ${name || tenantId}`);
@@ -885,10 +735,6 @@ const App: React.FC = () => {
 
   // Carregar dados de todas as coleções do tenant quando mudar (Suporte SaaS / Multi-tenant)
   useEffect(() => {
-    const isDemoMode = !!localStorage.getItem('kitchenflow_demo_user');
-    if (isDemoMode) {
-      return;
-    }
     // Reset states when switching tenants to avoid leaking previous tenant data or placeholders
     setProducts([]);
     setTables([]);
@@ -1021,26 +867,19 @@ const App: React.FC = () => {
     let activeTenantName: string | null = null;
     let activeTenantLogo: string | null = null;
 
-    const hasAdminAccess = !!user && !!currentUserData && (isSuperAdmin || ['SAAS_ADMIN', 'OWNER', 'MANAGER', 'CASHIER', 'WAITER', 'KITCHEN', 'KDS'].includes(currentUserData.role));
-
     const collectionsToSync = [
       { name: 'products', setter: setProducts, syncType: 'snapshot', limit: 300 },
-      { name: 'diningTables', setter: setTables, syncType: 'snapshot' }
+      { name: 'diningTables', setter: setTables, syncType: 'snapshot' },
+      { name: 'customers', setter: setCustomers, syncType: 'snapshot', limit: 200 },
+      { name: 'orders', setter: setOrders, syncType: 'snapshot', recentOnly: true, limit: 150 },
+      { name: 'financialRecords', setter: setFinancialRecords, syncType: 'snapshot', limit: 100, recentOnly: true },
+      { name: 'rawMaterials', setter: setRawMaterials, syncType: 'snapshot', limit: 200 },
+      { name: 'bankAccounts', setter: setBankAccounts, syncType: 'snapshot', limit: 50 },
+      { name: 'couriers', setter: setCouriers, syncType: 'snapshot', limit: 50 },
+      { name: 'auditLogs', setter: setAuditLogs, syncType: 'snapshot', limit: 30 },
+      { name: 'users', setter: setUsers, syncType: 'snapshot', limit: 50 },
+      { name: 'cashClosings', setter: setCashClosings, syncType: 'snapshot', limit: 20 }
     ];
-
-    if (hasAdminAccess) {
-      collectionsToSync.push(
-        { name: 'customers', setter: setCustomers, syncType: 'snapshot', limit: 200 },
-        { name: 'orders', setter: setOrders, syncType: 'snapshot', recentOnly: true, limit: 150 },
-        { name: 'financialRecords', setter: setFinancialRecords, syncType: 'snapshot', limit: 100, recentOnly: true },
-        { name: 'rawMaterials', setter: setRawMaterials, syncType: 'snapshot', limit: 200 },
-        { name: 'bankAccounts', setter: setBankAccounts, syncType: 'snapshot', limit: 50 },
-        { name: 'couriers', setter: setCouriers, syncType: 'snapshot', limit: 50 },
-        { name: 'auditLogs', setter: setAuditLogs, syncType: 'snapshot', limit: 30 },
-        { name: 'users', setter: setUsers, syncType: 'snapshot', limit: 50 },
-        { name: 'cashClosings', setter: setCashClosings, syncType: 'snapshot', limit: 20 }
-      );
-    }
 
     const unsubscribes = collectionsToSync.map(col => {
       // Usar uma query simples de igualdade por tenantId para evitar dependência de índices compostos no Firestore
@@ -1309,7 +1148,7 @@ const App: React.FC = () => {
       plansUnsub();
       saasConfigUnsub();
     };
-  }, [currentUserData?.tenantId, currentUserData?.role, viewingTenantId, isSuperAdmin, user]);
+  }, [currentUserData?.tenantId, viewingTenantId, isSuperAdmin]);
 
   // Monitorar estado de autenticação
   useEffect(() => {
@@ -1339,78 +1178,59 @@ const App: React.FC = () => {
           // Usuário já vinculado via UID
           finalUserData = convertTimestamps(userDoc.data()) as User;
         } else if (firebaseUser.email) {
-          try {
-            // 2. Se não encontrou pelo UID, tentar encontrar por EMAIL (Pré-cadastro ou alterado)
-            const searchEmail = firebaseUser.email.toLowerCase().trim();
-            const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', searchEmail), limit(1));
-            let usersByEmailSnap = await getDocs(usersByEmailQuery);
+          // 2. Se não encontrou pelo UID, tentar encontrar por EMAIL (Pré-cadastro ou alterado)
+          const searchEmail = firebaseUser.email.toLowerCase().trim();
+          const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', searchEmail), limit(1));
+          let usersByEmailSnap = await getDocs(usersByEmailQuery);
+          
+          if (usersByEmailSnap.empty && searchEmail !== firebaseUser.email) {
+            const exactQuery = query(collection(db, 'users'), where('email', '==', firebaseUser.email), limit(1));
+            usersByEmailSnap = await getDocs(exactQuery);
+          }
+          
+          if (!usersByEmailSnap.empty) {
+            // Encontrou um pré-cadastro ou cadastro coincidente por email
+            const existingUserDoc = usersByEmailSnap.docs[0];
+            const existingUserData = existingUserDoc.data() as User;
             
-            if (usersByEmailSnap.empty && searchEmail !== firebaseUser.email) {
-              const exactQuery = query(collection(db, 'users'), where('email', '==', firebaseUser.email), limit(1));
-              usersByEmailSnap = await getDocs(exactQuery);
-            }
-            
-            if (!usersByEmailSnap.empty) {
-              // Encontrou um pré-cadastro ou cadastro coincidente por email
-              const existingUserDoc = usersByEmailSnap.docs[0];
-              const existingUserData = existingUserDoc.data() as User;
-              
-              // Vincular o UID do Auth ao documento do Firestore (Convertendo random ID p/ UID)
-              finalUserData = {
-                ...existingUserData,
-                id: firebaseUser.uid,
-                updatedAt: new Date()
-              } as any;
+            // Vincular o UID do Auth ao documento do Firestore (Convertendo random ID p/ UID)
+            finalUserData = {
+              ...existingUserData,
+              id: firebaseUser.uid,
+              updatedAt: new Date()
+            } as any;
 
-              // Criar novo documento com UID e remover o antigo
-              await setDoc(userDocRef, finalUserData);
-              if (existingUserDoc.id !== firebaseUser.uid) {
-                await deleteDoc(existingUserDoc.ref);
-              }
+            // Criar novo documento com UID e remover o antigo
+            await setDoc(userDocRef, finalUserData);
+            if (existingUserDoc.id !== firebaseUser.uid) {
+              await deleteDoc(existingUserDoc.ref);
             }
-          } catch (queryErr) {
-            console.warn("Could not query user by email from client side (rules restriction):", queryErr);
           }
         }
 
         // Se após as buscas o usuário ainda não possuir perfil no Firestore, nós auto-criamos
         // um perfil padrão (CUSTOMER se for no marketplace, OWNER se for no painel) associado ao tenant correspondente
         if (!finalUserData && firebaseUser.email) {
-          const isMaster = firebaseUser.email.toLowerCase() === 'financeirorenanuk@gmail.com';
-          const isMarketplaceRoute = window.location.pathname.startsWith('/marketplace') || window.location.hash.startsWith('#/marketplace');
+          const isMaster = firebaseUser.email === 'financeirorenanuk@gmail.com';
+          const isMarketplaceRoute = window.location.pathname.startsWith('/marketplace');
           
           let role: UserRole = isMaster ? 'SAAS_ADMIN' : (isMarketplaceRoute ? 'CUSTOMER' : 'OWNER');
           let tenantId = isMaster ? '' : (isMarketplaceRoute ? 'GLOBAL' : 'HCL1177LRQVPEKCTYRAHU7IGBQ42');
           let defaultName = firebaseUser.displayName || firebaseUser.email.split('@')[0] || (isMarketplaceRoute ? 'Cliente' : 'Lojista');
 
           // Verificar se é entregador cadastrado na coleção de couriers
-          try {
-            const courierQuery = query(collection(db, 'couriers'), where('email', '==', firebaseUser.email.toLowerCase().trim()), limit(1));
-            const courierSnap = await getDocs(courierQuery);
-            if (!courierSnap.empty) {
-              role = 'COURIER';
-              tenantId = courierSnap.docs[0].data().tenantId || 'HCL1177LRQVPEKCTYRAHU7IGBQ42';
-              defaultName = courierSnap.docs[0].data().name || defaultName;
-            }
-          } catch (courierQueryErr) {
-            console.warn("Could not query couriers by email from client side (rules restriction):", courierQueryErr);
-          }
-
-          let savedProfile: { name: string, phone: string } | null = null;
-          try {
-            const savedProfileStr = localStorage.getItem('marketplace_profile');
-            if (savedProfileStr) {
-              savedProfile = JSON.parse(savedProfileStr);
-            }
-          } catch (e) {
-            console.warn("Could not read saved profile from localStorage:", e);
+          const courierQuery = query(collection(db, 'couriers'), where('email', '==', firebaseUser.email.toLowerCase().trim()), limit(1));
+          const courierSnap = await getDocs(courierQuery);
+          if (!courierSnap.empty) {
+            role = 'COURIER';
+            tenantId = courierSnap.docs[0].data().tenantId || 'HCL1177LRQVPEKCTYRAHU7IGBQ42';
+            defaultName = courierSnap.docs[0].data().name || defaultName;
           }
 
           const newUser: User = {
             id: firebaseUser.uid,
-            name: savedProfile?.name || defaultName,
+            name: defaultName,
             email: firebaseUser.email,
-            phone: savedProfile?.phone || '',
             role: role,
             tenantId: tenantId,
             permissions: isMaster 
@@ -1427,7 +1247,7 @@ const App: React.FC = () => {
 
         if (finalUserData) {
           // Se for o gestor/admin principal (financeirorenanuk@gmail.com ou SAAS_ADMIN), garante vínculo a 'HCL1177LRQVPEKCTYRAHU7IGBQ42' (Viva la fome) e o cargo SAAS_ADMIN
-          const isMasterUser = firebaseUser.email.toLowerCase() === 'financeirorenanuk@gmail.com' || finalUserData.role === 'SAAS_ADMIN';
+          const isMasterUser = firebaseUser.email === 'financeirorenanuk@gmail.com' || finalUserData.role === 'SAAS_ADMIN';
           if (isMasterUser) {
             let needsUpdate = false;
             const updatePayload: any = {};
@@ -1503,7 +1323,7 @@ const App: React.FC = () => {
         }
         
         // Auto-redirect for specific roles if on a neutral path
-        const isNeutralPath = window.location.pathname === '/' && (!window.location.hash || window.location.hash === '#/');
+        const isNeutralPath = window.location.pathname === '/';
         const finalUserPerms = getUserPermissions(finalUserData);
         const hasKDSKitchenOnly = finalUserPerms.includes('kds_kitchen_only_view');
         const isKDSOnlyUserLocal = finalUserData && 
@@ -1521,72 +1341,23 @@ const App: React.FC = () => {
           navigate('/saas');
         }
       } else {
-        // Fallback: if Firebase Auth is not signed in client-side, but there is a valid, unexpired API session in localStorage,
-        // we can keep the user logged in using the cached data. This is crucial for environments where Client Auth is out of sync.
-        const sessionRaw = localStorage.getItem('kitchenflow_session');
-        const cachedUserRaw = localStorage.getItem('kitchenflow_cached_user');
-        let sessionBypassSuccess = false;
-        
-        if (sessionRaw && cachedUserRaw) {
-          try {
-            const parsedSession = JSON.parse(sessionRaw);
-            const parsedUser = JSON.parse(cachedUserRaw);
-            if (parsedSession && parsedSession.expiration > Date.now()) {
-              console.log('[App Auth] Maintaining live cloud session via API cache fallback (No client-side Firebase Auth).');
-              setCurrentUserData(parsedUser);
-              sessionBypassSuccess = true;
-            }
-          } catch (bypassErr) {
-            console.warn('[App Auth] Failed to restore cached API session:', bypassErr);
-          }
-        }
-
-        if (!sessionBypassSuccess) {
-          setCurrentUserData(null);
-          setTenantData(null);
-          try {
-            await authService.purgeAllCachesAndStorages();
-          } catch (e) {
-            console.warn(e);
-          }
+        setCurrentUserData(null);
+        setTenantData(null);
+        try {
+          localStorage.removeItem('kitchenflow_cached_user');
+          localStorage.removeItem('kitchenflow_cached_tenant_data');
+          localStorage.removeItem('gastroai_cached_user');
+          localStorage.removeItem('gastroai_cached_tenant_data');
+        } catch (e) {
+          console.warn(e);
         }
       }
       setAuthLoading(false);
     });
 
-    // 3. Gerenciamento de Sessão Durável (Banco de Dados Fonte de Verdade)
-    // Valida o status do usuário, do tenant e da assinatura a cada 30 segundos em background.
-    const sessionInterval = setInterval(async () => {
-      const sessionRaw = localStorage.getItem('kitchenflow_session');
-      if (!sessionRaw) return;
-
-      try {
-        const session = JSON.parse(sessionRaw);
-        if (!session || !session.refreshToken) return;
-
-        const isExpiringSoon = session.expiration - Date.now() < 300000; // Expira em menos de 5 min ou já expirou
-        if (isExpiringSoon) {
-          console.log('[Session Manager] Token expirando ou vencido, renovando contra o Banco de Dados via AuthService (Fonte de Verdade)...');
-          try {
-            await authService.refreshSession(session.refreshToken);
-            console.log('[Session Manager] Token de sessão renovado com sucesso via AuthService!');
-          } catch (refreshErr: any) {
-            console.error('[Session Manager] Erro crítico de validação contra o Banco de Dados:', refreshErr.message);
-            console.error('[Session Manager] Sessão inválida, usuário suspenso ou plano expirado. Expulsando usuário...');
-            await authService.logout();
-            showToast(refreshErr.message || 'Sua sessão expirou ou sua conta foi suspensa temporariamente.', 'error');
-            window.location.reload();
-          }
-        }
-      } catch (err) {
-        console.warn('[Session Manager] Falha no parseamento da sessão ativa:', err);
-      }
-    }, 30000);
-
     return () => {
       unsubscribe();
       if (userUnsubscribe) userUnsubscribe();
-      clearInterval(sessionInterval);
     };
   }, [navigate]);
 
@@ -1594,9 +1365,8 @@ const App: React.FC = () => {
   useEffect(() => {
     let isMounted = true;
     if (!user) return;
-    const isDemoMode = !!localStorage.getItem('kitchenflow_demo_user');
     // Se estivermos visualizando um tenant específico em nuvem, não carregamos o mock local para não poluir o estado
-    if (!isDemoMode && (viewingTenantId || (currentUserData && currentUserData.tenantId))) {
+    if (viewingTenantId || (currentUserData && currentUserData.tenantId)) {
       setIsDbLoaded(true);
       return;
     }
@@ -1629,7 +1399,7 @@ const App: React.FC = () => {
         }
 
         // CARREGA APENAS SE NÃO ESTIVERMOS NO MODO NUVEM/TENANT (Para evitar sobrescrita)
-        if ((isDemoMode || (!currentUserData?.tenantId && !viewingTenantId)) && isMounted) {
+        if (!currentUserData?.tenantId && !viewingTenantId && isMounted) {
           const [p, t, c, o, u, l, f, s, rm, cc, ba] = await Promise.all([
             localDb.products.toArray(),
             localDb.diningTables.toArray(),
@@ -2027,9 +1797,6 @@ const App: React.FC = () => {
 
   // Real-time Cloud Order Listener (Marketplace Integration)
   useEffect(() => {
-    const hasAdminAccess = !!user && !!currentUserData && (isSuperAdmin || ['SAAS_ADMIN', 'OWNER', 'MANAGER', 'CASHIER', 'WAITER', 'KITCHEN', 'KDS'].includes(currentUserData.role));
-    if (!hasAdminAccess) return;
-
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
     
     if (effectiveTenantId) {
@@ -2125,7 +1892,7 @@ const App: React.FC = () => {
 
       return () => unsubscribe();
     }
-  }, [currentUserData?.tenantId, currentUserData?.role, viewingTenantId, isSuperAdmin, adminSettings.autoAcceptOrders, globalDeliveryFee, user]);
+  }, [currentUserData?.tenantId, viewingTenantId, adminSettings.autoAcceptOrders, globalDeliveryFee]);
 
   const [mockWhatsAppNotify, setMockWhatsAppNotify] = useState<{title: string, msg: string} | null>(null);
 
@@ -2541,29 +2308,6 @@ const App: React.FC = () => {
         ...updates,
         updatedAt: new Date()
       }), { merge: true });
-
-      // Sincronizar de volta com a coleção 'users'
-      try {
-        const userDocRef = doc(db, 'users', id);
-        const userDocSnap = await getDoc(userDocRef);
-        if (userDocSnap.exists()) {
-          const userUpdates: any = {};
-          if (updates.name !== undefined) userUpdates.name = updates.name;
-          if (updates.email !== undefined) userUpdates.email = updates.email;
-          if (updates.active !== undefined) userUpdates.active = updates.active;
-          /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-          if ((updates as any).password !== undefined) userUpdates.password = (updates as any).password;
-          
-          if (Object.keys(userUpdates).length > 0) {
-            await setDoc(userDocRef, {
-              ...userUpdates,
-              updatedAt: new Date()
-            }, { merge: true });
-          }
-        }
-      } catch (syncErr) {
-        console.error("Erro ao sincronizar update de courier com users:", syncErr);
-      }
     } else {
       await localDb.couriers.update(id, updates);
       setCouriers(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
@@ -2906,15 +2650,17 @@ const App: React.FC = () => {
     if (effectiveTenantId) {
        if (newCourier.email) {
          const trimmedEmail = newCourier.email.trim().toLowerCase();
-         // Validação ativa de duplicidade de e-mail na plataforma (usando dados na memória para evitar erros de regras do Firestore)
-         const emailExistsInUsers = users.some(u => u.email?.trim().toLowerCase() === trimmedEmail);
-         if (emailExistsInUsers) {
+         // Validação ativa de duplicidade de e-mail na plataforma
+         const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', trimmedEmail));
+         const usersByEmailSnap = await getDocs(usersByEmailQuery);
+         if (!usersByEmailSnap.empty) {
            showToast(`Erro: O e-mail de acesso "${trimmedEmail}" já está cadastrado em nossa plataforma!`, "error");
            return;
          }
 
-         const emailExistsInCouriers = couriers.some(c => c.email?.trim().toLowerCase() === trimmedEmail);
-         if (emailExistsInCouriers) {
+         const couriersQuery = query(collection(db, 'couriers'), where('email', '==', trimmedEmail));
+         const couriersSnap = await getDocs(couriersQuery);
+         if (!couriersSnap.empty) {
            showToast(`Erro: O e-mail de acesso "${trimmedEmail}" já está cadastrado como entregador em nossa plataforma!`, "error");
            return;
          }
@@ -4006,15 +3752,17 @@ const App: React.FC = () => {
 
     if (effectiveTenantId) {
       try {
-        // Validação ativa de duplicidade de e-mail na plataforma (usando dados na memória para evitar erros de regras do Firestore)
-        const emailExistsInUsers = users.some(u => u.email?.trim().toLowerCase() === trimmedEmail);
-        if (emailExistsInUsers) {
+        // Validação ativa de duplicidade de e-mail na plataforma
+        const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', trimmedEmail));
+        const usersByEmailSnap = await getDocs(usersByEmailQuery);
+        if (!usersByEmailSnap.empty) {
           showToast(`Erro: O e-mail "${trimmedEmail}" já está cadastrado em nossa plataforma!`, "error");
           throw new Error(`O e-mail "${trimmedEmail}" já está cadastrado em nossa plataforma.`);
         }
 
-        const emailExistsInCouriers = couriers.some(c => c.email?.trim().toLowerCase() === trimmedEmail);
-        if (emailExistsInCouriers) {
+        const couriersQuery = query(collection(db, 'couriers'), where('email', '==', trimmedEmail));
+        const couriersSnap = await getDocs(couriersQuery);
+        if (!couriersSnap.empty) {
           showToast(`Erro: O e-mail "${trimmedEmail}" já está cadastrado como entregador em nossa plataforma!`, "error");
           throw new Error(`O e-mail "${trimmedEmail}" já está cadastrado como entregador.`);
         }
@@ -4026,12 +3774,10 @@ const App: React.FC = () => {
 
         // Se for entregador, criar registro na coleção de couriers também
         if (newUser.role === 'COURIER') {
-          const newCourier: Courier & { password?: string } = {
+          const newCourier: Courier = {
             id: newUser.id,
             tenantId: newUser.tenantId,
             name: newUser.name,
-            email: newUser.email,
-            password: newUser.password,
             phone: '', // Pode ser preenchido depois
             status: 'available',
             active: true,
@@ -4075,13 +3821,17 @@ const App: React.FC = () => {
     if (effectiveTenantId) {
       // Dobra check se alterou e-mail para um duplicado de outra pessoa
       if (finalUpdates.email) {
-        const duplicate = users.some(u => u.id !== id && u.email?.trim().toLowerCase() === finalUpdates.email?.trim().toLowerCase());
+        const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', finalUpdates.email));
+        const usersByEmailSnap = await getDocs(usersByEmailQuery);
+        const duplicate = usersByEmailSnap.docs.some(doc => doc.id !== id);
         if (duplicate) {
           showToast(`Erro: O e-mail "${finalUpdates.email}" já está cadastrado em nossa plataforma!`, "error");
           throw new Error(`O e-mail "${finalUpdates.email}" já está cadastrado.`);
         }
 
-        const courierDuplicate = couriers.some(c => c.id !== id && c.email?.trim().toLowerCase() === finalUpdates.email?.trim().toLowerCase());
+        const couriersQuery = query(collection(db, 'couriers'), where('email', '==', finalUpdates.email));
+        const couriersSnap = await getDocs(couriersQuery);
+        const courierDuplicate = couriersSnap.docs.some(doc => doc.id !== id);
         if (courierDuplicate) {
           showToast(`Erro: O e-mail "${finalUpdates.email}" já está cadastrado como entregador!`, "error");
           throw new Error(`O e-mail "${finalUpdates.email}" já está cadastrado como entregador.`);
@@ -4093,22 +3843,21 @@ const App: React.FC = () => {
         updatedAt: new Date()
       }));
 
-      // Sincronizar com couriers se o usuário atual for entregador ou o novo cargo for entregador
-      const existingUser = users.find(u => u.id === id);
-      const isCourier = updates.role === 'COURIER' || existingUser?.role === 'COURIER';
-      if (isCourier && existingUser) {
-        const courierUpdate: any = { 
-          name: finalUpdates.name !== undefined ? finalUpdates.name : existingUser.name,
-          email: finalUpdates.email !== undefined ? finalUpdates.email : (existingUser.email || ''),
-          updatedAt: new Date()
-        };
-        if (finalUpdates.password !== undefined) courierUpdate.password = finalUpdates.password;
-        if (finalUpdates.active !== undefined) courierUpdate.active = finalUpdates.active;
-        await setDoc(doc(db, 'couriers', id), courierUpdate, { merge: true });
+      // Sincronizar com couriers se houver mudança de nome ou role
+      if (updates.role === 'COURIER' || (updates.name && users.find(u => u.id === id)?.role === 'COURIER')) {
+        const user = users.find(u => u.id === id);
+        if (user) {
+          const courierUpdate: any = { 
+            name: updates.name || user.name,
+            updatedAt: new Date()
+          };
+          if (updates.active !== undefined) courierUpdate.active = updates.active;
+          await setDoc(doc(db, 'couriers', id), courierUpdate, { merge: true });
+        }
       }
 
       // Se for o próprio usuário logado, tentar atualizar também no Firebase Auth diretamente
-      if (id === auth.currentUser?.uid && auth.currentUser) {
+      if (id === auth.currentUser?.uid) {
         try {
           if (finalUpdates.email && finalUpdates.email !== auth.currentUser.email) {
             await updateEmail(auth.currentUser, finalUpdates.email);
@@ -4116,14 +3865,8 @@ const App: React.FC = () => {
           if (finalUpdates.password) {
             await updatePassword(auth.currentUser, finalUpdates.password);
           }
-        } catch (authErr: any) {
-          console.error("Could not sync current user auth credentials directly:", authErr);
-          if (authErr.code === 'auth/requires-recent-login' || authErr.message?.includes('requires-recent-login')) {
-            showToast("Por segurança, você precisa fazer logout e login novamente para alterar sua própria senha ou e-mail.", "error");
-          } else {
-            showToast(`Erro ao atualizar no Firebase Auth: ${authErr.message || authErr}`, "error");
-          }
-          throw authErr;
+        } catch (authErr) {
+          console.warn("Could not sync current user auth credentials directly:", authErr);
         }
       }
     } else {
@@ -4786,41 +4529,14 @@ const App: React.FC = () => {
     }
   };
 
-  const effectivePath = useMemo(() => {
-    let path = location.pathname;
-    if (typeof window !== 'undefined' && window.location.hash) {
-      path = window.location.hash.substring(1).split('?')[0];
-      if (path && !path.startsWith('/')) {
-        path = '/' + path;
-      }
-    }
-    return path || '/';
-  }, [location.pathname]);
-
-  const isMarketplace = effectivePath.startsWith('/marketplace') || effectivePath.startsWith('/perfil') || effectivePath.startsWith('/cardapio') || effectivePath === '/';
-
-  const loadingText = (() => {
-    try {
-      const cachedTenant = localStorage.getItem('kitchenflow_cached_tenant_data');
-      if (cachedTenant) {
-        const parsed = JSON.parse(cachedTenant);
-        if (parsed?.name) return `Carregando ${parsed.name}...`;
-      }
-      const cachedUser = localStorage.getItem('kitchenflow_cached_user');
-      if (cachedUser) {
-        const parsed = JSON.parse(cachedUser);
-        if (parsed?.name) return `Carregando ${parsed.name}...`;
-      }
-    } catch {}
-    return "Carregando o sistema...";
-  })();
+  const isMarketplace = location.pathname.startsWith('/marketplace') || location.pathname.startsWith('/perfil') || location.pathname === '/';
 
   if (authLoading || (hasApiKey === null && !isMarketplace)) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-slate-400 font-black text-[10px] uppercase tracking-widest animate-pulse">{loadingText}</p>
+          <p className="text-slate-400 font-black text-[10px] uppercase tracking-widest animate-pulse">Carregando Viva Lá Fome...</p>
         </div>
       </div>
     );
@@ -4854,13 +4570,13 @@ const App: React.FC = () => {
     );
   }
 
-  const isMarketplaceRoute = effectivePath.startsWith('/marketplace') || effectivePath.startsWith('/perfil') || effectivePath.startsWith('/cardapio');
-  const isWebsiteRoute = effectivePath.startsWith('/site') || effectivePath.startsWith('/kitchenflow') || effectivePath === '/';
+  const isMarketplaceRoute = location.pathname.startsWith('/marketplace') || location.pathname.startsWith('/perfil');
+  const isWebsiteRoute = location.pathname.startsWith('/site') || location.pathname.startsWith('/kitchenflow') || location.pathname === '/';
   const isPublicRoute = isMarketplaceRoute || isWebsiteRoute;
 
   // 1. Se o usuário NÃO está autenticado no Firebase Auth
   // e tenta acessar uma rota privada/privilegiada (não pública):
-  if (!user && !isPublicRoute && effectivePath !== '/') {
+  if (!user && !isPublicRoute && location.pathname !== '/') {
     return <Login onLoginSuccess={() => {}} />;
   }
 
@@ -4879,7 +4595,7 @@ const App: React.FC = () => {
 
   // 3. Se já carregou o login (authLoading é falso), mas o usuário logado NÃO possui cadastro correspondente (currentUserData é null) ainda:
   // Carrega em segundo plano ou aguarda a conclusão da sincronização do auto-cadastro.
-  if (user && !currentUserData && !authLoading && !isPublicRoute && effectivePath !== '/') {
+  if (user && !currentUserData && !authLoading && !isPublicRoute && location.pathname !== '/') {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
@@ -4891,7 +4607,7 @@ const App: React.FC = () => {
   }
 
   // 4. Se o usuário está logado mas tem role CUSTOMER e tenta acessar painel restrito administrativo:
-  if (user && currentUserData && currentUserData.role === 'CUSTOMER' && !isPublicRoute && effectivePath !== '/') {
+  if (user && currentUserData && currentUserData.role === 'CUSTOMER' && !isPublicRoute && location.pathname !== '/') {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
         <div className="bg-white p-8 sm:p-10 rounded-[2.5rem] border border-slate-100 shadow-2xl max-w-sm w-full text-center space-y-6">
@@ -4916,107 +4632,6 @@ const App: React.FC = () => {
               className="w-full py-3.5 bg-slate-100 text-slate-600 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-200 transition-all"
             >
               Fazer Logout / Outra Conta
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // --- SEGURANÇA MÁXIMA CONTRA INVASÃO DE URLS (SYNCHRONOUS ROUTING LOCKS) ---
-  const isSaasPath = effectivePath.startsWith('/saas');
-  const isLojistaPath = effectivePath.startsWith('/lojista');
-  const isEntregadorPath = effectivePath.startsWith('/entregador');
-
-  // A. Bloqueio para caminhos do SaaS (/saas) se não for Super Admin
-  if (isSaasPath && currentUserData && !isSuperAdmin) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <div className="bg-white p-8 sm:p-10 rounded-[2.5rem] border border-slate-100 shadow-2xl max-w-sm w-full text-center space-y-6">
-          <div className="w-20 h-20 bg-rose-50 border border-rose-100 text-rose-600 rounded-3xl flex items-center justify-center mx-auto">
-            <Lock size={40} />
-          </div>
-          <div>
-            <h2 className="text-2xl font-black text-slate-800 tracking-tighter">Acesso Negado</h2>
-            <p className="text-slate-500 font-medium text-sm mt-3 leading-relaxed">
-              Você não possui credenciais de <strong className="text-indigo-600">Super Administrador</strong> para visualizar ou editar as configurações centrais do SaaS.
-            </p>
-          </div>
-          <div className="space-y-3">
-            <button 
-              onClick={() => {
-                if (currentUserData.role === 'COURIER') {
-                  navigate('/entregador');
-                } else if (currentUserData.role === 'CUSTOMER') {
-                  navigate('/marketplace');
-                } else {
-                  navigate('/lojista');
-                }
-              }}
-              className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-opacity-90 transition-all shadow-xl shadow-indigo-100"
-            >
-              Voltar para Área Principal
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // B. Bloqueio para caminhos do Lojista (/lojista) se o cargo não pertencer ao painel da loja
-  const allowedLojistaRoles = ['OWNER', 'ADMIN', 'MANAGER', 'CHEF', 'CASHIER', 'WAITER', 'KDS', 'STOCK_ANALYST'];
-  if (isLojistaPath && currentUserData && !allowedLojistaRoles.includes(currentUserData.role) && !isSuperAdmin) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <div className="bg-white p-8 sm:p-10 rounded-[2.5rem] border border-slate-100 shadow-2xl max-w-sm w-full text-center space-y-6">
-          <div className="w-20 h-20 bg-rose-50 border border-rose-100 text-rose-600 rounded-3xl flex items-center justify-center mx-auto">
-            <Lock size={40} />
-          </div>
-          <div>
-            <h2 className="text-2xl font-black text-slate-800 tracking-tighter">Acesso Restrito</h2>
-            <p className="text-slate-500 font-medium text-sm mt-3 leading-relaxed">
-              O cargo de <strong className="text-indigo-600">{currentUserData.role}</strong> não tem autorização para gerenciar ou acessar o painel administrativo da loja.
-            </p>
-          </div>
-          <div className="space-y-3">
-            <button 
-              onClick={() => {
-                if (currentUserData.role === 'COURIER') {
-                  navigate('/entregador');
-                } else {
-                  navigate('/marketplace');
-                }
-              }}
-              className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-opacity-90 transition-all shadow-xl shadow-indigo-100"
-            >
-              Voltar para Área Principal
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // C. Bloqueio para caminhos do Entregador (/entregador) se não for Courier ou possuir permissão
-  if (isEntregadorPath && currentUserData && currentUserData.role !== 'COURIER' && !getUserPermissions(currentUserData).includes('courier_app_access') && !isSuperAdmin) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <div className="bg-white p-8 sm:p-10 rounded-[2.5rem] border border-slate-100 shadow-2xl max-w-sm w-full text-center space-y-6">
-          <div className="w-20 h-20 bg-rose-50 border border-rose-100 text-rose-600 rounded-3xl flex items-center justify-center mx-auto">
-            <Lock size={40} />
-          </div>
-          <div>
-            <h2 className="text-2xl font-black text-slate-800 tracking-tighter">Acesso Negado</h2>
-            <p className="text-slate-500 font-medium text-sm mt-3 leading-relaxed">
-              Esta área de entregas é de uso exclusivo para entregadores e parceiros logísticos registrados.
-            </p>
-          </div>
-          <div className="space-y-3">
-            <button 
-              onClick={() => navigate('/marketplace')}
-              className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-opacity-90 transition-all shadow-xl shadow-indigo-100"
-            >
-              Ir para o Marketplace
             </button>
           </div>
         </div>
@@ -5092,7 +4707,7 @@ const App: React.FC = () => {
           </motion.div>
         )}
       </AnimatePresence>
-      {currentProject !== 'PLATFORM' && currentProject !== 'MARKETPLACE' && currentProject !== 'COURIER' && currentProject !== 'WEBSITE' && !isKDSOnlyUser && (
+      {currentProject !== 'MARKETPLACE' && currentProject !== 'COURIER' && currentProject !== 'WEBSITE' && !isKDSOnlyUser && (
         <Sidebar 
           activeTab={activeTab} 
           setActiveTab={(tab) => {
@@ -5104,10 +4719,7 @@ const App: React.FC = () => {
           }}
           isOpen={isSidebarOpen}
           onClose={() => setIsSidebarOpen(false)}
-          user={currentUserData ? {
-            ...currentUserData,
-            permissions: getUserPermissions(currentUserData)
-          } : { name: user.displayName || 'Usuário', role: 'WAITER', avatar: user.photoURL || undefined, permissions: [] } as any}
+          user={currentUserData || { name: user.displayName || 'Usuário', role: 'WAITER', avatar: user.photoURL || undefined } as any}
           onLogout={handleLogout}
           allowedModules={effectiveAllowedModules}
           isSuperAdmin={isSuperAdmin}
@@ -5138,7 +4750,7 @@ const App: React.FC = () => {
                  )
                ) : <Login onLoginSuccess={() => {}} />
             } />
-            {["/marketplace", "/marketplace/:tenantId", "/cardapio/:tenantId", "/perfil"].map((path) => (
+            {["/marketplace", "/marketplace/:tenantId", "/perfil"].map((path) => (
               <Route 
                 key={path}
                 path={path} 
@@ -5160,7 +4772,7 @@ const App: React.FC = () => {
           ) : (
             <>
               {/* Header Mobile */}
-              {!isKDSOnlyUser && currentProject !== 'PLATFORM' && (
+              {!isKDSOnlyUser && (
                 <header className="lg:hidden bg-white border-b p-2 flex items-center justify-between sticky top-0 z-30">
                   <button 
                     onClick={() => setIsSidebarOpen(true)}
@@ -5212,35 +4824,19 @@ const App: React.FC = () => {
                 </header>
               )}
 
-              <div className={`flex-1 custom-scrollbar ${isKDSOnlyUser || currentProject === 'PLATFORM' ? 'h-screen max-h-screen overflow-hidden flex flex-col p-0' : (activeTab === 'kds' || activeTab === 'kds-kitchen-only' || activeTab === 'order-monitor') ? 'h-[calc(100vh-64px)] lg:h-[calc(100vh-20px)] overflow-hidden flex flex-col p-1' : 'overflow-y-auto max-h-screen p-1'}`}>
+              <div className={`flex-1 custom-scrollbar ${isKDSOnlyUser ? 'h-screen max-h-screen overflow-hidden flex flex-col p-0' : (activeTab === 'kds' || activeTab === 'kds-kitchen-only' || activeTab === 'order-monitor') ? 'h-[calc(100vh-64px)] lg:h-[calc(100vh-20px)] overflow-hidden flex flex-col p-1' : 'overflow-y-auto max-h-screen p-1'}`}>
           {currentProject === 'PLATFORM' ? (
-            isSuperAdmin ? (
-              <SaaSAdmin 
-                activeTab={activeTab}
-                onViewTenant={handleViewTenant} 
-                onNavigate={(tab) => {
-                  if (tab === 'marketplace') {
-                    navigate('/marketplace');
-                  } else {
-                    setActiveTab(tab);
-                  }
-                }}
-                currentUser={user}
-                currentUserData={currentUserData}
-                onLogout={handleLogout}
-              />
-            ) : (
-              <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6 text-center w-full">
-                 <div className="bg-white p-8 rounded-[2.5rem] shadow-xl max-w-sm border border-slate-100">
-                   <div className="w-16 h-16 bg-rose-50 text-rose-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                     <Lock size={32} />
-                   </div>
-                   <h2 className="text-xl font-black text-slate-800 mb-2">Acesso Negado</h2>
-                   <p className="text-sm text-slate-500 mb-6">Esta área é exclusiva para administradores globais do sistema.</p>
-                   <button onClick={() => navigate('/lojista')} className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold uppercase text-[10px] tracking-wider">Ir para o Painel da Loja</button>
-                 </div>
-              </div>
-            )
+            <SaaSAdmin 
+              activeTab={activeTab}
+              onViewTenant={handleViewTenant} 
+              onNavigate={(tab) => {
+                if (tab === 'marketplace') {
+                  navigate('/marketplace');
+                } else {
+                  setActiveTab(tab);
+                }
+              }}
+            />
           ) : (
             <>
               {/* Alertas de Consumo de Assinatura */}
@@ -5702,66 +5298,60 @@ const App: React.FC = () => {
           />
         )}
         {activeTab === 'inventory' && hasPermission('inventory_edit') && (
-          <ErrorBoundary>
-            <Inventory 
-              products={products} 
-              rawMaterials={rawMaterials} 
-              onUpdateProduct={handleUpdateProduct} 
-              onAddProduct={handleAddProduct} 
-              onDeleteProduct={handleDeleteProduct}
-              onUpdateRawMaterial={handleUpdateRawMaterial} 
-              onAddRawMaterial={handleAddRawMaterial}
-              onDeleteRawMaterial={handleDeleteRawMaterial}
-              digitalMenuSettings={digitalMenuSettings}
-              onUpdateDigitalMenuSettings={setDigitalMenuSettings}
-              productCategories={productCategories}
-              setProductCategories={handleUpdateProductCategories}
-              rawMaterialCategories={rawMaterialCategories}
-              setRawMaterialCategories={handleUpdateRawMaterialCategories}
-              onSyncCloud={handleSaveSettings}
-              orders={orders}
-            />
-          </ErrorBoundary>
+          <Inventory 
+            products={products} 
+            rawMaterials={rawMaterials} 
+            onUpdateProduct={handleUpdateProduct} 
+            onAddProduct={handleAddProduct} 
+            onDeleteProduct={handleDeleteProduct}
+            onUpdateRawMaterial={handleUpdateRawMaterial} 
+            onAddRawMaterial={handleAddRawMaterial}
+            onDeleteRawMaterial={handleDeleteRawMaterial}
+            digitalMenuSettings={digitalMenuSettings}
+            onUpdateDigitalMenuSettings={setDigitalMenuSettings}
+            productCategories={productCategories}
+            setProductCategories={handleUpdateProductCategories}
+            rawMaterialCategories={rawMaterialCategories}
+            setRawMaterialCategories={handleUpdateRawMaterialCategories}
+            onSyncCloud={handleSaveSettings}
+            orders={orders}
+          />
         )}
         {activeTab === 'finance' && hasPermission('finance_view') && (
-          <ErrorBoundary>
-            <Finance 
-              orders={orders} 
-              products={products}
-              customers={customers} 
-              couriers={couriers} 
-              manualRecords={financialRecords} 
-              cashClosings={cashClosings} 
-              bankAccounts={bankAccounts}
-              adminSettings={adminSettings}
-              cashSession={cashSession}
-              onAddRecord={handleAddFinancialRecord} 
-              onUpdateRecord={handleUpdateFinancialRecord} 
-              onDeleteRecord={handleDeleteFinancialRecord}
-              onUpdateCustomer={handleUpdateCustomer} 
-              onAddBank={handleAddBankAccount}
-              onUpdateBank={handleUpdateBankAccount}
-              onDeleteBank={handleDeleteBankAccount}
-              onSettleOrders={handleSettleOrders}
-              onUpdateAdminSettings={handleSaveSettings}
-            />
-          </ErrorBoundary>
+          <Finance 
+            orders={orders} 
+            products={products}
+            customers={customers} 
+            couriers={couriers} 
+            manualRecords={financialRecords} 
+            cashClosings={cashClosings} 
+            bankAccounts={bankAccounts}
+            adminSettings={adminSettings}
+            cashSession={cashSession}
+            onAddRecord={handleAddFinancialRecord} 
+            onUpdateRecord={handleUpdateFinancialRecord} 
+            onDeleteRecord={handleDeleteFinancialRecord}
+            onUpdateCustomer={handleUpdateCustomer} 
+            onAddBank={handleAddBankAccount}
+            onUpdateBank={handleUpdateBankAccount}
+            onDeleteBank={handleDeleteBankAccount}
+            onSettleOrders={handleSettleOrders}
+            onUpdateAdminSettings={handleSaveSettings}
+          />
         )}
         {activeTab === 'merchant-copilot' && hasPermission('finance_view') && (
-          <ErrorBoundary>
-            <LojistaCopilot 
-              orders={orders}
-              products={products}
-              manualRecords={financialRecords}
-              adminSettings={adminSettings}
-              rawMaterials={rawMaterials}
-              onUpdateProduct={handleUpdateProduct}
-              onNavigateToInventory={() => setActiveTab('inventory')}
-              tenantData={tenantData}
-              plans={plans}
-              saasConfig={saasConfig}
-            />
-          </ErrorBoundary>
+          <LojistaCopilot 
+            orders={orders}
+            products={products}
+            manualRecords={financialRecords}
+            adminSettings={adminSettings}
+            rawMaterials={rawMaterials}
+            onUpdateProduct={handleUpdateProduct}
+            onNavigateToInventory={() => setActiveTab('inventory')}
+            tenantData={tenantData}
+            plans={plans}
+            saasConfig={saasConfig}
+          />
         )}
         {activeTab === 'users' && hasPermission('users_manage') && (
           <UsersPanel 

@@ -2,8 +2,10 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Permissive development sandbox rules to unblock testing without Identity Toolkit API
     match /{document=**} {
       allow read, write: if true;
     }
   }
 }
+

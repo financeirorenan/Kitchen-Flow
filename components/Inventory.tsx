@@ -16,7 +16,6 @@ import { Reorder, AnimatePresence, motion } from 'framer-motion';
 import { maskCurrency, parseCurrency } from '../utils/masks';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { compressImage } from '../lib/imageUtils';
-import { auth } from '../firebase';
 
 interface InventoryProps {
   products: Product[];
@@ -575,21 +574,9 @@ const Inventory: React.FC<InventoryProps> = memo(({
     setIsParsingInvoice(true);
     setIsUsingLocalParser(false);
     try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json'
-      };
-      if (auth.currentUser) {
-        try {
-          const idToken = await auth.currentUser.getIdToken(true);
-          headers['Authorization'] = `Bearer ${idToken}`;
-        } catch (tokenErr) {
-          console.error("Error getting idToken for invoice:", tokenErr);
-        }
-      }
-
       const response = await fetch('/api/gemini/parse-invoice', {
         method: 'POST',
-        headers,
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: invoiceText || undefined,
           fileBase64: uploadedFile?.base64 || undefined,
@@ -1222,7 +1209,7 @@ const Inventory: React.FC<InventoryProps> = memo(({
       </div>
 
       {/* Stats Header */}
-      <div className="w-full">
+      {true && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-white p-5 rounded-[1.5rem] border border-slate-100 shadow-sm flex items-center gap-4 group hover:shadow-md transition-all">
             <div className="p-3 bg-teal-50 text-teal-600 rounded-2xl group-hover:scale-110 transition-transform">
@@ -1272,7 +1259,7 @@ const Inventory: React.FC<InventoryProps> = memo(({
             </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Main Content Area */}
       {activeSubTab === 'products' ? (

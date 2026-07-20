@@ -76,6 +76,17 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
     });
   }, [kitchenOrders, activeFilter, selectedStation, products]);
 
+  // Trigger sound alert when a new kitchen order arrives
+  useEffect(() => {
+    const currentCount = kitchenOrders.length;
+    if (currentCount > prevOrdersCountRef.current && prevOrdersCountRef.current > 0) {
+      if (soundEnabled) {
+        playNewOrderSound();
+      }
+    }
+    prevOrdersCountRef.current = currentCount;
+  }, [kitchenOrders, soundEnabled]);
+
   const playNewOrderSound = () => {
     try {
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -100,17 +111,6 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
       console.warn("Could not play sound: ", e);
     }
   };
-
-  // Trigger sound alert when a new kitchen order arrives
-  useEffect(() => {
-    const currentCount = kitchenOrders.length;
-    if (currentCount > prevOrdersCountRef.current && prevOrdersCountRef.current > 0) {
-      if (soundEnabled) {
-        playNewOrderSound();
-      }
-    }
-    prevOrdersCountRef.current = currentCount;
-  }, [kitchenOrders, soundEnabled]);
 
   // Toggle checklist status of an item
   const toggleItemChecked = (orderId: string, itemKey: string) => {

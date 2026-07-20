@@ -1,6 +1,5 @@
 import React, { useState, memo } from 'react';
 import { auth, db } from '../firebase';
-import { authService } from '../services/authService';
 import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword, updateProfile, updatePassword, sendPasswordResetEmail, signInWithCustomToken } from 'firebase/auth';
 import { doc, setDoc, getDoc, collection, query, where, getDocs, limit, deleteDoc } from 'firebase/firestore';
 import { LogIn, Mail, Lock, Sparkles, Loader2, UserPlus, Phone, User, Store, Bike, Shield, Check, Eye, EyeOff } from 'lucide-react';
@@ -65,7 +64,7 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
           name: 'Renan (Demo)',
           email: 'financeirorenanuk@gmail.com',
           role: 'SAAS_ADMIN',
-          tenantId: '',
+          tenantId: 'HCL1177LRQVPEKCTYRAHU7IGBQ42',
           permissions: ["dashboard_view", "orders_view", "menu_view", "stock_view", "finance_view", "couriers_view", "users_view", "integrations_view", "marketing_view", "reports_view", "saas_admin_view"],
           status: 'online',
           active: true,
@@ -110,20 +109,18 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
   };
 
   // States for Signup Roles
-  const [signupRole, setSignupRole] = useState<'CUSTOMER' | 'COURIER' | 'OWNER'>('OWNER');
+  const [signupRole, setSignupRole] = useState<'CUSTOMER' | 'COURIER' | 'OWNER'>('CUSTOMER');
   const [restaurantName, setRestaurantName] = useState('');
   const [tradeCategory, setTradeCategory] = useState('hamburgueria');
   const [vehicleType, setVehicleType] = useState<'bike' | 'moto' | 'car'>('moto');
   const [pixKey, setPixKey] = useState('');
 
-  const isMarketplace = window.location.pathname.startsWith('/marketplace') || window.location.hash.startsWith('#/marketplace');
+  const isMarketplace = window.location.pathname.startsWith('/marketplace');
 
   // If we are strictly on the marketplace route, force the Customer signup role (for a clear customer-centric checkout flow)
   React.useEffect(() => {
     if (isMarketplace) {
       setSignupRole('CUSTOMER');
-    } else {
-      setSignupRole('OWNER');
     }
   }, [isMarketplace]);
 
@@ -165,117 +162,88 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
     }
 
     try {
-      console.log(`Iniciando ativação segura de primeiro acesso via servidor para ${trimmedEmail}...`);
-      const response = await fetch('/api/auth/first-access', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          email: trimmedEmail,
-          tempPassword: trimmedTempPassword,
-          newPassword: trimmedNewPassword
-        })
-      });
+      // 1. Verificar se usuário existe no Firestore
+      const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', trimmedEmail), limit(1));
+      const usersByEmailSnap = await getDocs(usersByEmailQuery);
 
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || 'Erro ao realizar a ativação de primeiro acesso.');
+      if (usersByEmailSnap.empty) {
+        setError('Acesso negado. Este e-mail não foi pré-cadastrado no sistema. Solicite o cadastro ao administrador.');
+        setLoading(false);
+        return;
       }
 
-      const data = await response.json();
+      const userData = usersByEmailSnap.docs[0].data();
+      const userDocId = usersByEmailSnap.docs[0].id;
 
-      if (data.customToken) {
-        console.log("Token customizado de primeiro acesso recebido do servidor, realizando login client-side...");
-        const userCredential = await signInWithCustomToken(auth, data.customToken);
-        const signedInUser = userCredential.user;
-        await updateProfile(signedInUser, { displayName: data.user.name || 'Lojista' });
-        
-        console.log("Login com token de primeiro acesso bem-sucedido.");
-        onLoginSuccess();
-      } else if (data.isLocalSession) {
-        console.log("Sessão de bypass local autorizada para primeiro acesso.");
-        
-        // Tenta realizar um login REAL com email/senha primeiro, já que o servidor garantiu que
-        // a conta já foi criada/sincronizada no Firebase Auth no backend com a nova senha permanente!
-        try {
-          console.log("Fazendo login real via email/senha após ativação de primeiro acesso pelo backend...");
-          let signedInUser = null;
+      // 2. Validar se a senha temporária confere com a do DB
+      if (!userData.password || userData.password !== trimmedTempPassword) {
+        setError('A senha temporária fornecida é inválida. Verifique os dados com seu administrador.');
+        setLoading(false);
+        return;
+      }
+
+      // 3. Criar ou sincronizar o usuário no Firebase Auth com a nova senha permanente
+      let user;
+      const isStaff = userData && userData.role !== 'CUSTOMER';
+      const authNewPassword = trimmedNewPassword;
+      try {
+        const userCredential = await createUserWithEmailAndPassword(auth, trimmedEmail, authNewPassword);
+        user = userCredential.user;
+      } catch (authErr: any) {
+        // Caso o usuário já exista no Auth (ex: foi criado mas senha estava desatrelada)
+        if (authErr.code === 'auth/email-already-in-use') {
           try {
-            const loginCred = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedNewPassword);
-            signedInUser = loginCred.user;
-            console.log("Login real via email/senha de primeiro acesso realizado com sucesso com a nova senha!");
-          } catch (firstTryErr: any) {
-            console.log("Nova senha falhou no Client Auth, tentando entrar com a senha temporária para atualizar...");
-            const tempLoginCred = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedTempPassword);
-            signedInUser = tempLoginCred.user;
-            console.log("Entrou com a senha temporária. Atualizando para a nova senha no Firebase Auth...");
-            await updatePassword(signedInUser, trimmedNewPassword);
-            console.log("Nova senha cadastrada com sucesso no Firebase Auth!");
+            // Tenta logar com a senha temporária real ou a legado determinística antiga para atualizar para a nova real
+            let loginCred;
+            try {
+              loginCred = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedTempPassword);
+            } catch (tempErr) {
+              if (isStaff) {
+                // Tenta fallback com a senha determinística antiga
+                const authTempPassword = getDeterministicPassword(trimmedEmail);
+                loginCred = await signInWithEmailAndPassword(auth, trimmedEmail, authTempPassword);
+              } else {
+                throw tempErr;
+              }
+            }
+            user = loginCred.user;
+            await updatePassword(user, authNewPassword);
+          } catch (loginErr) {
+            setError('Usuário já registrado no Firebase Auth, porém não foi possível redefinir com a senha temporária antiga.');
+            setLoading(false);
+            return;
           }
+        } else {
+          throw authErr;
+        }
+      }
 
-          await updateProfile(signedInUser, { displayName: data.user.name || 'Lojista' });
-          
-          // Remover demo_user se ele existia para migrar para sessão real de vez
-          localStorage.removeItem('kitchenflow_demo_user');
-          
-          // Salvar dados no cached_user
-          localStorage.setItem('kitchenflow_cached_user', JSON.stringify({
-            id: signedInUser.uid || data.user.id,
-            email: data.user.email,
-            role: data.user.role,
-            name: data.user.name,
-            tenantId: data.user.tenantId,
-            active: true,
-            status: 'online'
-          }));
-          
-          onLoginSuccess();
-          window.location.reload();
-          return;
-        } catch (clientSignInErr: any) {
-          console.warn("Falha ao realizar login direto ou atualização de senha no primeiro acesso. Aplicando bypass de segurança local:", clientSignInErr.code || clientSignInErr.message);
+      if (user) {
+        // 4. Salvar dados atualizados no Firestore sob o novo UID gerado
+        await updateProfile(user, { displayName: userData.name || 'Lojista' });
+
+        const userDocRef = doc(db, 'users', user.uid);
+        await setDoc(userDocRef, {
+          ...userData,
+          id: user.uid,
+          password: trimmedNewPassword, // Atualiza para a nova senha permanente
+          active: true,
+          updatedAt: new Date()
+        }, { merge: true });
+
+        // Se o Document ID antigo for diferente do novo UID, remove o documento legado para não duplicar
+        if (userDocId && userDocId !== user.uid) {
+          try {
+            await deleteDoc(doc(db, 'users', userDocId));
+          } catch (delErr) {
+            console.warn("Could not clean up legacy pre-registered user doc:", delErr);
+          }
         }
 
-        const simulatedFirebaseUser = {
-          uid: data.user.id,
-          email: data.user.email,
-          displayName: data.user.name,
-          isLocalSession: true
-        };
-
-        // Sincronizar o localStorage para o App inicializar com esse usuário local
-        localStorage.setItem('kitchenflow_demo_user', JSON.stringify({
-          firebaseUser: simulatedFirebaseUser,
-          userData: {
-            id: data.user.id,
-            email: data.user.email,
-            role: data.user.role,
-            name: data.user.name,
-            tenantId: data.user.tenantId,
-            active: true,
-            status: 'online'
-          }
-        }));
-
-        localStorage.setItem('kitchenflow_cached_user', JSON.stringify({
-          id: data.user.id,
-          email: data.user.email,
-          role: data.user.role,
-          name: data.user.name,
-          tenantId: data.user.tenantId,
-          active: true,
-          status: 'online'
-        }));
-
         onLoginSuccess();
-        window.location.reload();
-      } else {
-        throw new Error("Resposta de autenticação inválida recebida do servidor.");
       }
-
     } catch (err: any) {
-      console.error("Erro no primeiro acesso seguro:", err);
+      console.error("Erro no primeiro acesso:", err);
       setError(err.message || 'Ocorreu um erro ao ativar a sua conta. Tente novamente.');
     } finally {
       setLoading(false);
@@ -357,73 +325,91 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
         let signedInUser = null;
         let loginSuccess = false;
 
-        // 1. Prioridade Máxima: Tentar o login seguro via AuthService e API (purga caches e reconstrói via UID automaticamente)
+        // 1. Primeiro tenta o login direto padrão via Firebase Auth (rápido, direto na máquina do cliente)
         try {
-          console.log(`Tentando login ultra-rápido via AuthService para ${trimmedEmail}...`);
-          const authResult = await authService.loginWithAPI(trimmedEmail, trimmedPassword);
-          if (authResult.success) {
-            loginSuccess = true;
-            signedInUser = auth.currentUser || { uid: authResult.user.id, email: authResult.user.email };
-            console.log("Login via AuthService realizado com sucesso!");
-          }
-        } catch (apiErr: any) {
-          console.warn("Login via AuthService falhou ou está offline, aplicando fallback client-side direto...", apiErr.message || apiErr);
-          // Se for erro de credenciais incorretas vindo da nossa própria API, repassa
-          if (apiErr.message?.includes('incorretos') || apiErr.message?.includes('inválidas') || apiErr.message?.includes('E-mail ou senha')) {
-            throw apiErr;
-          }
+          console.log(`Tentando login client-side padrão para ${trimmedEmail}...`);
+          const loginCred = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
+          signedInUser = loginCred.user;
+          loginSuccess = true;
+          console.log(`Login client-side bem-sucedido.`);
+        } catch (clientErr: any) {
+          console.log(`Login client-side falhou: ${clientErr.code || clientErr.message}. Acionando sincronização via servidor...`);
         }
 
-        // 2. Fallback de Segurança: Se a API falhou por timeout, offline ou rede, tentar o login tradicional direto via Firebase Client Auth
+        // 2. Se falhar por qualquer desalinhamento, aciona a sincronização inteligente com o banco de dados via API
         if (!loginSuccess) {
           try {
-            console.log(`Tentando fallback client-side padrão direto via Firebase Auth para ${trimmedEmail}...`);
-            const loginCred = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
-            signedInUser = loginCred.user;
-            loginSuccess = true;
-            console.log(`Login client-side bem-sucedido.`);
+            const response = await fetch('/api/auth/login', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ email: trimmedEmail, password: trimmedPassword }),
+            });
 
-            // Buscar dados básicos do Firestore para reconstruir a sessão
-            const userDocRef = doc(db, 'users', signedInUser.uid);
-            const userDocSnap = await getDoc(userDocRef);
-            let uData = userDocSnap.exists() ? userDocSnap.data() : null;
-
-            if (!uData) {
-              const courierDocRef = doc(db, 'couriers', signedInUser.uid);
-              const courierDocSnap = await getDoc(courierDocRef);
-              uData = courierDocSnap.exists() ? courierDocSnap.data() : null;
+            if (!response.ok) {
+              const errData = await response.json();
+              throw new Error(errData.error || 'Credenciais inválidas. Verifique seu e-mail e senha.');
             }
 
-            const mockSession = {
-              accessToken: 'fallback-token',
-              refreshToken: 'fallback-refresh',
-              expiration: Date.now() + 3600000,
-              tenantId: uData?.tenantId || 'GLOBAL',
-              userId: signedInUser.uid,
-              role: uData?.role || 'CUSTOMER',
-              permissions: uData?.permissions || [],
-              plan: 'free',
-              empresa: uData?.restaurantName || 'KitchenFlow App',
-              createdAt: new Date().toISOString(),
-              active: true
-            };
+            const data = await response.json();
+            if (data.success) {
+              if (data.customToken) {
+                console.log("Token de acesso recebido do servidor. Autenticando na sessão local...");
+                const loginCred = await signInWithCustomToken(auth, data.customToken);
+                signedInUser = loginCred.user;
+                loginSuccess = true;
+                console.log("Sessão autenticada via Token Customizado com sucesso!");
+              } else if (data.isLocalSession) {
+                console.log("Sessão de bypass local autorizada pelo servidor.");
+                const simulatedFirebaseUser = {
+                  uid: data.user.id,
+                  email: data.user.email,
+                  displayName: data.user.name,
+                  isLocalSession: true
+                };
 
-            const authenticatedUser = {
-              id: signedInUser.uid,
-              email: trimmedEmail,
-              role: uData?.role || 'CUSTOMER',
-              name: uData?.name || signedInUser.displayName || trimmedEmail.split('@')[0],
-              tenantId: uData?.tenantId || 'GLOBAL',
-              active: true,
-              status: 'online'
-            };
+                // Sincronizar o localStorage para o App inicializar corretamente com esse usuário local
+                localStorage.setItem('kitchenflow_demo_user', JSON.stringify({
+                  firebaseUser: simulatedFirebaseUser,
+                  userData: {
+                    id: data.user.id,
+                    email: data.user.email,
+                    role: data.user.role,
+                    name: data.user.name,
+                    tenantId: data.user.tenantId,
+                    active: true,
+                    status: 'online'
+                  }
+                }));
 
-            // Purge and rebuild session properly via AuthService
-            await authService.initiateSession(mockSession, authenticatedUser);
+                localStorage.setItem('kitchenflow_cached_user', JSON.stringify({
+                  id: data.user.id,
+                  email: data.user.email,
+                  role: data.user.role,
+                  name: data.user.name,
+                  tenantId: data.user.tenantId,
+                  active: true,
+                  status: 'online'
+                }));
 
-          } catch (clientErr: any) {
-            console.error("Login de fallback client-side também falhou:", clientErr);
-            throw new Error('E-mail ou senha incorretos. Verifique seus dados.');
+                // Tentativa assíncrona e silenciosa de auto-alinhamento do Firebase Auth local via Client SDK
+                try {
+                  console.log("Tentando criar conta correspondente no Firebase Auth via Client SDK...");
+                  await createUserWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
+                  console.log("Conta auto-alinhada e registrada no Firebase Auth localmente com sucesso!");
+                } catch (clientRegErr: any) {
+                  console.log("Alinhamento silencioso Firebase Auth retornou:", clientRegErr.code || clientRegErr.message);
+                }
+
+                onLoginSuccess();
+                window.location.reload();
+                return;
+              }
+            }
+          } catch (serverErr: any) {
+            console.error("Erro na sincronização segura do servidor:", serverErr);
+            throw new Error(serverErr.message || 'Credenciais inválidas. Verifique seu e-mail e senha.');
           }
         }
 
@@ -455,7 +441,6 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
           }
 
           onLoginSuccess();
-          window.location.reload();
           return;
         } else {
           throw new Error('Não foi possível realizar a autenticação. Verifique os dados fornecidos.');
@@ -473,7 +458,6 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
             id: user.uid,
             name,
             email: trimmedEmail,
-            password: trimmedPassword,
             phone,
             role: 'COURIER',
             tenantId: 'GLOBAL',
@@ -487,7 +471,6 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
             tenantId: 'GLOBAL',
             name,
             email: trimmedEmail,
-            password: trimmedPassword,
             phone,
             pixKey,
             vehicleType,
@@ -500,8 +483,45 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
           // Lojista Parceiro: criar um novo Tenant (empresa) exclusivo para segregar dados
           const newTenantId = `tenant_${Date.now()}`;
 
-          // 1. Salvar Usuário central como OWNER (Lojista Proprietário) com as devidas permissões completas
-          // Escrever o usuário primeiro garante que regras de segurança do Firestore (que verificam o usuário e seu tenantId) passem com sucesso!
+          // 1. Cadastrar Tenant
+          await setDoc(doc(db, 'tenants', newTenantId), {
+            id: newTenantId,
+            name: restaurantName,
+            category: tradeCategory,
+            ownerId: user.uid,
+            ownerEmail: trimmedEmail,
+            active: true,
+            autoAcceptOrders: false,
+            createdAt: new Date()
+          });
+
+          // 2. Cadastrar Configurações do Lojista para evitar telas em branco
+          await setDoc(doc(db, 'settings', newTenantId), {
+            id: newTenantId,
+            admin: {
+              companyName: restaurantName,
+              cnpj: '',
+              phone: phone,
+              email: trimmedEmail,
+              address: 'Seu Endereço, 123',
+              operatingHours: '18:00 às 23:30',
+              globalDeliveryFee: 5.0,
+              autoAcceptOrders: false,
+              logoUrl: ''
+            },
+            digitalMenu: {
+              restaurantName: restaurantName,
+              accentColor: '#10B981',
+              allowDelivery: true,
+              allowTakeout: true,
+              allowTableReservation: true,
+              logoUrl: '',
+              bannerUrl: ''
+            },
+            createdAt: new Date()
+          });
+
+          // 3. Salvar Usuário central como OWNER (Lojista Proprietário) com as devidas permissões completas
           await setDoc(doc(db, 'users', user.uid), {
             id: user.uid,
             tenantId: newTenantId,
@@ -530,51 +550,12 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
             active: true
           });
 
-          // 2. Cadastrar Tenant
-          await setDoc(doc(db, 'tenants', newTenantId), {
-            id: newTenantId,
-            name: restaurantName,
-            category: tradeCategory,
-            ownerId: user.uid,
-            ownerEmail: trimmedEmail,
-            active: true,
-            autoAcceptOrders: false,
-            createdAt: new Date()
-          });
-
-          // 3. Cadastrar Configurações do Lojista para evitar telas em branco
-          await setDoc(doc(db, 'settings', newTenantId), {
-            id: newTenantId,
-            admin: {
-              companyName: restaurantName,
-              cnpj: '',
-              phone: phone,
-              email: trimmedEmail,
-              address: 'Seu Endereço, 123',
-              operatingHours: '18:00 às 23:30',
-              globalDeliveryFee: 5.0,
-              autoAcceptOrders: false,
-              logoUrl: ''
-            },
-            digitalMenu: {
-              restaurantName: restaurantName,
-              accentColor: '#10B981',
-              allowDelivery: true,
-              allowTakeout: true,
-              allowTableReservation: true,
-              logoUrl: '',
-              bannerUrl: ''
-            },
-            createdAt: new Date()
-          });
-
         } else {
           // Cliente final (Marketplace)
           await setDoc(doc(db, 'users', user.uid), {
             id: user.uid,
             name,
             email: trimmedEmail,
-            password: trimmedPassword,
             phone,
             role: 'CUSTOMER',
             tenantId: 'GLOBAL',
@@ -613,6 +594,10 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
   };
 
   const handleGoogleLogin = async () => {
+    if (!isMarketplace) {
+      setError('Acesso negado. O login via Google é permitido apenas na área do Marketplace.');
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -641,74 +626,6 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
       console.error(err);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleDirectSuperAdminLogin = async () => {
-    setLoading(true);
-    setError(null);
-    setSuccessMessage(null);
-    try {
-      const trimmedEmail = "financeirorenanuk@gmail.com";
-      const trimmedPassword = "Ch@pola07";
-      
-      console.log("Iniciando login expresso de Super Admin via API...");
-      const authResult = await authService.loginWithAPI(trimmedEmail, trimmedPassword);
-      if (authResult.success) {
-        setSuccessMessage("Sessão Super Admin autorizada com sucesso!");
-        setTimeout(() => {
-          onLoginSuccess();
-          window.location.reload();
-        }, 500);
-      } else {
-        throw new Error('Falha no login via API.');
-      }
-    } catch (err: any) {
-      console.warn("Login via API falhou, tentando fallback direto com Firebase Client Auth...", err.message || err);
-      try {
-        const loginCred = await signInWithEmailAndPassword(auth, "financeirorenanuk@gmail.com", "Ch@pola07");
-        const signedInUser = loginCred.user;
-        
-        // Buscar dados básicos do Firestore para reconstruir a sessão
-        const userDocRef = doc(db, 'users', signedInUser.uid);
-        const userDocSnap = await getDoc(userDocRef);
-        let uData = userDocSnap.exists() ? userDocSnap.data() : null;
-
-        const mockSession = {
-          accessToken: 'fallback-token',
-          refreshToken: 'fallback-refresh',
-          expiration: Date.now() + 3600000,
-          tenantId: uData?.tenantId || 'HCL1177LRQVPEKCTYRAHU7IGBQ42',
-          userId: signedInUser.uid,
-          role: 'SAAS_ADMIN',
-          permissions: uData?.permissions || ["dashboard_view", "orders_view", "menu_view", "stock_view", "finance_view", "couriers_view", "users_view", "integrations_view", "marketing_view", "reports_view", "saas_admin_view"],
-          plan: 'premium',
-          empresa: 'KitchenFlow Super Admin',
-          createdAt: new Date().toISOString(),
-          active: true
-        };
-
-        const authenticatedUser = {
-          id: signedInUser.uid,
-          email: "financeirorenanuk@gmail.com",
-          role: 'SAAS_ADMIN',
-          name: uData?.name || "Renan (Super Admin)",
-          tenantId: uData?.tenantId || 'HCL1177LRQVPEKCTYRAHU7IGBQ42',
-          active: true,
-          status: 'online'
-        };
-
-        await authService.initiateSession(mockSession, authenticatedUser);
-        setSuccessMessage("Autenticação direta estabelecida com sucesso!");
-        setTimeout(() => {
-          onLoginSuccess();
-          window.location.reload();
-        }, 500);
-      } catch (err2: any) {
-        console.error("Erro fatal no login do Super Admin:", err2);
-        setError("Erro ao acessar Super Admin real: " + (err2.message || err2.code || "Verifique as configurações do Firebase"));
-        setLoading(false);
-      }
     }
   };
 
@@ -741,7 +658,20 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
             {mode === 'signup' && !isMarketplace && (
               <div className="space-y-3">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tipo de Acesso Requerido</label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSignupRole('CUSTOMER')}
+                    className={`flex flex-col items-center justify-center p-3 rounded-2xl border-2 transition-all gap-1.5 ${
+                      signupRole === 'CUSTOMER'
+                        ? 'border-indigo-600 bg-indigo-50/50 text-indigo-700'
+                        : 'border-slate-100 bg-slate-50 text-slate-500 hover:border-slate-200'
+                    }`}
+                  >
+                    <User size={18} />
+                    <span className="text-[10px] font-black uppercase tracking-tight">Cliente</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => setSignupRole('COURIER')}
@@ -1097,14 +1027,16 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
 
 
           {/* Social Sign-In */}
-          <button
-            onClick={handleGoogleLogin}
-            disabled={loading}
-            className="w-full mt-6 bg-white border-2 border-slate-100 text-slate-600 py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-50 active:scale-98 transition-all flex items-center justify-center gap-3 shadow-sm"
-          >
-            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google Logo" className="w-5 h-5 select-none" />
-            Entrar de forma segura com o Google
-          </button>
+          {isMarketplace && (
+            <button
+              onClick={handleGoogleLogin}
+              disabled={loading}
+              className="w-full mt-6 bg-white border-2 border-slate-100 text-slate-600 py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-50 active:scale-98 transition-all flex items-center justify-center gap-3 shadow-sm"
+            >
+              <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google Logo" className="w-5 h-5 select-none" />
+              Entrar de forma segura com o Google
+            </button>
+          )}
 
           {/* Defensive text footer */}
           <p className="mt-8 text-center text-slate-400 text-[10px] font-semibold uppercase tracking-wider leading-relaxed">

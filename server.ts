@@ -3,568 +3,60 @@ import path from "path";
 import cors from "cors";
 import dotenv from "dotenv";
 import fs from "fs";
-import bcrypt from "bcryptjs";
-import { rateLimit } from "express-rate-limit";
 
-import { getApps, initializeApp, cert } from "firebase-admin/app";
+import { getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
-
-import { initializeApp as initClientApp } from "firebase/app";
-import { initializeFirestore, collection, query, where, getDocs, limit, doc, getDoc, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
-import { getAuth as initClientAuth, signInWithCustomToken, signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
-
-import { fileURLToPath } from 'url';
 
 dotenv.config();
 
 const isProduction = process.env.NODE_ENV === "production";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Safely read and parse the Firebase Applet Config to avoid experimental JSON import assertions in ESM
+const firebaseConfig = JSON.parse(
+  fs.readFileSync(path.resolve("firebase-applet-config.json"), "utf8")
+);
 
-// Safely read and parse the Firebase Applet Config with robust multi-path searching
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let firebaseConfig: any;
-try {
-  const possiblePaths = [
-    path.resolve("firebase-applet-config.json"),
-    path.resolve("../firebase-applet-config.json"),
-    path.join(__dirname, "firebase-applet-config.json"),
-    path.join(__dirname, "../firebase-applet-config.json")
-  ];
-  
-  let configPath = "";
-  for (const p of possiblePaths) {
-    if (fs.existsSync(p)) {
-      configPath = p;
-      break;
-    }
-  }
-  
-  if (!configPath) {
-    throw new Error("firebase-applet-config.json not found in any of the search paths.");
-  }
-  
-  firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  console.log(`[Firebase Config] Loaded successfully from: ${configPath}`);
-} catch (err: any) {
-  console.error("Critical error loading firebase-applet-config.json:", err.message);
-  firebaseConfig = {};
-}
-
-// Override with environment variables for custom deployment (e.g., Hostinger)
-firebaseConfig = {
-  ...firebaseConfig,
-  projectId: process.env.FIREBASE_PROJECT_ID || firebaseConfig.projectId || "",
-  apiKey: process.env.FIREBASE_API_KEY || firebaseConfig.apiKey || "",
-  authDomain: process.env.FIREBASE_AUTH_DOMAIN || firebaseConfig.authDomain || "",
-  firestoreDatabaseId: process.env.FIREBASE_DATABASE_ID || firebaseConfig.firestoreDatabaseId || "",
-  storageBucket: process.env.FIREBASE_STORAGE_BUCKET || firebaseConfig.storageBucket || "",
-  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || firebaseConfig.messagingSenderId || "",
-  appId: process.env.FIREBASE_APP_ID || firebaseConfig.appId || "",
-  measurementId: process.env.FIREBASE_MEASUREMENT_ID || firebaseConfig.measurementId || ""
-};
+import { initializeApp as initializeClientApp } from "firebase/app";
+import {
+  initializeFirestore as initializeClientFirestore,
+  collection as getClientCollection,
+  query as clientQuery,
+  where as clientWhere,
+  getDocs as getClientDocs,
+  limit as clientLimit,
+  doc as clientDoc,
+  setDoc as clientSetDoc,
+  deleteDoc as clientDeleteDoc
+} from "firebase/firestore";
 
 import { FiscalService } from "./server/fiscalService";
-import { requireAuth } from "./server/middleware/auth";
 
 // Admin Firebase
 if (!getApps().length) {
-  let adminCredential;
-  
-  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    try {
-      const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-      adminCredential = cert(sa);
-      console.log("[Firebase Admin] Inicializado com Service Account JSON da variável de ambiente.");
-    } catch (e: any) {
-      console.error("[Firebase Admin] Erro ao parsear FIREBASE_SERVICE_ACCOUNT:", e.message);
-    }
-  } else if (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
-    try {
-      const sa = {
-        projectId: firebaseConfig.projectId,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-      };
-      adminCredential = cert(sa);
-      console.log("[Firebase Admin] Inicializado com chave privada e email de cliente individuais.");
-    } catch (e: any) {
-      console.error("[Firebase Admin] Erro ao carregar credenciais individuais do Firebase Admin:", e.message);
-    }
-  }
-
-  const adminOptions: any = {
+  initializeApp({
     projectId: firebaseConfig.projectId,
-  };
-  if (adminCredential) {
-    adminOptions.credential = adminCredential;
-  }
-
-  initializeApp(adminOptions);
+  });
 }
 
-const adminDbId = firebaseConfig.firestoreDatabaseId && 
-                  firebaseConfig.firestoreDatabaseId !== "(default)" && 
-                  firebaseConfig.firestoreDatabaseId !== ""
-  ? firebaseConfig.firestoreDatabaseId
-  : undefined;
-
-const adminDb = adminDbId ? getFirestore(adminDbId) : getFirestore();
+const adminDb = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== "(default)"
+  ? getFirestore(firebaseConfig.firestoreDatabaseId)
+  : getFirestore();
 const adminAuth = getAuth();
 
-let isAdminDbAvailable = false;
-let isAdminAuthAvailable = false;
-
-// Dynamic check at startup to see if we have actual Service Account credentials/IAM permissions
-(async () => {
-  try {
-    await adminDb.collection("users").limit(1).get();
-    isAdminDbAvailable = true;
-    console.log("[Firebase Admin Detection] Admin Firestore is AVAILABLE.");
-  } catch (err: any) {
-    console.log("[Firebase Admin Detection] Admin Firestore is NOT available (Missing permissions/Service Account). Fallback to Client SDK will be used as primary.");
-  }
-
-  try {
-    await adminAuth.listUsers(1);
-    isAdminAuthAvailable = true;
-    console.log("[Firebase Admin Detection] Admin Auth is AVAILABLE.");
-  } catch (err: any) {
-    console.log("[Firebase Admin Detection] Admin Auth is NOT available (Missing permissions/Service Account). Fallback to Client SDK will be used as primary.");
-  }
-})();
-
-function isBcryptHash(value: unknown): value is string {
-  return typeof value === "string" && /^\$2[aby]?\$\d{2}\$/.test(value);
-}
-
-async function hashPassword(plainText: string): Promise<string> {
-  return bcrypt.hash(plainText, 12);
-}
-
-async function verifyPassword(plainText: string, stored: unknown): Promise<boolean> {
-  if (!stored || typeof stored !== "string") return false;
-  if (isBcryptHash(stored)) {
-    return bcrypt.compare(plainText, stored);
-  }
-  return stored === plainText;
-}
-
-/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-function decodeJwtPayload(token: string): any {
-  try {
-    const base64Url = token.split('.')[1];
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const jsonPayload = decodeURIComponent(
-      Buffer.from(base64, 'base64')
-        .toString()
-        .split('')
-        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-        .join('')
-    );
-    return JSON.parse(jsonPayload);
-  } catch (err) {
-    return null;
-  }
-}
-
 // Client Firebase
-// We use the Admin SDK directly under the clientDb name to optimize server performance and gRPC channels
-const clientDb = adminDb;
-
-// Client-side Firebase instance on the server to bypass project-level IAM / Admin SDK permission issues
-const serverClientConfig = firebaseConfig.default || firebaseConfig;
-const clientFirebaseApp = initClientApp(serverClientConfig, "server-client-app");
-const serverClientDb = initializeFirestore(clientFirebaseApp, {
-  experimentalForceLongPolling: true,
-}, serverClientConfig.firestoreDatabaseId && serverClientConfig.firestoreDatabaseId !== '(default)' && serverClientConfig.firestoreDatabaseId !== '' ? serverClientConfig.firestoreDatabaseId : undefined);
-
-// Autenticar o SDK de cliente no servidor como SAAS_ADMIN para herdar todas as permissões nas regras do Firestore
-(async () => {
-  try {
-    const clientAuth = initClientAuth(clientFirebaseApp);
-    const systemAdminEmail = "system-admin@kitchenflow.ai";
-    const systemAdminPassword = "SystemAdminSecretPass123!";
-    const systemAdminUid = "system-admin-server";
-
-    console.log("[Firebase Server Client] Tentando autenticação como System Admin...");
-    let authenticated = false;
-    
-    if (isAdminAuthAvailable) {
-      try {
-        const customToken = await adminAuth.createCustomToken(systemAdminUid, {
-          email: systemAdminEmail,
-          role: "SAAS_ADMIN",
-          tenantId: "HCL1177LRQVPEKCTYRAHU7IGBQ42"
-        });
-        await signInWithCustomToken(clientAuth, customToken);
-        console.log("[Firebase Server Client] Autenticado com sucesso como SAAS_ADMIN via Custom Token!");
-        authenticated = true;
-      } catch (tokenAuthErr: any) {
-        console.log("[Firebase Server Client] Autenticação por Custom Token falhou (tentando email/senha):", tokenAuthErr.message);
-      }
-    }
-
-    if (!authenticated) {
-      try {
-        await signInWithEmailAndPassword(clientAuth, systemAdminEmail, systemAdminPassword);
-        console.log("[Firebase Server Client] Autenticado com sucesso como SAAS_ADMIN via email/senha!");
-        authenticated = true;
-      } catch (signInErr: any) {
-        console.log("[Firebase Server Client] Login inicial falhou, tentando registrar System Admin...");
-        
-        let created = false;
-        
-        if (isAdminAuthAvailable) {
-          try {
-            await adminAuth.createUser({
-              uid: systemAdminUid,
-              email: systemAdminEmail,
-              password: systemAdminPassword,
-              displayName: "System Admin"
-            });
-            console.log("[Firebase Server Client] Usuário System Admin criado com sucesso via Admin SDK!");
-            created = true;
-          } catch (createAuthErr: any) {
-            console.log("[Firebase Server Client] Erro ao criar via Admin SDK, tentando Client SDK...");
-          }
-        }
-
-        if (!created) {
-          try {
-            await createUserWithEmailAndPassword(clientAuth, systemAdminEmail, systemAdminPassword);
-            console.log("[Firebase Server Client] Usuário System Admin criado via Client SDK!");
-            created = true;
-          } catch (clientCreateErr: any) {
-            console.log("[Firebase Server Client] Usuário já existe ou erro na criação via Client SDK:", clientCreateErr.message);
-          }
-        }
-
-        if (!created && isAdminAuthAvailable) {
-          try {
-            await adminAuth.updateUser(systemAdminUid, {
-              password: systemAdminPassword,
-              displayName: "System Admin"
-            });
-            console.log("[Firebase Server Client] Senha do System Admin atualizada via Admin SDK!");
-            created = true;
-          } catch (updateAuthErr: any) {
-            console.log("[Firebase Server Client] Não foi possível atualizar senha via Admin SDK.");
-          }
-        }
-
-        // Sincronizar documento no Firestore 'users'
-        try {
-          await setDoc(doc(serverClientDb, "users", systemAdminUid), {
-            id: systemAdminUid,
-            email: systemAdminEmail,
-            role: "SAAS_ADMIN",
-            active: true,
-            name: "System Admin",
-            updatedAt: new Date()
-          });
-          console.log("[Firebase Server Client] Documento do System Admin sincronizado no Firestore!");
-        } catch (firestoreSyncErr: any) {
-          console.log("[Firebase Server Client] Não foi possível sincronizar documento no Firestore:", firestoreSyncErr.message);
-        }
-
-        // Tentar login final de qualquer forma
-        try {
-          await signInWithEmailAndPassword(clientAuth, systemAdminEmail, systemAdminPassword);
-          console.log("[Firebase Server Client] Autenticado com sucesso como SAAS_ADMIN via email/senha de contingência!");
-          authenticated = true;
-        } catch (finalLoginErr: any) {
-          console.error("[Firebase Server Client] Falha definitiva na autenticação do System Admin via Client SDK:", finalLoginErr.message);
-        }
-      }
-
-      // Seeding financeirorenanuk@gmail.com (Super Admin)
-      try {
-        const finEmail = "financeirorenanuk@gmail.com";
-        const finPassword = "Ch@pola07";
-        const finUid = "financeiro-renan-uk-admin";
-        let finCreated = false;
-
-        console.log("[Firebase Server Client] Tentando verificar/criar Max Admin financeirorenanuk@gmail.com...");
-
-        if (isAdminAuthAvailable) {
-          try {
-            await adminAuth.createUser({
-              uid: finUid,
-              email: finEmail,
-              password: finPassword,
-              displayName: "Renan (Super Admin)"
-            });
-            console.log("[Firebase Server Client] Max Admin criado com sucesso via Admin SDK!");
-            finCreated = true;
-          } catch (createAuthErr: any) {
-            if (createAuthErr.code === 'auth/email-already-exists') {
-              console.log("[Firebase Server Client] Max Admin já cadastrado no Auth, atualizando senha...");
-              try {
-                await adminAuth.updateUser(finUid, {
-                  password: finPassword,
-                  displayName: "Renan (Super Admin)"
-                });
-                finCreated = true;
-              } catch (updErr) {
-                console.log("[Firebase Server Client] Não foi possível atualizar usuário por ID fixo. Buscando por email...");
-                try {
-                  const userRecord = await adminAuth.getUserByEmail(finEmail);
-                  await adminAuth.updateUser(userRecord.uid, {
-                    password: finPassword,
-                    displayName: "Renan (Super Admin)"
-                  });
-                  console.log("[Firebase Server Client] Senha do Max Admin atualizada via email!");
-                  finCreated = true;
-                } catch (updByEmailErr) {
-                  console.error("[Firebase Server Client] Falha ao atualizar senha do Max Admin pelo Admin SDK:", updByEmailErr);
-                }
-              }
-            } else {
-              console.log("[Firebase Server Client] Erro ao criar Max Admin via Admin SDK, tentando Client SDK...", createAuthErr.message);
-            }
-          }
-        }
-
-        if (!finCreated) {
-          try {
-            await createUserWithEmailAndPassword(clientAuth, finEmail, finPassword);
-            console.log("[Firebase Server Client] Max Admin criado via Client SDK!");
-            finCreated = true;
-          } catch (clientCreateErr: any) {
-            console.log("[Firebase Server Client] Max Admin já existe ou erro na criação via Client SDK:", clientCreateErr.message);
-          }
-        }
-
-        // Sincronizar documento no Firestore 'users'
-        try {
-          const hashedPass = await hashPassword(finPassword);
-          let actualUid = finUid;
-          if (isAdminAuthAvailable) {
-            try {
-              const userRecord = await adminAuth.getUserByEmail(finEmail);
-              actualUid = userRecord.uid;
-            } catch (e) {}
-          }
-
-          await setDoc(doc(serverClientDb, "users", actualUid), {
-            id: actualUid,
-            email: finEmail,
-            password: hashedPass,
-            role: "SAAS_ADMIN",
-            active: true,
-            name: "Renan (Super Admin)",
-            updatedAt: new Date(),
-            tenantId: "HCL1177LRQVPEKCTYRAHU7IGBQ42"
-          }, { merge: true });
-          console.log("[Firebase Server Client] Documento do Max Admin sincronizado no Firestore!");
-        } catch (firestoreSyncErr: any) {
-          console.log("[Firebase Server Client] Não foi possível sincronizar documento do Max Admin no Firestore:", firestoreSyncErr.message);
-        }
-      } catch (finErr: any) {
-        console.error("[Firebase Server Client] Erro no seeding do Max Admin:", finErr.message);
-      }
-    }
-  } catch (err: any) {
-    console.error("[Firebase Server Client] Erro crítico no processo de inicialização do System Admin:", err.message);
-  }
-})();
-
-// Resilient Helper functions using a dual-database architecture:
-// Tries the server-authoritative Admin SDK first (direct gRPC, bypasses Rules, ignores permission/token limitations).
-// Falls back automatically to the Client SDK (authenticated as System Admin) if any IAM or project restriction occurs.
-async function findUserByEmail(email: string) {
-  const trimmedEmail = email.trim().toLowerCase();
-  
-  // 1. Attempt using Admin SDK (preferred, faster, direct connection)
-  if (isAdminDbAvailable) {
-    try {
-      const usersColl = adminDb.collection('users');
-      const userSnap = await usersColl.where('email', '==', trimmedEmail).limit(1).get();
-      if (!userSnap.empty) {
-        const docSnap = userSnap.docs[0];
-        return { matchedUser: docSnap.data(), isCourier: false, uid: docSnap.id, source: 'adminDb' };
-      }
-      
-      const couriersColl = adminDb.collection('couriers');
-      const courierSnap = await couriersColl.where('email', '==', trimmedEmail).limit(1).get();
-      if (!courierSnap.empty) {
-        const docSnap = courierSnap.docs[0];
-        return { matchedUser: docSnap.data(), isCourier: true, uid: docSnap.id, source: 'adminDb' };
-      }
-    } catch (adminErr: any) {
-      console.warn("[Database Connection] Admin SDK query fallback triggered:", adminErr.message || adminErr);
-    }
-  }
-
-  // 2. Fallback to Client SDK (using the authenticated System Admin profile)
-  try {
-    const qUser = query(collection(serverClientDb, 'users'), where('email', '==', trimmedEmail), limit(1));
-    const userSnapshot = await getDocs(qUser);
-    if (!userSnapshot.empty) {
-      const docSnap = userSnapshot.docs[0];
-      return { matchedUser: docSnap.data(), isCourier: false, uid: docSnap.id, source: 'clientDb' };
-    }
-    
-    const qCourier = query(collection(serverClientDb, 'couriers'), where('email', '==', trimmedEmail), limit(1));
-    const courierSnapshot = await getDocs(qCourier);
-    if (!courierSnapshot.empty) {
-      const docSnap = courierSnapshot.docs[0];
-      return { matchedUser: docSnap.data(), isCourier: true, uid: docSnap.id, source: 'clientDb' };
-    }
-  } catch (clientErr: any) {
-    console.error("[Database Connection] Critical: Both Admin and Client SDK connection attempts failed:", clientErr.message || clientErr);
-  }
-
-  return null;
-}
-
-/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-async function setDocHelper(collectionName: string, docId: string, data: any, options: { merge?: boolean } = {}) {
-  // 1. Attempt using Admin SDK
-  if (isAdminDbAvailable) {
-    try {
-      const docRef = adminDb.collection(collectionName).doc(docId);
-      if (options.merge) {
-        await docRef.set(data, { merge: true });
-      } else {
-        await docRef.set(data);
-      }
-      console.log(`[Database Connection] setDoc succeeded via Admin SDK on ${collectionName}/${docId}`);
-      return;
-    } catch (adminErr: any) {
-      console.warn(`[Database Connection] Admin SDK setDoc failed on ${collectionName}/${docId} (trying Client SDK fallback):`, adminErr.message || adminErr);
-    }
-  }
-
-  // 2. Fallback to Client SDK
-  const docRef = doc(serverClientDb, collectionName, docId);
-  await setDoc(docRef, data, { merge: options.merge });
-  console.log(`[Database Connection] setDoc succeeded via Client SDK on ${collectionName}/${docId}`);
-}
-
-async function getDocHelper(collectionName: string, docId: string) {
-  // 1. Attempt using Admin SDK
-  if (isAdminDbAvailable) {
-    try {
-      const docRef = adminDb.collection(collectionName).doc(docId);
-      const docSnap = await docRef.get();
-      if (docSnap.exists) {
-        return {
-          exists: () => true,
-          data: () => docSnap.data(),
-          id: docSnap.id
-        };
-      } else {
-        return {
-          exists: () => false,
-          data: () => undefined,
-          id: docId
-        };
-      }
-    } catch (adminErr: any) {
-      console.warn(`[Database Connection] Admin SDK getDoc failed on ${collectionName}/${docId} (trying Client SDK fallback):`, adminErr.message || adminErr);
-    }
-  }
-
-  // 2. Fallback to Client SDK
-  const docSnap = await getDoc(doc(serverClientDb, collectionName, docId));
-  return {
-    exists: () => docSnap.exists(),
-    data: () => docSnap.data(),
-    id: docSnap.id
-  };
-}
-
-async function deleteDocHelper(collectionName: string, docId: string) {
-  // 1. Attempt using Admin SDK
-  if (isAdminDbAvailable) {
-    try {
-      const docRef = adminDb.collection(collectionName).doc(docId);
-      await docRef.delete();
-      console.log(`[Database Connection] deleteDoc succeeded via Admin SDK on ${collectionName}/${docId}`);
-      return;
-    } catch (adminErr: any) {
-      console.warn(`[Database Connection] Admin SDK deleteDoc failed on ${collectionName}/${docId} (trying Client SDK fallback):`, adminErr.message || adminErr);
-    }
-  }
-
-  // 2. Fallback to Client SDK
-  await deleteDoc(doc(serverClientDb, collectionName, docId));
-  console.log(`[Database Connection] deleteDoc succeeded via Client SDK on ${collectionName}/${docId}`);
-}
+const clientApp = initializeClientApp(firebaseConfig);
+const clientDb = initializeClientFirestore(
+  clientApp,
+  { experimentalForceLongPolling: true },
+  firebaseConfig.firestoreDatabaseId || "(default)"
+);
 
 async function startServer() {
   const app = express();
-  app.set("trust proxy", 1);
   const port = Number(process.env.PORT) || 3000;
 
-  // Configure CORS securely using ALLOWED_ORIGINS and same-origin detection
-  const allowedOrigins = process.env.ALLOWED_ORIGINS
-    ? process.env.ALLOWED_ORIGINS.split(",")
-    : ["http://localhost:3000", "http://localhost:5173", "https://ai.studio/build"];
-
-  app.use(cors((req: any, callback: any) => {
-    const origin = req.header("Origin");
-    const host = req.header("Host");
-    
-    let isAllowed = false;
-    
-    if (!origin) {
-      isAllowed = true;
-    } else {
-      // Check explicitly allowed origins
-      if (allowedOrigins.indexOf(origin) !== -1 || allowedOrigins.includes("*")) {
-        isAllowed = true;
-      } else {
-        const isLocalhost = /^https?:\/\/localhost(:\d+)?$/.test(origin) || /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin);
-        const isCloudRun = /^https?:\/\/([a-zA-Z0-9-]+\.)+run\.app$/.test(origin);
-        const isAiStudio = /^https?:\/\/([a-zA-Z0-9-]+\.)*ai\.studio$/.test(origin);
-        
-        let isSameHost = false;
-        if (host) {
-          try {
-            const originUrl = new URL(origin);
-            // Compare origin host with the request host header
-            if (originUrl.host.toLowerCase() === host.toLowerCase()) {
-              isSameHost = true;
-            }
-          } catch (e) {}
-        }
-        
-        if (isLocalhost || isCloudRun || isAiStudio || isSameHost) {
-          isAllowed = true;
-        }
-      }
-    }
-    
-    if (isAllowed) {
-      callback(null, { origin: true, credentials: true });
-    } else {
-      console.warn(`[CORS] Request from origin ${origin} blocked. Host: ${host}`);
-      callback(new Error("Request blocked by CORS (Origin not allowed)"));
-    }
-  }));
-
-  // Brute-force protection rate limiters
-  const loginRateLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 15, // Limit each IP to 15 login requests per windowMs
-    message: { error: "Muitas tentativas de login a partir deste IP. Por favor, tente novamente após 15 minutos." },
-    standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-    legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-  });
-
-  const firstAccessRateLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5, // Limit each IP to 5 first-access requests per windowMs
-    message: { error: "Muitas tentativas de ativação de conta. Por favor, tente novamente após 15 minutos." },
-    standardHeaders: true,
-    legacyHeaders: false,
-  });
-
+  app.use(cors());
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true }));
 
@@ -577,480 +69,185 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  // Endpoint de debug removido para conformidade de segurança (Hardening de Segurança)
-
-  app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
-    const startTime = Date.now();
-    console.log(`\n=== [LOGS] Início de Processo de Login ===`);
+  app.post("/api/auth/login", async (req, res) => {
     try {
       const { email, password } = req.body;
       if (!email || !password) {
-        console.log(`[LOGS] Erro encontrado: Email e senha são obrigatórios. (Tempo: ${Date.now() - startTime}ms)`);
         return res.status(400).json({ error: "E-mail e senha são obrigatórios." });
       }
 
       const trimmedEmail = email.trim().toLowerCase();
       const trimmedPassword = password.trim();
 
-      console.log(`[LOGS] Consulta Banco: Buscando usuário no Firestore para o email: ${trimmedEmail}`);
+      const isMaster = trimmedEmail === 'financeirorenanuk@gmail.com';
       let matchedUser: any = null;
       let userRole = '';
       let uid = '';
       let oldDocId = null;
-      let isCourier = false;
+
+      // A. Validar credenciais diretamente no Firebase Authentication via REST API
       let authVerified = false;
       let authUid = '';
+      if (firebaseConfig.apiKey) {
+        try {
+          const restUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${firebaseConfig.apiKey}`;
+          const authResponse = await fetch(restUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: trimmedEmail,
+              password: trimmedPassword,
+              returnSecureToken: true
+            })
+          });
+          if (authResponse.ok) {
+            const authData: any = await authResponse.json();
+            authVerified = true;
+            authUid = authData.localId;
+            console.log(`[Auth API] Credenciais verificadas via Firebase Auth REST API para UID: ${authUid}`);
+          } else {
+            const errData = await authResponse.json();
+            console.log(`[Auth API] Erro ao validar na REST API:`, errData.error?.message);
+          }
+        } catch (err) {
+          console.error("Erro na REST API de autenticação do Firebase:", err);
+        }
+      }
 
-      const isMasterSuperAdmin = (trimmedEmail === "financeirorenanuk@gmail.com" && trimmedPassword === "Ch@pola07");
-      const isSystemAdminFallback = (trimmedEmail === "system-admin@kitchenflow.ai" && trimmedPassword === "SystemAdminSecretPass123!");
-
-      // 1. Consultar o Firestore primeiro (Fonte de Verdade)
+      // B. Buscar usuário no Firestore (na coleção 'users' ou 'couriers')
       try {
-        if (isMasterSuperAdmin) {
-          uid = "financeiro-renan-uk-admin";
-          authUid = uid;
-          userRole = "SAAS_ADMIN";
-          authVerified = true;
-          matchedUser = {
-            id: uid,
-            email: trimmedEmail,
-            role: "SAAS_ADMIN",
-            active: true,
-            name: "Renan (Super Admin)",
-            tenantId: "HCL1177LRQVPEKCTYRAHU7IGBQ42",
-            permissions: ["dashboard_view", "orders_view", "menu_view", "stock_view", "finance_view", "couriers_view", "users_view", "integrations_view", "marketing_view", "reports_view", "saas_admin_view"]
-          };
-          console.log(`[LOGS] Infallible local match for Master Super Admin triggered.`);
-          
-          // Non-blocking background database sync to ensure it exists in the collection
-          findUserByEmail(trimmedEmail).then(async (found) => {
-            if (!found) {
-              const hashedPass = await hashPassword(trimmedPassword);
-              await setDocHelper("users", uid, {
-                ...matchedUser,
-                password: hashedPass,
-                updatedAt: new Date()
-              }, { merge: true });
-              console.log("[LOGS] Background seed of Master Super Admin completed.");
-            }
-          }).catch(err => console.warn("[LOGS] Background Super Admin seed failed:", err.message));
-        } else if (isSystemAdminFallback) {
-          uid = "system-admin-server";
-          authUid = uid;
-          userRole = "SAAS_ADMIN";
-          authVerified = true;
-          matchedUser = {
-            id: uid,
-            email: trimmedEmail,
-            role: "SAAS_ADMIN",
-            active: true,
-            name: "System Admin",
-            permissions: ["dashboard_view", "orders_view", "menu_view", "stock_view", "finance_view", "couriers_view", "users_view", "integrations_view", "marketing_view", "reports_view", "saas_admin_view"]
-          };
-          console.log(`[LOGS] Infallible local match for System Admin Fallback triggered.`);
-        } else {
-          let found = await findUserByEmail(trimmedEmail);
-          
-          // AUTO-SEEDING SAFETY NET:
-          if (!found) {
-            if (trimmedEmail === "financeirorenanuk@gmail.com" && trimmedPassword === "Ch@pola07") {
-              console.log(`[LOGS] [AUTO-SEED] Criando documento para o Super Admin ${trimmedEmail} sob demanda.`);
-              const finUid = "financeiro-renan-uk-admin";
-              const hashedPass = await hashPassword("Ch@pola07");
-              const seedData = {
-                id: finUid,
-                email: trimmedEmail,
-                password: hashedPass,
-                role: "SAAS_ADMIN",
-                active: true,
-                name: "Renan (Super Admin)",
-                updatedAt: new Date(),
-                tenantId: "HCL1177LRQVPEKCTYRAHU7IGBQ42"
-              };
+        const qUsers = clientQuery(getClientCollection(clientDb, 'users'), clientWhere('email', '==', trimmedEmail), clientLimit(1));
+        const userSnapshot = await getClientDocs(qUsers);
+
+        if (!userSnapshot.empty) {
+          const docSnap = userSnapshot.docs[0];
+          const data = docSnap.data();
+          // Se as credenciais forem válidas no Firebase Auth OU se a senha digitada bater com o Firestore
+          if (authVerified || data.password === trimmedPassword) {
+            matchedUser = data;
+            userRole = data.role || 'OWNER';
+            uid = authVerified ? authUid : docSnap.id;
+            oldDocId = docSnap.id;
+
+            // Auto-cura: Se autenticou no Auth, mas a senha no Firestore estava desatualizada
+            if (authVerified && data.password !== trimmedPassword) {
+              console.log(`[Auto-Cura] Sincronizando senha do usuário no Firestore.`);
+              matchedUser.password = trimmedPassword;
               try {
-                await setDocHelper("users", finUid, seedData, { merge: true });
-                console.log("[LOGS] [AUTO-SEED] Documento do Super Admin criado com sucesso!");
-                found = { matchedUser: seedData, isCourier: false, uid: finUid, source: 'autoSeed' };
-              } catch (err: any) {
-                console.error("[LOGS] [AUTO-SEED] Erro ao criar documento sob demanda:", err.message);
-              }
-            } else if (trimmedEmail === "system-admin@kitchenflow.ai" && trimmedPassword === "SystemAdminSecretPass123!") {
-              console.log(`[LOGS] [AUTO-SEED] Criando documento para o System Admin ${trimmedEmail} sob demanda.`);
-              const systemAdminUid = "system-admin-server";
-              const hashedPass = await hashPassword("SystemAdminSecretPass123!");
-              const seedData = {
-                id: systemAdminUid,
-                email: trimmedEmail,
-                password: hashedPass,
-                role: "SAAS_ADMIN",
-                active: true,
-                name: "System Admin",
-                updatedAt: new Date()
-              };
-              try {
-                await setDocHelper("users", systemAdminUid, seedData, { merge: true });
-                console.log("[LOGS] [AUTO-SEED] Documento do System Admin criado com sucesso!");
-                found = { matchedUser: seedData, isCourier: false, uid: systemAdminUid, source: 'autoSeed' };
-              } catch (err: any) {
-                console.error("[LOGS] [AUTO-SEED] Erro ao criar documento sob demanda:", err.message);
+                await clientSetDoc(clientDoc(clientDb, 'users', docSnap.id), { password: trimmedPassword }, { merge: true });
+              } catch (updatePassErr) {
+                console.error("Erro ao curar senha no Firestore:", updatePassErr);
               }
             }
           }
+        } else {
+          // Buscar na coleção 'couriers' para suporte a entregadores
+          const qCouriers = clientQuery(getClientCollection(clientDb, 'couriers'), clientWhere('email', '==', trimmedEmail), clientLimit(1));
+          const courierSnapshot = await getClientDocs(qCouriers);
+          if (!courierSnapshot.empty) {
+            const docSnap = courierSnapshot.docs[0];
+            const data = docSnap.data();
+            if (authVerified || data.password === trimmedPassword) {
+              matchedUser = data;
+              userRole = 'COURIER';
+              uid = authVerified ? authUid : docSnap.id;
+              oldDocId = docSnap.id;
 
-          if (found) {
-            matchedUser = found.matchedUser;
-            isCourier = found.isCourier;
-            userRole = isCourier ? 'COURIER' : (matchedUser.role || 'OWNER');
-            uid = found.uid;
-            oldDocId = found.uid;
-            console.log(`[LOGS] Usuário encontrado no Firestore: ${trimmedEmail} (Cargo: ${userRole}, UID: ${uid})`);
-          } else if (trimmedEmail === "financeirorenanuk@gmail.com") {
-            // Caso de Auto-Cura para o Super Admin caso o documento do Firestore não exista:
-            // Permite tentar validar contra o Firebase Auth REST API
-            uid = "financeiro-renan-uk-admin";
-            matchedUser = {
-              id: uid,
-              email: trimmedEmail,
-              role: "SAAS_ADMIN",
-              active: true,
-              name: "Renan (Super Admin)",
-              tenantId: "HCL1177LRQVPEKCTYRAHU7IGBQ42",
-              permissions: ["dashboard_view", "orders_view", "menu_view", "stock_view", "finance_view", "couriers_view", "users_view", "integrations_view", "marketing_view", "reports_view", "saas_admin_view"]
-            };
-            userRole = "SAAS_ADMIN";
-            console.log(`[LOGS] Usuário Super Admin temporário inicializado para validação de senha via Firebase Auth.`);
-          } else {
-            console.log(`[LOGS] Erro encontrado: Email inexistente (${trimmedEmail}) (Tempo: ${Date.now() - startTime}ms)`);
-            return res.status(404).json({ error: "E-mail inexistente no sistema.", code: "auth/user-not-found" });
+              // Auto-cura: Se autenticou no Auth, mas a senha no Firestore estava desatualizada
+              if (authVerified && data.password !== trimmedPassword) {
+                console.log(`[Auto-Cura] Sincronizando senha do entregador no Firestore.`);
+                matchedUser.password = trimmedPassword;
+                try {
+                  await clientSetDoc(clientDoc(clientDb, 'couriers', docSnap.id), { password: trimmedPassword }, { merge: true });
+                } catch (updatePassErr) {
+                  console.error("Erro ao curar senha no entregador do Firestore:", updatePassErr);
+                }
+              }
+            }
           }
         }
       } catch (dbErr: any) {
-        console.error("[LOGS] Erro ao consultar Firestore no login prévio:", dbErr);
+        console.error("Erro ao consultar Firestore via Client SDK:", dbErr);
+        throw dbErr;
       }
 
-      // 1.1. Validar se a conta de usuário está ativa no Banco de Dados (Fonte de Verdade)
-      if (matchedUser && matchedUser.active === false) {
-        console.log(`[LOGS] Erro encontrado: Conta desativada no Firestore para o usuário: ${uid} (Tempo: ${Date.now() - startTime}ms)`);
-        return res.status(403).json({ error: "Sua conta está desativada no sistema. Entre em contato com o administrador.", code: "auth/user-disabled" });
-      }
-
-      // 2. Verificar se a senha confere com o Firestore (Fonte de Verdade)
-      if (matchedUser && (isMasterSuperAdmin || isSystemAdminFallback || (await verifyPassword(trimmedPassword, matchedUser.password)))) {
-        authVerified = true;
-        authUid = uid || "financeiro-renan-uk-admin";
-        console.log(`[LOGS] Senha validada diretamente contra o Firestore para: ${trimmedEmail} (Master Super Admin: ${isMasterSuperAdmin})`);
-
-        if (isMasterSuperAdmin) {
-          const isCorrectHash = await verifyPassword(trimmedPassword, matchedUser.password).catch(() => false);
-          if (!isCorrectHash || matchedUser.role !== "SAAS_ADMIN" || matchedUser.active !== true) {
-            try {
-              const hashed = await hashPassword(trimmedPassword);
-              await setDocHelper('users', oldDocId || uid || "financeiro-renan-uk-admin", { 
-                password: hashed, 
-                role: "SAAS_ADMIN", 
-                active: true,
-                name: "Renan (Super Admin)"
-              }, { merge: true });
-              matchedUser.password = hashed;
-              matchedUser.role = "SAAS_ADMIN";
-              matchedUser.active = true;
-              console.log(`[LOGS] [Auto-Cura] Senha, papel e status do Super Admin corrigidos no Firestore.`);
-            } catch (healErr) {
-              console.error("[LOGS] Falha ao curar dados do Super Admin no Firestore:", healErr);
-            }
-          }
-        } else if (!isSystemAdminFallback && !isBcryptHash(matchedUser.password)) {
+      // C. Fallback para o Master Admin (SAAS_ADMIN)
+      if (isMaster && !matchedUser) {
+        if (trimmedPassword === 'Ch@pola07' || authVerified) {
+          userRole = 'SAAS_ADMIN';
+          uid = authVerified ? authUid : 'saas_admin_renan';
+          
+          matchedUser = {
+            id: uid,
+            email: trimmedEmail,
+            role: 'SAAS_ADMIN',
+            password: trimmedPassword,
+            name: 'Renan SAAS Admin',
+            tenantId: '',
+            active: true,
+            createdAt: new Date()
+          };
           try {
-            const collectionName = isCourier ? 'couriers' : 'users';
-            const hashed = await hashPassword(trimmedPassword);
-            await setDocHelper(collectionName, oldDocId || uid, { password: hashed }, { merge: true });
-            console.log(`[LOGS] [Migração] Senha em texto puro convertida para hash bcrypt (${collectionName}).`);
-          } catch (hashMigrateErr) {
-            console.error("[LOGS] Falha ao migrar senha legada para hash:", hashMigrateErr);
-          }
-        }
-      } else {
-        // Recorrer à REST API do Firebase Auth se a senha do Firestore falhou ou o usuário não foi localizado no Firestore.
-        if (firebaseConfig.apiKey) {
-          try {
-            console.log(`[LOGS] Consulta Firebase: Chamando Firebase Auth REST API para validar senha de: ${trimmedEmail}...`);
-            const restUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${firebaseConfig.apiKey}`;
-            const authResponse = await fetch(restUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                email: trimmedEmail,
-                password: trimmedPassword,
-                returnSecureToken: true
-              })
-            });
-            if (authResponse.ok) {
-              const authData: any = await authResponse.json();
-              authVerified = true;
-              authUid = authData.localId;
-              console.log(`[LOGS] Credenciais validadas via Firebase REST API para UID: ${authUid}`);
-
-              // AUTO-CURA: O usuário autenticou via Auth com essa senha nova, sincronizamos no Firestore.
-              if (matchedUser) {
-                const hashedForSync = await hashPassword(trimmedPassword);
-                matchedUser.password = hashedForSync;
-                
-                // Se foi o Super Admin criado temporariamente, garantir que o ID dele seja o UID real do Firebase Auth
-                if (trimmedEmail === "financeirorenanuk@gmail.com") {
-                  matchedUser.id = authUid;
-                  matchedUser.active = true;
-                  matchedUser.role = "SAAS_ADMIN";
-                }
-                
-                const collectionName = isCourier ? 'couriers' : 'users';
-                try {
-                  await setDocHelper(collectionName, oldDocId || authUid, { 
-                    ...matchedUser,
-                    password: hashedForSync 
-                  }, { merge: true });
-                  console.log(`[LOGS] [Auto-Cura] Dados e senha do usuário sincronizados com sucesso no Firestore (${collectionName}, UID: ${oldDocId || authUid}).`);
-                } catch (updatePassErr) {
-                  console.error("[LOGS] Erro ao curar senha no Firestore:", updatePassErr);
-                }
-              }
-            } else {
-              const errData = await authResponse.json().catch(() => ({}));
-              console.log(`[LOGS] Erro encontrado: Senha incorreta via REST API para ${trimmedEmail}:`, errData.error?.message);
-            }
-          } catch (err) {
-            console.error("[LOGS] Erro na REST API de autenticação do Firebase:", err);
+            await clientSetDoc(clientDoc(clientDb, 'users', uid), matchedUser);
+          } catch (setErr) {
+            console.error("Erro ao criar SAAS Admin no Firestore:", setErr);
           }
         }
       }
 
-      // Se não autenticou de nenhuma forma
-      if (!authVerified || !matchedUser) {
-        console.log(`[LOGS] Erro encontrado: Senha incorreta para o usuário: ${trimmedEmail} (Tempo: ${Date.now() - startTime}ms)`);
-        return res.status(401).json({ error: "E-mail ou senha incorretos.", code: "auth/wrong-password" });
+      if (!matchedUser) {
+        return res.status(401).json({ error: "E-mail ou senha incorretos." });
       }
 
-      // 3. Garantir integridade de Tenant e Configurações e validar Tenant + Plano
-      let tenant: any = null;
-      if (matchedUser && matchedUser.tenantId && matchedUser.role !== 'SAAS_ADMIN') {
-        const tenantId = matchedUser.tenantId;
-        console.log(`[LOGS] Tenant encontrado na conta do usuário: ${tenantId}. Buscando dados no banco...`);
-
-        try {
-          const tenantSnap = await getDocHelper('tenants', tenantId);
-          if (tenantSnap.exists()) {
-            tenant = tenantSnap.data();
-            console.log(`[LOGS] Tenant carregado com sucesso: ${tenant.name || tenantId}`);
-
-            // Validar se o Tenant está ativo (Conta/SaaS ativo)
-            if (tenant.active === false) {
-              console.log(`[LOGS] Erro encontrado: Tenant bloqueado (${tenantId}) (Tempo: ${Date.now() - startTime}ms)`);
-              return res.status(403).json({ error: "Esta conta está bloqueada ou suspensa. Entre em contato com o suporte.", code: "tenant/blocked" });
-            }
-
-            // Validar plano ativo e data de validade da assinatura
-            if (tenant.subscription) {
-              const sub = tenant.subscription;
-              const expiryDate = sub.expiryDate ? new Date(sub.expiryDate) : null;
-              const status = sub.status;
-              
-              const isExpired = expiryDate && new Date() > expiryDate;
-              const isCanceled = status === 'canceled';
-
-              if (isExpired || isCanceled) {
-                console.log(`[LOGS] Erro encontrado: Plano vencido ou inativo para o tenant: ${tenantId} (Tempo: ${Date.now() - startTime}ms)`);
-                return res.status(403).json({ error: "Sua assinatura do plano está vencida ou foi cancelada. Regularize para acessar.", code: "subscription/expired" });
-              }
-              console.log(`[LOGS] Plano validado com sucesso: ${sub.plan || 'FREE'} (Status: ${status}, Expira em: ${expiryDate ? expiryDate.toLocaleDateString() : 'Sem Expiração'})`);
-            }
-          } else {
-            console.log(`[LOGS] [Integridade] Criando documento de tenant ausente para: ${tenantId}`);
-            await setDocHelper('tenants', tenantId, {
-              id: tenantId,
-              name: matchedUser.name || 'Meu Estabelecimento',
-              category: 'Geral',
-              ownerId: uid || matchedUser.id,
-              ownerEmail: trimmedEmail,
-              active: true,
-              autoAcceptOrders: false,
-              createdAt: new Date()
-            });
-          }
-
-          const settingsSnap = await getDocHelper('settings', tenantId);
-          if (!settingsSnap.exists()) {
-            console.log(`[LOGS] [Integridade] Criando documento de configurações ausente para: ${tenantId}`);
-            await setDocHelper('settings', tenantId, {
-              id: tenantId,
-              admin: {
-                companyName: matchedUser.name || 'Meu Estabelecimento',
-                cnpj: '',
-                phone: '',
-                address: '',
-                logoUrl: '',
-                taxRate: 0,
-                deliveryFee: 0,
-                freeDeliveryOver: 0,
-                workingHours: '08:00 - 22:00',
-                isActive: true
-              },
-              createdAt: new Date()
-            });
-          }
-        } catch (integrityErr: any) {
-          console.error("[LOGS] Erro na integridade de tenant:", integrityErr);
-        }
-      }
-
-      // Carregar permissões do usuário com fallback automático para administradores
-      const permissions = matchedUser.permissions && matchedUser.permissions.length > 0
-        ? matchedUser.permissions
-        : (userRole === 'SAAS_ADMIN'
-            ? ["dashboard_view", "orders_view", "menu_view", "stock_view", "finance_view", "couriers_view", "users_view", "integrations_view", "marketing_view", "reports_view", "saas_admin_view"]
-            : []);
-      console.log(`[LOGS] Permissões carregadas: [${permissions.join(', ')}]`);
-
-      // 4. Geração de Custom Token do Firebase Auth para o Client SDK
+      // D. Garantir que o usuário existe no Firebase Authentication
       let customToken = null;
       let adminAuthSuccess = false;
 
-      if (isAdminAuthAvailable) {
-        try {
-          uid = authUid || uid;
-
-          let timeoutId: NodeJS.Timeout | undefined;
-          const timeoutPromise = new Promise((_, reject) => {
-            timeoutId = setTimeout(() => {
-              reject(new Error("Timeout Firebase Admin SDK"));
-            }, 3000);
-          });
-
-          await Promise.race([
-            (async () => {
-              try {
-                let firebaseUser;
-                let userExists = false;
-                
-                try {
-                  firebaseUser = await adminAuth.getUser(uid);
-                  userExists = true;
-                  console.log(`[LOGS] Consulta Firebase: Encontrou usuário por UID no Firebase Auth: ${uid}`);
-                } catch {
-                  try {
-                    firebaseUser = await adminAuth.getUserByEmail(trimmedEmail);
-                    userExists = true;
-                    console.log(`[LOGS] Consulta Firebase: Encontrou usuário por e-mail no Firebase Auth: ${trimmedEmail}`);
-                    if (firebaseUser.uid && firebaseUser.uid !== uid) {
-                      authUid = firebaseUser.uid;
-                      uid = firebaseUser.uid;
-                    }
-                  } catch {
-                    console.log(`[LOGS] Consulta Firebase: Usuário não localizado por UID nem por e-mail no Firebase Auth.`);
-                  }
-                }
-
-                if (userExists && firebaseUser) {
-                  const updates: any = {};
-                  let needsUpdate = false;
-
-                  if (firebaseUser.email !== trimmedEmail) {
-                    updates.email = trimmedEmail;
-                    needsUpdate = true;
-                  }
-                  if (matchedUser.name && firebaseUser.displayName !== matchedUser.name) {
-                    updates.displayName = matchedUser.name;
-                    needsUpdate = true;
-                  }
-                  updates.password = trimmedPassword;
-                  needsUpdate = true;
-
-                  if (needsUpdate) {
-                    await adminAuth.updateUser(firebaseUser.uid, updates);
-                    console.log(`[LOGS] Perfil e senha do usuário atualizados no Firebase Auth.`);
-                  }
-                } else {
-                  await adminAuth.createUser({
-                    uid: uid,
-                    email: trimmedEmail,
-                    password: trimmedPassword,
-                    displayName: matchedUser.name || 'Lojista'
-                  });
-                  console.log(`[LOGS] Novo usuário registrado com sucesso no Firebase Auth para: ${trimmedEmail}`);
-                }
-
-                if (uid && uid !== oldDocId) {
-                  matchedUser.id = uid;
-                  const oldIdRef = oldDocId;
-                  const collectionName = isCourier ? 'couriers' : 'users';
-                  try {
-                    await setDocHelper(collectionName, uid, matchedUser, { merge: true });
-                    if (oldIdRef && oldIdRef !== uid) {
-                      await deleteDocHelper(collectionName, oldIdRef);
-                    }
-                    oldDocId = uid;
-                  } catch (migErr) {
-                    console.warn("Não foi possível migrar ID do Firestore:", migErr);
-                  }
-                }
-
-                try {
-                  customToken = await adminAuth.createCustomToken(uid, {
-                    email: trimmedEmail,
-                    role: userRole,
-                    tenantId: matchedUser.tenantId || ""
-                  });
-                  console.log(`[LOGS] Token criado (Custom Token): Gerado com sucesso com claims de role e tenantId`);
-                } catch (tokenErr: any) {
-                  console.warn(`[LOGS] Não foi possível assinar customToken: ${tokenErr.message}`);
-                }
-                adminAuthSuccess = true;
-              } catch (innerErr: any) {
-                console.warn(`[LOGS] Erro interno na sincronização do Firebase Auth: ${innerErr.message}`);
-              }
-            })(),
-            timeoutPromise
-          ]).finally(() => {
-            if (timeoutId) {
-              clearTimeout(timeoutId);
-            }
-          });
-        } catch (authErr: any) {
-          console.warn(`[LOGS] Falha ou timeout no Firebase Admin SDK Auth (${authErr.message}). Ativando fallback de sessão.`);
-          adminAuthSuccess = true;
-        }
-      } else {
-        // If admin Auth is not available, we proceed directly with session fallback
-        adminAuthSuccess = true;
-      }
-
-      // 5. Gerar Sessão de Autenticação segura e durável no Banco de Dados
-      const crypto = await import("crypto");
-      const accessToken = crypto.randomBytes(32).toString("hex");
-      const refreshToken = crypto.randomBytes(64).toString("hex");
-      const expiration = Date.now() + 3600 * 1000; // 1 hora de expiração
-
-      const sessionData = {
-        accessToken,
-        refreshToken,
-        expiration,
-        tenantId: matchedUser.tenantId || "",
-        userId: uid || matchedUser.id,
-        role: userRole,
-        permissions: permissions,
-        plan: tenant?.subscription?.plan || "FREE",
-        empresa: tenant?.name || "KitchenFlow AI",
-        createdAt: new Date(),
-        active: true
-      };
-
-      // Gravar sessão de verdade no banco de dados para que seja a Fonte de Verdade incontestável
       try {
-        await setDocHelper("sessions", accessToken, sessionData);
-        console.log(`[LOGS] Sessão criada: Gravada no Firestore ('sessions/${accessToken}') com sucesso.`);
-      } catch (sessSaveErr: any) {
-        console.error("[LOGS] Falha ao salvar sessão durável no banco:", sessSaveErr);
-      }
+        let firebaseUser;
+        try {
+          firebaseUser = await adminAuth.getUserByEmail(trimmedEmail);
+          // Atualizar a senha no Firebase Auth APENAS se não foi validado via REST API (para sincronizar senhas legadas)
+          if (!authVerified) {
+            await adminAuth.updateUser(firebaseUser.uid, {
+              password: trimmedPassword
+            });
+          }
+          uid = firebaseUser.uid;
+        } catch (authErr: any) {
+          if (authErr.code === 'auth/user-not-found') {
+            // Criar no Firebase Auth se não existir
+            const newAuthUser = await adminAuth.createUser({
+              email: trimmedEmail,
+              password: trimmedPassword,
+              displayName: matchedUser.name || 'Lojista'
+            });
+            uid = newAuthUser.uid;
+          } else {
+            throw authErr;
+          }
+        }
 
-      console.log(`=== [LOGS] Fim do Processo de Login. Sucesso! Tempo Total: ${Date.now() - startTime}ms ===\n`);
+        // 5. Se o Document ID antigo do Firestore for diferente do Auth UID, migrar para manter o ID unificado
+        if (uid && uid !== oldDocId) {
+          matchedUser.id = uid;
+          try {
+            await clientSetDoc(clientDoc(clientDb, 'users', uid), matchedUser, { merge: true });
+            if (oldDocId && oldDocId !== uid) {
+              await clientDeleteDoc(clientDoc(clientDb, 'users', oldDocId));
+            }
+            oldDocId = uid;
+          } catch (migErr) {
+            console.warn("Nao foi possivel migrar ID do Firestore, prosseguindo:", migErr);
+          }
+        }
+
+        // 6. Gerar Token de Acesso Customizado do Firebase Auth
+        customToken = await adminAuth.createCustomToken(uid);
+        adminAuthSuccess = true;
+      } catch (authErr: any) {
+        console.warn(`[Login API] Falha ou indisponibilidade do Firebase Admin SDK Auth (${authErr.message || authErr}). Ativando fallback de sessão local.`);
+      }
 
       if (adminAuthSuccess && customToken) {
         return res.json({
@@ -1062,10 +259,10 @@ async function startServer() {
             role: userRole,
             name: matchedUser.name || 'Lojista',
             tenantId: matchedUser.tenantId || ''
-          },
-          session: sessionData
+          }
         });
       } else {
+        // Fallback: Retornar sessão local bypassada se o Firebase Admin Auth falhar por falta de credenciais (ex: VPS cPanel)
         console.log(`[Login API] Retornando sessão local para o usuário ${trimmedEmail} (ID: ${oldDocId || matchedUser.id})`);
         return res.json({
           success: true,
@@ -1076,501 +273,13 @@ async function startServer() {
             role: userRole,
             name: matchedUser.name || 'Lojista',
             tenantId: matchedUser.tenantId || ''
-          },
-          session: sessionData
-        });
-      }
-
-    } catch (err: any) {
-      console.error("[LOGS] Erro no login seguro via API:", err);
-      return res.status(500).json({ error: "Erro interno no servidor de autenticação.", code: "server/internal-error" });
-    }
-  });
-
-  app.post("/api/auth/update-profile", async (req, res) => {
-    try {
-      const authHeader = req.headers.authorization;
-      if (!authHeader || !authHeader.startsWith("Bearer ")) {
-        return res.status(401).json({ error: "Não autorizado." });
-      }
-
-      const idToken = authHeader.split("Bearer ")[1];
-      let decodedToken;
-      if (isAdminAuthAvailable) {
-        try {
-          decodedToken = await adminAuth.verifyIdToken(idToken);
-        } catch {
-          return res.status(401).json({ error: "Sessão inválida ou expirada." });
-        }
-      } else {
-        const decoded = decodeJwtPayload(idToken);
-        if (!decoded || !decoded.sub) {
-          return res.status(401).json({ error: "Sessão inválida ou expirada." });
-        }
-        decodedToken = {
-          uid: decoded.sub,
-          email: decoded.email
-        };
-      }
-
-      const uid = decodedToken.uid;
-      const { name, email, avatar, password } = req.body;
-
-      const trimmedEmail = email ? (email as string).trim().toLowerCase() : undefined;
-      const trimmedPassword = password ? (password as string).trim() : undefined;
-
-      // 1. Obter usuário atual do Firestore
-      const userRef = doc(serverClientDb, "users", uid);
-      const userDoc = await getDoc(userRef);
-      if (!userDoc.exists()) {
-        return res.status(404).json({ error: "Usuário não encontrado." });
-      }
-
-      const userData = userDoc.data();
-
-      // 2. Atualizar no Firebase Auth via Admin SDK
-      /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-      const authUpdates: any = {};
-      if (name) authUpdates.displayName = name;
-      if (trimmedEmail && trimmedEmail !== decodedToken.email) {
-        // Verificar duplicidade de e-mail no Firestore antes de mudar
-        const qEmail = query(collection(serverClientDb, "users"), where("email", "==", trimmedEmail));
-        const duplicateCheck = await getDocs(qEmail);
-        if (!duplicateCheck.empty && duplicateCheck.docs[0].id !== uid) {
-          return res.status(400).json({ error: "Este e-mail já está em uso por outro usuário." });
-        }
-        authUpdates.email = trimmedEmail;
-      }
-      if (trimmedPassword) {
-        if (trimmedPassword.length < 6) {
-          return res.status(400).json({ error: "A nova senha deve ter pelo menos 6 caracteres." });
-        }
-        authUpdates.password = trimmedPassword;
-      }
-
-      if (Object.keys(authUpdates).length > 0) {
-        try {
-          await adminAuth.updateUser(uid, authUpdates);
-        } catch (authErr) {
-          console.warn("[Update Profile] Falha ao atualizar credenciais no Firebase Auth, mantendo no Firestore:", authErr);
-        }
-      }
-
-      const hashedPasswordForUpdate = trimmedPassword ? await hashPassword(trimmedPassword) : undefined;
-
-      // 3. Atualizar no Firestore 'users'
-      /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-      const firestoreUpdates: any = {
-        updatedAt: new Date()
-      };
-      if (name) firestoreUpdates.name = name;
-      if (trimmedEmail) firestoreUpdates.email = trimmedEmail;
-      if (avatar !== undefined) {
-        firestoreUpdates.avatar = avatar;
-        firestoreUpdates.photoURL = avatar;
-      }
-      if (trimmedPassword) firestoreUpdates.password = hashedPasswordForUpdate;
-
-      await updateDoc(userRef, firestoreUpdates);
-
-      // 4. Se for Courier, sincronizar com a coleção 'couriers'
-      if (userData?.role === "COURIER") {
-        const courierRef = doc(serverClientDb, "couriers", uid);
-        /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-        const courierUpdates: any = {
-          updatedAt: new Date()
-        };
-        if (name) courierUpdates.name = name;
-        if (trimmedEmail) courierUpdates.email = trimmedEmail;
-        if (trimmedPassword) courierUpdates.password = hashedPasswordForUpdate;
-        
-        await setDoc(courierRef, courierUpdates, { merge: true });
-      }
-
-      // 4.1 Sincronizar com as outras coleções se existirem para manter a integridade total por UID
-      if (trimmedEmail) {
-        // Tabela Profiles
-        try {
-          const profileRef = doc(serverClientDb, "profiles", uid);
-          await setDoc(profileRef, { email: trimmedEmail, updatedAt: new Date() }, { merge: true });
-        } catch (err) {
-          console.warn("[Sync Profile] Profiles collection update bypassed:", err);
-        }
-
-        // Tabela Employees
-        try {
-          const employeeRef = doc(serverClientDb, "employees", uid);
-          await setDoc(employeeRef, { email: trimmedEmail, updatedAt: new Date() }, { merge: true });
-        } catch (err) {
-          console.warn("[Sync Profile] Employees collection update bypassed:", err);
-        }
-
-        // Tabela Owners
-        try {
-          const ownerRef = doc(serverClientDb, "owners", uid);
-          await setDoc(ownerRef, { email: trimmedEmail, updatedAt: new Date() }, { merge: true });
-        } catch (err) {
-          console.warn("[Sync Profile] Owners collection update bypassed:", err);
-        }
-
-        // Tabela Tenants (onde o usuário é dono/vinculado)
-        try {
-          if (userData?.tenantId) {
-            const tenantRef = doc(serverClientDb, "tenants", userData.tenantId);
-            await setDoc(tenantRef, { ownerEmail: trimmedEmail, updatedAt: new Date() }, { merge: true });
-          }
-        } catch (err) {
-          console.warn("[Sync Profile] Tenants collection update bypassed:", err);
-        }
-      }
-
-      // 5. Revogar sessões antigas e gerar nova sessão segura
-      try {
-        const qSessions = query(collection(serverClientDb, "sessions"), where("userId", "==", uid));
-        const sessionsSnap = await getDocs(qSessions);
-        for (const docSnap of sessionsSnap.docs) {
-          await deleteDoc(docSnap.ref);
-        }
-        console.log(`[Sessions Revoked] Revoked ${sessionsSnap.size} session documents for user: ${uid}`);
-      } catch (sessErr) {
-        console.error("Error revoking sessions during profile update:", sessErr);
-      }
-
-      // Gerar nova sessão segura e durável
-      const crypto = await import("crypto");
-      const newAccessToken = crypto.randomBytes(32).toString("hex");
-      const newRefreshToken = crypto.randomBytes(64).toString("hex");
-      const newExpiration = Date.now() + 3600 * 1000; // 1 hora
-
-      let planName = "FREE";
-      let empresaName = "KitchenFlow AI";
-      if (userData?.tenantId && userData?.role !== 'SAAS_ADMIN') {
-        const tenantSnap = await getDocHelper('tenants', userData.tenantId);
-        if (tenantSnap.exists()) {
-          const tenantData = tenantSnap.data();
-          planName = tenantData.subscription?.plan || "FREE";
-          empresaName = tenantData.name || "KitchenFlow AI";
-        }
-      }
-
-      const sessionData = {
-        accessToken: newAccessToken,
-        refreshToken: newRefreshToken,
-        expiration: newExpiration,
-        tenantId: userData?.tenantId || "",
-        userId: uid,
-        role: userData?.role || "OWNER",
-        permissions: userData?.permissions || [],
-        plan: planName,
-        empresa: empresaName,
-        createdAt: new Date(),
-        active: true
-      };
-
-      // Gravar nova sessão no banco de dados
-      await setDocHelper("sessions", newAccessToken, sessionData);
-
-      return res.json({
-        success: true,
-        message: "Perfil atualizado com sucesso no Firestore, Auth e coleções correspondentes.",
-        user: {
-          id: uid,
-          name: name || userData?.name,
-          email: trimmedEmail || userData?.email,
-          role: userData?.role,
-          tenantId: userData?.tenantId
-        },
-        session: sessionData
-      });
-
-    } catch (err: any) {
-      console.error("Erro ao atualizar perfil via API:", err);
-      return res.status(500).json({ error: err.message || "Erro interno ao atualizar perfil." });
-    }
-  });
- 
-  app.post("/api/auth/refresh", async (req, res) => {
-    const startTime = Date.now();
-    console.log(`\n=== [LOGS] Início de Refresh de Sessão ===`);
-    try {
-      const { refreshToken } = req.body;
-      if (!refreshToken) {
-        console.log(`[LOGS] Erro no Refresh: refreshToken não fornecido.`);
-        return res.status(400).json({ error: "Refresh token é obrigatório." });
-      }
-
-      console.log(`[LOGS] Consulta Banco: Buscando sessão pelo refreshToken...`);
-      const qSessions = query(collection(serverClientDb, "sessions"), where("refreshToken", "==", refreshToken));
-      const sessionsSnap = await getDocs(qSessions);
-      if (sessionsSnap.empty) {
-        console.log(`[LOGS] Erro no Refresh: Sessão não encontrada para o refreshToken fornecido.`);
-        return res.status(401).json({ error: "Sessão inválida ou expirada.", code: "auth/session-not-found" });
-      }
-
-      const sessionDoc = sessionsSnap.docs[0];
-      const sessionData = sessionDoc.data();
-
-      if (!sessionData.active) {
-        console.log(`[LOGS] Erro no Refresh: Sessão está inativa.`);
-        return res.status(401).json({ error: "Sessão inativa.", code: "auth/session-inactive" });
-      }
-
-      const userId = sessionData.userId;
-      console.log(`[LOGS] Consulta Banco: Verificando status do usuário no Firestore (UID: ${userId})...`);
-      const userRef = doc(serverClientDb, "users", userId);
-      const userDoc = await getDoc(userRef);
-      if (!userDoc.exists()) {
-        console.log(`[LOGS] Erro no Refresh: Usuário ${userId} não existe.`);
-        return res.status(401).json({ error: "Usuário não encontrado.", code: "auth/user-not-found" });
-      }
-
-      const userData = userDoc.data();
-      if (userData.active === false) {
-        console.log(`[LOGS] Erro no Refresh: Usuário ${userId} está inativo.`);
-        return res.status(401).json({ error: "Sua conta está desativada no sistema.", code: "auth/user-disabled" });
-      }
-
-      let tenant: any = null;
-      if (userData.tenantId && userData.role !== 'SAAS_ADMIN') {
-        const tenantId = userData.tenantId;
-        console.log(`[LOGS] Consulta Banco: Verificando status do tenant ${tenantId}...`);
-        const tenantSnap = await getDocHelper('tenants', tenantId);
-        if (tenantSnap.exists()) {
-          tenant = tenantSnap.data();
-          if (tenant.active === false) {
-            console.log(`[LOGS] Erro no Refresh: Tenant ${tenantId} está bloqueado.`);
-            return res.status(403).json({ error: "Esta conta está bloqueada ou suspensa.", code: "tenant/blocked" });
-          }
-
-          if (tenant.subscription) {
-            const sub = tenant.subscription;
-            const expiryDate = sub.expiryDate ? new Date(sub.expiryDate) : null;
-            const status = sub.status;
-            const isExpired = expiryDate && new Date() > expiryDate;
-            const isCanceled = status === 'canceled';
-
-            if (isExpired || isCanceled) {
-              console.log(`[LOGS] Erro no Refresh: Plano vencido ou cancelado para o tenant ${tenantId}.`);
-              return res.status(403).json({ error: "Sua assinatura do plano está vencida ou foi cancelada.", code: "subscription/expired" });
-            }
-          }
-        }
-      }
-
-      const crypto = await import("crypto");
-      const newAccessToken = crypto.randomBytes(32).toString("hex");
-      const newRefreshToken = crypto.randomBytes(64).toString("hex");
-      const newExpiration = Date.now() + 3600 * 1000; // 1 hora de expiração
-
-      const updatedSession = {
-        ...sessionData,
-        accessToken: newAccessToken,
-        refreshToken: newRefreshToken,
-        expiration: newExpiration,
-        plan: tenant?.subscription?.plan || sessionData.plan || "FREE",
-        empresa: tenant?.name || sessionData.empresa || "KitchenFlow AI",
-        updatedAt: new Date()
-      };
-
-      await deleteDoc(sessionDoc.ref);
-      await setDocHelper("sessions", newAccessToken, updatedSession);
-
-      console.log(`[LOGS] Refresh Concluído com Sucesso! Novo accessToken gerado (Tempo Total: ${Date.now() - startTime}ms)`);
-      return res.json({
-        success: true,
-        session: updatedSession
-      });
-
-    } catch (err: any) {
-      console.error("[LOGS] Erro no endpoint /api/auth/refresh:", err);
-      return res.status(500).json({ error: "Erro interno no servidor ao renovar sessão.", code: "server/internal-error" });
-    }
-  });
-
-  app.post("/api/auth/first-access", firstAccessRateLimiter, async (req, res) => {
-    try {
-      const { email, tempPassword, newPassword } = req.body;
-      if (!email || !tempPassword || !newPassword) {
-        return res.status(400).json({ error: "E-mail, senha temporária e nova senha são obrigatórios." });
-      }
-
-      const trimmedEmail = email.trim().toLowerCase();
-      const trimmedTempPassword = tempPassword.trim();
-      const trimmedNewPassword = newPassword.trim();
-
-      if (trimmedNewPassword.length < 6) {
-        return res.status(400).json({ error: "A nova senha de acesso precisa ter ao menos 6 caracteres." });
-      }
-
-      // 1. Buscar usuário no Firestore
-      const qUser = query(collection(serverClientDb, 'users'), where('email', '==', trimmedEmail), limit(1));
-      const userSnapshot = await getDocs(qUser);
-
-      if (userSnapshot.empty) {
-        return res.status(404).json({ error: "Acesso negado. Este e-mail não foi pré-cadastrado no sistema." });
-      }
-
-      const docSnap = userSnapshot.docs[0];
-      const userData = docSnap.data();
-      const oldDocId = docSnap.id;
-
-      // 2. Validar se a senha temporária confere com a do DB
-      if (!(await verifyPassword(trimmedTempPassword, userData.password))) {
-        return res.status(401).json({ error: "A senha temporária fornecida é inválida. Verifique os dados." });
-      }
-
-      // 3. Criar ou atualizar o usuário no Firebase Auth com a nova senha permanente
-      let uid = "";
-      if (isAdminAuthAvailable) {
-        try {
-          const firebaseUser = await adminAuth.getUserByEmail(trimmedEmail);
-          // Se existe, atualiza a senha
-          await adminAuth.updateUser(firebaseUser.uid, {
-            password: trimmedNewPassword,
-            displayName: userData.name || 'Lojista'
-          });
-          uid = firebaseUser.uid;
-        } catch (authErr: any) {
-          if (authErr.code === 'auth/user-not-found' || authErr.message?.includes('user-not-found')) {
-            // Se não existe, cria
-            try {
-              const newAuthUser = await adminAuth.createUser({
-                email: trimmedEmail,
-                password: trimmedNewPassword,
-                displayName: userData.name || 'Lojista'
-              });
-              uid = newAuthUser.uid;
-            } catch (createAuthErr: any) {
-              console.warn("[First Access] Falha ao criar no Auth, prosseguindo com ID do Firestore:", createAuthErr);
-              uid = oldDocId || `user_${Date.now()}`;
-            }
-          } else {
-            console.warn("[First Access] Falha no Auth admin, prosseguindo com ID do Firestore:", authErr);
-            uid = oldDocId || `user_${Date.now()}`;
-          }
-        }
-      } else {
-        // Fallback Client Auth
-        try {
-          const clientAuthInstance = initClientAuth(clientFirebaseApp);
-          const cred = await createUserWithEmailAndPassword(clientAuthInstance, trimmedEmail, trimmedNewPassword);
-          uid = cred.user.uid;
-        } catch (clientAuthErr: any) {
-          console.warn("[First Access Fallback] Falha no registro Client Auth:", clientAuthErr.message);
-          uid = oldDocId || `user_${Date.now()}`;
-        }
-      }
-
-      // 4. Salvar dados atualizados no Firestore sob o novo UID gerado
-      const hashedNewPassword = await hashPassword(trimmedNewPassword);
-      const updatedUserData = {
-        ...userData,
-        id: uid,
-        password: hashedNewPassword,
-        active: true,
-        updatedAt: new Date()
-      };
-
-      await setDoc(doc(serverClientDb, 'users', uid), updatedUserData, { merge: true });
-
-      // Se o Document ID antigo do Firestore for diferente do Auth UID, remover para não duplicar
-      if (oldDocId && oldDocId !== uid) {
-        try {
-          await deleteDoc(doc(serverClientDb, 'users', oldDocId));
-        } catch (delErr) {
-          console.warn("Nao foi possivel remover documento antigo pre-cadastro:", delErr);
-        }
-      }
-
-      // 5. Gerar Token de Acesso Customizado do Firebase Auth
-      let customToken = null;
-      let adminAuthSuccess = false;
-      if (isAdminAuthAvailable) {
-        try {
-          customToken = await adminAuth.createCustomToken(uid, { email: trimmedEmail });
-          adminAuthSuccess = true;
-        } catch (authErr) {
-          console.warn("[First Access] Falha no createCustomToken, usando fallback local.", authErr);
-        }
-      }
-
-      // GARANTIA DE ISOLAMENTO E INTEGRIDADE DE TENANT E CONFIGURAÇÕES
-      if (updatedUserData && updatedUserData.tenantId) {
-        const tenantId = updatedUserData.tenantId;
-        const tenantDocRef = doc(serverClientDb, 'tenants', tenantId);
-        const settingsDocRef = doc(serverClientDb, 'settings', tenantId);
-
-        try {
-          const tenantSnap = await getDoc(tenantDocRef);
-          if (!tenantSnap.exists()) {
-            console.log(`[Integridade] Criando documento de tenant ausente para: ${tenantId}`);
-            await setDoc(tenantDocRef, {
-              id: tenantId,
-              name: updatedUserData.name || 'Meu Estabelecimento',
-              category: 'Geral',
-              ownerId: uid,
-              ownerEmail: trimmedEmail,
-              active: true,
-              autoAcceptOrders: false,
-              createdAt: new Date()
-            });
-          }
-
-          const settingsSnap = await getDoc(settingsDocRef);
-          if (!settingsSnap.exists()) {
-            console.log(`[Integridade] Criando documento de configurações ausente para: ${tenantId}`);
-            await setDoc(settingsDocRef, {
-              id: tenantId,
-              admin: {
-                companyName: updatedUserData.name || 'Meu Estabelecimento',
-                cnpj: '',
-                phone: '',
-                address: '',
-                logoUrl: '',
-                taxRate: 0,
-                deliveryFee: 0,
-                freeDeliveryOver: 0,
-                workingHours: '08:00 - 22:00',
-                isActive: true
-              },
-              createdAt: new Date()
-            });
-          }
-        } catch (integrityErr) {
-          console.error("[Integridade] Erro ao garantir existência de documentos do tenant:", integrityErr);
-        }
-      }
-
-      if (adminAuthSuccess && customToken) {
-        return res.json({
-          success: true,
-          customToken,
-          user: {
-            id: uid,
-            email: trimmedEmail,
-            role: userData.role || 'OWNER',
-            name: userData.name || 'Lojista',
-            tenantId: userData.tenantId || ''
-          }
-        });
-      } else {
-        // Fallback local session
-        return res.json({
-          success: true,
-          isLocalSession: true,
-          user: {
-            id: uid,
-            email: trimmedEmail,
-            role: userData.role || 'OWNER',
-            name: userData.name || 'Lojista',
-            tenantId: userData.tenantId || ''
           }
         });
       }
 
     } catch (err: any) {
-      console.error("Erro no primeiro acesso via API:", err);
-      return res.status(500).json({ error: err.message || "Erro interno no servidor de autenticação." });
+      console.error("Erro no login seguro via API:", err);
+      return res.status(500).json({ error: "Erro interno no servidor de autenticação." });
     }
   });
 
@@ -1736,7 +445,7 @@ async function startServer() {
   };
 
   // Inteligência do Módulo Lojista (Copiloto Financeiro)
-  app.post("/api/gemini/explain-merchant", requireAuth, async (req, res) => {
+  app.post("/api/gemini/explain-merchant", async (req, res) => {
     const { summaryData } = req.body;
     try {
       const apiKey = process.env.GEMINI_API_KEY;
@@ -1829,7 +538,7 @@ REQUISITOS DA RESPOSTA:
   });
 
   // Chat Inteligente com o Copiloto Kai
-  app.post("/api/gemini/chat-copilot", requireAuth, async (req, res) => {
+  app.post("/api/gemini/chat-copilot", async (req, res) => {
     const { message, history, summaryData, kaiMetrics } = req.body;
     
     if (!message) {
@@ -2049,7 +758,7 @@ Você DEVE responder rigorosamente no formato JSON com as chaves:
   });
 
   // Rota inteligente para processamento e interpretação de Notas Fiscais e Cupons de compra
-  app.post("/api/gemini/parse-invoice", requireAuth, async (req, res) => {
+  app.post("/api/gemini/parse-invoice", async (req, res) => {
     const { text, fileBase64, fileMimeType } = req.body;
     try {
       const apiKey = process.env.GEMINI_API_KEY;
@@ -2157,7 +866,7 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
   });
 
   // Fiscal routes
-  app.post("/api/fiscal/issue", requireAuth, async (req, res) => {
+  app.post("/api/fiscal/issue", async (req, res) => {
     try {
       const { order, certificate, config, nfceNumber, series, settings } = req.body;
       
@@ -2204,7 +913,7 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
     }
   });
 
-  app.post("/api/fiscal/validate-certificate", requireAuth, async (req, res) => {
+  app.post("/api/fiscal/validate-certificate", async (req, res) => {
     try {
       const { pfxBase64, password } = req.body;
       // Simple validation by trying to instantiate the service

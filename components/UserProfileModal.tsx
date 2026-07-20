@@ -21,10 +21,9 @@ import {
   reauthenticateWithCredential, 
   EmailAuthProvider 
 } from 'firebase/auth';
-import { doc, updateDoc, setDoc } from 'firebase/firestore';
+import { doc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { User } from '../types';
-import { authService } from '../services/authService';
 
 interface UserProfileModalProps {
   isOpen: boolean;
@@ -200,193 +199,69 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
       const fbUser = auth.currentUser;
       if (!fbUser) throw new Error('Usuário não autenticado.');
 
+      // 1. Update Profile (DisplayName and Photo)
       const selectedAvatar = useCustomUrl ? customAvatarUrl : avatar;
+      await updateProfile(fbUser, {
+        displayName: name,
+        photoURL: selectedAvatar || null
+      });
+
+      // 2. Update Email locally if changed
+      let emailChanged = false;
       const cleanEmail = email.trim().toLowerCase();
-      const isLocalSession = !!localStorage.getItem('kitchenflow_demo_user');
-
-      let useFallback = isLocalSession;
-
-      if (!isLocalSession) {
+      if (cleanEmail !== fbUser.email) {
         try {
-          const idToken = await fbUser.getIdToken(true);
-          const response = await fetch('/api/auth/update-profile', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${idToken}`
-            },
-            body: JSON.stringify({
-              name,
-              email: cleanEmail,
-              avatar: selectedAvatar,
-              password: password || undefined
-            })
-          });
-
-          if (!response.ok) {
-            const errData = await response.json();
-            throw new Error(errData.error || 'Erro ao atualizar perfil no servidor.');
+          await updateEmail(fbUser, cleanEmail);
+          emailChanged = true;
+        } catch (err: any) {
+          if (err.code === 'auth/requires-recent-login') {
+            setReauthRequired(true);
+            setLoading(false);
+            showToast('Por motivos de segurança, você precisa confirmar sua senha atual antes de alterar o e-mail.', 'info');
+            return;
           }
-
-          const data = await response.json();
-          console.log('[API Profile Update] Perfil atualizado via API com sucesso:', data);
-
-          if (data.session) {
-            localStorage.setItem('kitchenflow_session', JSON.stringify(data.session));
-          }
-
-          // Sincronizar o display name e photoURL localmente no objeto Auth do cliente
-          try {
-            await updateProfile(fbUser, {
-              displayName: name,
-              photoURL: selectedAvatar || null
-            });
-          } catch (syncLocalErr) {
-            console.warn('[API Profile Update] Não foi possível sincronizar o perfil local do Auth (comum em sessões personalizadas):', syncLocalErr);
-          }
-
-        } catch (apiErr: any) {
-          console.warn('[API Profile Update] Falha na chamada da API de atualização de perfil. Tentando fluxo direto client-side...', apiErr.message || apiErr);
-          useFallback = true;
+          throw err;
         }
       }
 
-      if (useFallback) {
-        if (!isLocalSession) {
-          // Fluxo de Fallback (Direto no cliente): Útil para sessões locais / offline ou falhas de rede na API
-          // 1. Update Profile (DisplayName and Photo)
-          await updateProfile(fbUser, {
-            displayName: name,
-            photoURL: selectedAvatar || null
-          });
-
-          // 2. Update Email locally if changed
-          if (cleanEmail !== fbUser.email) {
-            try {
-              await updateEmail(fbUser, cleanEmail);
-            } catch (err: any) {
-              if (err.code === 'auth/requires-recent-login') {
-                setReauthRequired(true);
-                setLoading(false);
-                showToast('Por motivos de segurança, você precisa confirmar sua senha atual antes de alterar o e-mail.', 'info');
-                return;
-              }
-              throw err;
-            }
+      // 3. Update Password if changed
+      let passwordChanged = false;
+      if (password) {
+        try {
+          const authPassword = password;
+          await updatePassword(fbUser, authPassword);
+          passwordChanged = true;
+        } catch (err: any) {
+          if (err.code === 'auth/requires-recent-login') {
+            setReauthRequired(true);
+            setLoading(false);
+            showToast('Por motivos de segurança, você precisa confirmar sua senha atual antes de alterar a senha.', 'info');
+            return;
           }
-
-          // 3. Update Password if changed
-          if (password) {
-            try {
-              await updatePassword(fbUser, password);
-            } catch (err: any) {
-              if (err.code === 'auth/requires-recent-login') {
-                setReauthRequired(true);
-                setLoading(false);
-                showToast('Por motivos de segurança, você precisa confirmar sua senha atual antes de alterar a senha.', 'info');
-                return;
-              }
-              throw err;
-            }
-          }
-        } else {
-          // Se for sessão de bypass local, atualiza também os dados salvos em localStorage
-          const demoUserRaw = localStorage.getItem('kitchenflow_demo_user');
-          if (demoUserRaw) {
-            try {
-              const parsed = JSON.parse(demoUserRaw);
-              parsed.firebaseUser.displayName = name;
-              parsed.firebaseUser.email = cleanEmail;
-              parsed.userData.name = name;
-              parsed.userData.email = cleanEmail;
-              parsed.userData.avatar = selectedAvatar;
-              if (password) {
-                parsed.userData.password = password;
-              }
-              localStorage.setItem('kitchenflow_demo_user', JSON.stringify(parsed));
-            } catch (e) {
-              console.error("Erro ao atualizar demo user em localStorage:", e);
-            }
-          }
-        }
-
-        // 4. Update user document on Firestore
-        if (currentUserData) {
-          const userDocRef = doc(db, 'users', currentUserData.id || fbUser.uid);
-          const updatedData: any = {
-            name,
-            email: cleanEmail,
-            avatar: selectedAvatar || '',
-            photoURL: selectedAvatar || '',
-            updatedAt: new Date()
-          };
-
-          if (password) {
-            updatedData.password = password;
-          }
-
-          await updateDoc(userDocRef, updatedData);
-
-          // Se o usuário for entregador, atualizar também o documento na coleção 'couriers'
-          if (currentUserData.role === 'COURIER') {
-            try {
-              const courierDocRef = doc(db, 'couriers', currentUserData.id || fbUser.uid);
-              const courierUpdatedData: any = {
-                name,
-                email: cleanEmail,
-                updatedAt: new Date()
-              };
-              if (password) {
-                courierUpdatedData.password = password;
-              }
-              await setDoc(courierDocRef, courierUpdatedData, { merge: true });
-            } catch (courierErr) {
-              console.error("Erro ao atualizar entregador na coleção 'couriers' no fallback:", courierErr);
-            }
-          }
+          throw err;
         }
       }
 
-      // Sincronizar dados de estado local do usuário
+      // 4. Update user document on Firestore
       if (currentUserData) {
-        const updatedLocalData: any = {
+        const userDocRef = doc(db, 'users', fbUser.uid);
+        const updatedData: any = {
           name,
           email: cleanEmail,
           avatar: selectedAvatar || '',
           photoURL: selectedAvatar || '',
           updatedAt: new Date()
         };
+
         if (password) {
-          updatedLocalData.password = password;
+          updatedData.password = password;
         }
 
+        await updateDoc(userDocRef, updatedData);
         onUpdateUser({
           ...currentUserData,
-          ...updatedLocalData
+          ...updatedData
         } as User);
-      }
-
-      // Invalidação e Limpeza automática de caches obsoletos via AuthService
-      try {
-        console.log('[Cache Invalidation] Iniciando limpeza completa de caches pós-alteração via AuthService...');
-        const activeSessionBackup = localStorage.getItem('kitchenflow_session');
-        const activeDemoSessionBackup = localStorage.getItem('kitchenflow_demo_user');
-        const activeUserBackup = localStorage.getItem('kitchenflow_cached_user');
-
-        await authService.purgeAllCachesAndStorages();
-
-        // Restaurar sessão, demo user e dados cache do usuário para manter autenticado
-        if (activeSessionBackup) {
-          localStorage.setItem('kitchenflow_session', activeSessionBackup);
-        }
-        if (activeDemoSessionBackup) {
-          localStorage.setItem('kitchenflow_demo_user', activeDemoSessionBackup);
-        }
-        if (activeUserBackup) {
-          localStorage.setItem('kitchenflow_cached_user', activeUserBackup);
-        }
-      } catch (cacheErr) {
-        console.warn('Erro ao limpar caches de bibliotecas via AuthService:', cacheErr);
       }
 
       showToast('Perfil atualizado com sucesso!', 'success');

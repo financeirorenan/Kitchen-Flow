@@ -49,6 +49,32 @@ export const MonitorPedidos: React.FC<MonitorPedidosProps> = ({ orders }) => {
       .slice(0, 12);
   }, [orders]);
 
+  // Handle Voice Announcement and Sound alerts when an order becomes ready
+  useEffect(() => {
+    const currentReadyIds = readyOrders.map(o => o.id);
+    const prevReadyIds = prevReadyIdsRef.current;
+
+    // Detect newly added "ready" orders
+    const newlyReadyOrders = readyOrders.filter(o => !prevReadyIds.includes(o.id));
+
+    if (newlyReadyOrders.length > 0 && prevReadyIds.length > 0) {
+      newlyReadyOrders.forEach(order => {
+        // 1. Play alert chime
+        if (soundEnabled) {
+          playAlertChime();
+        }
+
+        // 2. Synthesize speech if enabled
+        if (speechEnabled) {
+          announceOrder(order);
+        }
+      });
+    }
+
+    // Save current ids for next cycle
+    prevReadyIdsRef.current = currentReadyIds;
+  }, [readyOrders, soundEnabled, speechEnabled]);
+
   const playAlertChime = () => {
     try {
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -106,32 +132,6 @@ export const MonitorPedidos: React.FC<MonitorPedidosProps> = ({ orders }) => {
       console.warn("Could not speak: ", err);
     }
   };
-
-  // Handle Voice Announcement and Sound alerts when an order becomes ready
-  useEffect(() => {
-    const currentReadyIds = readyOrders.map(o => o.id);
-    const prevReadyIds = prevReadyIdsRef.current;
-
-    // Detect newly added "ready" orders
-    const newlyReadyOrders = readyOrders.filter(o => !prevReadyIds.includes(o.id));
-
-    if (newlyReadyOrders.length > 0 && prevReadyIds.length > 0) {
-      newlyReadyOrders.forEach(order => {
-        // 1. Play alert chime
-        if (soundEnabled) {
-          playAlertChime();
-        }
-
-        // 2. Synthesize speech if enabled
-        if (speechEnabled) {
-          announceOrder(order);
-        }
-      });
-    }
-
-    // Save current ids for next cycle
-    prevReadyIdsRef.current = currentReadyIds;
-  }, [readyOrders, soundEnabled, speechEnabled]);
 
   const toggleFullscreen = () => {
     if (!containerRef.current) return;
