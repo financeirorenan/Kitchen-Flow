@@ -186,29 +186,48 @@ export class AuthService {
         firebaseAuthSuccess = true;
       } catch (clientErr: any) {
         console.warn('[AuthService] Client SDK fallback login failed:', clientErr.message);
+        
+        // Auto-Cura / Self-Healing: If the server validated the credentials, but the client-side Auth
+        // doesn't have this user registered (which happens when running without full Admin Auth credentials on the server to auto-provision),
+        // we can register them directly on the fly!
+        if (clientErr.code === 'auth/user-not-found' || clientErr.message?.includes('user-not-found') || clientErr.code === 'auth/invalid-credential' || clientErr.message?.includes('invalid-credential')) {
+          try {
+            console.log('[AuthService] Auto-registering user on the fly in Firebase Auth via Client SDK...');
+            await createUserWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
+            console.log('[AuthService] Client SDK auto-registration on the fly successful!');
+            firebaseAuthSuccess = true;
+          } catch (createErr: any) {
+            console.warn('[AuthService] Client SDK auto-registration failed:', createErr.message);
+          }
+        }
       }
     }
 
     if (!firebaseAuthSuccess) {
-      console.log('[AuthService] Client-side Firebase Auth failed or was skipped. Establishing persistent local bypass session.');
-      const simulatedFirebaseUser = {
-        uid: user.id,
-        email: user.email,
-        displayName: user.name,
-        isLocalSession: true
-      };
-      localStorage.setItem('kitchenflow_demo_user', JSON.stringify({
-        firebaseUser: simulatedFirebaseUser,
-        userData: {
-          id: user.id,
-          name: user.name,
+      if (user.role === 'SAAS_ADMIN' || trimmedEmail === 'financeirorenanuk@gmail.com') {
+        console.log('[AuthService] SAAS_ADMIN logged in. Bypassing demo mode fallback to ensure live cloud access.');
+        localStorage.removeItem('kitchenflow_demo_user');
+      } else {
+        console.log('[AuthService] Client-side Firebase Auth failed or was skipped. Establishing persistent local bypass session.');
+        const simulatedFirebaseUser = {
+          uid: user.id,
           email: user.email,
-          role: user.role,
-          tenantId: user.tenantId,
-          active: true,
-          status: 'online'
-        }
-      }));
+          displayName: user.name,
+          isLocalSession: true
+        };
+        localStorage.setItem('kitchenflow_demo_user', JSON.stringify({
+          firebaseUser: simulatedFirebaseUser,
+          userData: {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            tenantId: user.tenantId,
+            active: true,
+            status: 'online'
+          }
+        }));
+      }
     } else {
       localStorage.removeItem('kitchenflow_demo_user');
     }

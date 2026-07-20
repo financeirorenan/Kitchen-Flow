@@ -1521,12 +1521,34 @@ const App: React.FC = () => {
           navigate('/saas');
         }
       } else {
-        setCurrentUserData(null);
-        setTenantData(null);
-        try {
-          await authService.purgeAllCachesAndStorages();
-        } catch (e) {
-          console.warn(e);
+        // Fallback: if Firebase Auth is not signed in client-side, but there is a valid, unexpired API session in localStorage,
+        // we can keep the user logged in using the cached data. This is crucial for environments where Client Auth is out of sync.
+        const sessionRaw = localStorage.getItem('kitchenflow_session');
+        const cachedUserRaw = localStorage.getItem('kitchenflow_cached_user');
+        let sessionBypassSuccess = false;
+        
+        if (sessionRaw && cachedUserRaw) {
+          try {
+            const parsedSession = JSON.parse(sessionRaw);
+            const parsedUser = JSON.parse(cachedUserRaw);
+            if (parsedSession && parsedSession.expiration > Date.now()) {
+              console.log('[App Auth] Maintaining live cloud session via API cache fallback (No client-side Firebase Auth).');
+              setCurrentUserData(parsedUser);
+              sessionBypassSuccess = true;
+            }
+          } catch (bypassErr) {
+            console.warn('[App Auth] Failed to restore cached API session:', bypassErr);
+          }
+        }
+
+        if (!sessionBypassSuccess) {
+          setCurrentUserData(null);
+          setTenantData(null);
+          try {
+            await authService.purgeAllCachesAndStorages();
+          } catch (e) {
+            console.warn(e);
+          }
         }
       }
       setAuthLoading(false);
