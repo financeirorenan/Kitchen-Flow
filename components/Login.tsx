@@ -414,12 +414,14 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
         }
 
         if (loginSuccess && signedInUser) {
-          // Auto-cura: Sincronizar a nova senha com o Firestore se necessário
+          // Auto-cura: Sincronizar a nova senha com o Firestore se necessário, e marcar o status como online
           try {
             const userDocRef = doc(db, 'users', signedInUser.uid);
             const userDocSnap = await getDoc(userDocRef);
             if (userDocSnap.exists()) {
               const uData = userDocSnap.data();
+              console.log("Definindo status do usuário como online no Firestore...");
+              await setDoc(userDocRef, { status: 'online', lastAccess: new Date(), updatedAt: new Date() }, { merge: true });
               if (uData.password !== trimmedPassword) {
                 console.log("Sincronizando senha do Firestore com a senha de login atual...");
                 await setDoc(userDocRef, { password: trimmedPassword }, { merge: true });
@@ -430,6 +432,8 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
               const courierDocSnap = await getDoc(courierDocRef);
               if (courierDocSnap.exists()) {
                 const cData = courierDocSnap.data();
+                console.log("Definindo status do entregador como online no Firestore...");
+                await setDoc(courierDocRef, { status: 'online', lastAccess: new Date(), updatedAt: new Date() }, { merge: true });
                 if (cData.password !== trimmedPassword) {
                   console.log("Sincronizando senha do entregador no Firestore...");
                   await setDoc(courierDocRef, { password: trimmedPassword }, { merge: true });
@@ -437,7 +441,7 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
               }
             }
           } catch (syncErr) {
-            console.warn("Erro ao auto-sincronizar senha no Firestore após login:", syncErr);
+            console.warn("Erro ao auto-sincronizar senha ou status no Firestore após login:", syncErr);
           }
 
           onLoginSuccess();

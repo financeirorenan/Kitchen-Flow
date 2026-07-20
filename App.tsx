@@ -1246,6 +1246,16 @@ const App: React.FC = () => {
         }
 
         if (finalUserData) {
+          // Garante que o status do usuário seja online no Firestore
+          if (finalUserData.status !== 'online') {
+            finalUserData.status = 'online';
+            try {
+              await setDoc(userDocRef, { status: 'online', lastAccess: new Date(), updatedAt: new Date() }, { merge: true });
+            } catch (fsErr) {
+              console.error("Erro ao sincronizar status online no Firestore:", fsErr);
+            }
+          }
+
           // Se for o gestor/admin principal (financeirorenanuk@gmail.com ou SAAS_ADMIN), garante vínculo a 'HCL1177LRQVPEKCTYRAHU7IGBQ42' (Viva la fome) e o cargo SAAS_ADMIN
           const isMasterUser = firebaseUser.email === 'financeirorenanuk@gmail.com' || finalUserData.role === 'SAAS_ADMIN';
           if (isMasterUser) {
