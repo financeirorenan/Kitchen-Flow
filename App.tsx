@@ -4929,7 +4929,7 @@ const App: React.FC = () => {
                   <div className="flex items-center gap-4">
                      {isSuperAdmin && viewingTenantId && (
                        <button 
-                         onClick={handleStopViewingTenant}
+                         onClick={handleLogout}
                          className="flex items-center gap-2 px-6 py-3 bg-rose-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-rose-200 hover:bg-rose-700 transition-all border-b-4 border-rose-800 active:translate-y-[2px] active:border-b-0 group"
                        >
                          <Shield size={16} className="group-hover:rotate-12 transition-transform" />
