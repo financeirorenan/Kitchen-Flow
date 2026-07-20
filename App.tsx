@@ -4737,6 +4737,7 @@ const App: React.FC = () => {
           restaurantName={currentProject === 'PLATFORM' ? 'KitchenFlow AI' : (viewingTenantName || tenantData?.name || adminSettings.companyName || 'Viva Lá Fome!')}
           logoUrl={currentProject === 'PLATFORM' ? undefined : (viewingTenantLogo || tenantData?.logoUrl || adminSettings.logoUrl)}
           onProfileClick={() => setIsProfileOpen(true)}
+          userPermissions={localUserPerms}
         />
       )}
       

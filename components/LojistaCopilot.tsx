@@ -2347,16 +2347,29 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
               </div>
 
               {/* 3. TAXAS DELIVERY */}
-              <div className="p-4 bg-slate-50/50 rounded-2xl border border-slate-100">
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">
-                  3. Comissões Apps / Delivery
-                </span>
-                <span className="text-xl font-black text-rose-600">
-                  - R$ {stats.taxasDelivery.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </span>
-                <p className="text-[8.5px] text-slate-400 font-bold uppercase tracking-wide mt-2">
-                  Comissão estimada iFood/Apps
-                </p>
+              <div className="p-4 bg-rose-50/10 hover:bg-rose-50/20 border border-rose-100/60 rounded-2xl transition-all flex flex-col justify-between min-h-[140px] group relative">
+                <div>
+                  <div className="flex justify-between items-start mb-1">
+                    <span className="text-[10px] font-black text-rose-500 uppercase tracking-widest">
+                      3. Comissões Apps & Delivery
+                    </span>
+                    <span className="p-1 rounded-lg bg-rose-100/40 text-rose-600 group-hover:scale-105 transition-transform">
+                      <Percent size={11} className="stroke-[3]" />
+                    </span>
+                  </div>
+                  <span className="text-xl font-black text-rose-600 block mt-1">
+                    - R$ {stats.taxasDelivery.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div className="mt-4 pt-2 border-t border-rose-100/30 flex flex-col gap-0.5">
+                  <div className="flex justify-between items-center text-[9px] font-bold text-slate-500">
+                    <span>Taxa Média Aplicada:</span>
+                    <span className="font-extrabold text-rose-600">12.0%</span>
+                  </div>
+                  <p className="text-[8px] text-slate-400 font-bold uppercase tracking-wide mt-1">
+                    Comissões iFood/Apps e taxas de entrega estimadas
+                  </p>
+                </div>
               </div>
 
               {/* 4. SALARIOS / FOLHA */}

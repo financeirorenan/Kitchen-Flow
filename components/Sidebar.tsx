@@ -42,6 +42,7 @@ interface SidebarProps {
   restaurantName: string;
   logoUrl?: string;
   onProfileClick?: () => void;
+  userPermissions?: Permission[];
 }
 
 const Sidebar: React.FC<SidebarProps> = memo(({ 
@@ -56,7 +57,8 @@ const Sidebar: React.FC<SidebarProps> = memo(({
   isSaaSMode = false,
   restaurantName,
   logoUrl,
-  onProfileClick
+  onProfileClick,
+  userPermissions
 }) => {
   const navigate = useNavigate();
 
@@ -103,17 +105,17 @@ const Sidebar: React.FC<SidebarProps> = memo(({
         if (!isModuleAllowedByTenant) return false;
 
         // Now, check the user's specific permissions
-        const userPermissions = user.permissions || [];
+        const actualUserPermissions = userPermissions || user.permissions || [];
         
         if (item.id === 'kds-kitchen-only') {
-          return userPermissions.includes('kds_view') || userPermissions.includes('kds_kitchen_only_view');
+          return actualUserPermissions.includes('kds_view') || actualUserPermissions.includes('kds_kitchen_only_view');
         }
 
         if (item.id === 'support') {
           return true; // Técnico support is always available
         }
 
-        return userPermissions.includes(item.permission as Permission);
+        return actualUserPermissions.includes(item.permission as Permission);
       });
 
   const handleTabClick = (item: any) => {
@@ -149,7 +151,7 @@ const Sidebar: React.FC<SidebarProps> = memo(({
       
       <div className={`
         fixed lg:sticky top-0 left-0 z-50
-        w-64 lg:w-48 ${isSaaSMode ? 'bg-brand-black border-slate-800' : 'bg-brand-white border-r'} h-screen flex flex-col shrink-0
+        w-64 lg:w-48 ${isSaaSMode ? 'bg-brand-black border-slate-800' : 'bg-brand-white border-r'} h-screen h-[100dvh] flex flex-col shrink-0 overflow-hidden
         transition-transform duration-300 ease-in-out shadow-xl lg:shadow-none
         ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
       `}>
@@ -199,7 +201,7 @@ const Sidebar: React.FC<SidebarProps> = memo(({
 
 
 
-        <nav className="flex-1 p-3 space-y-1 overflow-y-auto custom-scrollbar">
+        <nav className="flex-1 min-h-0 p-3 space-y-1 overflow-y-auto custom-scrollbar">
           {filteredMenuItems.map((item) => (
             <button
               key={item.id}
@@ -215,7 +217,7 @@ const Sidebar: React.FC<SidebarProps> = memo(({
             </button>
           ))}
         </nav>
-        <div className={`p-3 border-t ${isSaaSMode ? 'border-slate-800 bg-slate-800/50' : 'bg-slate-50/50'} space-y-2`}>
+        <div className={`p-3 pb-safe pb-5 lg:pb-3 border-t ${isSaaSMode ? 'border-slate-800 bg-slate-800/50' : 'bg-slate-50/50'} space-y-2 shrink-0`}>
           <div 
             onClick={onProfileClick}
             className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:opacity-85 active:scale-[0.98] transition-all ${isSaaSMode ? 'bg-slate-800 border-slate-700 hover:bg-slate-700/80' : 'bg-white border-slate-100 hover:bg-slate-50/80'} rounded-xl border shadow-sm group/profile`}
