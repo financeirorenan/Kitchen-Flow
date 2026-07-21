@@ -489,12 +489,21 @@ const App: React.FC = () => {
     if (isSuper) {
       return ALL_MODULES.map(m => m.id);
     }
+    
+    const rolePerms = (userData.role ? rolePermissions[userData.role] : []) || [];
+    
+    // Para OWNER e ADMIN (acesso máximo ao lojista), garante que eles tenham todas as permissões padrão do cargo
+    if (userData.role === 'OWNER' || userData.role === 'ADMIN') {
+      const perms = userData.permissions || [];
+      return Array.from(new Set([...perms, ...rolePerms]));
+    }
+
     const perms = userData.permissions;
     if (perms && perms.length > 0) {
       return perms;
     }
     // Fallback to role-based default permissions from our state
-    return (userData.role ? rolePermissions[userData.role] : []) || [];
+    return rolePerms;
   };
 
   const hasPermission = (permission: Permission) => {

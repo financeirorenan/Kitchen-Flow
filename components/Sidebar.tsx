@@ -92,6 +92,9 @@ const Sidebar: React.FC<SidebarProps> = memo(({
         // If the user is SuperAdmin (SAAS_ADMIN or developer email), they can see everything
         if (isSuperAdmin) return true;
 
+        // Se o usuário for OWNER ou ADMIN (acesso máximo ao lojista), eles devem ter acesso a todas as opções do menu
+        if (user.role === 'OWNER' || user.role === 'ADMIN') return true;
+
         // Check if the module is enabled in the tenant's subscription plan.
         // If allowedModules is undefined or empty, we assume there's no restriction or subscription loading,
         // so we default to true to allow user's role/permissions to be the source of truth.
