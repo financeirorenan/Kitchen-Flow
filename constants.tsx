@@ -132,7 +132,7 @@ export const INITIAL_COURIERS: Courier[] = [
 ];
 
 export const ROLE_DEFAULT_PERMISSIONS: Record<string, Permission[]> = {
-  ADMIN: ['dashboard_view', 'pos_access', 'tables_manage', 'kds_view', 'delivery_manage', 'inventory_edit', 'finance_view', 'cmv_analysis', 'users_manage'],
+  ADMIN: ['dashboard_view', 'pos_access', 'tables_manage', 'kds_view', 'delivery_manage', 'inventory_edit', 'finance_view', 'cmv_analysis', 'users_manage', 'digital_menu_manage', 'admin_settings_manage', 'fiscal_manage', 'customers_manage'],
   MANAGER: ['dashboard_view', 'pos_access', 'tables_manage', 'kds_view', 'delivery_manage', 'inventory_edit', 'cmv_analysis'],
   WAITER: ['pos_access', 'tables_manage'],
   CASHIER: ['pos_access', 'delivery_manage'],
