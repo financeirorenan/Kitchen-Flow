@@ -1189,9 +1189,6 @@ const Tables: React.FC<TablesProps> = memo(
           else if (editingItemIndex !== null) setEditingItemIndex(null);
           else if (showCashModal) setShowCashModal(false);
           else if (selectedTable) {
-            if (selectedTable.items.some((i) => !i.sentToKitchen)) {
-              handleSendToKitchenLocal();
-            }
             setSelectedTable(null);
           }
           return;
@@ -2932,9 +2929,6 @@ const Tables: React.FC<TablesProps> = memo(
                   </div>
                   <button
                     onClick={() => {
-                      if (selectedTable && selectedTable.items.some((i) => !i.sentToKitchen)) {
-                        handleSendToKitchenLocal();
-                      }
                       if (pdvEditOrder && onCancelPdvEdit) {
                         onCancelPdvEdit();
                       }

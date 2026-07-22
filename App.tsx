@@ -2366,13 +2366,13 @@ const App: React.FC = () => {
     
     const displayTableNumber = tableInfo ? tableInfo.number : tableId;
 
-    // Check if we are updating an existing active order for this table that hasn't been delivered/finished
+    // Check if we are updating an existing active order for this table that hasn't been finished/delivered/cancelled
     const activeOrder = orders.find(o => 
       (o.id === tableInfo?.currentOrderId || (o.type === (isCounter ? 'takeout' : 'table') && String(o.tableNumber) === String(displayTableNumber))) && 
-      !['finished', 'cancelled'].includes(o.status)
+      ['pending', 'preparing', 'ready'].includes(o.status)
     );
     
-    if (activeOrder && activeOrder.status !== 'delivered') {
+    if (activeOrder) {
       const updatedItems = [...activeOrder.items];
       items.forEach(newItem => {
         updatedItems.push({ ...newItem, sentToKitchen: true });
@@ -3323,7 +3323,7 @@ const App: React.FC = () => {
         ? 'preparing' 
         : (isCounter && !table.items.every(i => i.sentToKitchen)) 
           ? 'preparing' 
-          : 'delivered', // Table/Counter orders that are being closed/paid are considered delivered/finished
+          : 'finished', // Closed table and counter orders are completely finished
       deliveryMethod: isRealDelivery ? 'entrega' : undefined,
       createdAt: table.currentOrderId ? (orders.find(o => o.id === table.currentOrderId)?.createdAt || new Date()) : new Date(),
       paymentMethod: method,
@@ -3486,6 +3486,7 @@ const App: React.FC = () => {
           status: 'available' as const, 
           total: 0, 
           currentOrderId: null, 
+          partialPayments: [],
           updatedAt: new Date() 
         };
 
@@ -3511,7 +3512,7 @@ const App: React.FC = () => {
       });
       
       if (!isCounter) {
-        const resetData = { items: [], status: 'available' as const, total: 0, currentOrderId: undefined };
+        const resetData = { items: [], status: 'available' as const, total: 0, currentOrderId: undefined, partialPayments: [] };
         await localDb.diningTables.update(tableId, resetData);
         setTables(prev => prev.map(t => t.id === tableId ? { ...t, ...resetData } : t));
       }
