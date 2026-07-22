@@ -427,11 +427,11 @@ const App: React.FC = () => {
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [currentProject, setCurrentProject] = useState<'PLATFORM' | 'RESTAURANT' | 'MARKETPLACE' | 'COURIER' | 'WEBSITE'>(() => {
     const path = typeof window !== 'undefined' ? window.location.pathname : '/';
+    if (path.startsWith('/marketplace') || path.startsWith('/perfil') || path.startsWith('/cardapio') || path.startsWith('/c/') || path.startsWith('/m/')) {
+      return 'MARKETPLACE';
+    }
     if (path === '/' || path.startsWith('/site') || path.startsWith('/kitchenflow')) {
       return 'WEBSITE';
-    }
-    if (path.startsWith('/marketplace') || path.startsWith('/perfil')) {
-      return 'MARKETPLACE';
     }
     if (path.startsWith('/entregador')) {
       return 'COURIER';
@@ -526,7 +526,9 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const path = location.pathname;
-    if (path === '/' || path.startsWith('/site') || path.startsWith('/kitchenflow')) {
+    if (path.startsWith('/marketplace') || path.startsWith('/perfil') || path.startsWith('/cardapio') || path.startsWith('/c/') || path.startsWith('/m/')) {
+      if (currentProject !== 'MARKETPLACE') setCurrentProject('MARKETPLACE');
+    } else if (path === '/' || path.startsWith('/site') || path.startsWith('/kitchenflow')) {
       if (currentProject !== 'WEBSITE') setCurrentProject('WEBSITE');
     } else if (path.startsWith('/saas')) {
       if (currentUserData) {
@@ -1523,7 +1525,8 @@ const App: React.FC = () => {
 
     const requiredPermission = tabPermissions[activeTab];
     if (requiredPermission) {
-      const hasDirectPermission = userPerms.includes(requiredPermission as any);
+      const isOwnerOrAdmin = currentUserData?.role === 'OWNER' || currentUserData?.role === 'ADMIN';
+      const hasDirectPermission = isOwnerOrAdmin || userPerms.includes(requiredPermission as any);
       
       // Special allowance for kds-kitchen-only which can be opened by kds_view too
       const isAllowedKDSKitchen = activeTab === 'kds-kitchen-only' && userPerms.includes('kds_view');
@@ -3892,6 +3895,7 @@ const App: React.FC = () => {
       await localDb.users.update(id, updates);
       setUsers(prev => prev.map(u => u.id === id ? { ...u, ...updates } : u));
     }
+    showToast("Usuário atualizado com sucesso!");
     addLog('u1', 'USUARIOS', `Usuário atualizado: ${id}`);
   };
 
@@ -4589,9 +4593,10 @@ const App: React.FC = () => {
     );
   }
 
-  const isMarketplaceRoute = location.pathname.startsWith('/marketplace') || location.pathname.startsWith('/perfil');
-  const isWebsiteRoute = location.pathname.startsWith('/site') || location.pathname.startsWith('/kitchenflow') || location.pathname === '/';
-  const isPublicRoute = isMarketplaceRoute || isWebsiteRoute;
+  const isCardapioRoute = location.pathname.startsWith('/cardapio') || location.pathname.startsWith('/c/') || location.pathname.startsWith('/m/');
+  const isMarketplaceRoute = location.pathname.startsWith('/marketplace') || location.pathname.startsWith('/perfil') || isCardapioRoute;
+  const isWebsiteRoute = (location.pathname.startsWith('/site') || location.pathname.startsWith('/kitchenflow') || location.pathname === '/') && !isCardapioRoute;
+  const isPublicRoute = isMarketplaceRoute || isWebsiteRoute || isCardapioRoute;
 
   // 1. Se o usuário NÃO está autenticado no Firebase Auth
   // e tenta acessar uma rota privada/privilegiada (não pública):
@@ -4770,7 +4775,7 @@ const App: React.FC = () => {
                  )
                ) : <Login onLoginSuccess={() => {}} />
             } />
-            {["/marketplace", "/marketplace/:tenantId", "/perfil"].map((path) => (
+            {["/marketplace", "/marketplace/:tenantId", "/cardapio", "/cardapio/:tenantId", "/c/:tenantId", "/m/:tenantId", "/perfil"].map((path) => (
               <Route 
                 key={path}
                 path={path} 

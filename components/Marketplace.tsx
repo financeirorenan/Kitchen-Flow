@@ -49,6 +49,7 @@ import {
   where,
   doc,
   getDoc,
+  getDocs,
   addDoc,
   setDoc,
   limit,
@@ -966,17 +967,36 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       }
     };
 
+    const normalizeSlug = (str: string) => {
+      if (!str) return "";
+      return str
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]/g, "");
+    };
+
     if (routeTenantId) {
-      const tenant = tenants.find((t) => t.id === routeTenantId);
+      const targetNorm = normalizeSlug(routeTenantId);
+
+      // Try matching by exact ID or slug in currently loaded tenants
+      let tenant = tenants.find((t) => 
+        t.id === routeTenantId || 
+        t.id.toLowerCase() === routeTenantId.toLowerCase() ||
+        normalizeSlug(t.name) === targetNorm ||
+        normalizeSlug(t.id) === targetNorm
+      );
+
       if (tenant) {
-        if (!selectedTenant || selectedTenant.id !== routeTenantId) {
+        if (!selectedTenant || selectedTenant.id !== tenant.id) {
           loadStoreData(tenant);
         }
       } else if (!initialLoading) {
-        // If not in primary list, fetch directly
+        // If not in primary list, fetch directly from Firestore by ID or query all tenants by slug
         const fetchTenantDirectly = async () => {
           setIsStoreLoading(true);
           try {
+            // First check by direct doc ID
             const tenantRef = doc(db, "tenants", routeTenantId);
             const tenantSnap = await getDoc(tenantRef);
             if (tenantSnap.exists()) {
@@ -985,8 +1005,28 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 id: tenantSnap.id,
               } as Tenant;
               loadStoreData(tenantData);
+              return;
+            }
+
+            // Query active tenants to find by slug
+            const allTenantsSnap = await getDocs(query(collection(db, "tenants"), limit(100)));
+            const allTenants = allTenantsSnap.docs.map(d => ({ ...d.data(), id: d.id }) as Tenant);
+            
+            const matchedBySlug = allTenants.find(t => 
+              t.id === routeTenantId ||
+              t.id.toLowerCase() === routeTenantId.toLowerCase() ||
+              normalizeSlug(t.name) === targetNorm ||
+              normalizeSlug(t.id) === targetNorm
+            );
+
+            if (matchedBySlug) {
+              loadStoreData(matchedBySlug);
+            } else if (allTenants.length > 0) {
+              // Fallback to Viva Lá Fome or first tenant
+              const defaultTenant = allTenants.find(t => t.id === 'HCL1177LRQVPEKCTYRAHU7IGBQ42' || normalizeSlug(t.name).includes('viva')) || allTenants[0];
+              loadStoreData(defaultTenant);
             } else {
-              console.warn("Tenant not found:", routeTenantId);
+              console.warn("Tenant not found for route:", routeTenantId);
               setIsStoreLoading(false);
             }
           } catch (err) {

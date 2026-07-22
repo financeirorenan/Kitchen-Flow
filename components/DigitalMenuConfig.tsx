@@ -66,7 +66,10 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
     return [...products].sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
   }, [products]);
 
-  const menuUrl = `${window.location.origin}/cardapio/${settings.restaurantName.toLowerCase().replace(/\s+/g, '-')}`;
+  const cleanMenuSlug = settings.restaurantName 
+    ? settings.restaurantName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') 
+    : 'viva-la-fome';
+  const menuUrl = `${window.location.origin}/cardapio/${cleanMenuSlug || 'viva-la-fome'}`;
 
   const bannerPresets = [
     { name: 'Pizza', url: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?q=80&w=2070&auto=format&fit=crop' },
