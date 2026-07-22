@@ -79,6 +79,7 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products, onClos
         name: product.name + (finalOptions.length > 0 ? ` (${finalOptions.map(o => o.name).join(', ')})` : ''),
         quantity: optionsModalQty,
         price: itemPrice,
+        category: product.category,
         sentToKitchen: true,
         selectedOptions: finalOptions.length > 0 ? finalOptions : undefined,
         observation: optionsModalObs || undefined

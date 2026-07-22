@@ -274,46 +274,33 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
         </div>
       </div>
 
-      {/* Subheader: Categories / Production Stations & Order Types */}
-      <div className="bg-slate-900/60 border-b border-slate-800/60 p-3 px-5 flex flex-wrap items-center justify-between gap-3">
-        {/* Stations/Category Filters */}
-        <div className="flex items-center gap-1.5 overflow-x-auto max-w-full py-1 custom-scrollbar">
-          <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 mr-2 shrink-0">
-            Posto / Categoria:
+      {/* Subheader: Order Type Filters */}
+      <div className="bg-slate-900/60 border-b border-slate-800/60 p-3 px-5 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Utensils size={16} className="text-rose-400" />
+          <span className="text-xs font-black uppercase tracking-wider text-slate-300">
+            Fila de Produção da Cozinha
           </span>
-          {stations.map(station => (
-            <button
-              key={station}
-              onClick={() => setSelectedStation(station)}
-              className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border shrink-0 ${
-                selectedStation === station
-                  ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-950/40'
-                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
-              }`}
-            >
-              {station === 'all' ? '🍽️ Todos os Itens' : station}
-            </button>
-          ))}
         </div>
 
         {/* Order Type Filters */}
-        <div className="flex gap-1.5 bg-slate-950/60 p-1 rounded-xl border border-slate-800/80">
+        <div className="flex gap-1.5 bg-slate-950/80 p-1 rounded-xl border border-slate-800">
           {[
-            { id: 'all', label: 'Todos', icon: Grid },
-            { id: 'table', label: 'Mesa/Salão', icon: Smartphone },
+            { id: 'all', label: 'Todos os Pedidos', icon: Grid },
+            { id: 'table', label: 'Mesa / Salão', icon: Smartphone },
             { id: 'takeout', label: 'Balcão', icon: ShoppingBag },
             { id: 'delivery', label: 'Delivery', icon: Bike }
           ].map(item => (
             <button
               key={item.id}
               onClick={() => setActiveFilter(item.id as any)}
-              className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${
                 activeFilter === item.id 
-                  ? 'bg-rose-600 text-white font-black shadow' 
+                  ? 'bg-rose-600 text-white font-black shadow-md' 
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
               }`}
             >
-              <item.icon size={12} />
+              <item.icon size={13} />
               {item.label}
             </button>
           ))}
@@ -328,17 +315,11 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
               {filteredKitchenOrders.map(order => {
                 const isPreparing = order.status === 'preparing';
                 
-                // Get items belonging to the selected station/category (if filtered)
-                const itemsToDisplay = order.items.filter(item => {
-                  if (selectedStation === 'all') return true;
-                  const prod = products.find(p => p.id === item.productId || p.name.toLowerCase() === item.name.split(' (')[0].trim().toLowerCase());
-                  return prod?.category === selectedStation;
-                });
-
+                const itemsToDisplay = order.items;
                 if (itemsToDisplay.length === 0) return null;
 
                 const orderCheckedState = checkedItems[order.id] || {};
-                const allItemsChecked = itemsToDisplay.every((_, idx) => orderCheckedState[`${order.id}-${idx}`]);
+                const allItemsChecked = itemsToDisplay.length > 0 && itemsToDisplay.every((_, idx) => orderCheckedState[`${order.id}-${idx}`]);
 
                 return (
                   <motion.div
@@ -360,7 +341,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                     {/* Ticket Header */}
                     <div className="p-4 bg-slate-900/40 border-b border-slate-800/80 flex flex-col gap-2 pl-6">
                       <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                        <span className="text-xs font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
                           {order.type === 'table' ? '🍽️ SALÃO' : order.type === 'takeout' ? '🛍️ BALCÃO' : '🛵 DELIVERY'}
                           <span className="text-slate-700">•</span>
                           #{order.dailyNumber || order.id.slice(-4).toUpperCase()}
@@ -369,10 +350,10 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                       </div>
 
                       <div className="flex items-center justify-between">
-                        <h3 className="text-base font-black text-slate-100 tracking-tight uppercase truncate max-w-[70%]">
+                        <h3 className="text-lg font-black text-slate-100 tracking-tight uppercase truncate max-w-[70%]">
                           {getOrderIdentifier(order)}
                         </h3>
-                        <span className="text-[9px] font-mono font-bold text-slate-500">
+                        <span className="text-xs font-mono font-bold text-slate-400">
                           {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </span>
                       </div>
@@ -380,8 +361,8 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
 
                     {/* Cooking Checklist items */}
                     <div className="flex-1 p-4 space-y-3.5">
-                      <div className="flex items-center justify-between text-[9px] font-black uppercase tracking-widest text-slate-500 border-b border-slate-800/50 pb-1.5">
-                        <span>Ingredientes / Pratos</span>
+                      <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-slate-500 border-b border-slate-800/50 pb-1.5">
+                        <span>PRATOS / INGREDIENTES</span>
                         <span>QTD</span>
                       </div>
 
@@ -390,57 +371,69 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                           const itemKey = `${order.id}-${idx}`;
                           const isChecked = !!orderCheckedState[itemKey];
 
-                          // Resolve the product category for this item
-                          const prod = products.find(p => p.id === item.productId || p.name.toLowerCase() === item.name.split(' (')[0].trim().toLowerCase());
-                          const category = prod?.category;
+                          // Resolve product category accurately
+                          let category = item.category;
+                          if (!category && products && products.length > 0) {
+                            let prod = products.find(p => p.id === item.productId);
+                            if (!prod) {
+                              const rawName = item.name || '';
+                              const cleanName = rawName.split(' (')[0].split(' - ')[0].trim().toLowerCase();
+                              const fullName = rawName.trim().toLowerCase();
+                              prod = products.find(p => {
+                                const pn = p.name.trim().toLowerCase();
+                                return pn === cleanName || pn === fullName || cleanName.startsWith(pn) || fullName.includes(pn);
+                              });
+                            }
+                            category = prod?.category;
+                          }
 
                           return (
                             <div 
                               key={idx}
                               onClick={() => toggleItemChecked(order.id, itemKey)}
-                              className={`flex items-start justify-between p-2 rounded-2xl cursor-pointer transition-all border text-xs gap-3 ${
+                              className={`flex items-start justify-between p-3 rounded-2xl cursor-pointer transition-all border text-sm gap-3 ${
                                 isChecked 
                                   ? 'bg-emerald-950/20 border-emerald-900/40 text-slate-400 line-through decoration-emerald-500/50' 
-                                  : 'bg-slate-950/50 border-slate-800/80 hover:bg-slate-850 hover:border-slate-700 text-slate-200'
+                                  : 'bg-slate-950/60 border-slate-800/90 hover:bg-slate-850 hover:border-slate-700 text-slate-100'
                               }`}
                             >
-                              <div className="flex items-start gap-2.5 flex-1">
-                                <div className={`w-4.5 h-4.5 rounded-md border flex items-center justify-center shrink-0 mt-0.5 transition-all ${
+                              <div className="flex items-start gap-3 flex-1">
+                                <div className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 mt-1 transition-all ${
                                   isChecked 
                                     ? 'bg-emerald-500 border-emerald-400 text-slate-950' 
                                     : 'border-slate-700 text-transparent'
                                 }`}>
-                                  <Check size={11} strokeWidth={3} />
+                                  <Check size={13} strokeWidth={3} />
                                 </div>
-                                <div className="flex flex-col gap-0.5">
-                                  <div className="flex flex-wrap items-center gap-1.5">
-                                    <span className={`font-semibold ${isChecked ? 'text-slate-500 font-normal' : 'text-slate-100'}`}>
+                                <div className="flex flex-col gap-1 flex-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className={`text-base sm:text-lg font-black tracking-tight leading-snug ${isChecked ? 'text-slate-500 font-semibold' : 'text-slate-100'}`}>
                                       {item.name}
                                     </span>
                                     {category && (
-                                      <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 text-[8px] font-extrabold text-indigo-400 uppercase tracking-wider">
+                                      <span className="px-2 py-0.5 rounded-md bg-indigo-500/15 border border-indigo-500/30 text-[9px] sm:text-[10px] font-black text-indigo-300 uppercase tracking-wider shrink-0">
                                         {category}
                                       </span>
                                     )}
                                   </div>
                                   {item.selectedOptions && item.selectedOptions.length > 0 && (
-                                    <div className="text-[10px] text-slate-500 space-y-0.5 font-bold pl-1">
+                                    <div className="text-xs sm:text-sm text-slate-400 space-y-0.5 font-bold pl-1 mt-0.5">
                                       {item.selectedOptions.map((opt, oIdx) => (
                                         <p key={oIdx}>+ {opt.name}</p>
                                       ))}
                                     </div>
                                   )}
                                   {item.observation && (
-                                    <p className="text-[9px] font-black text-rose-400 bg-rose-950/20 border border-rose-900/30 px-2 py-0.5 rounded-lg w-fit mt-1">
+                                    <p className="text-xs sm:text-sm font-black text-rose-300 bg-rose-950/40 border border-rose-500/40 px-2.5 py-1 rounded-xl w-fit mt-1.5 shadow-sm">
                                       OBS: {item.observation}
                                     </p>
                                   )}
                                 </div>
                               </div>
-                              <span className={`font-black text-[11px] px-1.5 py-0.5 rounded-md shrink-0 ${
+                              <span className={`font-black text-sm sm:text-base px-2.5 py-1 rounded-xl shrink-0 ${
                                 isChecked 
-                                  ? 'bg-emerald-950/30 text-emerald-400 border border-emerald-900/20' 
-                                  : 'bg-slate-900 text-indigo-400 border border-slate-800'
+                                  ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-900/40' 
+                                  : 'bg-indigo-950/80 text-indigo-300 border border-indigo-500/30 shadow'
                               }`}>
                                 {item.quantity}x
                               </span>

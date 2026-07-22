@@ -604,6 +604,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
         name: item.product.name,
         price: item.product.price + (item.selectedOptions?.reduce((sum, opt) => sum + (opt.price || 0), 0) || 0),
         quantity: item.quantity,
+        category: item.product.category,
         selectedOptions: item.selectedOptions
       })),
       total: cartTotal + (orderType === 'delivery' ? deliveryFee : 0),

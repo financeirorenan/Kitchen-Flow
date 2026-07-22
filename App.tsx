@@ -2366,14 +2366,13 @@ const App: React.FC = () => {
     
     const displayTableNumber = tableInfo ? tableInfo.number : tableId;
 
-    // Check if we are updating an existing active order for this table
+    // Check if we are updating an existing active order for this table that hasn't been delivered/finished
     const activeOrder = orders.find(o => 
-      o.type === (isCounter ? 'takeout' : 'table') &&
-      (o.id === tableId || String(o.tableNumber) === String(displayTableNumber)) && 
-      !['finished', 'cancelled', 'delivered'].includes(o.status)
+      (o.id === tableInfo?.currentOrderId || (o.type === (isCounter ? 'takeout' : 'table') && String(o.tableNumber) === String(displayTableNumber))) && 
+      !['finished', 'cancelled'].includes(o.status)
     );
     
-    if (activeOrder) {
+    if (activeOrder && activeOrder.status !== 'delivered') {
       const updatedItems = [...activeOrder.items];
       items.forEach(newItem => {
         updatedItems.push({ ...newItem, sentToKitchen: true });
@@ -2990,28 +2989,29 @@ const App: React.FC = () => {
     }
   };
 
-  const handleUpdateTable = async (id: number | string, items: OrderItem[], status: Table['status'], isCounter?: boolean) => {
+  const handleUpdateTable = async (id: number | string, items: OrderItem[], status: Table['status'], isCounter?: boolean, partialPayments?: Table['partialPayments']) => {
     const total = items.reduce((a, b) => a + (b.price * b.quantity), 0);
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || (isSuperAdmin ? `saas-admin-${user?.uid}` : null);
     const numericId = typeof id === 'string' ? Number(id) : id;
 
+    const tableUpdates: Record<string, any> = { items, status, total };
+    if (partialPayments !== undefined) {
+      tableUpdates.partialPayments = partialPayments;
+    }
+
     if (isCounter) {
-      setCounterOrders(prev => prev.map(t => t.id === id || t.id === numericId ? { ...t, items, status, total } : t));
-      // Sincronizar com Firestore se for balcão também!
+      setCounterOrders(prev => prev.map(t => t.id === id || t.id === numericId ? { ...t, ...tableUpdates } : t));
       if (effectiveTenantId) {
         try {
           const docId = `counter-${id}`; 
-          // Note: Balcão orders are temporary tables, but we should sync them if they are in Firestore
-          // However, usually they were only local. Let's make it consistent.
-          // In some versions, they might be in diningTables too.
         } catch (e) {}
       }
     } else {
       // Local update
       if (!isNaN(numericId)) {
-        await localDb.diningTables.update(numericId, { items, status, total });
+        await localDb.diningTables.update(numericId, tableUpdates);
       }
-      setTables(prev => prev.map(t => t.id === id || t.id === numericId || (t as any).docId === id ? { ...t, items, status, total } : t));
+      setTables(prev => prev.map(t => t.id === id || t.id === numericId || (t as any).docId === id ? { ...t, ...tableUpdates } : t));
 
       // Cloud Sync
       if (effectiveTenantId) {
@@ -3020,7 +3020,7 @@ const App: React.FC = () => {
           const docId = (table as any).docId || (typeof id === 'string' && isNaN(numericId) ? id : null);
 
           if (docId) {
-            await setDoc(doc(db, 'diningTables', docId), cleanObject({ items, status, total, updatedAt: new Date() }), { merge: true });
+            await setDoc(doc(db, 'diningTables', docId), cleanObject({ ...tableUpdates, updatedAt: new Date() }), { merge: true });
           } else {
             const q = query(
               collection(db, 'diningTables'), 
@@ -3030,7 +3030,7 @@ const App: React.FC = () => {
             const snapshot = await getDocs(q);
             if (!snapshot.empty) {
               const batch = writeBatch(db);
-              snapshot.docs.forEach(d => batch.update(d.ref, cleanObject({ items, status, total, updatedAt: new Date() })));
+              snapshot.docs.forEach(d => batch.update(d.ref, cleanObject({ ...tableUpdates, updatedAt: new Date() })));
               await batch.commit();
             }
           }

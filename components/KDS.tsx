@@ -297,17 +297,25 @@ const KDS: React.FC<KDSProps> = memo(({
           {order.items && order.items.length > 0 && (() => {
              // Group items of this order by product category
              const itemsByCategory = order.items.reduce<Record<string, typeof order.items>>((acc, item) => {
-                // Extract base product name before options (e.g., "Pastel (Queijo)" -> "Pastel")
-                const baseName = item.name.split(' (')[0].trim().toLowerCase();
-                let prod = item.productId ? products.find(p => p.id === item.productId) : null;
-                if (!prod) {
-                   prod = products.find(p => p.name && p.name.toLowerCase().trim() === baseName);
+                let category = item.category;
+                if (!category && products && products.length > 0) {
+                   let prod = item.productId ? products.find(p => p.id === item.productId) : null;
+                   if (!prod) {
+                      const rawName = item.name || '';
+                      const cleanName = rawName.split(' (')[0].split(' - ')[0].trim().toLowerCase();
+                      const fullName = rawName.trim().toLowerCase();
+                      prod = products.find(p => {
+                         const pn = p.name.trim().toLowerCase();
+                         return pn === cleanName || pn === fullName || cleanName.startsWith(pn) || fullName.includes(pn);
+                      });
+                   }
+                   category = prod?.category;
                 }
-                const category = prod?.category || 'Geral';
-                if (!acc[category]) {
-                   acc[category] = [];
+                const finalCat = category || 'Geral';
+                if (!acc[finalCat]) {
+                   acc[finalCat] = [];
                 }
-                acc[category].push(item);
+                acc[finalCat].push(item);
                 return acc;
              }, {});
 

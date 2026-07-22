@@ -420,6 +420,7 @@ export interface OrderItem {
   name: string;
   quantity: number;
   price: number;
+  category?: string;
   observation?: string;
   seat?: string;
   selectedOptions?: ProductOption[];
@@ -491,6 +492,16 @@ export interface Table {
   currentOrderId?: string;
   items: OrderItem[];
   total: number;
+  partialPayments?: {
+    id?: string;
+    method: PaymentMethod;
+    amount: number;
+    timestamp?: Date;
+    customerId?: string;
+    customerDocument?: string;
+    isFiscalIssued?: boolean;
+    fiscalKey?: string;
+  }[];
 }
 
 export interface Courier {

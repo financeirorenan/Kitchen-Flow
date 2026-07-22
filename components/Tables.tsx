@@ -867,6 +867,7 @@ const Tables: React.FC<TablesProps> = memo(
                   : ""),
               price: itemPrice,
               quantity: qty,
+              category: product.category,
               seat: activeSeat,
               selectedOptions:
                 finalOptions.length > 0 ? finalOptions : undefined,
@@ -1126,19 +1127,23 @@ const Tables: React.FC<TablesProps> = memo(
 
     const openPayment = useCallback(() => {
       if (!selectedTable) return;
-      setRemainingBalance(
-        selectedTable.total +
-          (isDeliveryOrder && isCounterContext
-            ? parseCurrency(deliveryFeeInput)
-            : 0),
-      );
+      const existingParts = selectedTable.partialPayments || [];
+      const totalPaidSoFar = existingParts.reduce((acc, p) => acc + p.amount, 0);
+      const baseTotal = selectedTable.total + (isDeliveryOrder && isCounterContext ? parseCurrency(deliveryFeeInput) : 0);
+
+      setSplitParts(existingParts);
+      if (existingParts.length > 0) {
+        setIsSplitting(true);
+      } else {
+        setIsSplitting(false);
+      }
+
+      setRemainingBalance(Math.max(0, baseTotal - totalPaidSoFar));
       setAdditionalFee(0);
       setAdditionalFeeReason("");
       setShowReasonInput(false);
       setDiscount(0);
-      setSplitParts([]);
       setPaidItemIndices([]);
-      setIsSplitting(false);
       setSplitMode(null);
       setIsFiscalEmission(adminSettings.fiscal?.autoIssueNfce || false);
       setAutoCloseAfterPayment(true);
@@ -1183,7 +1188,12 @@ const Tables: React.FC<TablesProps> = memo(
           else if (showPaymentModal) setShowPaymentModal(false);
           else if (editingItemIndex !== null) setEditingItemIndex(null);
           else if (showCashModal) setShowCashModal(false);
-          else if (selectedTable) setSelectedTable(null);
+          else if (selectedTable) {
+            if (selectedTable.items.some((i) => !i.sentToKitchen)) {
+              handleSendToKitchenLocal();
+            }
+            setSelectedTable(null);
+          }
           return;
         }
 
@@ -1244,7 +1254,9 @@ const Tables: React.FC<TablesProps> = memo(
                 0,
               )
             : remainingBalance
-        : remainingBalance;
+        : (customSplitValue && parseFloat(customSplitValue) > 0 && parseFloat(customSplitValue) < remainingBalance - 0.01)
+          ? parseFloat(customSplitValue)
+          : remainingBalance;
 
       if (method === "dinheiro" || methodType === "cash") {
         setSelectedPaymentMethod(method);
@@ -1270,7 +1282,7 @@ const Tables: React.FC<TablesProps> = memo(
               ? selectedSplitItems.map((idx) => selectedTable.items[idx])
               : undefined,
         };
-        const newRemaining = remainingBalance - amountToPay;
+        const newRemaining = Math.max(0, remainingBalance - amountToPay);
         const updatedParts = [...splitParts, newPart];
 
         if (!isSplitting) setIsSplitting(true);
@@ -1286,6 +1298,11 @@ const Tables: React.FC<TablesProps> = memo(
         setSelectedSplitItems([]);
         setCustomSplitValue("");
 
+        // Persistir pagamento parcial no objeto da mesa
+        const updatedTable = { ...selectedTable, partialPayments: updatedParts };
+        setSelectedTable(updatedTable);
+        onUpdateTable(selectedTable.id, selectedTable.items, "occupied", isCounterContext, updatedParts);
+
         if (newRemaining <= 0.01) {
           if (autoCloseAfterPayment) {
             finishSplitPayment(updatedParts);
@@ -1295,6 +1312,10 @@ const Tables: React.FC<TablesProps> = memo(
                 "Pagamento registrado! Mesa mantida aberta para emissão de cupons.",
                 "success",
               );
+          }
+        } else {
+          if (showToast) {
+            showToast(`Pagamento parcial de R$ ${amountToPay.toFixed(2)} registrado! Mesa mantida aberta (Saldo rest: R$ ${newRemaining.toFixed(2)}).`, "success");
           }
         }
         return;
@@ -1394,7 +1415,7 @@ const Tables: React.FC<TablesProps> = memo(
               ? selectedSplitItems.map((idx) => selectedTable.items[idx])
               : undefined,
         };
-        const newRemaining = remainingBalance - amountToPay;
+        const newRemaining = Math.max(0, remainingBalance - amountToPay);
         const updatedParts = [...splitParts, newPart];
         setSplitParts(updatedParts);
         setRemainingBalance(newRemaining);
@@ -1410,6 +1431,11 @@ const Tables: React.FC<TablesProps> = memo(
 
         if (!isSplitting) setIsSplitting(true);
 
+        // Persistir pagamento parcial na mesa
+        const updatedTable = { ...selectedTable, partialPayments: updatedParts };
+        setSelectedTable(updatedTable);
+        onUpdateTable(selectedTable.id, selectedTable.items, "occupied", isCounterContext, updatedParts);
+
         if (newRemaining <= 0.01) {
           if (autoCloseAfterPayment) {
             finishSplitPayment(updatedParts);
@@ -1419,6 +1445,10 @@ const Tables: React.FC<TablesProps> = memo(
                 "Pagamento em dinheiro registrado! Mesa mantida aberta para emissão de cupons.",
                 "success",
               );
+          }
+        } else {
+          if (showToast) {
+            showToast(`Pagamento em dinheiro de R$ ${amountToPay.toFixed(2)} registrado! Mesa mantida aberta (Saldo rest: R$ ${newRemaining.toFixed(2)}).`, "success");
           }
         }
         return;
@@ -1608,7 +1638,7 @@ const Tables: React.FC<TablesProps> = memo(
               ? selectedSplitItems.map((idx) => selectedTable.items[idx])
               : undefined,
         };
-        const newRemaining = remainingBalance - amountToPay;
+        const newRemaining = Math.max(0, remainingBalance - amountToPay);
         const updatedParts = [...splitParts, newPart];
 
         setSplitParts(updatedParts);
@@ -1625,6 +1655,11 @@ const Tables: React.FC<TablesProps> = memo(
 
         if (!isSplitting) setIsSplitting(true);
 
+        // Persistir pagamento parcial na mesa
+        const updatedTable = { ...selectedTable, partialPayments: updatedParts };
+        setSelectedTable(updatedTable);
+        onUpdateTable(selectedTable.id, selectedTable.items, "occupied", isCounterContext, updatedParts);
+
         if (newRemaining <= 0.01) {
           if (autoCloseAfterPayment) {
             finishSplitPayment(updatedParts);
@@ -1634,6 +1669,10 @@ const Tables: React.FC<TablesProps> = memo(
                 "Lançamento fiado registrado! Mesa mantida aberta para emissão de cupons.",
                 "success",
               );
+          }
+        } else {
+          if (showToast) {
+            showToast(`Lançamento de R$ ${amountToPay.toFixed(2)} registrado! Mesa mantida aberta (Saldo rest: R$ ${newRemaining.toFixed(2)}).`, "success");
           }
         }
         return;
@@ -2893,6 +2932,9 @@ const Tables: React.FC<TablesProps> = memo(
                   </div>
                   <button
                     onClick={() => {
+                      if (selectedTable && selectedTable.items.some((i) => !i.sentToKitchen)) {
+                        handleSendToKitchenLocal();
+                      }
                       if (pdvEditOrder && onCancelPdvEdit) {
                         onCancelPdvEdit();
                       }
@@ -3957,9 +3999,34 @@ const Tables: React.FC<TablesProps> = memo(
                                   </p>
                                 </div>
                               </div>
-                              <p className="font-black text-slate-800 text-xs lg:text-sm">
-                                R$ {part.amount.toFixed(2)}
-                              </p>
+                              <div className="flex items-center gap-2">
+                                <p className="font-black text-slate-800 text-xs lg:text-sm">
+                                  R$ {part.amount.toFixed(2)}
+                                </p>
+                                {!part.isFiscalIssued && (
+                                  <button
+                                    onClick={() => {
+                                      if (confirm(`Remover este pagamento parcial de R$ ${part.amount.toFixed(2)} (${part.method})?`)) {
+                                        const updatedParts = splitParts.filter(p => p.id !== part.id);
+                                        setSplitParts(updatedParts);
+                                        setRemainingBalance(prev => prev + part.amount);
+                                        if (updatedParts.length === 0) {
+                                          setIsSplitting(false);
+                                        }
+                                        if (selectedTable) {
+                                          const updatedTable = { ...selectedTable, partialPayments: updatedParts };
+                                          setSelectedTable(updatedTable);
+                                          onUpdateTable(selectedTable.id, selectedTable.items, "occupied", isCounterContext, updatedParts);
+                                        }
+                                      }
+                                    }}
+                                    className="p-1 hover:bg-rose-50 text-slate-300 hover:text-rose-600 rounded-lg transition-colors"
+                                    title="Remover pagamento parcial"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                )}
+                              </div>
                             </div>
 
                             {/* Painel Fiscal Desta Parte */}
