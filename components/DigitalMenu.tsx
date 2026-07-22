@@ -790,13 +790,17 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
         
         {/* Navigation Actions */}
         <div className="absolute top-8 inset-x-6 flex justify-between items-center z-10">
-          <motion.button 
-            whileTap={{ scale: 0.9 }}
-            onClick={onBack}
-            className="w-12 h-12 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center text-white border border-white/20"
-          >
-            <ArrowLeft size={24} />
-          </motion.button>
+          {onBack ? (
+            <motion.button 
+              whileTap={{ scale: 0.9 }}
+              onClick={onBack}
+              className="w-12 h-12 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center text-white border border-white/20"
+            >
+              <ArrowLeft size={24} />
+            </motion.button>
+          ) : (
+            <div />
+          )}
           
           <div className="flex gap-3">
             <motion.button 

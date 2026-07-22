@@ -463,6 +463,10 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
   const location = useLocation();
 
+  const isDirectCardapioRoute = useMemo(() => {
+    return location.pathname.startsWith('/cardapio') || location.pathname.startsWith('/c/') || location.pathname.startsWith('/m/');
+  }, [location.pathname]);
+
   useEffect(() => {
     if (location.pathname === "/perfil") {
       setNavView("profile");
@@ -1185,11 +1189,15 @@ const Marketplace: React.FC<MarketplaceProps> = ({
           minOrderValue={storeAdminSettings?.minOrderValue}
           estimatedDeliveryTime={storeAdminSettings?.estimatedDeliveryTime}
           estimatedPickupTime={storeAdminSettings?.estimatedPickupTime}
-          onBack={() => {
-            setSelectedTenant(null);
-            navigate("/marketplace");
-          }}
-          isMarketplace={true}
+          onBack={
+            isDirectCardapioRoute
+              ? undefined
+              : () => {
+                  setSelectedTenant(null);
+                  navigate("/marketplace");
+                }
+          }
+          isMarketplace={!isDirectCardapioRoute}
           initialAddress={currentAddress}
           isFavorite={favorites.includes(selectedTenant.id)}
           onToggleFavorite={(e) => toggleFavorite(e, selectedTenant.id)}

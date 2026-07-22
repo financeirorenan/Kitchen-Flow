@@ -7,7 +7,7 @@ import {
   User, Truck, Package, Flag, ChevronRight, 
   ChefHat, Timer, Bike, AlertCircle, X,
   Edit, Plus, Minus, Trash2, Search, CreditCard, Printer, Share2, ShoppingBag, MapPin, Phone,
-  Store, XCircle, Receipt
+  Store, XCircle, Receipt, Maximize2, Minimize2
 } from 'lucide-react';
 import { generateReceiptHtml, handlePrintOrder } from '../services/printService';
 
@@ -48,6 +48,29 @@ const KDS: React.FC<KDSProps> = memo(({
   const [fiscalPrintDefault, setFiscalPrintDefault] = useState(false);
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
   const [isMudarParaOpen, setIsMudarParaOpen] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(() => typeof document !== 'undefined' && Boolean(document.fullscreenElement));
+
+  React.useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch((err) => {
+        console.warn('Erro ao ativar tela cheia:', err);
+      });
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch((err) => {
+          console.warn('Erro ao sair da tela cheia:', err);
+        });
+      }
+    }
+  };
 
   const toggleSelectOrder = (orderId: string) => {
     setSelectedOrderIds(prev => 
@@ -667,6 +690,18 @@ const KDS: React.FC<KDSProps> = memo(({
               className={`${fiscalPrintDefault ? 'bg-indigo-600' : 'bg-brand-secondary'} px-3 py-1 rounded hover:opacity-90 flex items-center gap-1 transition-colors`}
             >
                <Printer size={12} /> {fiscalPrintDefault ? 'Imprimir Fiscal' : 'Imprimir no meu usuário'}
+            </button>
+            <button
+              onClick={toggleFullscreen}
+              className={`px-3 py-1 rounded flex items-center gap-1 transition-all uppercase text-[9px] font-black border ${
+                isFullscreen 
+                  ? 'bg-indigo-600 text-white border-indigo-400 shadow-md shadow-indigo-600/30' 
+                  : 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700'
+              }`}
+              title={isFullscreen ? "Sair da Tela Cheia" : "Modo Tela Cheia para Monitor/TV"}
+            >
+              {isFullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+              {isFullscreen ? 'Sair Tela Cheia' : 'Tela Cheia'}
             </button>
          </div>
       </div>

@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Order, OrderItem, Product, Table } from '../types';
 import { 
   ChefHat, Clock, CheckCircle2, AlertTriangle, Play, Check, 
-  Sparkles, Coffee, Flame, Utensils, Award, RefreshCw, Volume2, VolumeX, Grid, Smartphone, ShoppingBag, Bike, LogOut
+  Sparkles, Coffee, Flame, Utensils, Award, RefreshCw, Volume2, VolumeX, Grid, Smartphone, ShoppingBag, Bike, LogOut,
+  Maximize2, Minimize2
 } from 'lucide-react';
 
 interface KDSKitchenOnlyProps {
@@ -26,6 +27,29 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
   const [selectedStation, setSelectedStation] = useState<string>('all');
   const [activeFilter, setActiveFilter] = useState<'all' | 'delivery' | 'takeout' | 'table'>('all');
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(() => typeof document !== 'undefined' && Boolean(document.fullscreenElement));
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch((err) => {
+        console.warn('Erro ao ativar tela cheia:', err);
+      });
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch((err) => {
+          console.warn('Erro ao sair da tela cheia:', err);
+        });
+      }
+    }
+  };
   
   // Track checked items per order in local state so cooks can mark specific dishes as completed
   const [checkedItems, setCheckedItems] = useState<Record<string, Record<string, boolean>>>({});
@@ -216,6 +240,20 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
           >
             {soundEnabled ? <Volume2 size={13} /> : <VolumeX size={13} />}
             {soundEnabled ? 'Sons Ativos' : 'Sons Mudos'}
+          </button>
+
+          {/* Fullscreen Mode */}
+          <button
+            onClick={toggleFullscreen}
+            className={`p-2 px-3.5 rounded-xl border text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
+              isFullscreen 
+                ? 'bg-indigo-600 text-white border-indigo-400 font-black shadow-lg shadow-indigo-600/30' 
+                : 'bg-slate-800 text-slate-200 border-slate-700/50 hover:bg-slate-700'
+            }`}
+            title={isFullscreen ? "Sair da Tela Cheia" : "Modo Tela Cheia (Ideal para Cozinha/TVs)"}
+          >
+            {isFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+            {isFullscreen ? 'Sair Tela Cheia' : 'Tela Cheia'}
           </button>
 
           {showLogoutButton && onLogout && (
