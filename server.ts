@@ -56,9 +56,90 @@ async function startServer() {
   const app = express();
   const port = Number(process.env.PORT) || 3000;
 
+  // 🛡️ 1. Firewall Security Headers & Security Protection
+  app.disable('x-powered-by');
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    res.setHeader('X-DNS-Prefetch-Control', 'off');
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    next();
+  });
+
+  // 🛡️ 2. Rate Limiting Engine (Proteção contra sobrecarga / DDoS e Brute-force)
+  const rateLimitStore = new Map<string, { count: number; firstRequestTime: number }>();
+  
+  // Limpador automático de registros antigos da memória a cada 5 minutos
+  setInterval(() => {
+    const now = Date.now();
+    for (const [ipKey, data] of rateLimitStore.entries()) {
+      if (now - data.firstRequestTime > 60000) {
+        rateLimitStore.delete(ipKey);
+      }
+    }
+  }, 300000);
+
+  const createRateLimiter = (maxRequests: number, windowMs: number = 60000) => {
+    return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+      const ip = (req.headers['x-forwarded-for'] as string || req.socket.remoteAddress || 'unknown').split(',')[0].trim();
+      const routeKey = `${ip}:${req.path}`;
+      const now = Date.now();
+
+      const record = rateLimitStore.get(routeKey);
+
+      if (!record) {
+        rateLimitStore.set(routeKey, { count: 1, firstRequestTime: now });
+        return next();
+      }
+
+      if (now - record.firstRequestTime < windowMs) {
+        if (record.count >= maxRequests) {
+          console.warn(`[Firewall] Rate limit excedido para IP ${ip} na rota ${req.path}`);
+          return res.status(429).json({
+            error: "Muitas requisições em pouco tempo. O Firewall temporariamente pausou novos pedidos para proteger o servidor. Tente novamente em 1 minuto."
+          });
+        }
+        record.count++;
+      } else {
+        rateLimitStore.set(routeKey, { count: 1, firstRequestTime: now });
+      }
+
+      next();
+    };
+  };
+
+  const generalLimiter = createRateLimiter(120, 60000); // 120 reqs/min geral
+  const authLimiter = createRateLimiter(12, 60000);     // 12 tentativas/min login (anti brute-force)
+  const aiLimiter = createRateLimiter(25, 60000);       // 25 reqs/min para rotas de IA
+
   app.use(cors());
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true }));
+
+  // 🛡️ 3. Firewall WAF (Inspeção de Payload & Anti-Injeção)
+  app.use((req, res, next) => {
+    if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
+      const bodyStr = JSON.stringify(req.body || {});
+      const maliciousPatterns = [
+        /<script\b[^>]*>/i,
+        /javascript:/i,
+        /UNION\s+SELECT/i,
+        /DROP\s+TABLE/i,
+        /--\s*$/m
+      ];
+      for (const pattern of maliciousPatterns) {
+        if (pattern.test(bodyStr)) {
+          console.warn(`[Firewall WAF] Bloqueada requisição com padrão malicioso suspeito de IP: ${req.socket.remoteAddress}`);
+          return res.status(400).json({ error: "Requisição bloqueada por filtro de segurança de firewall." });
+        }
+      }
+    }
+    next();
+  });
+
+  app.use('/api/', generalLimiter);
+  app.use('/api/auth/login', authLimiter);
+  app.use('/api/gemini/', aiLimiter);
 
   app.get("/health", (_req, res) => {
     res.status(200).json({ ok: true });

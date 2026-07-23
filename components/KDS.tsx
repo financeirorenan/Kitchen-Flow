@@ -129,17 +129,31 @@ const KDS: React.FC<KDSProps> = memo(({
     }
 
     const today = new Date();
+
+    const safeParseDate = (raw: any): Date | null => {
+      if (!raw) return null;
+      if (raw instanceof Date) return isNaN(raw.getTime()) ? null : raw;
+      if (typeof raw === 'object' && typeof raw.seconds === 'number') {
+        return new Date(raw.seconds * 1000);
+      }
+      if (typeof raw?.toDate === 'function') {
+        return raw.toDate();
+      }
+      const d = new Date(raw);
+      return isNaN(d.getTime()) ? null : d;
+    };
+
     const isToday = (date: any) => {
-      if (!date) return false;
-      const d = new Date(date);
+      const d = safeParseDate(date);
+      if (!d) return false;
       return d.getDate() === today.getDate() &&
              d.getMonth() === today.getMonth() &&
              d.getFullYear() === today.getFullYear();
     };
 
     const isRecent = (date: any, status: string) => {
-      if (!date) return false;
-      const d = new Date(date);
+      const d = safeParseDate(date);
+      if (!d) return false;
       
       // Regra de "Cozinha" (preparing/pending): 
       // Apenas hoje ou últimas 12 horas para evitar poluição de sobras de ontem
@@ -156,28 +170,35 @@ const KDS: React.FC<KDSProps> = memo(({
 
     const openedDate = (() => {
       if (!cashSession || !cashSession.isOpen || !cashSession.openedAt) return null;
-      const d = new Date(cashSession.openedAt);
-      return isNaN(d.getTime()) ? null : d;
+      return safeParseDate(cashSession.openedAt);
     })();
 
     const getOrderCompletionDate = (o: Order) => {
       const rawDate = o.completedAt || o.finishedAt || o.deliveredAt || o.updatedAt || o.createdAt;
-      if (!rawDate) return null;
-      const d = new Date(rawDate);
-      return isNaN(d.getTime()) ? null : d;
+      return safeParseDate(rawDate);
+    };
+
+    // Função de ordenação FIFO estrita (o pedido lançado primeiro vem sempre na frente, posição #1)
+    const sortByFifo = (list: Order[]) => {
+      return [...list].sort((a, b) => {
+        const timeA = safeParseDate(a.createdAt)?.getTime() || 0;
+        const timeB = safeParseDate(b.createdAt)?.getTime() || 0;
+        if (timeA !== timeB) return timeA - timeB;
+        return (a.dailyNumber || 0) - (b.dailyNumber || 0);
+      });
     };
 
     return {
-      preparing: filteredOrders.filter(o => 
+      preparing: sortByFifo(filteredOrders.filter(o => 
         (o.status === 'preparing' || o.status === 'pending') && isRecent(o.createdAt, 'preparing')
-      ),
-      ready: filteredOrders.filter(o => 
+      )),
+      ready: sortByFifo(filteredOrders.filter(o => 
         o.status === 'ready' && isRecent(o.createdAt, 'ready')
-      ),
-      delivering: filteredOrders.filter(o => 
+      )),
+      delivering: sortByFifo(filteredOrders.filter(o => 
         o.status === 'delivering' && isRecent(o.createdAt, o.status)
-      ),
-      delivered: filteredOrders.filter(o => {
+      )),
+      delivered: sortByFifo(filteredOrders.filter(o => {
         const isDeliveredOrFinished = o.status === 'delivered' || o.status === 'finished';
         if (!isDeliveredOrFinished) return false;
 
@@ -187,7 +208,7 @@ const KDS: React.FC<KDSProps> = memo(({
         }
 
         return (isToday(o.createdAt) || (new Date().getTime() - new Date(o.createdAt).getTime() < 12 * 60 * 60 * 1000)) && !o.isSettled;
-      }).slice(0, 40),
+      })).slice(0, 40),
     };
   }, [filteredOrders, activeFilter, cashSession]);
 

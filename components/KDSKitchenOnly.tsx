@@ -68,6 +68,20 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
     }
   };
   
+  // Safe helper to convert any date representation (Date, string, Firestore Timestamp) to Date
+  const safeParseDate = (raw: any): Date => {
+    if (!raw) return new Date();
+    if (raw instanceof Date) return isNaN(raw.getTime()) ? new Date() : raw;
+    if (typeof raw === 'object' && typeof raw.seconds === 'number') {
+      return new Date(raw.seconds * 1000);
+    }
+    if (typeof raw?.toDate === 'function') {
+      return raw.toDate();
+    }
+    const d = new Date(raw);
+    return isNaN(d.getTime()) ? new Date() : d;
+  };
+
   // Track checked items per order in local state so cooks can mark specific dishes as completed
   const [checkedItems, setCheckedItems] = useState<Record<string, Record<string, boolean>>>({});
   
@@ -78,10 +92,20 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
   const kitchenOrders = useMemo(() => {
     // Keep only recent pending/preparing orders (from last 12 hours) to avoid clutter
     const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000);
-    return orders.filter(o => 
-      (o.status === 'pending' || o.status === 'preparing') && 
-      new Date(o.createdAt) > twelveHoursAgo
-    );
+    const filtered = orders.filter(o => {
+      const isKitchenStatus = o.status === 'pending' || o.status === 'preparing';
+      if (!isKitchenStatus) return false;
+      const createdDate = safeParseDate(o.createdAt);
+      return createdDate > twelveHoursAgo;
+    });
+
+    // Ordenação FIFO estrita (o pedido lançado primeiro vem em 1º lugar na tela do KDS)
+    return [...filtered].sort((a, b) => {
+      const timeA = safeParseDate(a.createdAt).getTime();
+      const timeB = safeParseDate(b.createdAt).getTime();
+      if (timeA !== timeB) return timeA - timeB;
+      return (a.dailyNumber || 0) - (b.dailyNumber || 0);
+    });
   }, [orders]);
 
   // Extract all available product categories to serve as Kitchen Stations
@@ -168,8 +192,9 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
   };
 
   // Get elapsed minutes for color-coding prep time
-  const getElapsedTimeInfo = (createdAt: Date) => {
-    const minutes = Math.floor((new Date().getTime() - new Date(createdAt).getTime()) / 60000);
+  const getElapsedTimeInfo = (createdAt: any) => {
+    const createdDate = safeParseDate(createdAt);
+    const minutes = Math.floor((Date.now() - createdDate.getTime()) / 60000);
     let colorClass = isLight 
       ? 'text-emerald-700 bg-emerald-50 border-emerald-200' 
       : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
@@ -418,6 +443,15 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                           {order.type === 'table' ? '🍽️ SALÃO' : order.type === 'takeout' ? '🛍️ BALCÃO' : '🛵 DELIVERY'}
                           <span className={isLight ? 'text-slate-300' : 'text-slate-700'}>•</span>
                           #{order.dailyNumber || order.id.slice(-4).toUpperCase()}
+                          {order.isSettled ? (
+                            <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-600 border border-emerald-500/30">
+                              ✓ PAGO
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-600 border border-amber-500/30">
+                              ⏳ A PAGAR
+                            </span>
+                          )}
                         </span>
                         <TimerBadge createdAt={order.createdAt} />
                       </div>

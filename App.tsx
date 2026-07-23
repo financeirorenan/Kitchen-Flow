@@ -3339,19 +3339,34 @@ const App: React.FC = () => {
 
     const targetOrderId = existingOrderId || `KDS-${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
 
+    // Tentar localizar pedido ativo correspondente para preservar status da cozinha
+    const activeOrderObj = existingOrderId 
+      ? orders.find(o => o.id === existingOrderId)
+      : orders.find(o => !isCounter && String(o.tableNumber) === String(tableNumber) && o.status !== 'cancelled' && o.status !== 'finished');
+
+    const activeStatus = activeOrderObj?.status;
+
+    // Preservar o status de produção se o pedido ainda está na cozinha ('preparing' ou 'ready' ou 'pending')
+    let determinedStatus: OrderStatus = 'finished';
+    if (isRealDelivery) {
+      determinedStatus = (activeStatus === 'ready' || activeStatus === 'delivering' || activeStatus === 'delivered') ? activeStatus : 'preparing';
+    } else if (activeStatus === 'preparing' || activeStatus === 'ready' || activeStatus === 'pending') {
+      determinedStatus = activeStatus;
+    } else if (table.items.some(i => i.sentToKitchen)) {
+      determinedStatus = 'preparing';
+    } else {
+      determinedStatus = 'finished';
+    }
+
     const rawOrder: Order = {
       id: targetOrderId,
       tableNumber: isCounter ? undefined : tableNumber,
       items: table.items,
       total: finalTotal,
       type: isRealDelivery ? 'delivery' : (isCounter ? 'takeout' : 'table'),
-      status: isRealDelivery 
-        ? 'preparing' 
-        : (isCounter && !table.items.every(i => i.sentToKitchen)) 
-          ? 'preparing' 
-          : 'finished', // Closed table and counter orders are completely finished
+      status: determinedStatus,
       deliveryMethod: isRealDelivery ? 'entrega' : undefined,
-      createdAt: existingOrderId ? (orders.find(o => o.id === existingOrderId)?.createdAt || new Date()) : new Date(),
+      createdAt: activeOrderObj?.createdAt || new Date(),
       paymentMethod: method,
       payments: payments?.map(p => ({ ...p, timestamp: new Date() })),
       isFiscalIssued: fiscal,
@@ -3369,7 +3384,7 @@ const App: React.FC = () => {
       tenantId: viewingTenantId || currentUserData?.tenantId || 't1',
       source: table.currentOrderId ? (orders.find(o => o.id === table.currentOrderId)?.source || 'local') : 'local',
       isSettled: true,
-      finishedAt: new Date(),
+      finishedAt: determinedStatus === 'finished' ? new Date() : undefined,
       updatedAt: new Date()
     };
     const newOrder = assignDailyNumberToOrder(rawOrder);
@@ -3430,36 +3445,42 @@ const App: React.FC = () => {
       }
     }
 
-    // Marcar todos os pedidos relacionados a esta mesa/balcão como finalizados
-    const relatedOrdersToFinish = orders.filter(o => 
+    // Atualizar pedidos relacionados a esta mesa/balcão com status de pagamento mantendo status de cozinha
+    const relatedOrdersToUpdate = orders.filter(o => 
       o.id !== newOrder.id &&
-      (o.status === 'pending' || o.status === 'preparing' || o.status === 'ready' || o.status === 'delivered') && 
+      o.status !== 'cancelled' &&
       (
         (existingOrderId && o.id === existingOrderId) ||
         (tableNumber !== undefined && tableNumber !== null && String(o.tableNumber) === String(tableNumber) && !isCounter)
       )
     );
     
-    if (relatedOrdersToFinish.length > 0) {
+    if (relatedOrdersToUpdate.length > 0) {
       const now = new Date();
-      const orderIds = relatedOrdersToFinish.map(o => o.id);
-      
-      // Update local
-      setOrders(prev => prev.map(o => orderIds.includes(o.id) ? { ...o, status: 'finished', finishedAt: now, updatedAt: now } : o));
-      
-      // Sync cloud
-      if (viewingTenantId || currentUserData?.tenantId) {
-        const batch = writeBatch(db);
-        relatedOrdersToFinish.forEach(ro => {
-          const targetDocId = ro.docId || ro.id;
-          batch.update(doc(db, 'orders', targetDocId), { 
-            status: 'finished', 
-            finishedAt: now, 
-            updatedAt: now,
-            completedAt: now 
-          });
-        });
-        await batch.commit();
+      for (const ro of relatedOrdersToUpdate) {
+        const isKitchenActive = ro.status === 'preparing' || ro.status === 'pending' || ro.status === 'ready';
+        const targetStatus = isKitchenActive ? ro.status : 'finished';
+        
+        const updates: Partial<Order> = {
+          status: targetStatus,
+          isSettled: true,
+          paymentMethod: method,
+          payments: payments?.map(p => ({ ...p, timestamp: now })),
+          updatedAt: now,
+          ...(targetStatus === 'finished' ? { finishedAt: now, completedAt: now } : {})
+        };
+
+        setOrders(prev => prev.map(o => o.id === ro.id ? { ...o, ...updates } : o));
+        await localDb.orders.update(ro.id, updates);
+
+        if (viewingTenantId || currentUserData?.tenantId) {
+          try {
+            const targetDocId = ro.docId || ro.id;
+            await updateDoc(doc(db, 'orders', targetDocId), updates);
+          } catch (e) {
+            console.error("Error syncing payment update to related order:", e);
+          }
+        }
       }
     }
 
@@ -3570,26 +3591,31 @@ const App: React.FC = () => {
       setCounterOrders(prev => prev.filter(t => t.id !== tableId));
     }
 
-    // Encerrar quaisquer outros pedidos pendentes/duplicados desta mesma mesa que tenham ficado abertos
+    // Sincronizar quitação de pagamento em pedidos desta mesma mesa sem sobrescrever status de cozinha
     if (!isCounter && tableNumber) {
       const duplicateOpenOrders = orders.filter(o => 
         o.id !== newOrder.id && 
         String(o.tableNumber) === String(tableNumber) && 
         (o.type === 'table' || o.type === 'dine_in') && 
-        o.status !== 'finished' && 
         o.status !== 'cancelled'
       );
       for (const dup of duplicateOpenOrders) {
+        const isKitchenActive = dup.status === 'preparing' || dup.status === 'pending' || dup.status === 'ready';
+        const targetStatus = isKitchenActive ? dup.status : 'finished';
         try {
+          const updates = { 
+            status: targetStatus, 
+            isSettled: true, 
+            paymentMethod: method,
+            updatedAt: new Date(),
+            ...(targetStatus === 'finished' ? { finishedAt: new Date() } : {})
+          };
           if (effectiveTenantId) {
-            await setDoc(doc(db, 'orders', dup.id), { status: 'finished', isSettled: true, updatedAt: new Date() }, { merge: true });
+            await setDoc(doc(db, 'orders', dup.id), updates, { merge: true });
           }
-          await localDb.orders.update(dup.id, { status: 'finished', isSettled: true });
+          await localDb.orders.update(dup.id, updates);
+          setOrders(prev => prev.map(o => o.id === dup.id ? { ...o, ...updates } as Order : o));
         } catch (e) {}
-      }
-      if (duplicateOpenOrders.length > 0) {
-        const dupIds = duplicateOpenOrders.map(d => d.id);
-        setOrders(prev => prev.map(o => dupIds.includes(o.id) ? { ...o, status: 'finished', isSettled: true } as Order : o));
       }
     }
 
