@@ -224,13 +224,6 @@ const KDS: React.FC<KDSProps> = memo(({
       return;
     }
 
-    // Regra do Usuário: Uma vez pronto (ready), não pode voltar para a cozinha (preparing)
-    // Pode retroceder de 'delivering' para 'ready', mas não de 'ready' para 'preparing'
-    if (order.status === 'ready') {
-       console.warn("Bloqueio: Pedidos prontos não podem retornar à cozinha.");
-       return;
-    }
-
     const statusFlow: OrderStatus[] = ['pending', 'preparing', 'ready', 'delivering'];
     const currentIndex = statusFlow.indexOf(order.status);
     
@@ -444,11 +437,11 @@ const KDS: React.FC<KDSProps> = memo(({
             
             {/* NavButtons */}
             <div className="flex gap-0.5 ml-1">
-               {order.status !== 'pending' && order.status !== 'preparing' && order.status !== 'cancelled' && (
+               {order.status !== 'pending' && order.status !== 'cancelled' && order.status !== 'delivered' && order.status !== 'finished' && (
                  <button 
                    onClick={() => handleBack(order)}
-                   className="p-1.5 bg-slate-100 text-slate-400 hover:bg-slate-200 rounded-sm"
-                   title="Voltar Estagio"
+                   className="p-1.5 bg-amber-50 text-amber-600 hover:bg-amber-100 rounded-sm transition-all"
+                   title="Voltar Etapa (Retornar para Cozinha/Preparo)"
                  >
                    <ChevronRight size={14} className="rotate-180" />
                  </button>

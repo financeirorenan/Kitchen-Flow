@@ -975,10 +975,9 @@ const App: React.FC = () => {
                 const localIsTerminal = terminalStatuses.includes(localStatus);
                 const cloudIsTerminal = terminalStatuses.includes(cloudStatus);
 
-                // Se o status local já estiver mais avançado ou já for terminal, mantém o local
-                // Exceto se o cloud for "cancelled" (cancelamento remoto deve ser respeitado)
-                if ((localPriority > cloudPriority || (localIsTerminal && !cloudIsTerminal)) && cloudStatus !== 'cancelled') {
-                  console.log(`Resilience: Ignored cloud status downgrade for order ${cloudOrder.id} (${cloudStatus} ignored, keeping ${localStatus})`);
+                // Se o status local for terminal e o cloud não for, só ignora se não for cancelamento remoto
+                if (localIsTerminal && !cloudIsTerminal && cloudStatus !== 'cancelled') {
+                  console.log(`Resilience: Keeping terminal status ${localStatus} for order ${cloudOrder.id}`);
                 } else {
                   updated[existingIdx] = cloudOrder;
                 }
@@ -2527,27 +2526,7 @@ const App: React.FC = () => {
         return;
     }
 
-    if (status !== 'cancelled') {
-        const currentPriority = STATUS_PRIORITY[currentStatus] || 0;
-        const newPriority = STATUS_PRIORITY[status] || 0;
-        
-        // Regra do Usuário: 
-        // 1. Permitir retroceder de 'delivering' (4) para 'ready' (3)
-        // 2. Bloquear retroceder de 'ready' (3) para 'preparing' (2) ou menos
-        // 3. Bloquear outros retrocessos
-        const isAllowedRetrocession = (currentStatus === 'delivering' && status === 'ready');
-
-        if (newPriority < currentPriority && !isAllowedRetrocession) {
-          console.warn(`Attempted invalid status transition for order ${id}: ${currentStatus} -> ${status}`);
-          return;
-        }
-
-        // Se já chegou em 'ready', nunca volta para 'preparing'
-        if (currentPriority >= 3 && newPriority < 3) {
-          console.warn(`Attempted to return a ready order to kitchen (${id}). Blocked.`);
-          return;
-        }
-    }
+    // Transição permitida para qualquer status em pedidos não-terminais (ex: retornar pedido 'ready' ou 'delivering' para a cozinha 'preparing')
 
     const now = new Date();
     const updates: Partial<Order> = { 

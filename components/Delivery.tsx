@@ -9,7 +9,7 @@ import {
   Save, UserPlus, Wallet, ArrowRightLeft,
   Banknote, QrCode, ClipboardList, Timer, Clock,
   Coins, CreditCard, DollarSign, Calculator, AlertTriangle, Edit3,
-  Search, Filter, Store, Edit, Loader2, Printer, ChefHat, Upload, Receipt
+  Search, Filter, Store, Edit, Loader2, Printer, ChefHat, Upload, Receipt, RotateCcw
 } from 'lucide-react';
 import { generateReceiptHtml, handlePrintOrder } from '../services/printService';
 import { maskPhone } from '../utils/masks';
@@ -654,13 +654,25 @@ const Delivery: React.FC<DeliveryProps> = memo(({
                      </div>
                   </div>
 
-                  <button 
-                    disabled={order.status !== 'ready'}
-                    onClick={() => setSelectedOrderId(order.id)} 
-                    className="w-full py-1.5 bg-indigo-600 text-white rounded-lg font-black text-[8px] uppercase tracking-widest hover:bg-indigo-700 shadow-sm disabled:opacity-30 disabled:grayscale transition-all"
-                  >
-                     {order.status === 'ready' ? 'Atribuir Entregador' : 'Aguardando Cozinha'}
-                  </button>
+                  <div className="flex gap-1.5">
+                    {order.status === 'ready' && (
+                      <button 
+                        onClick={() => onUpdateStatus(order.id, 'preparing')}
+                        className="px-2.5 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg font-black text-[8px] uppercase tracking-wider hover:bg-amber-100 transition-all flex items-center gap-1 shrink-0"
+                        title="Retornar pedido para a cozinha (em preparação)"
+                      >
+                        <RotateCcw size={10} />
+                        Voltar p/ Cozinha
+                      </button>
+                    )}
+                    <button 
+                      disabled={order.status !== 'ready'}
+                      onClick={() => setSelectedOrderId(order.id)} 
+                      className="flex-1 py-1.5 bg-indigo-600 text-white rounded-lg font-black text-[8px] uppercase tracking-widest hover:bg-indigo-700 shadow-sm disabled:opacity-30 disabled:grayscale transition-all"
+                    >
+                       {order.status === 'ready' ? 'Atribuir Entregador' : 'Aguardando Cozinha'}
+                    </button>
+                  </div>
                 </div>
               ))}
 
