@@ -141,6 +141,9 @@ export interface AdminSettings {
     showLogo: boolean;
     connectionMode?: 'browser' | 'webusb' | 'websocket' | 'spool_file';
     websocketUrl?: string;
+    highContrastMode?: boolean;
+    fontDensity?: 'normal' | 'high' | 'ultra';
+    fontSizeLevel?: 'normal' | 'large' | 'extra_large';
   };
   apis: {
     googleMapsKey: string;

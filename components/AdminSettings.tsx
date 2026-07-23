@@ -706,6 +706,65 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
                     </label>
                   </div>
                 </div>
+
+                {/* PAINEL DE NITIDEZ E DENSIDADE TÉRMICA DA IMPRESSÃO */}
+                <div className="p-3 bg-indigo-50/70 border border-indigo-100 rounded-2xl space-y-2.5">
+                  <div className="flex items-center justify-between border-b border-indigo-100 pb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-indigo-600 text-white rounded-lg">
+                        <Printer size={13} />
+                      </div>
+                      <div>
+                        <h4 className="text-[10px] font-black text-indigo-950 uppercase tracking-wide">Ajustes de Nitidez & Qualidade Térmica</h4>
+                        <p className="text-[7px] font-bold text-indigo-600/80 uppercase">Otimização para Impressoras Fiscais e Térmicas (NFC-e)</p>
+                      </div>
+                    </div>
+                    <span className="px-2 py-0.5 bg-indigo-600 text-white text-[7px] font-black rounded-full uppercase tracking-wider">
+                      Ultra-Nitidez Ativa
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[7px] font-black text-slate-500 uppercase tracking-widest ml-1">Tamanho e Legibilidade das Fontes</label>
+                      <select 
+                        className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg outline-none font-bold text-[10px] text-slate-800"
+                        value={settings.printing.fontSizeLevel || 'large'}
+                        onChange={(e) => onUpdateSettings({
+                          ...settings, 
+                          printing: {
+                            ...settings.printing, 
+                            fontSizeLevel: e.target.value as any
+                          }
+                        })}
+                      >
+                        <option value="normal">Padrão (100% - Compacto)</option>
+                        <option value="large">Ampliado (+15% - Recomendado para Leitura Nítida)</option>
+                        <option value="extra_large">Extra Grande (+30% - Máximo Destaque Visual)</option>
+                      </select>
+                      <p className="text-[6px] text-slate-500 leading-tight pl-1">Aumenta o tamanho dos caracteres na bobina para facilitar a leitura rápida.</p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[7px] font-black text-slate-500 uppercase tracking-widest ml-1">Densidade do Traço Térmico</label>
+                      <select 
+                        className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg outline-none font-bold text-[10px] text-slate-800"
+                        value={settings.printing.fontDensity || 'ultra'}
+                        onChange={(e) => onUpdateSettings({
+                          ...settings, 
+                          printing: {
+                            ...settings.printing, 
+                            fontDensity: e.target.value as any
+                          }
+                        })}
+                      >
+                        <option value="normal">Normal (Alto Contraste #000)</option>
+                        <option value="ultra">Negrito Total Escuro (Otimizado para Bobinas Térmicas)</option>
+                      </select>
+                      <p className="text-[6px] text-slate-500 leading-tight pl-1">Aplica preto absoluto (#000000) e traços sólidos sem pontilhado cinza.</p>
+                    </div>
+                  </div>
+                </div>
                 <div className="space-y-1.5">
                   <div className="space-y-0.5">
                     <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest ml-1">Cabeçalho do Cupom</label>

@@ -1,4 +1,4 @@
-import { Order, AdminSettings, OrderItem } from '../types';
+import { Order, AdminSettings } from '../types';
 
 /**
  * Safely parses any date/timestamp into a Date object
@@ -105,8 +105,7 @@ export const generateRawTextReceipt = (order: Partial<Order>, settings: AdminSet
   out += pad('QTD DESCRICAO', lineCharLimit - 10) + right('Vl TOTAL', 10) + '\n';
   out += divider + '\n';
 
-  order.items?.forEach((item, idx) => {
-    const itemNum = String(idx + 1).padStart(3, '0');
+  order.items?.forEach((item) => {
     const cleanName = item.name.split('(')[0].trim().toUpperCase();
     const qtyStr = `${item.quantity}x `;
     const totalItemRow = (item.price * item.quantity).toFixed(2).replace('.', ',');
@@ -173,27 +172,78 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
   const width = is80mm ? '72mm' : '48mm';
   const isFiscal = order.isFiscalIssued || order.wantsFiscalCoupon;
   
-  // Variáveis de fontes e espaçamento
+  // Escala de tamanho de fonte conforme configuração de nitidez
+  const fontSizeLevel = printing.fontSizeLevel || 'large';
+  const scale = fontSizeLevel === 'extra_large' ? 1.3 : fontSizeLevel === 'large' ? 1.15 : 1.0;
+
+  // Variáveis de fontes e espaçamento otimizadas para impressoras térmicas (maior nitidez)
   const fontSizeBase = isFiscal 
-    ? (is80mm ? '10px' : '8.5px') 
-    : (is80mm ? '13px' : '11px');
+    ? (is80mm ? `${Math.round(11.5 * scale * 10) / 10}px` : `${Math.round(10 * scale * 10) / 10}px`) 
+    : (is80mm ? `${Math.round(13.5 * scale * 10) / 10}px` : `${Math.round(12 * scale * 10) / 10}px`);
   const fontSizeSmall = isFiscal 
-    ? (is80mm ? '8.5px' : '7.5px') 
-    : (is80mm ? '11.5px' : '9.5px');
+    ? (is80mm ? `${Math.round(10 * scale * 10) / 10}px` : `${Math.round(9 * scale * 10) / 10}px`) 
+    : (is80mm ? `${Math.round(11.5 * scale * 10) / 10}px` : `${Math.round(10 * scale * 10) / 10}px`);
   const fontSizeItem = isFiscal 
-    ? (is80mm ? '9.5px' : '8px') 
-    : (is80mm ? '14px' : '12px'); 
+    ? (is80mm ? `${Math.round(11 * scale * 10) / 10}px` : `${Math.round(9.5 * scale * 10) / 10}px`) 
+    : (is80mm ? `${Math.round(14.5 * scale * 10) / 10}px` : `${Math.round(12.5 * scale * 10) / 10}px`); 
   const fontSizeHeader = isFiscal 
-    ? (is80mm ? '12px' : '10.5px') 
-    : (is80mm ? '16px' : '14px');
-  const qrCodeSize = is80mm ? '110px' : '80px';
+    ? (is80mm ? `${Math.round(14 * scale * 10) / 10}px` : `${Math.round(12 * scale * 10) / 10}px`) 
+    : (is80mm ? `${Math.round(17 * scale * 10) / 10}px` : `${Math.round(14.5 * scale * 10) / 10}px`);
+  const qrCodeSize = is80mm ? '120px' : '90px';
+
+  const isUltraBold = printing.fontDensity === 'ultra' || printing.highContrastMode !== false;
 
   const totalQuantity = order.items?.reduce((acc, item) => acc + item.quantity, 0) || 0;
   const createdAt = parseOrderDate(order.createdAt);
 
-  // Se for IMPRESSÃO FISCAL baseada na imagem enviada
+  // CSS global de alto contraste para garantir nitidez extrema em impressoras térmicas
+  const thermalGlobalStyle = `
+    @media print {
+      *, *::before, *::after {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+        color: #000000 !important;
+        background-color: #ffffff !important;
+        box-shadow: none !important;
+        text-shadow: none !important;
+      }
+    }
+    @page { margin: 0; size: auto; }
+    html, body { 
+      width: ${width}; 
+      margin: 0 auto; 
+      padding: 1.5mm 3.5mm; 
+      font-family: 'Courier New', Courier, 'Liberation Mono', 'Consolas', monospace; 
+      font-weight: ${isUltraBold ? '800' : '700'};
+      color: #000000 !important;
+      background-color: #ffffff !important;
+      line-height: 1.25;
+      box-sizing: border-box;
+      -webkit-font-smoothing: antialiased !important;
+      -moz-osx-font-smoothing: grayscale !important;
+      text-rendering: optimizeLegibility !important;
+      font-smooth: never !important;
+      letter-spacing: 0.1px;
+    }
+    .header { text-align: center; margin-bottom: 6px; }
+    .header-title { font-weight: 900; font-size: ${fontSizeHeader}; text-transform: uppercase; margin-bottom: 3px; color: #000000 !important; }
+    .header-info { font-size: ${fontSizeSmall}; margin-bottom: 2px; font-weight: 700; color: #000000 !important; }
+    .divider { border-top: 1.5px solid #000000; margin: 6px 0; }
+    .total-row { display: flex; justify-content: space-between; font-size: ${fontSizeBase}; font-weight: 900; margin-bottom: 4px; color: #000000 !important; }
+    .fiscal-title { text-align: center; font-weight: 900; font-size: ${fontSizeBase}; margin: 6px 0; line-height: 1.3; color: #000000 !important; }
+    .bold { font-weight: 900; color: #000000 !important; }
+    .center { text-align: center; }
+    img {
+      image-rendering: -webkit-optimize-contrast !important;
+      image-rendering: crisp-edges !important;
+      image-rendering: pixelated !important;
+    }
+  `;
+
+  // Se for IMPRESSÃO FISCAL baseada na NFC-e
   if (isFiscal) {
-    // Itens formatados de forma oficial NFC-e
+    // Itens formatados de forma oficial NFC-e com alto contraste
     const itemsHtml = order.items?.map((item, idx) => {
       const itemNumber = String(idx + 1).padStart(3, '0');
       const code = item.productId ? item.productId.slice(0, 8).toUpperCase().padStart(8, '0') : '23262449';
@@ -202,22 +252,22 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
       const priceStr = item.price.toFixed(2).replace('.', ',');
       
       return `
-        <div style="font-size: ${fontSizeSmall}; margin-bottom: 6px; line-height: 1.25; font-family: 'Courier New', Courier, monospace;">
+        <div style="font-size: ${fontSizeSmall}; margin-bottom: 6px; line-height: 1.25; font-family: 'Courier New', Courier, monospace; color: #000000 !important;">
           <div style="display: flex;">
-            <span style="width: 10%; margin-right: 2px;">${itemNumber}</span>
-            <span style="width: 25%; margin-right: 4px;">${code}</span>
-            <span style="width: 65%; font-weight: bold; word-break: break-all;">${cleanName}</span>
+            <span style="width: 10%; margin-right: 2px; font-weight: 900;">${itemNumber}</span>
+            <span style="width: 25%; margin-right: 4px; font-weight: 700;">${code}</span>
+            <span style="width: 65%; font-weight: 900; word-break: break-all;">${cleanName}</span>
           </div>
-          <div style="text-align: right; font-weight: bold; margin-top: 1px;">
+          <div style="text-align: right; font-weight: 900; margin-top: 1px;">
             ${item.quantity} UN X ${priceStr} Vl Unit. Vl Total ${totalItemRow}
           </div>
           ${item.observation ? `
-            <div style="font-size: ${fontSizeSmall}; font-weight: bold; margin-left: 10%; text-transform: uppercase; font-style: italic;">
+            <div style="font-size: ${fontSizeSmall}; font-weight: 900; margin-left: 10%; text-transform: uppercase; font-style: italic; color: #000000 !important;">
               * OBS: ${item.observation} *
             </div>
           ` : ''}
           ${item.selectedOptions && item.selectedOptions.length > 0 ? `
-            <div style="font-size: ${fontSizeSmall}; margin-left: 10%; color: #333;">
+            <div style="font-size: ${fontSizeSmall}; margin-left: 10%; font-weight: 700; color: #000000 !important;">
               ${item.selectedOptions.map(opt => `+ ${opt.name.toUpperCase()}`).join(', ')}
             </div>
           ` : ''}
@@ -235,25 +285,7 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
         <meta charset="UTF-8">
         <title>Cupom Fiscal NFC-e</title>
         <style>
-          @page { margin: 0; size: auto; }
-          body { 
-            width: ${width}; 
-            margin: 0 auto; 
-            padding: 2mm 5.5mm; 
-            font-family: 'Courier New', Courier, monospace; 
-            color: #000;
-            background: #fff;
-            line-height: 1.2;
-            box-sizing: border-box;
-          }
-          .header { text-align: center; margin-bottom: 8px; }
-          .header-title { font-weight: bold; font-size: ${fontSizeHeader}; text-transform: uppercase; margin-bottom: 3px; }
-          .header-info { font-size: ${fontSizeSmall}; margin-bottom: 2px; }
-          .divider { border-top: 1px dashed #000; margin: 8px 0; }
-          .total-row { display: flex; justify-content: space-between; font-size: ${fontSizeBase}; font-weight: bold; margin-bottom: 4px; }
-          .fiscal-title { text-align: center; font-weight: bold; font-size: ${fontSizeBase}; margin: 8px 0; line-height: 1.3; }
-          .bold { font-weight: bold; }
-          .center { text-align: center; }
+          ${thermalGlobalStyle}
         </style>
       </head>
       <body>
@@ -273,7 +305,7 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
 
         <div class="divider"></div>
 
-        <div style="display: flex; font-size: ${fontSizeSmall}; font-weight: bold; margin-bottom: 4px;">
+        <div style="display: flex; font-size: ${fontSizeSmall}; font-weight: 900; margin-bottom: 4px; color: #000000 !important;">
           <span style="width: 10%;">#</span>
           <span style="width: 25%;">CÓD</span>
           <span style="width: 35%;">DESCRIÇÃO</span>
@@ -283,7 +315,7 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
         <div class="divider"></div>
 
         <div class="items">
-          ${itemsHtml || '<div style="text-align: center; padding: 10px;">NENHUM ITEM</div>'}
+          ${itemsHtml || '<div style="text-align: center; padding: 10px; font-weight: 900;">NENHUM ITEM</div>'}
         </div>
 
         <div class="divider"></div>
@@ -302,23 +334,23 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
         </div>
 
         <div class="bold" style="font-size: ${fontSizeSmall}; margin-top: 6px; margin-bottom: 3px; text-transform: uppercase;">FORMA DE PAGAMENTO:</div>
-        <div style="display: flex; justify-content: space-between; font-size: ${fontSizeBase}; margin-bottom: 4px;">
+        <div style="display: flex; justify-content: space-between; font-size: ${fontSizeBase}; font-weight: 900; margin-bottom: 4px; color: #000000 !important;">
           <span style="text-transform: uppercase;">${paymentMethodLabel(order.paymentMethod || 'cartao_credito')}</span>
           <span class="bold">${(order.total || 0).toFixed(2).replace('.', ',')}</span>
         </div>
 
         <div class="divider"></div>
 
-        <div class="center" style="font-size: ${fontSizeSmall}; margin-bottom: 6px;">
+        <div class="center" style="font-size: ${fontSizeSmall}; margin-bottom: 6px; font-weight: 700;">
           Consulte pela Chave de Acesso em<br/>
           <strong>https://www.nfce.fazenda.sp.gov.br/qrcode</strong>
         </div>
 
-        <div class="center bold" style="font-size: ${fontSizeBase}; margin-bottom: 12px; word-break: break-all; letter-spacing: 0.5px;">
+        <div class="center bold" style="font-size: ${fontSizeBase}; margin-bottom: 12px; word-break: break-all; letter-spacing: 0.5px; font-weight: 900;">
           ${formatFiscalKey(order.fiscalKey || '35260659256207000174650010000011091263520471')}
         </div>
 
-        <div style="font-size: ${fontSizeSmall}; line-height: 1.35; text-transform: uppercase;">
+        <div style="font-size: ${fontSizeSmall}; line-height: 1.35; text-transform: uppercase; font-weight: 700;">
           <div><strong>CONSUMIDOR CNPJ / CPF:</strong> ${order.customerDocument || 'NÃO IDENTIFICADO'}</div>
           <div style="margin-top: 3px;"><strong>NFC-e nº</strong> ${String(fiscal?.nextNfceNumber || 1109).padStart(9, '0')} &nbsp;&nbsp; <strong>Série</strong> ${String(fiscal?.series || 1).padStart(3, '0')}</div>
           <div><strong>Data/Hora Emissão:</strong> ${dateStr} ${timeStr}</div>
@@ -326,12 +358,12 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
         </div>
 
         <div class="center" style="margin: 15px 0;">
-          <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://www.nfce.fazenda.sp.gov.br/qrcode?p=${order.fiscalKey || '34260659256207000174650010000011122263520412'}" style="width: ${qrCodeSize}; height: ${qrCodeSize};" />
+          <img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https://www.nfce.fazenda.sp.gov.br/qrcode?p=${order.fiscalKey || '34260659256207000174650010000011122263520412'}&ecc=M&format=png&color=000000&bgcolor=ffffff&qzone=1" style="width: ${qrCodeSize}; height: ${qrCodeSize}; image-rendering: pixelated;" />
         </div>
 
         <div class="divider"></div>
 
-        <div class="center" style="font-size: ${fontSizeSmall}; line-height: 1.3; font-style: italic;">
+        <div class="center" style="font-size: ${fontSizeSmall}; line-height: 1.3; font-style: italic; font-weight: 700;">
           Tributos Aproximados - Total R$ ${( (order.total || 0) * 0.3145 ).toFixed(2).replace('.', ',')} (31.45%)<br/>
           Federal R$ ${( (order.total || 0) * 0.1345 ).toFixed(2).replace('.', ',')}, Estadual R$ ${( (order.total || 0) * 0.1800 ).toFixed(2).replace('.', ',')}, Municipal R$ 0,00 - Fonte IBPT<br/>
           www.satpox.com.br
@@ -365,23 +397,23 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
   const itemsHtml = order.items?.map((item) => {
     const cleanName = item.name.split('(')[0].trim().toUpperCase();
     return `
-      <div style="margin-bottom: 10px; font-size: ${fontSizeItem}; font-family: 'Courier New', Courier, monospace;">
+      <div style="margin-bottom: 10px; font-size: ${fontSizeItem}; font-family: 'Courier New', Courier, monospace; color: #000000 !important;">
         <div style="display: flex; justify-content: space-between; align-items: flex-start;">
           <div style="display: flex; gap: 6px; flex: 1; overflow: hidden;">
-            <span style="font-weight: bold; min-width: 20px;">${item.quantity}x</span>
-            <span style="font-weight: bold; word-break: break-all;">${cleanName}</span>
+            <span style="font-weight: 900; min-width: 22px;">${item.quantity}x</span>
+            <span style="font-weight: 900; word-break: break-all;">${cleanName}</span>
           </div>
-          <div style="text-align: right; min-width: 50px; font-weight: bold;">
+          <div style="text-align: right; min-width: 55px; font-weight: 900;">
             ${(item.price * item.quantity).toFixed(2).replace('.', ',')}
           </div>
         </div>
         ${item.observation ? `
-          <div style="font-size: ${fontSizeSmall}; margin-left: 26px; margin-top: 2px; font-weight: bold; text-transform: uppercase;">
+          <div style="font-size: ${fontSizeSmall}; margin-left: 26px; margin-top: 2px; font-weight: 900; text-transform: uppercase; color: #000000 !important;">
             * OBS: ${item.observation} *
           </div>
         ` : ''}
         ${item.selectedOptions && item.selectedOptions.length > 0 ? `
-          <div style="font-size: ${fontSizeSmall}; margin-left: 26px; color: #333;">
+          <div style="font-size: ${fontSizeSmall}; margin-left: 26px; font-weight: 700; color: #000000 !important;">
             ${item.selectedOptions.map(opt => `+ ${opt.name.toUpperCase()}`).join(', ')}
           </div>
         ` : ''}
@@ -397,11 +429,11 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
 
   const deliveryHtml = order.type === 'delivery' ? `
     <div class="divider"></div>
-    <div style="font-size: ${fontSizeBase}; font-weight: bold; text-align: center; margin-bottom: 8px; border: 1px solid #000; padding: 3px; text-transform: uppercase;">DADOS DE ENTREGA</div>
-    <div style="font-size: ${fontSizeSmall}; margin-bottom: 2px;"><strong>CLIENTE:</strong> ${order.customerName?.toUpperCase() || 'NÃO INFORMADO'}</div>
-    <div style="font-size: ${fontSizeSmall}; margin-bottom: 2px;"><strong>TELEFONE:</strong> ${order.customerPhone || 'NÃO INFORMADO'}</div>
-    <div style="font-size: ${fontSizeSmall}; margin-bottom: 2px;"><strong>ENDEREÇO:</strong> ${order.customerAddress?.toUpperCase() || 'NÃO INFORMADO'}</div>
-    ${order.changeFor ? `<div style="font-size: ${fontSizeSmall};"><strong>TROCO PARA:</strong> R$ ${order.changeFor.toFixed(2).replace('.', ',')}</div>` : ''}
+    <div style="font-size: ${fontSizeBase}; font-weight: 900; text-align: center; margin-bottom: 8px; border: 1.5px solid #000; padding: 3px; text-transform: uppercase; color: #000000 !important;">DADOS DE ENTREGA</div>
+    <div style="font-size: ${fontSizeSmall}; margin-bottom: 2px; font-weight: 700;"><strong>CLIENTE:</strong> ${order.customerName?.toUpperCase() || 'NÃO INFORMADO'}</div>
+    <div style="font-size: ${fontSizeSmall}; margin-bottom: 2px; font-weight: 700;"><strong>TELEFONE:</strong> ${order.customerPhone || 'NÃO INFORMADO'}</div>
+    <div style="font-size: ${fontSizeSmall}; margin-bottom: 2px; font-weight: 700;"><strong>ENDEREÇO:</strong> ${order.customerAddress?.toUpperCase() || 'NÃO INFORMADO'}</div>
+    ${order.changeFor ? `<div style="font-size: ${fontSizeSmall}; font-weight: 700;"><strong>TROCO PARA:</strong> R$ ${order.changeFor.toFixed(2).replace('.', ',')}</div>` : ''}
   ` : '';
 
   return `
@@ -410,41 +442,24 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
     <head>
       <meta charset="UTF-8">
       <style>
-        @page { margin: 0; size: auto; }
-        body { 
-          width: ${width}; 
-          margin: 0 auto; 
-          padding: 2mm 5.5mm; 
-          font-family: 'Courier New', Courier, monospace; 
-          color: #000;
-          background: #fff;
-          line-height: 1.2;
-          box-sizing: border-box;
-        }
-        .header { text-align: center; margin-bottom: 6px; }
-        .title { font-weight: bold; font-size: ${fontSizeHeader}; text-transform: uppercase; margin-bottom: 2px; }
-        .info { font-size: ${fontSizeSmall}; margin-bottom: 1px; }
-        .divider { border-top: 1px dashed #000; margin: 8px 0; }
-        .total-row { display: flex; justify-content: space-between; font-size: ${fontSizeBase}; margin-bottom: 3px; }
-        .bold { font-weight: bold; }
-        .center { text-align: center; }
+        ${thermalGlobalStyle}
       </style>
     </head>
     <body>
       <div class="header">
-        <div class="title">${companyName}</div>
-        <div class="info">CNPJ: ${cnpj}</div>
-        <div class="info">${address}</div>
-        ${phone ? `<div class="info">Fone: ${phone}</div>` : ''}
+        <div class="header-title">${companyName}</div>
+        <div class="header-info">CNPJ: ${cnpj}</div>
+        <div class="header-info">${address}</div>
+        ${phone ? `<div class="header-info">Fone: ${phone}</div>` : ''}
       </div>
 
       <div class="divider"></div>
 
-      <div style="text-align: center; font-weight: bold; font-size: ${fontSizeHeader}; text-transform: uppercase; margin-bottom: 5px;">
+      <div style="text-align: center; font-weight: 900; font-size: ${fontSizeHeader}; text-transform: uppercase; margin-bottom: 5px; color: #000000 !important;">
         ${orderTypeLabel}
       </div>
 
-      <div style="font-size: ${fontSizeSmall}; margin-top: 4px; line-height: 1.35;">
+      <div style="font-size: ${fontSizeSmall}; margin-top: 4px; line-height: 1.35; font-weight: 700;">
         ${order.tableNumber ? `<div><strong>Mesa/Comanda:</strong> ${order.tableNumber}</div>` : ''}
         <div><strong>Pedido:</strong> #${order.dailyNumber ? order.dailyNumber : (order.id ? order.id.slice(-6).toUpperCase() : 'NOVO')}</div>
         <div><strong>Data/Hora:</strong> ${createdAt.toLocaleDateString('pt-BR')} ${createdAt.toLocaleTimeString('pt-BR')}</div>
@@ -455,7 +470,7 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
 
       <div class="divider"></div>
 
-      <div style="display: flex; justify-content: space-between; font-size: ${fontSizeSmall}; font-weight: bold; margin-bottom: 5px; text-transform: uppercase;">
+      <div style="display: flex; justify-content: space-between; font-size: ${fontSizeSmall}; font-weight: 900; margin-bottom: 5px; text-transform: uppercase; color: #000000 !important;">
         <span>QTD DESCRIÇÃO</span>
         <span>TOTAL</span>
       </div>
@@ -463,12 +478,12 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
       <div class="divider" style="margin-top: 0;"></div>
 
       <div class="items">
-        ${itemsHtml || '<div style="text-align: center; padding: 10px;">SEM ITENS</div>'}
+        ${itemsHtml || '<div style="text-align: center; padding: 10px; font-weight: 900;">SEM ITENS</div>'}
       </div>
 
       <div class="divider"></div>
 
-      <div style="font-size: ${fontSizeSmall}; font-weight: bold; margin-bottom: 5px;">
+      <div style="font-size: ${fontSizeSmall}; font-weight: 900; margin-bottom: 5px;">
         QTD. TOTAL DE ITENS: ${totalQuantity}
       </div>
 
@@ -483,7 +498,7 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
         <span>${(order.additionalFee || 0).toFixed(2).replace('.', ',')}</span>
       </div>
       ${order.additionalFeeReason ? `
-        <div style="font-size: ${fontSizeSmall}; color: #333; margin-left: 10px; font-style: italic; margin-bottom: 2px;">
+        <div style="font-size: ${fontSizeSmall}; color: #000000 !important; margin-left: 10px; font-style: italic; margin-bottom: 2px; font-weight: 700;">
           Motivo acréscimo: ${order.additionalFeeReason}
         </div>
       ` : ''}
@@ -494,7 +509,7 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
       
       <div class="divider" style="margin: 4px 0;"></div>
       
-      <div class="total-row bold" style="font-size: ${fontSizeHeader}; border-top: 1px solid #000; padding-top: 4px;">
+      <div class="total-row bold" style="font-size: ${fontSizeHeader}; border-top: 2px solid #000000; padding-top: 4px; font-weight: 900;">
         <span>TOTAL R$</span>
         <span>${(order.total || 0).toFixed(2).replace('.', ',')}</span>
       </div>
@@ -502,7 +517,7 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
       ${order.paymentMethod ? `
         <div class="divider"></div>
         <div class="bold" style="font-size: ${fontSizeSmall}; margin-bottom: 2px;">PAGO VIA:</div>
-        <div style="display: flex; justify-content: space-between; font-size: ${fontSizeBase};">
+        <div style="display: flex; justify-content: space-between; font-size: ${fontSizeBase}; font-weight: 900; color: #000000 !important;">
           <span style="text-transform: uppercase;">${paymentMethodLabel(order.paymentMethod)}</span>
           <span class="bold">R$ ${(order.total || 0).toFixed(2).replace('.', ',')}</span>
         </div>
@@ -513,7 +528,7 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
       <div class="center bold" style="font-size: ${fontSizeSmall}; text-transform: uppercase;">
         ${printing.headerText || 'KITCHENFLOW AI APP'}
       </div>
-      <div class="center" style="font-size: ${fontSizeSmall}; margin-top: 3px; font-weight: normal; opacity: 0.9;">
+      <div class="center" style="font-size: ${fontSizeSmall}; margin-top: 3px; font-weight: 700;">
         ${printing.footerText || 'Obrigado pela preferência!'}
       </div>
 
@@ -870,7 +885,8 @@ export const handlePrintOrder = async (order: Partial<Order>, settings: AdminSet
       
       const commands: number[] = [
         ESC, 0x40, // Inicializar impressora (Reset)
-        ESC, 0x74, 16, // Configura tabela de caracteres para WPC1252 / ISO-8859-1 se disponível
+        ESC, 0x74, 16, // Configura tabela de caracteres para WPC1252 / ISO-8859-1
+        ESC, 0x45, 1, // ESC E 1 - Ativar modo Negrito/Encorpado para aquecimento térmico mais nítido
       ];
 
       // Enviar os comandos de inicialização
