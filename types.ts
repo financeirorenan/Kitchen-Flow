@@ -173,6 +173,7 @@ export interface DigitalMenuSettings {
   accentColor?: string; // Cor de destaque (ex: amarelo)
   fontFamily?: 'sans' | 'serif' | 'mono';
   restaurantName: string;
+  customSlug?: string; // Slug de URL exclusivo do cliente (ex: "hamburgueria-artesanal")
   welcomeMessage: string;
   allowOrdering: boolean;
   showStock: boolean;

@@ -983,13 +983,18 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     if (routeTenantId) {
       const targetNorm = normalizeSlug(routeTenantId);
 
-      // Try matching by exact ID or slug in currently loaded tenants
-      let tenant = tenants.find((t) => 
-        t.id === routeTenantId || 
-        t.id.toLowerCase() === routeTenantId.toLowerCase() ||
-        normalizeSlug(t.name) === targetNorm ||
-        normalizeSlug(t.id) === targetNorm
-      );
+      // Try matching by exact ID, customSlug, or normalized name in currently loaded tenants
+      let tenant = tenants.find((t) => {
+        const tSettings = tenantsSettings[t.id];
+        const customSlug = tSettings?.digitalMenu?.customSlug;
+        if (customSlug && normalizeSlug(customSlug) === targetNorm) return true;
+        return (
+          t.id === routeTenantId || 
+          t.id.toLowerCase() === routeTenantId.toLowerCase() ||
+          normalizeSlug(t.name) === targetNorm ||
+          normalizeSlug(t.id) === targetNorm
+        );
+      });
 
       if (tenant) {
         if (!selectedTenant || selectedTenant.id !== tenant.id) {
@@ -1016,12 +1021,17 @@ const Marketplace: React.FC<MarketplaceProps> = ({
             const allTenantsSnap = await getDocs(query(collection(db, "tenants"), limit(100)));
             const allTenants = allTenantsSnap.docs.map(d => ({ ...d.data(), id: d.id }) as Tenant);
             
-            const matchedBySlug = allTenants.find(t => 
-              t.id === routeTenantId ||
-              t.id.toLowerCase() === routeTenantId.toLowerCase() ||
-              normalizeSlug(t.name) === targetNorm ||
-              normalizeSlug(t.id) === targetNorm
-            );
+            const matchedBySlug = allTenants.find(t => {
+              const tSettings = tenantsSettings[t.id];
+              const customSlug = tSettings?.digitalMenu?.customSlug;
+              if (customSlug && normalizeSlug(customSlug) === targetNorm) return true;
+              return (
+                t.id === routeTenantId ||
+                t.id.toLowerCase() === routeTenantId.toLowerCase() ||
+                normalizeSlug(t.name) === targetNorm ||
+                normalizeSlug(t.id) === targetNorm
+              );
+            });
 
             if (matchedBySlug) {
               loadStoreData(matchedBySlug);

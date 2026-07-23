@@ -66,8 +66,9 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
     return [...products].sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
   }, [products]);
 
-  const cleanMenuSlug = settings.restaurantName 
-    ? settings.restaurantName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') 
+  const rawSlug = settings.customSlug || settings.restaurantName || '';
+  const cleanMenuSlug = rawSlug
+    ? rawSlug.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') 
     : 'viva-la-fome';
   const menuUrl = `${window.location.origin}/cardapio/${cleanMenuSlug || 'viva-la-fome'}`;
 
@@ -337,6 +338,36 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome de Exibição</label>
                 <input type="text" className="w-full px-4 py-3 bg-slate-50 border rounded-xl outline-none font-bold text-xs" value={settings.restaurantName} onChange={(e) => onUpdateSettings({ ...settings, restaurantName: e.target.value })} />
               </div>
+
+              {/* URL E SLUG PERSONALIZADO DO CLIENTE */}
+              <div className="p-4 bg-indigo-50/70 border border-indigo-100 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Globe size={16} className="text-indigo-600" />
+                    <label className="text-[10px] font-black text-indigo-950 uppercase tracking-wider">URL Personalizada do Cliente (Link do Cardápio)</label>
+                  </div>
+                  <span className="px-2.5 py-0.5 bg-indigo-600 text-white text-[7px] font-black rounded-full uppercase tracking-wider">Acesso Direto</span>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5 bg-white border border-indigo-200 rounded-xl px-3 py-2">
+                    <span className="text-[10px] font-mono font-bold text-slate-400">{window.location.origin}/cardapio/</span>
+                    <input 
+                      type="text" 
+                      placeholder={cleanMenuSlug}
+                      className="flex-1 outline-none font-mono font-black text-xs text-indigo-600 lowercase bg-transparent"
+                      value={settings.customSlug || ''} 
+                      onChange={(e) => {
+                        const sanitized = e.target.value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9-]/g, '');
+                        onUpdateSettings({ ...settings, customSlug: sanitized });
+                      }} 
+                    />
+                  </div>
+                  <p className="text-[8px] font-medium text-slate-500 pl-1">
+                    Este link é 100% exclusivo para seus clientes. Ao acessá-lo, o cliente visualiza apenas o cardápio e faz pedidos, sem qualquer risco de abrir o painel administrativo do lojista.
+                  </p>
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Mensagem de Boas-vindas</label>
                 <textarea className="w-full px-4 py-3 bg-slate-50 border rounded-xl outline-none font-medium text-xs resize-none" rows={2} value={settings.welcomeMessage} onChange={(e) => onUpdateSettings({ ...settings, welcomeMessage: e.target.value })} />
