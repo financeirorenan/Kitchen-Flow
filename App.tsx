@@ -3351,13 +3351,24 @@ const App: React.FC = () => {
     // NFC-e Emission Logic
     if (fiscal) {
       try {
+        const currentNfceNum = adminSettings.fiscal?.nextNfceNumber || 1;
+        const currentSeries = adminSettings.fiscal?.series || 1;
         const response = await fetch('/api/fiscal/issue', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             order: newOrder,
             settings: adminSettings.fiscal,
-            customerDocument: customerDocument
+            customerDocument: customerDocument,
+            nfceNumber: currentNfceNum,
+            series: currentSeries,
+            certificate: adminSettings.fiscal?.certificate,
+            config: {
+              environment: adminSettings.fiscal?.environment || 'homologation',
+              cnpj: adminSettings.fiscal?.cnpj,
+              cscId: adminSettings.fiscal?.cscId,
+              cscToken: adminSettings.fiscal?.cscToken
+            }
           })
         });
 
@@ -3366,10 +3377,20 @@ const App: React.FC = () => {
           if (result.success) {
             newOrder.fiscalKey = result.nfeKey;
             newOrder.isFiscalIssued = true;
-            addLog('u1', 'FISCAL', `NFC-e emitida com sucesso: ${result.nfeKey}`);
+            addLog('u1', 'FISCAL', `NFC-e #${currentNfceNum} emitida com sucesso (Protocolo: ${result.protocol || 'OK'}): ${result.nfeKey}`);
+            
+            // Incrementar a sequência do próximo número de NFC-e
+            const nextNum = currentNfceNum + 1;
+            handleUpdateAdminSettings({
+              ...adminSettings,
+              fiscal: {
+                ...adminSettings.fiscal,
+                nextNfceNumber: nextNum
+              }
+            });
           } else {
             console.error('Erro SEFAZ:', result.error);
-            addLog('u1', 'FISCAL', `Erro ao emitir NFC-e: ${result.error}`);
+            addLog('u1', 'FISCAL', `Erro ao emitir NFC-e #${currentNfceNum}: ${result.error}`);
             showToast(`Erro SEFAZ: ${result.error}`, 'error');
           }
         } else {
