@@ -72,6 +72,8 @@ import {
   Package,
   ArrowDownCircle,
   ArrowUpCircle,
+  ChevronRight,
+  Clock,
 } from "lucide-react";
 
 interface TablesProps {
@@ -271,6 +273,16 @@ const Tables: React.FC<TablesProps> = memo(
     const [isClosingCash, setIsClosingCash] = useState(false);
     const [lastClosingReport, setLastClosingReport] = useState<any>(null);
     const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+
+    // Sales breakdown order report modal state
+    const [selectedMethodReport, setSelectedMethodReport] = useState<{
+      id: string;
+      label: string;
+      icon?: any;
+      color?: string;
+      bg?: string;
+    } | null>(null);
+    const [methodReportSearch, setMethodReportSearch] = useState("");
 
     // Change calculation states
     const [amountReceived, setAmountReceived] = useState("");
@@ -668,6 +680,7 @@ const Tables: React.FC<TablesProps> = memo(
         cashIncomes: extraIncomes,
         cashExpenses: extraExpenses,
         sessionRecords,
+        sessionOrders,
         expectedFinalValue:
           totalsByMethod.dinheiro +
           cashSession.openingValue +
@@ -676,6 +689,157 @@ const Tables: React.FC<TablesProps> = memo(
         count: sessionOrders.length,
       };
     }, [orders, financialRecords, cashSession]);
+
+    const getStandardPaymentMethodKey = (method: string): string => {
+      if (!method) return "dinheiro";
+      const cleanMethod = String(method).trim().toLowerCase();
+
+      const standardKeys = [
+        "dinheiro",
+        "cartao_credito",
+        "cartao_debito",
+        "pix",
+        "vale_refeicao",
+        "conta_cliente",
+      ];
+      if (standardKeys.includes(cleanMethod)) return cleanMethod;
+
+      if (cleanMethod === "cash") return "dinheiro";
+      if (cleanMethod === "credit") return "cartao_credito";
+      if (cleanMethod === "debit") return "cartao_debito";
+      if (cleanMethod === "voucher") return "vale_refeicao";
+      if (cleanMethod === "account" || cleanMethod === "fiado") return "conta_cliente";
+
+      if (adminSettings && adminSettings.paymentMethods) {
+        const config = adminSettings.paymentMethods.find(
+          (m) =>
+            m.id === method ||
+            m.name.trim().toLowerCase() === cleanMethod ||
+            m.type.trim().toLowerCase() === cleanMethod,
+        );
+        if (config) {
+          switch (config.type) {
+            case "cash":
+              return "dinheiro";
+            case "credit":
+              return "cartao_credito";
+            case "debit":
+              return "cartao_debito";
+            case "pix":
+              return "pix";
+            case "voucher":
+              return "vale_refeicao";
+            case "account":
+              return "conta_cliente";
+          }
+        }
+      }
+
+      if (
+        cleanMethod.includes("dinheiro") ||
+        cleanMethod.includes("money") ||
+        cleanMethod.includes("efetivo") ||
+        cleanMethod.includes("cedula")
+      )
+        return "dinheiro";
+      if (cleanMethod.includes("credito") || cleanMethod.includes("crédito"))
+        return "cartao_credito";
+      if (cleanMethod.includes("debito") || cleanMethod.includes("débito"))
+        return "cartao_debito";
+      if (cleanMethod.includes("pix")) return "pix";
+      if (
+        cleanMethod.includes("vale") ||
+        cleanMethod.includes("refeicao") ||
+        cleanMethod.includes("refeição") ||
+        cleanMethod.includes("ticket") ||
+        cleanMethod.includes("sodexo") ||
+        cleanMethod.includes("vr")
+      )
+        return "vale_refeicao";
+      if (
+        cleanMethod.includes("fiado") ||
+        cleanMethod.includes("cliente") ||
+        cleanMethod.includes("carteira") ||
+        cleanMethod.includes("conta")
+      )
+        return "conta_cliente";
+
+      return "dinheiro";
+    };
+
+    const getOrderMethodContribution = (order: Order, targetMethodId: string): number => {
+      if (targetMethodId === "all") return order.total || 0;
+
+      if (targetMethodId === "electronic") {
+        const electronicKeys = ["pix", "cartao_credito", "cartao_debito", "vale_refeicao"];
+        if (order.payments && order.payments.length > 0) {
+          return order.payments.reduce((acc, p) => {
+            const std = getStandardPaymentMethodKey(p.method);
+            return electronicKeys.includes(std) ? acc + p.amount : acc;
+          }, 0);
+        } else if (order.paymentMethod) {
+          const std = getStandardPaymentMethodKey(order.paymentMethod);
+          return electronicKeys.includes(std) ? order.total || 0 : 0;
+        }
+        return 0;
+      }
+
+      if (order.payments && order.payments.length > 0) {
+        return order.payments.reduce((acc, p) => {
+          const std = getStandardPaymentMethodKey(p.method);
+          return std === targetMethodId ? acc + p.amount : acc;
+        }, 0);
+      } else if (order.paymentMethod) {
+        const std = getStandardPaymentMethodKey(order.paymentMethod);
+        return std === targetMethodId ? order.total || 0 : 0;
+      }
+      return 0;
+    };
+
+    const matchingOrdersForReport = useMemo(() => {
+      if (!selectedMethodReport) return [];
+
+      let sourceOrders: Order[] = [];
+      if (cashReport && cashReport.sessionOrders && cashReport.sessionOrders.length > 0) {
+        sourceOrders = cashReport.sessionOrders;
+      } else if (lastClosingReport) {
+        const openedAt = new Date(lastClosingReport.openedAt);
+        const closedAt = new Date(lastClosingReport.closedAt);
+        sourceOrders = orders.filter((o) => {
+          const created = new Date(o.createdAt);
+          return created >= openedAt && created <= closedAt && o.status !== "cancelled";
+        });
+      } else if (cashSession.openedAt) {
+        const openedAt = new Date(cashSession.openedAt);
+        sourceOrders = orders.filter((o) => {
+          const created = new Date(o.createdAt);
+          return created >= openedAt && o.status !== "cancelled";
+        });
+      } else {
+        sourceOrders = orders.filter((o) => o.status !== "cancelled");
+      }
+
+      return sourceOrders
+        .map((o) => {
+          const contribution = getOrderMethodContribution(o, selectedMethodReport.id);
+          return { order: o, contribution };
+        })
+        .filter((item) => item.contribution > 0)
+        .filter(({ order }) => {
+          if (!methodReportSearch.trim()) return true;
+          const term = methodReportSearch.toLowerCase().trim();
+          const nameMatch = (order.customerName || "").toLowerCase().includes(term);
+          const tableMatch = order.tableNumber ? String(order.tableNumber).includes(term) : false;
+          const numberMatch = order.dailyNumber ? String(order.dailyNumber).includes(term) : false;
+          const idMatch = (order.id || "").toLowerCase().includes(term);
+          const itemsMatch = order.items.some((i) => i.name.toLowerCase().includes(term));
+          return nameMatch || tableMatch || numberMatch || idMatch || itemsMatch;
+        });
+    }, [selectedMethodReport, cashReport, lastClosingReport, cashSession.openedAt, orders, methodReportSearch]);
+
+    const reportTotalContribution = useMemo(() => {
+      return matchingOrdersForReport.reduce((acc, curr) => acc + curr.contribution, 0);
+    }, [matchingOrdersForReport]);
 
     const filteredCustomerList = useMemo(
       () =>
@@ -2020,13 +2184,22 @@ const Tables: React.FC<TablesProps> = memo(
                         ).map(([method, amount]: [any, any]) => (
                             <div
                               key={method}
-                              className="flex justify-between items-center p-3.5 hover:bg-slate-50 transition-colors"
+                              onClick={() => {
+                                setSelectedMethodReport({
+                                  id: method,
+                                  label: getPaymentMethodLabel(method),
+                                });
+                                setMethodReportSearch("");
+                              }}
+                              className="flex justify-between items-center p-3.5 hover:bg-slate-50 transition-colors cursor-pointer group"
+                              title="Clique para ver os pedidos"
                             >
-                              <span className="text-[11px] font-bold text-slate-600">
+                              <span className="text-[11px] font-bold text-slate-600 flex items-center gap-1.5">
                                 {getPaymentMethodLabel(method)}
+                                <ChevronRight size={12} className="text-slate-300 group-hover:text-indigo-500 group-hover:translate-x-0.5 transition-all" />
                               </span>
                               <span className="text-[11px] font-black text-slate-800">
-                                R$ {amount.toFixed(2)}
+                                R$ {Number(amount).toFixed(2)}
                               </span>
                             </div>
                           ),
@@ -2109,21 +2282,58 @@ const Tables: React.FC<TablesProps> = memo(
                 ) : (
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-3">
-                      <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">
-                          Total Vendido
-                        </p>
+                      <div
+                        onClick={() => {
+                          setSelectedMethodReport({
+                            id: "all",
+                            label: "Todas as Vendas do Turno",
+                            icon: ShoppingBag,
+                          });
+                          setMethodReportSearch("");
+                        }}
+                        className="bg-slate-50 hover:bg-indigo-50/50 p-4 rounded-2xl border border-slate-100 hover:border-indigo-200 transition-all cursor-pointer group"
+                        title="Clique para ver os pedidos"
+                      >
+                        <div className="flex justify-between items-start">
+                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 group-hover:text-indigo-600 transition-colors">
+                            Total Vendido
+                          </p>
+                          <ChevronRight size={12} className="text-slate-300 group-hover:text-indigo-500 group-hover:translate-x-0.5 transition-all" />
+                        </div>
                         <h4 className="text-lg font-black text-slate-800 tracking-tighter">
                           R$ {(cashReport?.totalSales || 0).toFixed(2)}
                         </h4>
-                      </div>
-                      <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100">
-                        <p className="text-[9px] font-black text-emerald-600 uppercase tracking-widest mb-1">
-                          Saldo em Dinheiro (Gaveta)
+                        <p className="text-[8px] font-bold text-indigo-500 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          Clique para ver {cashReport?.count || 0} pedido(s)
                         </p>
+                      </div>
+
+                      <div
+                        onClick={() => {
+                          setSelectedMethodReport({
+                            id: "dinheiro",
+                            label: "Dinheiro (Vendas do Turno)",
+                            icon: Banknote,
+                            color: "text-emerald-500",
+                            bg: "bg-emerald-50",
+                          });
+                          setMethodReportSearch("");
+                        }}
+                        className="bg-emerald-50 hover:bg-emerald-100/60 p-4 rounded-2xl border border-emerald-100 hover:border-emerald-200 transition-all cursor-pointer group"
+                        title="Clique para ver os pedidos em dinheiro"
+                      >
+                        <div className="flex justify-between items-start">
+                          <p className="text-[9px] font-black text-emerald-600 uppercase tracking-widest mb-1">
+                            Saldo em Dinheiro (Gaveta)
+                          </p>
+                          <ChevronRight size={12} className="text-emerald-400 group-hover:translate-x-0.5 transition-all" />
+                        </div>
                         <h4 className="text-lg font-black text-emerald-700 tracking-tighter">
                           R$ {(cashReport?.expectedFinalValue || 0).toFixed(2)}
                         </h4>
+                        <p className="text-[8px] font-bold text-emerald-600 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          Clique para ver os pedidos em dinheiro
+                        </p>
                       </div>
                     </div>
 
@@ -2137,11 +2347,25 @@ const Tables: React.FC<TablesProps> = memo(
                         </span>
                       </div>
                       <div className="space-y-2">
-                        <div className="flex justify-between text-[11px] font-bold">
-                          <span className="text-slate-500">
+                        <div
+                          onClick={() => {
+                            setSelectedMethodReport({
+                              id: "dinheiro",
+                              label: "Vendas em Dinheiro",
+                              icon: Banknote,
+                              color: "text-emerald-500",
+                              bg: "bg-emerald-50",
+                            });
+                            setMethodReportSearch("");
+                          }}
+                          className="flex justify-between text-[11px] font-bold hover:bg-slate-100/80 p-1 rounded-lg cursor-pointer transition-colors group"
+                          title="Clique para ver os pedidos em dinheiro"
+                        >
+                          <span className="text-slate-500 flex items-center gap-1 group-hover:text-indigo-600">
                             Vendas em Dinheiro:
+                            <ChevronRight size={10} className="text-slate-300 group-hover:text-indigo-500 group-hover:translate-x-0.5 transition-all" />
                           </span>
-                          <span className="text-slate-800">
+                          <span className="text-slate-800 font-black">
                             R$ {(cashReport?.totalsByMethod?.dinheiro || 0).toFixed(2)}
                           </span>
                         </div>
@@ -2295,17 +2519,34 @@ const Tables: React.FC<TablesProps> = memo(
                         ].map((method) => (
                           <div
                             key={method.id}
-                            className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm"
+                            onClick={() => {
+                              setSelectedMethodReport({
+                                id: method.id,
+                                label: method.label,
+                                icon: method.icon,
+                                color: method.color,
+                                bg: method.bg,
+                              });
+                              setMethodReportSearch("");
+                            }}
+                            className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm hover:border-indigo-300 hover:bg-slate-50/80 transition-all cursor-pointer group active:scale-[0.99]"
+                            title={`Clique para ver os pedidos pagos com ${method.label}`}
                           >
                             <div className="flex items-center gap-3">
                               <div
-                                className={`p-2 rounded-xl ${method.bg} ${method.color}`}
+                                className={`p-2 rounded-xl ${method.bg} ${method.color} group-hover:scale-110 transition-transform`}
                               >
                                 <method.icon size={18} />
                               </div>
-                              <p className="font-bold text-slate-700 text-xs">
-                                {method.label}
-                              </p>
+                              <div>
+                                <p className="font-bold text-slate-700 text-xs flex items-center gap-1">
+                                  {method.label}
+                                  <ChevronRight size={12} className="text-slate-300 group-hover:text-indigo-500 group-hover:translate-x-0.5 transition-all" />
+                                </p>
+                                <span className="text-[9px] font-semibold text-slate-400">
+                                  Ver pedidos
+                                </span>
+                              </div>
                             </div>
                             <p className="font-black text-slate-800 text-sm">
                               R${" "}
@@ -2332,12 +2573,29 @@ const Tables: React.FC<TablesProps> = memo(
                           </p>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <p className="text-[10px] font-black text-slate-400 uppercase">
+                      <div
+                        onClick={() => {
+                          setSelectedMethodReport({
+                            id: "electronic",
+                            label: "Meios Eletrônicos (PIX + Cartões + VR)",
+                            icon: CardIcon,
+                            color: "text-indigo-600",
+                            bg: "bg-indigo-50",
+                          });
+                          setMethodReportSearch("");
+                        }}
+                        className="text-right cursor-pointer group hover:bg-indigo-50/60 p-2.5 rounded-xl transition-all"
+                        title="Clique para ver os pedidos em meios eletrônicos"
+                      >
+                        <p className="text-[10px] font-black text-slate-400 group-hover:text-indigo-600 uppercase flex items-center justify-end gap-1">
                           Meios Eletrônicos
+                          <ChevronRight size={10} className="group-hover:translate-x-0.5 transition-all" />
                         </p>
                         <p className="font-black text-slate-800">
                           R$ {(cashReport?.electronicTotal || 0).toFixed(2)}
+                        </p>
+                        <p className="text-[8px] font-bold text-indigo-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                          Clique para ver
                         </p>
                       </div>
                     </div>
@@ -2391,6 +2649,203 @@ const Tables: React.FC<TablesProps> = memo(
                     </button>
                   </div>
                 )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Relatório de Pedidos por Meio de Pagamento */}
+        {selectedMethodReport && (
+          <div className="fixed inset-0 z-[210] flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-md animate-in fade-in">
+            <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh] border border-slate-100 animate-in zoom-in-95">
+              {/* Modal Header */}
+              <div className="p-5 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-white/10 rounded-2xl border border-white/10 backdrop-blur-sm text-indigo-400">
+                    {selectedMethodReport.icon ? (
+                      <selectedMethodReport.icon size={22} />
+                    ) : (
+                      <Receipt size={22} />
+                    )}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-base font-black tracking-tight">
+                        Relatório de Pedidos — {selectedMethodReport.label}
+                      </h3>
+                      <span className="px-2.5 py-0.5 bg-indigo-500/20 text-indigo-300 rounded-full text-[10px] font-black uppercase tracking-wider border border-indigo-500/30">
+                        {matchingOrdersForReport.length} {matchingOrdersForReport.length === 1 ? 'pedido' : 'pedidos'}
+                      </span>
+                    </div>
+                    <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest mt-0.5">
+                      Conferência detalhada das vendas do turno
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedMethodReport(null)}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors text-slate-300 hover:text-white cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Summary Banner & Search */}
+              <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+                <div className="flex items-center gap-3 w-full sm:w-auto">
+                  <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm flex-1 sm:flex-initial">
+                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">
+                      Montante Acumulado
+                    </p>
+                    <p className="text-lg font-black text-emerald-600 tracking-tight">
+                      R$ {reportTotalContribution.toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Search input */}
+                <div className="relative w-full sm:w-64">
+                  <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Buscar cliente, mesa, item..."
+                    value={methodReportSearch}
+                    onChange={(e) => setMethodReportSearch(e.target.value)}
+                    className="w-full pl-9 pr-8 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:border-indigo-500 transition-all placeholder:text-slate-400"
+                  />
+                  {methodReportSearch && (
+                    <button
+                      onClick={() => setMethodReportSearch("")}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Orders List Content */}
+              <div className="p-4 overflow-y-auto custom-scrollbar flex-1 space-y-3">
+                {matchingOrdersForReport.length > 0 ? (
+                  matchingOrdersForReport.map(({ order, contribution }) => {
+                    const createdDate = order.createdAt instanceof Date ? order.createdAt : new Date(order.createdAt);
+                    const timeStr = createdDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+                    const typeLabel = order.type === 'table' ? `Mesa ${order.tableNumber || ''}` : order.type === 'delivery' ? 'Delivery' : 'Balcão';
+                    const typeIcon = order.type === 'table' ? Utensils : order.type === 'delivery' ? Bike : ShoppingBag;
+                    const TypeIconComp = typeIcon;
+
+                    return (
+                      <div
+                        key={order.id}
+                        className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all space-y-3"
+                      >
+                        {/* Header line of Order Card */}
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                          <div className="flex items-center gap-2.5">
+                            <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
+                              <TypeIconComp size={16} />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-black text-slate-800 uppercase tracking-tight">
+                                  {typeLabel} {order.customerName ? `• ${order.customerName}` : ''}
+                                </span>
+                                {order.dailyNumber && (
+                                  <span className="px-1.5 py-0.5 bg-slate-100 text-slate-600 text-[9px] font-mono font-bold rounded">
+                                    #{order.dailyNumber}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[9px] font-bold text-slate-400 flex items-center gap-1 mt-0.5">
+                                <Clock size={10} /> {timeStr} • ID: {order.id.slice(-6).toUpperCase()}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="text-right">
+                            <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">
+                              Contribuição ({selectedMethodReport.label.split(' ')[0]})
+                            </p>
+                            <p className="text-sm font-black text-emerald-600">
+                              R$ {contribution.toFixed(2)}
+                            </p>
+                            {order.total !== contribution && (
+                              <p className="text-[8px] font-bold text-slate-400">
+                                Total do pedido: R$ {order.total.toFixed(2)}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Items summary */}
+                        <div className="space-y-1 bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-xs">
+                          <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">
+                            Itens do Pedido ({order.items.length})
+                          </p>
+                          <div className="space-y-1 max-h-28 overflow-y-auto custom-scrollbar">
+                            {order.items.map((item, idx) => (
+                              <div key={idx} className="flex justify-between items-center text-[11px]">
+                                <span className="font-bold text-slate-700">
+                                  <span className="text-indigo-600 font-black mr-1">{item.quantity}x</span> {item.name}
+                                </span>
+                                <span className="font-mono text-slate-500 text-[10px]">
+                                  R$ {(item.price * item.quantity).toFixed(2)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Payments Breakdown if multiple payments */}
+                        {order.payments && order.payments.length > 0 && (
+                          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                            <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider">
+                              Pagamentos:
+                            </span>
+                            {order.payments.map((p, pIdx) => (
+                              <span
+                                key={pIdx}
+                                className={`px-2 py-0.5 rounded-md text-[9px] font-bold border ${
+                                  getStandardPaymentMethodKey(p.method) === selectedMethodReport.id
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200 font-black'
+                                    : 'bg-slate-100 text-slate-600 border-slate-200'
+                                }`}
+                              >
+                                {p.method}: R$ {p.amount.toFixed(2)}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="py-12 text-center text-slate-400 space-y-2">
+                    <Receipt size={40} className="mx-auto opacity-30 animate-pulse" />
+                    <p className="text-xs font-black uppercase tracking-wider text-slate-500">
+                      Nenhum pedido encontrado
+                    </p>
+                    <p className="text-[10px] font-bold text-slate-400 max-w-xs mx-auto">
+                      {methodReportSearch
+                        ? "Nenhum resultado corresponde à sua pesquisa."
+                        : `Não há vendas registradas para "${selectedMethodReport.label}" neste turno.`}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-3 shrink-0">
+                <div className="text-[10px] font-bold text-slate-500">
+                  Exibindo <span className="font-black text-slate-800">{matchingOrdersForReport.length}</span> pedido(s)
+                </div>
+                <button
+                  onClick={() => setSelectedMethodReport(null)}
+                  className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-md cursor-pointer"
+                >
+                  Voltar ao Fechamento
+                </button>
               </div>
             </div>
           </div>

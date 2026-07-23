@@ -44,6 +44,11 @@ import {
   Printer,
   CreditCard,
   Smartphone,
+  ChevronRight,
+  Clock,
+  Utensils,
+  ShoppingBag,
+  Receipt,
 } from "lucide-react";
 import { generateReceiptHtml } from "../services/printService";
 import { maskCurrency, parseCurrency } from "../utils/masks";
@@ -218,6 +223,13 @@ const Finance: React.FC<FinanceProps> = memo(
     const [isRecurring, setIsRecurring] = useState(false);
     const [installments, setInstallments] = useState("1");
     const [formPaymentMethod, setFormPaymentMethod] = useState("dinheiro");
+
+    // Drill-down report state for cash closings
+    const [selectedClosingMethodReport, setSelectedClosingMethodReport] = useState<{
+      id: string;
+      label: string;
+    } | null>(null);
+    const [financeReportSearch, setFinanceReportSearch] = useState("");
 
     // State for Lançamento Expresso
     const [quickType, setQuickType] = useState<"income" | "expense">("expense");
@@ -3854,10 +3866,19 @@ const Finance: React.FC<FinanceProps> = memo(
                         ).map(([method, value]) => (
                           <div
                             key={method}
-                            className="flex justify-between items-center"
+                            onClick={() => {
+                              setSelectedClosingMethodReport({
+                                id: method,
+                                label: method.replace("_", " "),
+                              });
+                              setFinanceReportSearch("");
+                            }}
+                            className="flex justify-between items-center p-1.5 hover:bg-indigo-100/50 rounded-lg cursor-pointer transition-colors group"
+                            title="Clique para ver os pedidos"
                           >
-                            <span className="text-[10px] font-bold text-slate-600 capitalize">
+                            <span className="text-[10px] font-bold text-slate-600 capitalize flex items-center gap-1 group-hover:text-indigo-700">
                               {method.replace("_", " ")}
+                              <ChevronRight size={10} className="text-slate-400 group-hover:text-indigo-600 group-hover:translate-x-0.5 transition-all" />
                             </span>
                             <span className="text-[10px] font-black text-slate-800">
                               {formatCurrency(value as number)}
@@ -3920,6 +3941,173 @@ const Finance: React.FC<FinanceProps> = memo(
                       Fechar Detalhes
                     </button>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {selectedClosing && selectedClosingMethodReport && (
+              <div className="fixed inset-0 z-[210] flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-md animate-in fade-in">
+                <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] border border-slate-100 animate-in zoom-in-95">
+                  <div className="p-5 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white flex justify-between items-center shrink-0">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 bg-white/10 rounded-2xl border border-white/10 backdrop-blur-sm text-indigo-400">
+                        <Receipt size={22} />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-black tracking-tight capitalize">
+                          Relatório de Pedidos — {selectedClosingMethodReport.label}
+                        </h3>
+                        <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest mt-0.5">
+                          Fechamento de Caixa #{selectedClosing.id.slice(-6).toUpperCase()}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setSelectedClosingMethodReport(null)}
+                      className="p-2 hover:bg-white/10 rounded-full transition-colors text-slate-300 hover:text-white cursor-pointer"
+                    >
+                      <X size={20} />
+                    </button>
+                  </div>
+
+                  {/* Orders filter and list */}
+                  {(() => {
+                    const openedAt = new Date(selectedClosing.openedAt);
+                    const closedAt = new Date(selectedClosing.closedAt);
+
+                    const closingOrders = orders.filter((o) => {
+                      const created = new Date(o.createdAt);
+                      return created >= openedAt && created <= closedAt && o.status !== "cancelled";
+                    });
+
+                    const targetMethod = selectedClosingMethodReport.id;
+                    const matching = closingOrders
+                      .map((o) => {
+                        let contribution = 0;
+                        if (o.payments && o.payments.length > 0) {
+                          contribution = o.payments.reduce((acc, p) => {
+                            const clean = String(p.method).toLowerCase().trim();
+                            return clean === targetMethod || clean.includes(targetMethod) ? acc + p.amount : acc;
+                          }, 0);
+                        } else if (o.paymentMethod) {
+                          const clean = String(o.paymentMethod).toLowerCase().trim();
+                          if (clean === targetMethod || clean.includes(targetMethod)) {
+                            contribution = o.total || 0;
+                          }
+                        }
+                        if (contribution === 0 && targetMethod === "all") {
+                          contribution = o.total || 0;
+                        }
+                        return { order: o, contribution };
+                      })
+                      .filter((item) => item.contribution > 0)
+                      .filter(({ order }) => {
+                        if (!financeReportSearch.trim()) return true;
+                        const term = financeReportSearch.toLowerCase().trim();
+                        const nameMatch = (order.customerName || "").toLowerCase().includes(term);
+                        const tableMatch = order.tableNumber ? String(order.tableNumber).includes(term) : false;
+                        const idMatch = (order.id || "").toLowerCase().includes(term);
+                        const itemsMatch = order.items.some((i) => i.name.toLowerCase().includes(term));
+                        return nameMatch || tableMatch || idMatch || itemsMatch;
+                      });
+
+                    const totalSum = matching.reduce((acc, curr) => acc + curr.contribution, 0);
+
+                    return (
+                      <>
+                        <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+                          <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm w-full sm:w-auto">
+                            <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">
+                              Montante Acumulado
+                            </p>
+                            <p className="text-lg font-black text-emerald-600 tracking-tight">
+                              {formatCurrency(totalSum)}
+                            </p>
+                          </div>
+
+                          <div className="relative w-full sm:w-64">
+                            <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                            <input
+                              type="text"
+                              placeholder="Buscar por cliente, mesa..."
+                              value={financeReportSearch}
+                              onChange={(e) => setFinanceReportSearch(e.target.value)}
+                              className="w-full pl-9 pr-8 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:border-indigo-500 transition-all placeholder:text-slate-400"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="p-4 overflow-y-auto custom-scrollbar flex-1 space-y-3">
+                          {matching.length > 0 ? (
+                            matching.map(({ order, contribution }) => {
+                              const createdDate = order.createdAt instanceof Date ? order.createdAt : new Date(order.createdAt);
+                              const timeStr = createdDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+                              return (
+                                <div
+                                  key={order.id}
+                                  className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm hover:border-indigo-300 transition-all space-y-2.5"
+                                >
+                                  <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                                    <div>
+                                      <span className="text-xs font-black text-slate-800 uppercase tracking-tight">
+                                        {order.type === "table" ? `Mesa ${order.tableNumber || ""}` : order.type === "delivery" ? "Delivery" : "Balcão"} {order.customerName ? `• ${order.customerName}` : ""}
+                                      </span>
+                                      <p className="text-[9px] font-bold text-slate-400 flex items-center gap-1 mt-0.5">
+                                        <Clock size={10} /> {timeStr} • ID: {order.id.slice(-6).toUpperCase()}
+                                      </p>
+                                    </div>
+                                    <div className="text-right">
+                                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">
+                                        Contribuição
+                                      </p>
+                                      <p className="text-sm font-black text-emerald-600">
+                                        {formatCurrency(contribution)}
+                                      </p>
+                                    </div>
+                                  </div>
+
+                                  <div className="space-y-1 bg-slate-50 p-2 rounded-xl text-xs">
+                                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">
+                                      Itens do Pedido ({order.items.length})
+                                    </p>
+                                    {order.items.map((item, idx) => (
+                                      <div key={idx} className="flex justify-between items-center text-[11px]">
+                                        <span className="font-bold text-slate-700">
+                                          <span className="text-indigo-600 font-black mr-1">{item.quantity}x</span> {item.name}
+                                        </span>
+                                        <span className="font-mono text-slate-500 text-[10px]">
+                                          {formatCurrency(item.price * item.quantity)}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })
+                          ) : (
+                            <div className="py-12 text-center text-slate-400 space-y-2">
+                              <Receipt size={40} className="mx-auto opacity-30 animate-pulse" />
+                              <p className="text-xs font-black uppercase tracking-wider text-slate-500">
+                                Nenhum pedido encontrado
+                              </p>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
+                          <span className="text-[10px] font-bold text-slate-500">
+                            {matching.length} pedido(s) encontrado(s)
+                          </span>
+                          <button
+                            onClick={() => setSelectedClosingMethodReport(null)}
+                            className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-md cursor-pointer"
+                          >
+                            Voltar aos Detalhes
+                          </button>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
             )}
