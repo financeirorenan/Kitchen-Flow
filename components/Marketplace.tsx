@@ -1070,7 +1070,19 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   }, []);
 
   const handleStoreClick = async (tenant: Tenant) => {
-    navigate(`/marketplace/${tenant.id}`);
+    const tSettings = tenantsSettings[tenant.id];
+    const customSlug = tSettings?.digitalMenu?.customSlug;
+    const cleanNameSlug = tenant.name 
+      ? tenant.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+      : '';
+    const preferredSlug = customSlug || cleanNameSlug || tenant.id;
+
+    const isCardapioRoute = location.pathname.startsWith('/cardapio') || location.pathname.startsWith('/c/') || location.pathname.startsWith('/m/');
+    if (isCardapioRoute) {
+      navigate(`/cardapio/${preferredSlug}`);
+    } else {
+      navigate(`/marketplace/${preferredSlug}`);
+    }
   };
 
   const filteredTenants = useMemo(() => {

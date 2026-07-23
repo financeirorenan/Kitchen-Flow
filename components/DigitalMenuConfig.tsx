@@ -17,6 +17,7 @@ import {
 import DigitalMenu from './DigitalMenu';
 
 interface DigitalMenuConfigProps {
+  tenantId?: string;
   settings: DigitalMenuSettings;
   onUpdateSettings: (settings: DigitalMenuSettings) => void;
   products: Product[];
@@ -38,6 +39,7 @@ interface SimCartItem {
 }
 
 const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({ 
+  tenantId,
   settings, 
   onUpdateSettings, 
   products, 
@@ -54,7 +56,7 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'visual' | 'management' | 'qrcode' | 'promo' | 'totem'>('visual');
   const [showTestMode, setShowTestMode] = useState(false);
-  const [isLinkCopied, setIsLinkCopied] = useState(false);
+  const [isLinkCopied, setIsLinkCopied] = useState<string | boolean>(false);
   const [previewDevice, setPreviewDevice] = useState<'mobile' | 'desktop'>('mobile');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success'>('idle');
   const [totemSearch, setTotemSearch] = useState('');
@@ -70,7 +72,11 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
   const cleanMenuSlug = rawSlug
     ? rawSlug.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') 
     : 'viva-la-fome';
+    
+  const effectiveId = tenantId || 'HCL1177LRQVPEKCTYRAHU7IGBQ42';
   const menuUrl = `${window.location.origin}/cardapio/${cleanMenuSlug || 'viva-la-fome'}`;
+  const menuUrlById = `${window.location.origin}/cardapio/${effectiveId}`;
+  const lojistaUrl = `${window.location.origin}/lojista/${cleanMenuSlug || effectiveId}`;
 
   const bannerPresets = [
     { name: 'Pizza', url: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?q=80&w=2070&auto=format&fit=crop' },
@@ -107,9 +113,9 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
     }
   };
 
-  const handleCopyLink = () => {
-    navigator.clipboard.writeText(menuUrl);
-    setIsLinkCopied(true);
+  const handleCopyLink = (urlToCopy?: string, copyKey: string | boolean = true) => {
+    navigator.clipboard.writeText(urlToCopy || menuUrl);
+    setIsLinkCopied(copyKey);
     setTimeout(() => setIsLinkCopied(false), 2000);
   };
 
@@ -340,16 +346,19 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
               </div>
 
               {/* URL E SLUG PERSONALIZADO DO CLIENTE */}
-              <div className="p-4 bg-indigo-50/70 border border-indigo-100 rounded-2xl space-y-3">
+              <div className="p-4 bg-indigo-50/70 border border-indigo-100 rounded-2xl space-y-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Globe size={16} className="text-indigo-600" />
-                    <label className="text-[10px] font-black text-indigo-950 uppercase tracking-wider">URL Personalizada do Cliente (Link do Cardápio)</label>
+                    <label className="text-[10px] font-black text-indigo-950 uppercase tracking-wider">URLs de Acesso do Lojista (Links do Cardápio / Loja)</label>
                   </div>
                   <span className="px-2.5 py-0.5 bg-indigo-600 text-white text-[7px] font-black rounded-full uppercase tracking-wider">Acesso Direto</span>
                 </div>
-                <div className="space-y-1">
-                  <div className="flex items-center gap-1.5 bg-white border border-indigo-200 rounded-xl px-3 py-2">
+
+                {/* 1. Link por Nome / Slug Customizado */}
+                <div className="space-y-1.5">
+                  <span className="text-[9px] font-black uppercase text-indigo-900 tracking-wider">1. Link Personalizado (por Nome ou Slug)</span>
+                  <div className="flex items-center gap-1.5 bg-white border border-indigo-200 rounded-xl px-3 py-2 shadow-sm">
                     <span className="text-[10px] font-mono font-bold text-slate-400">{window.location.origin}/cardapio/</span>
                     <input 
                       type="text" 
@@ -361,11 +370,41 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
                         onUpdateSettings({ ...settings, customSlug: sanitized });
                       }} 
                     />
+                    <button
+                      type="button"
+                      onClick={() => handleCopyLink(menuUrl, 'slug')}
+                      className={`px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase transition-all flex items-center gap-1 ${
+                        isLinkCopied === 'slug' ? 'bg-emerald-500 text-white' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
+                      }`}
+                    >
+                      {isLinkCopied === 'slug' ? <Check size={12} /> : <Copy size={12} />}
+                      {isLinkCopied === 'slug' ? 'Copiado' : 'Copiar'}
+                    </button>
                   </div>
-                  <p className="text-[8px] font-medium text-slate-500 pl-1">
-                    Este link é 100% exclusivo para seus clientes. Ao acessá-lo, o cliente visualiza apenas o cardápio e faz pedidos, sem qualquer risco de abrir o painel administrativo do lojista.
-                  </p>
                 </div>
+
+                {/* 2. Link por ID do Lojista */}
+                <div className="space-y-1.5">
+                  <span className="text-[9px] font-black uppercase text-indigo-900 tracking-wider">2. Link Direto (por ID do Lojista)</span>
+                  <div className="flex items-center gap-1.5 bg-white border border-indigo-200 rounded-xl px-3 py-2 shadow-sm">
+                    <span className="text-[10px] font-mono font-bold text-slate-400">{window.location.origin}/cardapio/</span>
+                    <span className="flex-1 font-mono font-black text-xs text-indigo-600 truncate">{effectiveId}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyLink(menuUrlById, 'id')}
+                      className={`px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase transition-all flex items-center gap-1 ${
+                        isLinkCopied === 'id' ? 'bg-emerald-500 text-white' : 'bg-indigo-50 text-indigo-100 hover:bg-indigo-100'
+                      }`}
+                    >
+                      {isLinkCopied === 'id' ? <Check size={12} /> : <Copy size={12} />}
+                      {isLinkCopied === 'id' ? 'Copiado' : 'Copiar'}
+                    </button>
+                  </div>
+                </div>
+
+                <p className="text-[8px] font-medium text-slate-500 pl-1">
+                  Ambos os links levam seu cliente diretamente ao seu Cardápio Digital exclusivo. O cliente realiza o pedido diretamente sem ter acesso ao painel do lojista.
+                </p>
               </div>
 
               <div className="space-y-2">
