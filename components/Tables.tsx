@@ -1431,8 +1431,8 @@ const Tables: React.FC<TablesProps> = memo(
         return;
       }
 
-      // Se o valor for menor que o saldo remanescente OU se autoCloseAfterPayment estiver desativado, tratar como pagamento parcial/fração
-      if (amountToPay < remainingBalance - 0.01 || !autoCloseAfterPayment) {
+      // Se o valor for menor que o saldo remanescente OU se autoCloseAfterPayment estiver desativado (apenas para mesas), tratar como pagamento parcial/fração
+      if (amountToPay < remainingBalance - 0.01 || (!autoCloseAfterPayment && !isCounterContext)) {
         const newPart: SplitPart = {
           id: Math.random().toString(36).substr(2, 9),
           amount: amountToPay,
@@ -1465,7 +1465,7 @@ const Tables: React.FC<TablesProps> = memo(
         onUpdateTable(selectedTable.id, selectedTable.items, "occupied", isCounterContext, updatedParts);
 
         if (newRemaining <= 0.01) {
-          if (autoCloseAfterPayment) {
+          if (autoCloseAfterPayment || isCounterContext) {
             finishSplitPayment(updatedParts);
           } else {
             if (showToast)
@@ -1565,7 +1565,7 @@ const Tables: React.FC<TablesProps> = memo(
         return;
       }
 
-      if (amountToPay < remainingBalance - 0.01 || !autoCloseAfterPayment) {
+      if (amountToPay < remainingBalance - 0.01 || (!autoCloseAfterPayment && !isCounterContext)) {
         const newPart: SplitPart = {
           id: Math.random().toString(36).substr(2, 9),
           amount: amountToPay,
@@ -1598,7 +1598,7 @@ const Tables: React.FC<TablesProps> = memo(
         onUpdateTable(selectedTable.id, selectedTable.items, "occupied", isCounterContext, updatedParts);
 
         if (newRemaining <= 0.01) {
-          if (autoCloseAfterPayment) {
+          if (autoCloseAfterPayment || isCounterContext) {
             finishSplitPayment(updatedParts);
           } else {
             if (showToast)

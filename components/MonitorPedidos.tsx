@@ -35,6 +35,15 @@ export const MonitorPedidos: React.FC<MonitorPedidosProps> = ({ orders }) => {
         (o.status === 'preparing' || o.status === 'pending') && 
         new Date(o.createdAt) > twelveHoursAgo
       )
+      .sort((a, b) => {
+        const timeA = new Date(a.createdAt).getTime() || 0;
+        const timeB = new Date(b.createdAt).getTime() || 0;
+        if (timeA !== timeB) return timeA - timeB;
+        const dailyA = a.dailyNumber || 0;
+        const dailyB = b.dailyNumber || 0;
+        if (dailyA !== dailyB) return dailyA - dailyB;
+        return String(a.id).localeCompare(String(b.id));
+      })
       .slice(0, 16); // limit for visual elegance on TV screen
   }, [orders]);
 
@@ -46,6 +55,15 @@ export const MonitorPedidos: React.FC<MonitorPedidosProps> = ({ orders }) => {
         o.status === 'ready' && 
         new Date(o.createdAt) > twelveHoursAgo
       )
+      .sort((a, b) => {
+        const timeA = new Date(a.createdAt).getTime() || 0;
+        const timeB = new Date(b.createdAt).getTime() || 0;
+        if (timeA !== timeB) return timeA - timeB;
+        const dailyA = a.dailyNumber || 0;
+        const dailyB = b.dailyNumber || 0;
+        if (dailyA !== dailyB) return dailyA - dailyB;
+        return String(a.id).localeCompare(String(b.id));
+      })
       .slice(0, 12);
   }, [orders]);
 

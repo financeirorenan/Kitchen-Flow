@@ -111,9 +111,9 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
     return ['all', ...Array.from(categories)];
   }, [products]);
 
-  // Filter orders based on active filters (type) and selected station (category)
+  // Filter orders based on active filters (type) and selected station (category), sorted by FIFO launch order
   const filteredKitchenOrders = useMemo(() => {
-    return kitchenOrders.filter(order => {
+    const list = kitchenOrders.filter(order => {
       // 1. Filter by order type
       if (activeFilter !== 'all' && order.type !== activeFilter) {
         return false;
@@ -130,6 +130,16 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
       }
 
       return true;
+    });
+
+    return list.sort((a, b) => {
+      const timeA = safeParseDate(a.createdAt).getTime();
+      const timeB = safeParseDate(b.createdAt).getTime();
+      if (timeA !== timeB) return timeA - timeB;
+      const dailyA = a.dailyNumber || 0;
+      const dailyB = b.dailyNumber || 0;
+      if (dailyA !== dailyB) return dailyA - dailyB;
+      return String(a.id).localeCompare(String(b.id));
     });
   }, [kitchenOrders, activeFilter, selectedStation, products]);
 

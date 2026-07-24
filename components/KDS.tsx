@@ -178,16 +178,36 @@ const KDS: React.FC<KDSProps> = memo(({
       return safeParseDate(rawDate);
     };
 
+    // Estabilidade estrita de ordem de lançamento: o pedido lançado primeiro (menor data de criação)
+    // permanece sempre na primeira posição e não altera sua posição ao lançar novos pedidos.
+    const sortByLaunchOrder = (a: Order, b: Order) => {
+      const dateA = safeParseDate(a.createdAt);
+      const dateB = safeParseDate(b.createdAt);
+      const timeA = dateA ? dateA.getTime() : 0;
+      const timeB = dateB ? dateB.getTime() : 0;
+      if (timeA !== timeB) return timeA - timeB;
+      const dailyA = a.dailyNumber || 0;
+      const dailyB = b.dailyNumber || 0;
+      if (dailyA !== dailyB) return dailyA - dailyB;
+      return String(a.id).localeCompare(String(b.id));
+    };
+
+    if (activeFilter === 'cancelled') {
+      return {
+        cancelled: [...filteredOrders].sort(sortByLaunchOrder)
+      };
+    }
+
     return {
       preparing: filteredOrders.filter(o => 
         (o.status === 'preparing' || o.status === 'pending') && isRecent(o.createdAt, 'preparing')
-      ),
+      ).sort(sortByLaunchOrder),
       ready: filteredOrders.filter(o => 
         o.status === 'ready' && isRecent(o.createdAt, 'ready')
-      ),
+      ).sort(sortByLaunchOrder),
       delivering: filteredOrders.filter(o => 
         o.status === 'delivering' && isRecent(o.createdAt, o.status)
-      ),
+      ).sort(sortByLaunchOrder),
       delivered: filteredOrders.filter(o => {
         const isDeliveredOrFinished = o.status === 'delivered' || o.status === 'finished';
         if (!isDeliveredOrFinished) return false;
@@ -198,7 +218,7 @@ const KDS: React.FC<KDSProps> = memo(({
         }
 
         return (isToday(o.createdAt) || (new Date().getTime() - new Date(o.createdAt).getTime() < 12 * 60 * 60 * 1000)) && !o.isSettled;
-      }).slice(0, 40),
+      }).sort(sortByLaunchOrder).slice(0, 40),
     };
   }, [filteredOrders, activeFilter, cashSession]);
 
