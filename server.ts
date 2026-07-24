@@ -17,19 +17,6 @@ const firebaseConfig = JSON.parse(
   fs.readFileSync(path.resolve("firebase-applet-config.json"), "utf8")
 );
 
-import { initializeApp as initializeClientApp } from "firebase/app";
-import {
-  initializeFirestore as initializeClientFirestore,
-  collection as getClientCollection,
-  query as clientQuery,
-  where as clientWhere,
-  getDocs as getClientDocs,
-  limit as clientLimit,
-  doc as clientDoc,
-  setDoc as clientSetDoc,
-  deleteDoc as clientDeleteDoc
-} from "firebase/firestore";
-
 import { FiscalService } from "./server/fiscalService";
 
 // Admin Firebase
@@ -43,14 +30,6 @@ const adminDb = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDa
   ? getFirestore(firebaseConfig.firestoreDatabaseId)
   : getFirestore();
 const adminAuth = getAuth();
-
-// Client Firebase
-const clientApp = initializeClientApp(firebaseConfig);
-const clientDb = initializeClientFirestore(
-  clientApp,
-  { experimentalForceLongPolling: true },
-  firebaseConfig.firestoreDatabaseId || "(default)"
-);
 
 async function startServer() {
   const app = express();
@@ -188,8 +167,7 @@ async function startServer() {
 
       // B. Buscar usuário no Firestore (na coleção 'users' ou 'couriers')
       try {
-        const qUsers = clientQuery(getClientCollection(clientDb, 'users'), clientWhere('email', '==', trimmedEmail), clientLimit(1));
-        const userSnapshot = await getClientDocs(qUsers);
+        const userSnapshot = await adminDb.collection('users').where('email', '==', trimmedEmail).limit(1).get();
 
         if (!userSnapshot.empty) {
           const docSnap = userSnapshot.docs[0];
@@ -206,7 +184,7 @@ async function startServer() {
               console.log(`[Auto-Cura] Sincronizando senha do usuário no Firestore.`);
               matchedUser.password = trimmedPassword;
               try {
-                await clientSetDoc(clientDoc(clientDb, 'users', docSnap.id), { password: trimmedPassword }, { merge: true });
+                await adminDb.collection('users').doc(docSnap.id).set({ password: trimmedPassword }, { merge: true });
               } catch (updatePassErr) {
                 console.error("Erro ao curar senha no Firestore:", updatePassErr);
               }
@@ -214,8 +192,7 @@ async function startServer() {
           }
         } else {
           // Buscar na coleção 'couriers' para suporte a entregadores
-          const qCouriers = clientQuery(getClientCollection(clientDb, 'couriers'), clientWhere('email', '==', trimmedEmail), clientLimit(1));
-          const courierSnapshot = await getClientDocs(qCouriers);
+          const courierSnapshot = await adminDb.collection('couriers').where('email', '==', trimmedEmail).limit(1).get();
           if (!courierSnapshot.empty) {
             const docSnap = courierSnapshot.docs[0];
             const data = docSnap.data();
@@ -230,7 +207,7 @@ async function startServer() {
                 console.log(`[Auto-Cura] Sincronizando senha do entregador no Firestore.`);
                 matchedUser.password = trimmedPassword;
                 try {
-                  await clientSetDoc(clientDoc(clientDb, 'couriers', docSnap.id), { password: trimmedPassword }, { merge: true });
+                  await adminDb.collection('couriers').doc(docSnap.id).set({ password: trimmedPassword }, { merge: true });
                 } catch (updatePassErr) {
                   console.error("Erro ao curar senha no entregador do Firestore:", updatePassErr);
                 }
@@ -239,7 +216,7 @@ async function startServer() {
           }
         }
       } catch (dbErr: any) {
-        console.error("Erro ao consultar Firestore via Client SDK:", dbErr);
+        console.error("Erro ao consultar Firestore via Admin SDK:", dbErr);
         throw dbErr;
       }
 
@@ -260,7 +237,7 @@ async function startServer() {
             createdAt: new Date()
           };
           try {
-            await clientSetDoc(clientDoc(clientDb, 'users', uid), matchedUser);
+            await adminDb.collection('users').doc(uid).set(matchedUser);
           } catch (setErr) {
             console.error("Erro ao criar SAAS Admin no Firestore:", setErr);
           }
@@ -304,9 +281,9 @@ async function startServer() {
         if (uid && uid !== oldDocId) {
           matchedUser.id = uid;
           try {
-            await clientSetDoc(clientDoc(clientDb, 'users', uid), matchedUser, { merge: true });
+            await adminDb.collection('users').doc(uid).set(matchedUser, { merge: true });
             if (oldDocId && oldDocId !== uid) {
-              await clientDeleteDoc(clientDoc(clientDb, 'users', oldDocId));
+              await adminDb.collection('users').doc(oldDocId).delete();
             }
             oldDocId = uid;
           } catch (migErr) {
@@ -1012,11 +989,11 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
     if (fs.existsSync(distPath)) {
       app.use(express.static(distPath));
 
-      app.get("*all", (_req, res) => {
+      app.use((_req, res) => {
         res.sendFile(path.join(distPath, "index.html"));
       });
     } else {
-      app.get("*all", (_req, res) => {
+      app.use((_req, res) => {
         res.status(500).send("Build do frontend não encontrado.");
       });
     }
@@ -1030,4 +1007,4 @@ startServer().catch((err) => {
   process.exit(1);
 });
 
-export { adminDb, adminAuth, clientDb };
+export { adminDb, adminAuth };
