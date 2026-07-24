@@ -17,6 +17,19 @@ const firebaseConfig = JSON.parse(
   fs.readFileSync(path.resolve("firebase-applet-config.json"), "utf8")
 );
 
+import { initializeApp as initializeClientApp } from "firebase/app";
+import {
+  initializeFirestore as initializeClientFirestore,
+  collection as getClientCollection,
+  query as clientQuery,
+  where as clientWhere,
+  getDocs as getClientDocs,
+  limit as clientLimit,
+  doc as clientDoc,
+  setDoc as clientSetDoc,
+  deleteDoc as clientDeleteDoc
+} from "firebase/firestore";
+
 import { FiscalService } from "./server/fiscalService";
 
 // Admin Firebase
@@ -31,85 +44,21 @@ const adminDb = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDa
   : getFirestore();
 const adminAuth = getAuth();
 
+// Client Firebase
+const clientApp = initializeClientApp(firebaseConfig);
+const clientDb = initializeClientFirestore(
+  clientApp,
+  { experimentalForceLongPolling: true },
+  firebaseConfig.firestoreDatabaseId || "(default)"
+);
+
 async function startServer() {
   const app = express();
   const port = Number(process.env.PORT) || 3000;
 
-  // 🛡️ 1. Firewall Security Headers
-  app.disable('x-powered-by');
-  app.use((req, res, next) => {
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('X-XSS-Protection', '1; mode=block');
-    res.setHeader('X-DNS-Prefetch-Control', 'off');
-    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-    next();
-  });
-
-  // 🛡️ 2. High-Performance Non-Blocking Rate Limiter (Proteção contra Brute-Force e Abuso)
-  const rateLimitStore = new Map<string, { count: number; windowStart: number }>();
-
-  // Limpeza assíncrona periódica a cada 2 minutos
-  setInterval(() => {
-    const now = Date.now();
-    for (const [key, data] of rateLimitStore.entries()) {
-      if (now - data.windowStart > 120000) {
-        rateLimitStore.delete(key);
-      }
-    }
-  }, 120000);
-
-  const createRateLimiter = (maxRequests: number, windowMs: number = 60000) => {
-    return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-      // Ignorar health check e assets estáticos para nunca travar a aplicação
-      if (req.path === '/health' || req.path === '/api/health') return next();
-
-      const forwarded = req.headers['x-forwarded-for'];
-      const clientIp = typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : (req.socket.remoteAddress || '127.0.0.1');
-      const routeKey = `${clientIp}:${req.baseUrl || ''}${req.path}`;
-      const now = Date.now();
-
-      const record = rateLimitStore.get(routeKey);
-
-      if (!record || (now - record.windowStart) > windowMs) {
-        rateLimitStore.set(routeKey, { count: 1, windowStart: now });
-        return next();
-      }
-
-      if (record.count >= maxRequests) {
-        console.warn(`[Firewall] Rate limit acionado para IP ${clientIp} em ${req.path}`);
-        return res.status(429).json({
-          error: "Limite de requisições atingido temporariamente. Aguarde alguns segundos."
-        });
-      }
-
-      record.count++;
-      next();
-    };
-  };
-
-  // Limites elevados para não bloquear navegação em alta carga (1000 req/min geral, 30 req/min auth)
-  const generalLimiter = createRateLimiter(1000, 60000);
-  const authLimiter = createRateLimiter(30, 60000);
-  const aiLimiter = createRateLimiter(60, 60000);
-
   app.use(cors());
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true }));
-
-  // 🛡️ 3. Non-Blocking WAF (Inspeção Leve de Parâmetros e Cabeçalhos)
-  app.use((req, res, next) => {
-    // Inspeciona apenas query string e URL sem fazer JSON.stringify de payloads grandes
-    const urlToCheck = decodeURIComponent(req.originalUrl || req.url || '');
-    if (/<script\b/i.test(urlToCheck) || /javascript:/i.test(urlToCheck) || /UNION\s+SELECT/i.test(urlToCheck)) {
-      console.warn(`[Firewall WAF] Padrão malicioso bloqueado na URL: ${req.url}`);
-      return res.status(400).json({ error: "Requisição bloqueada pelo firewall." });
-    }
-    next();
-  });
-
-  app.use('/api/auth/login', authLimiter);
-  app.use('/api/gemini', aiLimiter);
-  app.use('/api', generalLimiter);
 
   app.get("/health", (_req, res) => {
     res.status(200).json({ ok: true });
@@ -167,7 +116,8 @@ async function startServer() {
 
       // B. Buscar usuário no Firestore (na coleção 'users' ou 'couriers')
       try {
-        const userSnapshot = await adminDb.collection('users').where('email', '==', trimmedEmail).limit(1).get();
+        const qUsers = clientQuery(getClientCollection(clientDb, 'users'), clientWhere('email', '==', trimmedEmail), clientLimit(1));
+        const userSnapshot = await getClientDocs(qUsers);
 
         if (!userSnapshot.empty) {
           const docSnap = userSnapshot.docs[0];
@@ -184,7 +134,7 @@ async function startServer() {
               console.log(`[Auto-Cura] Sincronizando senha do usuário no Firestore.`);
               matchedUser.password = trimmedPassword;
               try {
-                await adminDb.collection('users').doc(docSnap.id).set({ password: trimmedPassword }, { merge: true });
+                await clientSetDoc(clientDoc(clientDb, 'users', docSnap.id), { password: trimmedPassword }, { merge: true });
               } catch (updatePassErr) {
                 console.error("Erro ao curar senha no Firestore:", updatePassErr);
               }
@@ -192,7 +142,8 @@ async function startServer() {
           }
         } else {
           // Buscar na coleção 'couriers' para suporte a entregadores
-          const courierSnapshot = await adminDb.collection('couriers').where('email', '==', trimmedEmail).limit(1).get();
+          const qCouriers = clientQuery(getClientCollection(clientDb, 'couriers'), clientWhere('email', '==', trimmedEmail), clientLimit(1));
+          const courierSnapshot = await getClientDocs(qCouriers);
           if (!courierSnapshot.empty) {
             const docSnap = courierSnapshot.docs[0];
             const data = docSnap.data();
@@ -207,7 +158,7 @@ async function startServer() {
                 console.log(`[Auto-Cura] Sincronizando senha do entregador no Firestore.`);
                 matchedUser.password = trimmedPassword;
                 try {
-                  await adminDb.collection('couriers').doc(docSnap.id).set({ password: trimmedPassword }, { merge: true });
+                  await clientSetDoc(clientDoc(clientDb, 'couriers', docSnap.id), { password: trimmedPassword }, { merge: true });
                 } catch (updatePassErr) {
                   console.error("Erro ao curar senha no entregador do Firestore:", updatePassErr);
                 }
@@ -216,7 +167,7 @@ async function startServer() {
           }
         }
       } catch (dbErr: any) {
-        console.error("Erro ao consultar Firestore via Admin SDK:", dbErr);
+        console.error("Erro ao consultar Firestore via Client SDK:", dbErr);
         throw dbErr;
       }
 
@@ -237,7 +188,7 @@ async function startServer() {
             createdAt: new Date()
           };
           try {
-            await adminDb.collection('users').doc(uid).set(matchedUser);
+            await clientSetDoc(clientDoc(clientDb, 'users', uid), matchedUser);
           } catch (setErr) {
             console.error("Erro ao criar SAAS Admin no Firestore:", setErr);
           }
@@ -281,9 +232,9 @@ async function startServer() {
         if (uid && uid !== oldDocId) {
           matchedUser.id = uid;
           try {
-            await adminDb.collection('users').doc(uid).set(matchedUser, { merge: true });
+            await clientSetDoc(clientDoc(clientDb, 'users', uid), matchedUser, { merge: true });
             if (oldDocId && oldDocId !== uid) {
-              await adminDb.collection('users').doc(oldDocId).delete();
+              await clientDeleteDoc(clientDoc(clientDb, 'users', oldDocId));
             }
             oldDocId = uid;
           } catch (migErr) {
@@ -989,11 +940,11 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
     if (fs.existsSync(distPath)) {
       app.use(express.static(distPath));
 
-      app.use((_req, res) => {
+      app.get("*all", (_req, res) => {
         res.sendFile(path.join(distPath, "index.html"));
       });
     } else {
-      app.use((_req, res) => {
+      app.get("*all", (_req, res) => {
         res.status(500).send("Build do frontend não encontrado.");
       });
     }
@@ -1007,4 +958,4 @@ startServer().catch((err) => {
   process.exit(1);
 });
 
-export { adminDb, adminAuth };
+export { adminDb, adminAuth, clientDb };

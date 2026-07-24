@@ -92,19 +92,11 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
   const kitchenOrders = useMemo(() => {
     // Keep only recent pending/preparing orders (from last 12 hours) to avoid clutter
     const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000);
-    const filtered = orders.filter(o => {
+    return orders.filter(o => {
       const isKitchenStatus = o.status === 'pending' || o.status === 'preparing';
       if (!isKitchenStatus) return false;
       const createdDate = safeParseDate(o.createdAt);
       return createdDate > twelveHoursAgo;
-    });
-
-    // Ordenação FIFO estrita (o pedido lançado primeiro vem em 1º lugar na tela do KDS)
-    return [...filtered].sort((a, b) => {
-      const timeA = safeParseDate(a.createdAt).getTime();
-      const timeB = safeParseDate(b.createdAt).getTime();
-      if (timeA !== timeB) return timeA - timeB;
-      return (a.dailyNumber || 0) - (b.dailyNumber || 0);
     });
   }, [orders]);
 

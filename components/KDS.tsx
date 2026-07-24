@@ -178,27 +178,17 @@ const KDS: React.FC<KDSProps> = memo(({
       return safeParseDate(rawDate);
     };
 
-    // Função de ordenação FIFO estrita (o pedido lançado primeiro vem sempre na frente, posição #1)
-    const sortByFifo = (list: Order[]) => {
-      return [...list].sort((a, b) => {
-        const timeA = safeParseDate(a.createdAt)?.getTime() || 0;
-        const timeB = safeParseDate(b.createdAt)?.getTime() || 0;
-        if (timeA !== timeB) return timeA - timeB;
-        return (a.dailyNumber || 0) - (b.dailyNumber || 0);
-      });
-    };
-
     return {
-      preparing: sortByFifo(filteredOrders.filter(o => 
+      preparing: filteredOrders.filter(o => 
         (o.status === 'preparing' || o.status === 'pending') && isRecent(o.createdAt, 'preparing')
-      )),
-      ready: sortByFifo(filteredOrders.filter(o => 
+      ),
+      ready: filteredOrders.filter(o => 
         o.status === 'ready' && isRecent(o.createdAt, 'ready')
-      )),
-      delivering: sortByFifo(filteredOrders.filter(o => 
+      ),
+      delivering: filteredOrders.filter(o => 
         o.status === 'delivering' && isRecent(o.createdAt, o.status)
-      )),
-      delivered: sortByFifo(filteredOrders.filter(o => {
+      ),
+      delivered: filteredOrders.filter(o => {
         const isDeliveredOrFinished = o.status === 'delivered' || o.status === 'finished';
         if (!isDeliveredOrFinished) return false;
 
@@ -208,7 +198,7 @@ const KDS: React.FC<KDSProps> = memo(({
         }
 
         return (isToday(o.createdAt) || (new Date().getTime() - new Date(o.createdAt).getTime() < 12 * 60 * 60 * 1000)) && !o.isSettled;
-      })).slice(0, 40),
+      }).slice(0, 40),
     };
   }, [filteredOrders, activeFilter, cashSession]);
 
