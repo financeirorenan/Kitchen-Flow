@@ -2062,12 +2062,11 @@ const App: React.FC = () => {
       await setDoc(doc(db, 'financialRecords', id), {
         ...updates,
         updatedAt: new Date()
-      }, { merge: true });
-    } else {
-      await localDb.financialRecords.update(id, updates);
+      }, { merge: true }).catch(e => console.warn("Cloud financial record update error:", e));
     }
+    await localDb.financialRecords.update(id, updates).catch(e => console.warn("Local DB financial record update error:", e));
     setFinancialRecords(prev => prev.map(r => r.id === id ? { ...r, ...updates } : r));
-    addLog('u1', 'FINANCEIRO', `Registro financeiro updated: ${id}`);
+    addLog('u1', 'FINANCEIRO', `Registro financeiro atualizado: ${id}`);
   };
 
   const handleDeleteFinancialRecord = async (id: string) => {
@@ -2847,32 +2846,35 @@ const App: React.FC = () => {
     
     // Se forma de pagamento ou total foi alterada, sincronizar com o lançamento financeiro correspondente
     if (updates.paymentMethod || updates.total !== undefined) {
-      const order = orders.find(o => o.id === id);
-      if (order) {
-        const matchingRecord = financialRecords.find(r => 
-          r.orderId === id ||
-          (r.description && r.description.includes(`#${id.slice(-4)}`))
-        );
-        if (matchingRecord) {
-          const newAmount = updates.total !== undefined ? updates.total : matchingRecord.amount;
-          const newPaymentMethod = updates.paymentMethod || matchingRecord.paymentMethod;
-          
-          let newDescription = matchingRecord.description;
-          if (updates.paymentMethod) {
-            // Substitui "Pagamento: X" por "Pagamento: Y"
-            if (newDescription.includes("Pagamento:")) {
-              newDescription = newDescription.replace(/(Pagamento:\s*)([^\s,]+)/i, `$1${updates.paymentMethod}`);
-            } else {
-              newDescription = `${newDescription} - Pagamento: ${updates.paymentMethod}`;
-            }
+      const order = orders.find(o => o.id === id || o.docId === id);
+      const targetId = order?.id || id;
+      const targetDocId = order?.docId;
+      const shortId = targetId.slice(-4);
+
+      const matchingRecords = financialRecords.filter(r => 
+        r.orderId === targetId ||
+        (targetDocId && r.orderId === targetDocId) ||
+        (r.description && r.description.includes(`#${shortId}`))
+      );
+
+      for (const matchingRecord of matchingRecords) {
+        const newAmount = updates.total !== undefined ? updates.total : matchingRecord.amount;
+        const newPaymentMethod = updates.paymentMethod || matchingRecord.paymentMethod;
+        
+        let newDescription = matchingRecord.description;
+        if (updates.paymentMethod) {
+          if (newDescription.includes("Pagamento:")) {
+            newDescription = newDescription.replace(/(Pagamento:\s*)([^\s,]+)/i, `$1${updates.paymentMethod}`);
+          } else {
+            newDescription = `${newDescription} - Pagamento: ${updates.paymentMethod}`;
           }
-          
-          await handleUpdateFinancialRecord(matchingRecord.id, { 
-            amount: newAmount,
-            paymentMethod: newPaymentMethod,
-            description: newDescription
-          });
         }
+        
+        await handleUpdateFinancialRecord(matchingRecord.id, { 
+          amount: newAmount,
+          paymentMethod: newPaymentMethod,
+          description: newDescription
+        });
       }
     }
 
