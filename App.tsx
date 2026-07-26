@@ -1950,10 +1950,11 @@ const App: React.FC = () => {
       type: record.type || 'expense',
       amount: record.amount || 0,
       feeAmount,
-      paymentMethod: record.paymentMethod,
+      paymentMethod: record.paymentMethod || 'dinheiro',
       category: record.category || 'Outros',
       description: record.description || 'Lançamento manual',
       date: record.date || new Date(),
+      status: record.status || 'paid',
       shiftOpenedAt: cashSession.isOpen ? (cashSession.openedAt || new Date()) : undefined
     };
     
@@ -2365,11 +2366,25 @@ const App: React.FC = () => {
     
     const displayTableNumber = tableInfo ? tableInfo.number : tableId;
 
-    // Buscar pedido ativo/existente desta mesa para NUNCA duplicar pedidos
+    // Buscar pedido ativo/existente desta mesa ou pedido em edição para NUNCA duplicar pedidos
     let activeOrder: Order | undefined = undefined;
 
+    // Priority 0: Se estivemos em modo de edição de pedido no PDV (pdvEditOrder), usar o próprio pedido diretamente
+    if (pdvEditOrder) {
+      activeOrder = orders.find(o => o.id === pdvEditOrder.id) || pdvEditOrder;
+    }
+
+    // Priority 0.5: Se o próprio tableId for o ID de um pedido existente em orders
+    if (!activeOrder && typeof tableId === 'string') {
+      activeOrder = orders.find(o => 
+        (o.id === tableId || o.docId === tableId) && 
+        o.status !== 'cancelled' && 
+        o.status !== 'finished'
+      );
+    }
+
     // Priority 1: Buscar pelo currentOrderId gravado na mesa/comanda se existir (mesmo se 'ready', 'delivered' etc., pois a mesa continua aberta)
-    if (tableInfo?.currentOrderId) {
+    if (!activeOrder && tableInfo?.currentOrderId) {
       activeOrder = orders.find(o => 
         (o.id === tableInfo.currentOrderId || o.docId === tableInfo.currentOrderId) && 
         o.status !== 'cancelled' &&
@@ -4409,13 +4424,14 @@ const App: React.FC = () => {
       });
 
       let recordsDuringSession: FinancialRecord[] = financialRecords.filter(r => {
-        // Prefer shiftOpenedAt link if available for strict session association
+        const isPaid = r.status === 'paid' || !r.status;
+        if (!isPaid) return false;
         if (r.shiftOpenedAt) {
           const shiftDate = parseToDate(r.shiftOpenedAt);
-          return Math.abs(shiftDate.getTime() - openedDate.getTime()) < 5000 && r.status === 'paid'; // 5s tolerance
+          if (Math.abs(shiftDate.getTime() - openedDate.getTime()) < 10000) return true;
         }
         const date = parseToDate(r.date);
-        return date >= openedDate && r.status === 'paid';
+        return date >= openedDate;
       });
 
       // Try to get fresh data if online
@@ -4444,12 +4460,14 @@ const App: React.FC = () => {
               } as FinancialRecord;
             });
             recordsDuringSession = fetchedRecords.filter(r => {
+              const isPaid = r.status === 'paid' || !r.status;
+              if (!isPaid) return false;
               if (r.shiftOpenedAt) {
                 const shiftDate = parseToDate(r.shiftOpenedAt);
-                return Math.abs(shiftDate.getTime() - openedDate.getTime()) < 5000 && r.status === 'paid';
+                if (Math.abs(shiftDate.getTime() - openedDate.getTime()) < 10000) return true;
               }
               const date = parseToDate(r.date);
-              return date >= openedDate && r.status === 'paid';
+              return date >= openedDate;
             });
           }
         } catch (err) {
@@ -4485,11 +4503,11 @@ const App: React.FC = () => {
       });
 
        const cashIncomes = recordsDuringSession
-         .filter(r => r.type === 'income' && r.paymentMethod === 'dinheiro' && r.category === 'Suprimento')
+         .filter(r => (r.category === 'Suprimento' || r.description?.toLowerCase().includes('suprimento')))
          .reduce((acc, r) => acc + (r.amount || 0), 0);
        
        const cashExpenses = recordsDuringSession
-         .filter(r => r.type === 'expense' && r.paymentMethod === 'dinheiro' && r.category === 'Sangria')
+         .filter(r => (r.category === 'Sangria' || r.description?.toLowerCase().includes('sangria')))
          .reduce((acc, r) => acc + (r.amount || 0), 0);
 
       const expectedCash = (cashSession.openingValue || 0) + (salesByMethod.dinheiro || 0) + cashIncomes - cashExpenses;

@@ -615,11 +615,24 @@ const Tables: React.FC<TablesProps> = memo(
       const sessionOpenedAt = parseToDate(cashSession.openedAt);
 
       const sessionRecords = financialRecords.filter((r) => {
+        const isPaid = r.status === "paid" || !r.status;
+        if (!isPaid) return false;
+
+        if (r.shiftOpenedAt) {
+          const shiftDate = parseToDate(r.shiftOpenedAt);
+          if (Math.abs(shiftDate.getTime() - sessionOpenedAt.getTime()) < 10000) {
+            return true;
+          }
+        }
+
         const date = parseToDate(r.date);
         return (
           date >= sessionOpenedAt &&
-          r.status === "paid" &&
-          getStandardPaymentMethod(r.paymentMethod || "") === "dinheiro"
+          (getStandardPaymentMethod(r.paymentMethod || "dinheiro") === "dinheiro" ||
+            r.category === "Suprimento" ||
+            r.category === "Sangria" ||
+            r.description?.toLowerCase().includes("suprimento") ||
+            r.description?.toLowerCase().includes("sangria"))
         );
       });
 
@@ -631,12 +644,12 @@ const Tables: React.FC<TablesProps> = memo(
       // Monetary sums should exclude automated sale records (which already exist in sessionOrders)
       // and also exclude the opening cash record itself to avoid double counting
       const extraIncomes = sessionRecords
-        .filter((r) => r.category === "Suprimento")
-        .reduce((acc, r) => acc + (r.type === "income" ? r.amount : 0), 0);
+        .filter((r) => r.category === "Suprimento" || r.description?.toLowerCase().includes("suprimento"))
+        .reduce((acc, r) => acc + (r.amount || 0), 0);
 
       const extraExpenses = sessionRecords
-        .filter((r) => r.category === "Sangria")
-        .reduce((acc, r) => acc + (r.type === "expense" ? r.amount : 0), 0);
+        .filter((r) => r.category === "Sangria" || r.description?.toLowerCase().includes("sangria"))
+        .reduce((acc, r) => acc + (r.amount || 0), 0);
 
       const totalsByMethod = {
         dinheiro: 0,
@@ -1265,7 +1278,9 @@ const Tables: React.FC<TablesProps> = memo(
 
       setIsSendingToKitchen(true);
       setTimeout(() => {
-        onSendToKitchen(selectedTable.id, unsentItems, isCounterContext);
+        // Se estivermos em modo de edição de pedido (pdvEditOrder), usar o ID do pedido diretamente
+        const targetId = pdvEditOrder ? pdvEditOrder.id : selectedTable.id;
+        onSendToKitchen(targetId, unsentItems, isCounterContext);
 
         // Marcar itens como enviados no estado local
         const updatedItems = selectedTable.items.map((item) => ({
@@ -1283,11 +1298,102 @@ const Tables: React.FC<TablesProps> = memo(
           prev ? { ...prev, items: updatedItems } : null,
         );
 
+        // Se estiver editando um pedido vindo de KDS/Delivery, sincronizar as alterações do pedido
+        if (pdvEditOrder && onUpdateOrder) {
+          const deliveryFeeVal = isDeliveryOrder && isCounterContext ? parseCurrency(deliveryFeeInput) : 0;
+          onUpdateOrder(pdvEditOrder.id, {
+            items: updatedItems,
+            total: selectedTable.total + deliveryFeeVal + (additionalFee || 0) - (discount || 0),
+            customerName: customerName || undefined,
+            customerPhone: customerPhone || undefined,
+            customerAddress: deliveryAddress || undefined,
+            deliveryFee: isDeliveryOrder ? deliveryFeeVal : undefined,
+          });
+        }
+
         setIsSendingToKitchen(false);
         setShowKitchenSuccess(true);
         setTimeout(() => setShowKitchenSuccess(false), 3000);
       }, 1000);
-    }, [selectedTable, isCounterContext, onSendToKitchen, onUpdateTable]);
+    }, [
+      selectedTable,
+      isCounterContext,
+      onSendToKitchen,
+      onUpdateTable,
+      pdvEditOrder,
+      onUpdateOrder,
+      isDeliveryOrder,
+      deliveryFeeInput,
+      additionalFee,
+      discount,
+      customerName,
+      customerPhone,
+      deliveryAddress,
+    ]);
+
+    const handleSavePdvEditOrder = useCallback(() => {
+      if (!pdvEditOrder || !selectedTable || !onUpdateOrder) return;
+
+      const deliveryFeeVal = isDeliveryOrder && isCounterContext ? parseCurrency(deliveryFeeInput) : 0;
+      const updatedTotal =
+        selectedTable.total +
+        deliveryFeeVal +
+        (additionalFee || 0) -
+        (discount || 0);
+
+      const updatedItems = selectedTable.items.map((item) => ({
+        ...item,
+        sentToKitchen: true,
+      }));
+
+      onUpdateOrder(pdvEditOrder.id, {
+        items: updatedItems,
+        total: updatedTotal,
+        customerName: customerName || undefined,
+        customerPhone: customerPhone || undefined,
+        customerAddress: deliveryAddress || undefined,
+        deliveryFee: isDeliveryOrder ? deliveryFeeVal : undefined,
+        paymentMethod: selectedPaymentMethod || pdvEditOrder.paymentMethod,
+        type: isDeliveryOrder
+          ? "delivery"
+          : isCounterContext
+            ? "takeout"
+            : "table",
+        customerId: selectedCustomerId || undefined,
+        additionalFee: additionalFee || 0,
+        additionalFeeReason: additionalFeeReason || "",
+        discount: discount || 0,
+      });
+
+      if (showToast) {
+        showToast(
+          `Pedido #${pdvEditOrder.dailyNumber || pdvEditOrder.id.slice(-4)} atualizado com sucesso!`,
+          "success",
+        );
+      }
+
+      if (onCancelPdvEdit) {
+        onCancelPdvEdit();
+      }
+      setSelectedTable(null);
+    }, [
+      pdvEditOrder,
+      selectedTable,
+      onUpdateOrder,
+      isDeliveryOrder,
+      isCounterContext,
+      deliveryFeeInput,
+      additionalFee,
+      discount,
+      customerName,
+      customerPhone,
+      deliveryAddress,
+      selectedPaymentMethod,
+      selectedCustomerId,
+      additionalFeeReason,
+      showToast,
+      onCancelPdvEdit,
+    ]);
 
     const openPayment = useCallback(() => {
       if (!selectedTable) return;
@@ -3341,11 +3447,13 @@ const Tables: React.FC<TablesProps> = memo(
                   </div>
                   <div>
                     <h2 className="text-sm lg:text-xl font-black text-slate-800 flex items-center gap-2">
-                      Vender{" "}
-                      <span className="bg-indigo-100 text-indigo-700 px-2 lg:px-3 py-0.5 rounded-full text-[8px] lg:text-xs uppercase tracking-widest">
-                        {isCounterContext
-                          ? "PDV BALCÃO"
-                          : `MESA ${selectedTable.id}`}
+                      {pdvEditOrder ? "Atualizar" : "Vender"}{" "}
+                      <span className={`${pdvEditOrder ? 'bg-amber-100 text-amber-800' : 'bg-indigo-100 text-indigo-700'} px-2 lg:px-3 py-0.5 rounded-full text-[8px] lg:text-xs uppercase tracking-widest font-black`}>
+                        {pdvEditOrder
+                          ? `PEDIDO #${pdvEditOrder.dailyNumber || pdvEditOrder.id.slice(-4)}`
+                          : isCounterContext
+                            ? "PDV BALCÃO"
+                            : `MESA ${selectedTable.id}`}
                       </span>
                     </h2>
                   </div>
@@ -3820,16 +3928,27 @@ const Tables: React.FC<TablesProps> = memo(
                   >
                     Cancelar Venda
                   </button>
-                  <button
-                    onClick={() => setShowTransferModal(true)}
-                    disabled={
-                      isCounterContext || selectedTable.items.length === 0
-                    }
-                    className="flex-1 sm:px-8 py-3 lg:py-4 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-xl lg:rounded-2xl font-black text-[10px] lg:text-xs uppercase tracking-widest hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                  >
-                    <ArrowRightLeft size={14} />
-                    Transferir
-                  </button>
+                  {!pdvEditOrder && (
+                    <button
+                      onClick={() => setShowTransferModal(true)}
+                      disabled={
+                        isCounterContext || selectedTable.items.length === 0
+                      }
+                      className="flex-1 sm:px-8 py-3 lg:py-4 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-xl lg:rounded-2xl font-black text-[10px] lg:text-xs uppercase tracking-widest hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      <ArrowRightLeft size={14} />
+                      Transferir
+                    </button>
+                  )}
+                  {pdvEditOrder && (
+                    <button
+                      onClick={handleSavePdvEditOrder}
+                      className="flex-1 sm:px-8 py-3 lg:py-4 bg-emerald-600 text-white rounded-xl lg:rounded-2xl font-black text-[10px] lg:text-xs uppercase tracking-widest hover:bg-emerald-700 transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-100"
+                    >
+                      <Save size={16} />
+                      Salvar Alterações
+                    </button>
+                  )}
                   <button
                     onClick={handleSendToKitchenLocal}
                     disabled={
