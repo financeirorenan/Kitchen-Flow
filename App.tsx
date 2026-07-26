@@ -3352,16 +3352,21 @@ const App: React.FC = () => {
       determinedStatus = (activeStatus === 'ready' || activeStatus === 'delivering' || activeStatus === 'delivered') ? activeStatus : 'preparing';
     } else if (activeStatus === 'preparing' || activeStatus === 'ready' || activeStatus === 'pending') {
       determinedStatus = activeStatus;
+    } else if (isCounter) {
+      // Pedidos de balcão recém-lançados/pagos devem ir para o KDS de produção ('preparing') para a cozinha preparar
+      determinedStatus = 'preparing';
     } else if (table.items.some(i => i.sentToKitchen)) {
       determinedStatus = 'preparing';
     } else {
       determinedStatus = 'finished';
     }
 
+    const preparedItems = table.items.map(i => ({ ...i, sentToKitchen: true }));
+
     const rawOrder: Order = {
       id: targetOrderId,
       tableNumber: isCounter ? undefined : tableNumber,
-      items: table.items,
+      items: preparedItems,
       total: finalTotal,
       type: isRealDelivery ? 'delivery' : (isCounter ? 'takeout' : 'table'),
       status: determinedStatus,

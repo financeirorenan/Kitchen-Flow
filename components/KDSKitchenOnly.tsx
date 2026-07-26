@@ -115,8 +115,12 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
   const filteredKitchenOrders = useMemo(() => {
     const list = kitchenOrders.filter(order => {
       // 1. Filter by order type
-      if (activeFilter !== 'all' && order.type !== activeFilter) {
-        return false;
+      if (activeFilter !== 'all') {
+        if (activeFilter === 'takeout' && order.type !== 'takeout' && order.type !== 'counter') {
+          return false;
+        } else if (activeFilter !== 'takeout' && order.type !== activeFilter) {
+          return false;
+        }
       }
 
       // 2. Filter by station (category)
