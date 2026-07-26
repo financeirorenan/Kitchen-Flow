@@ -526,6 +526,8 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const path = location.pathname;
+    const parts = path.split('/').filter(Boolean);
+
     if (path.startsWith('/marketplace') || path.startsWith('/perfil') || path.startsWith('/cardapio') || path.startsWith('/c/') || path.startsWith('/m/')) {
       if (currentProject !== 'MARKETPLACE') setCurrentProject('MARKETPLACE');
     } else if (path === '/' || path.startsWith('/site') || path.startsWith('/kitchenflow')) {
@@ -541,7 +543,9 @@ const App: React.FC = () => {
           return;
         }
         if (!isSuperAdmin) {
-          navigate('/lojista', { replace: true });
+          const userTenant = currentUserData.tenantId;
+          const targetUrl = userTenant ? `/lojista/${userTenant}` : '/lojista';
+          navigate(targetUrl, { replace: true });
           setCurrentProject('RESTAURANT');
           setActiveTab('merchant-copilot');
           return;
@@ -555,7 +559,7 @@ const App: React.FC = () => {
       }
       if (currentProject !== 'PLATFORM') setCurrentProject('PLATFORM');
       if (activeTab === 'merchant-copilot') setActiveTab('saas-admin');
-    } else if (path.startsWith('/lojista') || path.startsWith('/painel') || path.startsWith('/admin')) {
+    } else if (path.startsWith('/lojista') || path.startsWith('/painel') || path.startsWith('/admin') || path.startsWith('/loja')) {
       if (currentUserData) {
         if (currentUserData.role === 'COURIER') {
           navigate('/entregador', { replace: true });
@@ -570,6 +574,27 @@ const App: React.FC = () => {
           navigate('/marketplace', { replace: true });
           return;
         }
+
+        const urlTenantParam = parts[1];
+        const userTenantId = currentUserData.tenantId;
+
+        if (isSuperAdmin) {
+          if (urlTenantParam && urlTenantParam !== viewingTenantId) {
+            setViewingTenantId(urlTenantParam);
+          }
+        } else {
+          // Lojista acessando o painel
+          if (userTenantId) {
+            if (urlTenantParam && urlTenantParam !== userTenantId && urlTenantParam !== tenantData?.slug) {
+              showToast("Acesso restrito: Você só tem permissão para acessar o painel da sua loja.", "warning");
+              navigate(`/lojista/${userTenantId}`, { replace: true });
+              return;
+            } else if (!urlTenantParam) {
+              navigate(`/lojista/${userTenantId}`, { replace: true });
+              return;
+            }
+          }
+        }
       }
       if (currentProject !== 'RESTAURANT') setCurrentProject('RESTAURANT');
       if (activeTab === 'saas-admin' || activeTab === 'courier-app') setActiveTab('merchant-copilot');
@@ -579,7 +604,7 @@ const App: React.FC = () => {
     } else if (path.startsWith('/marketplace') || path.startsWith('/perfil')) {
       if (currentProject !== 'MARKETPLACE') setCurrentProject('MARKETPLACE');
     }
-  }, [location.pathname, isSuperAdmin, currentProject, activeTab, navigate, currentUserData]);
+  }, [location.pathname, isSuperAdmin, currentProject, activeTab, navigate, currentUserData, tenantData?.slug, viewingTenantId]);
 
   useEffect(() => {
     (window as any).setActiveTab = (tab: string) => {
@@ -598,7 +623,7 @@ const App: React.FC = () => {
     setViewingTenantLogo(logo || null);
     setCurrentProject('RESTAURANT');
     setActiveTab('merchant-copilot');
-    navigate('/lojista');
+    navigate(`/lojista/${tenantId}`);
     
     if (currentUserData) {
       addLog(currentUserData.id, 'SAAS_AUDIT', `Super Admin iniciou suporte/visualização do parceiro: ${name || tenantId}`);

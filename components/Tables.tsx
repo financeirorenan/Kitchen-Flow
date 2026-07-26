@@ -4724,10 +4724,13 @@ const Tables: React.FC<TablesProps> = memo(
 
                   {!isSplitting && remainingBalance > 0 && (
                     <button
-                      onClick={() => setIsSplitting(true)}
+                      onClick={() => {
+                        setIsSplitting(true);
+                        setSplitMode(null);
+                      }}
                       className="w-full flex items-center justify-center gap-2 py-3 lg:py-4 bg-indigo-50 text-indigo-600 border-2 border-indigo-100 rounded-xl lg:rounded-2xl font-black text-[9px] lg:text-[10px] uppercase tracking-widest hover:bg-indigo-100 transition-all"
                     >
-                      <Calculator size={16} /> Dividir Conta
+                      <Calculator size={16} /> Pagamento Parcial / Dividir Conta
                     </button>
                   )}
                 </div>
@@ -4794,62 +4797,70 @@ const Tables: React.FC<TablesProps> = memo(
                       <div className="space-y-8 h-full flex flex-col">
                         {isSplitting && !splitMode && (
                           <div className="space-y-6 animate-in fade-in duration-300">
-                            <h3 className="text-lg font-black text-slate-800">
-                              Como deseja dividir?
-                            </h3>
+                            <div>
+                              <h3 className="text-xl font-black text-slate-800">
+                                Pagamento Parcial
+                              </h3>
+                              <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-wider">
+                                Como deseja lançar este pagamento parcial?
+                              </p>
+                            </div>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                               <button
                                 onClick={() => setSplitMode("value")}
-                                className="p-8 rounded-[2rem] border-2 border-slate-100 bg-white hover:border-indigo-500 hover:shadow-lg transition-all text-left flex flex-col gap-4 group"
+                                className="p-6 rounded-[2rem] border-2 border-indigo-100 bg-white hover:border-indigo-600 hover:bg-indigo-50/50 hover:shadow-lg transition-all text-left flex flex-col gap-4 group"
                               >
-                                <div className="p-4 bg-indigo-50 text-indigo-600 rounded-2xl w-fit group-hover:bg-indigo-600 group-hover:text-white transition-all">
-                                  <DollarSign size={24} />
+                                <div className="p-4 bg-indigo-50 text-indigo-600 rounded-2xl w-fit group-hover:bg-indigo-600 group-hover:text-white transition-all shadow-sm">
+                                  <DollarSign size={28} />
                                 </div>
                                 <div>
-                                  <p className="font-black text-slate-800">
-                                    Valor Específico
+                                  <p className="font-black text-slate-800 text-base">
+                                    Pagar por Valor Específico
                                   </p>
-                                  <p className="text-[10px] font-bold text-slate-400 uppercase">
-                                    Defina o quanto pagar agora
+                                  <p className="text-xs font-semibold text-slate-500 mt-1 leading-relaxed">
+                                    Informe um valor em dinheiro ou fração para abater do saldo total (Restante: R$ {remainingBalance.toFixed(2)}).
                                   </p>
                                 </div>
                               </button>
                               <button
                                 onClick={() => setSplitMode("items")}
-                                className="p-8 rounded-[2rem] border-2 border-slate-100 bg-white hover:border-indigo-500 hover:shadow-lg transition-all text-left flex flex-col gap-4 group"
+                                className="p-6 rounded-[2rem] border-2 border-emerald-100 bg-white hover:border-emerald-600 hover:bg-emerald-50/50 hover:shadow-lg transition-all text-left flex flex-col gap-4 group"
                               >
-                                <div className="p-4 bg-emerald-50 text-emerald-600 rounded-2xl w-fit group-hover:bg-emerald-600 group-hover:text-white transition-all">
-                                  <ListChecks size={24} />
+                                <div className="p-4 bg-emerald-50 text-emerald-600 rounded-2xl w-fit group-hover:bg-emerald-600 group-hover:text-white transition-all shadow-sm">
+                                  <ListChecks size={28} />
                                 </div>
                                 <div>
-                                  <p className="font-black text-slate-800">
-                                    Por Itens
+                                  <p className="font-black text-slate-800 text-base">
+                                    Pagar por Produtos / Itens
                                   </p>
-                                  <p className="text-[10px] font-bold text-slate-400 uppercase">
-                                    Selecione o que pagar
+                                  <p className="text-xs font-semibold text-slate-500 mt-1 leading-relaxed">
+                                    Selecione individualmente os produtos do pedido a serem pagos nesta etapa.
                                   </p>
                                 </div>
                               </button>
                             </div>
                             <button
-                              onClick={() => setIsSplitting(false)}
-                              className="text-xs font-black text-slate-400 uppercase tracking-widest hover:text-rose-500 transition-colors"
+                              onClick={() => {
+                                setIsSplitting(false);
+                                setSplitMode(null);
+                              }}
+                              className="text-xs font-black text-slate-400 uppercase tracking-widest hover:text-rose-500 transition-colors pt-2 block"
                             >
-                              Voltar ao pagamento total
+                              ← Voltar ao Pagamento Total
                             </button>
                           </div>
                         )}
 
                         {(!isSplitting || (isSplitting && splitMode)) && (
                           <div className="space-y-8 animate-in slide-in-from-right-4 duration-300 flex-1 flex flex-col">
-                            <div className="flex justify-between items-end">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                               <div>
                                 <h3 className="text-xl font-black text-slate-800">
                                   {isSplitting
                                     ? splitMode === "value"
-                                      ? "Lançar Valor Manual"
-                                      : "Pagar Itens Selecionados"
-                                    : "Pagamento"}
+                                      ? "Pagamento Parcial por Valor"
+                                      : "Pagamento Parcial por Produtos"
+                                    : "Pagamento Total"}
                                 </h3>
                                 <p className="text-[10px] font-black uppercase text-indigo-600 tracking-widest">
                                   {remainingBalance <
@@ -4859,17 +4870,46 @@ const Tables: React.FC<TablesProps> = memo(
                                       : 0) +
                                     additionalFee -
                                     discount
-                                    ? "Pagamento Parcial"
+                                    ? "Saldo Restante R$ " + remainingBalance.toFixed(2)
                                     : "Etapa final do despacho"}
                                 </p>
                               </div>
-                              {splitMode && (
-                                <button
-                                  onClick={() => setSplitMode(null)}
-                                  className="text-xs font-bold text-slate-400 hover:text-indigo-600"
-                                >
-                                  Alterar Modo
-                                </button>
+
+                              {isSplitting && (
+                                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl border border-slate-200 self-start sm:self-auto">
+                                  <button
+                                    onClick={() => setSplitMode("value")}
+                                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 ${
+                                      splitMode === "value"
+                                        ? "bg-white text-indigo-600 shadow-sm"
+                                        : "text-slate-500 hover:text-slate-800"
+                                    }`}
+                                  >
+                                    <DollarSign size={14} />
+                                    Por Valor
+                                  </button>
+                                  <button
+                                    onClick={() => setSplitMode("items")}
+                                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 ${
+                                      splitMode === "items"
+                                        ? "bg-white text-emerald-600 shadow-sm"
+                                        : "text-slate-500 hover:text-slate-800"
+                                    }`}
+                                  >
+                                    <ListChecks size={14} />
+                                    Por Produtos
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setIsSplitting(false);
+                                      setSplitMode(null);
+                                    }}
+                                    className="px-2.5 py-1.5 rounded-xl text-[10px] font-bold text-slate-400 hover:text-rose-600 hover:bg-slate-200 transition-all uppercase tracking-wider ml-1"
+                                    title="Cancelar Pagamento Parcial"
+                                  >
+                                    Total
+                                  </button>
+                                </div>
                               )}
                             </div>
 
@@ -4884,11 +4924,11 @@ const Tables: React.FC<TablesProps> = memo(
                                       <button
                                         onClick={() => {
                                           setIsSplitting(true);
-                                          setSplitMode("value");
+                                          setSplitMode(null);
                                         }}
                                         className="text-[10px] font-black text-indigo-600 uppercase tracking-widest hover:underline"
                                       >
-                                        Pagar Parcial
+                                        Pagamento Parcial
                                       </button>
                                     )}
                                   </div>
