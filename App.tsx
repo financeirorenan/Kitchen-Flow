@@ -542,8 +542,16 @@ const App: React.FC = () => {
         }
         if (!isSuperAdmin) {
           navigate('/lojista', { replace: true });
+          setCurrentProject('RESTAURANT');
+          setActiveTab('merchant-copilot');
           return;
         }
+      } else if (!isSuperAdmin) {
+        // Se ainda estiver carregando os dados do usuário e não for superadmin reconhecido, evita PLATFORM
+        navigate('/lojista', { replace: true });
+        setCurrentProject('RESTAURANT');
+        setActiveTab('merchant-copilot');
+        return;
       }
       if (currentProject !== 'PLATFORM') setCurrentProject('PLATFORM');
       if (activeTab === 'merchant-copilot') setActiveTab('saas-admin');
@@ -1506,6 +1514,14 @@ const App: React.FC = () => {
       return;
     }
 
+    // Bloqueia tentativas de acessar a aba ou projeto SaaS Admin sem ser Super Admin
+    if ((activeTab === 'saas-admin' || currentProject === 'PLATFORM') && !isSuperAdmin) {
+      if (currentProject === 'PLATFORM') setCurrentProject('RESTAURANT');
+      setActiveTab('merchant-copilot');
+      navigate('/lojista', { replace: true });
+      return;
+    }
+
     // Verify if activeTab matches permitted menus
     const tabPermissions: Record<string, string> = {
       'merchant-copilot': 'finance_view',
@@ -1834,7 +1850,7 @@ const App: React.FC = () => {
 
           if (change.type === 'added' || change.type === 'modified') {
             if (isPending) {
-              const cloudOrder = { ...docData, id: change.doc.id } as Order;
+              const cloudOrder = { ...docData, id: change.doc.id, docId: change.doc.id } as Order;
               
               const createdAt = cloudOrder.createdAt instanceof Date 
                 ? cloudOrder.createdAt 
@@ -1847,8 +1863,14 @@ const App: React.FC = () => {
               }
 
               try {
+                if ((cloudOrder.createdAt as any)?.toDate) {
+                  cloudOrder.createdAt = (cloudOrder.createdAt as any).toDate();
+                } else if (cloudOrder.createdAt) {
+                  cloudOrder.createdAt = new Date(cloudOrder.createdAt);
+                }
+
                 const localOrder = await localDb.orders.get(cloudOrder.id);
-                // Ignore if already processed or in a final state locally
+                // Ignore notify if already processed or in a final state locally
                 if (localOrder && (['preparing', 'ready', 'delivering', 'delivered', 'cancelled', 'finished'].includes(localOrder.status))) {
                   console.log(`Sync: Order ${cloudOrder.id} already in state ${localOrder.status}, ignoring duplicate notify.`);
                   return;
@@ -1857,12 +1879,6 @@ const App: React.FC = () => {
                 // Double check if it's already in the main state to prevent UI flickers
                 if (ordersRef.current.some(o => o.id === cloudOrder.id && (['preparing', 'ready', 'delivering', 'delivered', 'cancelled', 'finished'].includes(o.status)))) {
                   return;
-                }
-
-                if ((cloudOrder.createdAt as any)?.toDate) {
-                  cloudOrder.createdAt = (cloudOrder.createdAt as any).toDate();
-                } else if (cloudOrder.createdAt) {
-                  cloudOrder.createdAt = new Date(cloudOrder.createdAt);
                 }
                 
                 // Notify about new marketplace/digital order
@@ -1891,6 +1907,16 @@ const App: React.FC = () => {
                    return;
                 }
 
+                // Se não for aceito automaticamente, salva na lista principal e na fila de pendentes
+                await localDb.orders.put(cloudOrder);
+                setOrders(prev => {
+                  const exists = prev.some(o => o.id === cloudOrder.id || o.docId === cloudOrder.docId);
+                  if (exists) {
+                    return prev.map(o => (o.id === cloudOrder.id || o.docId === cloudOrder.docId) ? { ...o, ...cloudOrder } : o);
+                  }
+                  return [cloudOrder, ...prev];
+                });
+
                 setIncomingDigitalOrders(prev => {
                   if (prev.some(o => o.id === cloudOrder.id)) return prev;
                   return [cloudOrder, ...prev];
@@ -1900,11 +1926,62 @@ const App: React.FC = () => {
                 console.error("Error processing cloud order:", err);
               }
             } else {
-              // Se foi modificado e não é mais pending, removemos da fila de pendentes (foi aceito ou recusado)
-              setIncomingDigitalOrders(prev => prev.filter(o => o.id !== change.doc.id));
+              // Quando o pedido é modificado em tempo real para qualquer status (preparing, ready, delivering, delivered, cancelled, finished)
+              const cloudOrder = { ...docData, id: docData.id || change.doc.id, docId: change.doc.id } as Order;
+              
+              // Normalizar datas do Firestore
+              if ((cloudOrder.createdAt as any)?.toDate) cloudOrder.createdAt = (cloudOrder.createdAt as any).toDate();
+              else if (cloudOrder.createdAt) cloudOrder.createdAt = new Date(cloudOrder.createdAt);
+
+              if ((cloudOrder.updatedAt as any)?.toDate) cloudOrder.updatedAt = (cloudOrder.updatedAt as any).toDate();
+              else if (cloudOrder.updatedAt) cloudOrder.updatedAt = new Date(cloudOrder.updatedAt);
+
+              if ((cloudOrder.acceptedAt as any)?.toDate) cloudOrder.acceptedAt = (cloudOrder.acceptedAt as any).toDate();
+              else if (cloudOrder.acceptedAt) cloudOrder.acceptedAt = new Date(cloudOrder.acceptedAt);
+
+              if ((cloudOrder.readyAt as any)?.toDate) cloudOrder.readyAt = (cloudOrder.readyAt as any).toDate();
+              else if (cloudOrder.readyAt) cloudOrder.readyAt = new Date(cloudOrder.readyAt);
+
+              if ((cloudOrder.dispatchedAt as any)?.toDate) cloudOrder.dispatchedAt = (cloudOrder.dispatchedAt as any).toDate();
+              else if (cloudOrder.dispatchedAt) cloudOrder.dispatchedAt = new Date(cloudOrder.dispatchedAt);
+
+              if ((cloudOrder.deliveredAt as any)?.toDate) cloudOrder.deliveredAt = (cloudOrder.deliveredAt as any).toDate();
+              else if (cloudOrder.deliveredAt) cloudOrder.deliveredAt = new Date(cloudOrder.deliveredAt);
+
+              if ((cloudOrder.finishedAt as any)?.toDate) cloudOrder.finishedAt = (cloudOrder.finishedAt as any).toDate();
+              else if (cloudOrder.finishedAt) cloudOrder.finishedAt = new Date(cloudOrder.finishedAt);
+
+              if ((cloudOrder.completedAt as any)?.toDate) cloudOrder.completedAt = (cloudOrder.completedAt as any).toDate();
+              else if (cloudOrder.completedAt) cloudOrder.completedAt = new Date(cloudOrder.completedAt);
+
+              // Remover da fila de digitais pendentes se deixou de ser pending
+              setIncomingDigitalOrders(prev => prev.filter(o => o.id !== change.doc.id && o.id !== cloudOrder.id));
+
+              // Atualizar banco local e estado global em tempo real para sincronização entre Admin, Cozinha, Garçom e Entregas
+              try {
+                await localDb.orders.put(cloudOrder);
+              } catch (e) {
+                console.warn("Local DB sync warning:", e);
+              }
+
+              setOrders(prev => {
+                const idx = prev.findIndex(o => o.id === cloudOrder.id || o.docId === cloudOrder.docId);
+                if (idx !== -1) {
+                  const updatedList = [...prev];
+                  updatedList[idx] = { ...updatedList[idx], ...cloudOrder };
+                  return updatedList;
+                }
+                return [cloudOrder, ...prev];
+              });
             }
           } else if (change.type === 'removed') {
             setIncomingDigitalOrders(prev => prev.filter(o => o.id !== change.doc.id));
+            setOrders(prev => prev.filter(o => o.id !== change.doc.id && o.docId !== change.doc.id));
+            try {
+              await localDb.orders.delete(change.doc.id);
+            } catch (e) {
+              console.warn("Local DB delete error:", e);
+            }
           }
         });
       }, (error) => {
@@ -4970,7 +5047,7 @@ const App: React.FC = () => {
               )}
 
               <div className={`flex-1 custom-scrollbar ${isKDSOnlyUser ? 'h-screen max-h-screen overflow-hidden flex flex-col p-0' : (activeTab === 'kds' || activeTab === 'kds-kitchen-only' || activeTab === 'order-monitor') ? 'h-[calc(100vh-64px)] lg:h-[calc(100vh-20px)] overflow-hidden flex flex-col p-1' : 'overflow-y-auto max-h-screen p-1'}`}>
-          {currentProject === 'PLATFORM' ? (
+          {currentProject === 'PLATFORM' && isSuperAdmin ? (
             <SaaSAdmin 
               activeTab={activeTab}
               onViewTenant={handleViewTenant} 
@@ -4982,6 +5059,22 @@ const App: React.FC = () => {
                 }
               }}
             />
+          ) : currentProject === 'PLATFORM' && !isSuperAdmin ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-slate-50 min-h-[60vh]">
+              <div className="w-16 h-16 bg-red-100 text-red-600 rounded-3xl flex items-center justify-center mb-4 border border-red-200 shadow-sm">
+                <ShieldAlert size={32} />
+              </div>
+              <h2 className="text-xl font-black text-slate-800">Acesso Restrito ao SaaS Admin</h2>
+              <p className="text-sm text-slate-500 max-w-md mt-2 leading-relaxed">
+                Sua conta não possui privilégios de Administrador da Plataforma. Você foi redirecionado para o painel da sua loja.
+              </p>
+              <button 
+                onClick={() => { setCurrentProject('RESTAURANT'); setActiveTab('merchant-copilot'); navigate('/lojista'); }}
+                className="mt-6 px-6 py-3 bg-brand-primary text-white rounded-2xl font-bold text-sm shadow-md hover:bg-brand-primary/90 transition-all active:scale-95"
+              >
+                Ir para o Painel da Loja
+              </button>
+            </div>
           ) : (
             <>
               {/* Alertas de Consumo de Assinatura */}
