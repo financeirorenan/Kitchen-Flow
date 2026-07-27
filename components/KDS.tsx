@@ -344,8 +344,8 @@ const KDS: React.FC<KDSProps> = memo(({
              }, {});
 
              return (
-                <div className="border-t border-slate-100 pt-2.5 space-y-3">
-                   <p className="text-[9px] font-extrabold tracking-wider uppercase text-slate-400">Itens do Pedido</p>
+                <div className="border-t border-slate-100 pt-2.5 space-y-3 max-h-52 overflow-y-auto custom-scrollbar pr-1">
+                   <p className="text-[9px] font-extrabold tracking-wider uppercase text-slate-400">Itens do Pedido ({order.items.length})</p>
                    <div className="space-y-3">
                       {Object.entries(itemsByCategory).map(([category, items]) => (
                          <div key={category} className="space-y-1">

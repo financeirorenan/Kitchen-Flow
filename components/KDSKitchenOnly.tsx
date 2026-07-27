@@ -425,7 +425,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.8 }}
                     transition={{ type: "spring", stiffness: 220, damping: 22 }}
-                    className={`border rounded-3xl flex flex-col overflow-hidden shadow-xl transition-all relative ${
+                    className={`border rounded-3xl flex flex-col overflow-hidden shadow-xl transition-all relative h-[420px] ${
                       isLight
                         ? isPreparing
                           ? 'bg-white border-indigo-300 shadow-indigo-100'
@@ -439,7 +439,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                     <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${isPreparing ? 'bg-indigo-500' : 'bg-rose-500'}`} />
 
                     {/* Ticket Header */}
-                    <div className={`p-4 border-b flex flex-col gap-2 pl-6 ${
+                    <div className={`p-4 border-b flex flex-col gap-2 pl-6 shrink-0 ${
                       isLight ? 'bg-slate-50/80 border-slate-200' : 'bg-slate-900/40 border-slate-800/80'
                     }`}>
                       <div className="flex items-center justify-between">
@@ -476,16 +476,37 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                       </div>
                     </div>
 
-                    {/* Cooking Checklist items */}
-                    <div className="flex-1 p-4 space-y-3.5">
-                      <div className={`flex items-center justify-between text-[10px] font-black uppercase tracking-widest border-b pb-1.5 ${
-                        isLight ? 'text-slate-400 border-slate-200' : 'text-slate-500 border-slate-800/50'
+                    {/* Cooking Checklist items with internal scrollable container */}
+                    <div className="flex-1 min-h-0 p-3 sm:p-4 overflow-y-auto custom-scrollbar flex flex-col gap-3">
+                      <div className={`flex items-center justify-between text-[10px] font-black uppercase tracking-widest border-b pb-1.5 sticky top-0 z-10 py-1 ${
+                        isLight ? 'text-slate-400 border-slate-200 bg-white' : 'text-slate-500 border-slate-800/50 bg-slate-900'
                       }`}>
-                        <span>PRATOS / INGREDIENTES</span>
+                        <span className="flex items-center gap-1.5">
+                          PRATOS / INGREDIENTES
+                          <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-bold ${
+                            isLight ? 'bg-slate-100 text-slate-600' : 'bg-slate-800 text-slate-300'
+                          }`}>
+                            {itemsToDisplay.length}
+                          </span>
+                        </span>
                         <span>QTD</span>
                       </div>
 
-                      <div className="space-y-3">
+                      {/* Order level observation if present */}
+                      {(order.observations || order.notes) && (
+                        <div className={`p-2.5 rounded-xl border text-xs font-black flex items-start gap-2 ${
+                          isLight
+                            ? 'bg-amber-50/80 border-amber-200 text-amber-900'
+                            : 'bg-amber-950/40 border-amber-800/50 text-amber-300'
+                        }`}>
+                          <span className="shrink-0 text-sm">📝</span>
+                          <span className="whitespace-pre-line leading-tight">
+                            OBS GERAL: {order.observations || order.notes}
+                          </span>
+                        </div>
+                      )}
+
+                      <div className="space-y-2.5">
                         {itemsToDisplay.map((item, idx) => {
                           const itemKey = `${order.id}-${idx}`;
                           const isChecked = !!orderCheckedState[itemKey];
@@ -585,7 +606,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                     </div>
 
                     {/* Actions Panel */}
-                    <div className={`p-3 border-t grid grid-cols-2 gap-2 ${
+                    <div className={`p-3 border-t grid grid-cols-2 gap-2 shrink-0 ${
                       isLight ? 'bg-slate-50/80 border-slate-200' : 'bg-slate-900/30 border-slate-800/80'
                     }`}>
                       {/* Preparando Toggle */}

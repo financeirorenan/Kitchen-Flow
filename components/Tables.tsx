@@ -267,6 +267,50 @@ const Tables: React.FC<TablesProps> = memo(
         .sort((a, b) => a.number - b.number);
     }, [tables, tableSearch]);
 
+    const getTableDisplayNumber = useCallback(
+      (table: { number?: number; id: string | number } | null | undefined) => {
+        if (!table) return "";
+        if (
+          table.number !== undefined &&
+          table.number !== null &&
+          !isNaN(Number(table.number)) &&
+          Number(table.number) > 0
+        ) {
+          return `Mesa ${table.number}`;
+        }
+        if (
+          typeof table.id === "number" ||
+          (typeof table.id === "string" && table.id.length <= 4)
+        ) {
+          return `Mesa ${table.id}`;
+        }
+        return `Mesa ${table.id.toString().slice(-4)}`;
+      },
+      [],
+    );
+
+    const getTableNumLabel = useCallback(
+      (table: { number?: number; id: string | number } | null | undefined) => {
+        if (!table) return "";
+        if (
+          table.number !== undefined &&
+          table.number !== null &&
+          !isNaN(Number(table.number)) &&
+          Number(table.number) > 0
+        ) {
+          return `${table.number}`;
+        }
+        if (
+          typeof table.id === "number" ||
+          (typeof table.id === "string" && table.id.length <= 4)
+        ) {
+          return `${table.id}`;
+        }
+        return `#${table.id.toString().slice(-4)}`;
+      },
+      [],
+    );
+
     const [openingValueInput, setOpeningValueInput] = useState("0");
     const [closingValueInput, setClosingValueInput] = useState("0");
     const [closingObservations, setClosingObservations] = useState("");
@@ -3267,76 +3311,143 @@ const Tables: React.FC<TablesProps> = memo(
         )}
 
         {/* Modal: Confirmação de Cancelamento */}
+        {/* Modal: Transferir Mesa */}
         {showTransferModal && selectedTable && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-            <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden p-8 space-y-6 animate-in zoom-in-95 duration-300">
-              <div className="flex justify-between items-center">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-md p-4 animate-in fade-in duration-200">
+            <div className="bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl overflow-hidden p-6 sm:p-8 space-y-6 animate-in zoom-in-95 duration-200 border border-slate-100">
+              {/* Header */}
+              <div className="flex justify-between items-center pb-4 border-b border-slate-100">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center">
-                    <ArrowRightLeft size={20} />
+                  <div className="w-11 h-11 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center shadow-sm border border-indigo-100 shrink-0">
+                    <ArrowRightLeft size={22} />
                   </div>
                   <div>
-                    <h2 className="text-xl font-black text-slate-800">
+                    <h2 className="text-xl font-black text-slate-800 tracking-tight">
                       Transferir Mesa
                     </h2>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                      Mesa {selectedTable.id} para...
+                    <p className="text-xs font-bold text-slate-500 flex items-center gap-1.5 mt-0.5">
+                      <span>Origem:</span>
+                      <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-lg font-black text-xs">
+                        {getTableDisplayNumber(selectedTable)}
+                      </span>
                     </p>
                   </div>
                 </div>
                 <button
-                  onClick={() => setShowTransferModal(false)}
-                  className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                  type="button"
+                  onClick={() => {
+                    setShowTransferModal(false);
+                    setTransferToTableId(null);
+                  }}
+                  className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-full transition-colors"
                 >
-                  <X size={20} className="text-slate-400" />
+                  <X size={20} />
                 </button>
               </div>
 
-              <div className="grid grid-cols-4 gap-3 max-h-64 overflow-y-auto p-1 custom-scrollbar">
-                {tables
-                  .filter((t) => t.id !== selectedTable.id)
-                  .map((t) => (
-                    <button
-                      key={t.id}
-                      onClick={() => setTransferToTableId(t.id)}
-                      disabled={t.status !== "available"}
-                      className={`aspect-square rounded-2xl border-2 flex flex-col items-center justify-center transition-all ${
-                        transferToTableId === t.id
-                          ? "border-indigo-600 bg-indigo-50 text-indigo-600 shadow-lg shadow-indigo-100"
-                          : t.status === "available"
-                            ? "border-slate-100 bg-white text-slate-600 hover:border-indigo-200"
-                            : "border-slate-50 bg-slate-50 text-slate-300 cursor-not-allowed"
-                      }`}
-                    >
-                      <span className="text-[10px] font-black uppercase opacity-60">
-                        Mesa
-                      </span>
-                      <span className="text-lg font-black leading-none">
-                        {t.id}
-                      </span>
-                      {t.status !== "available" && (
-                        <Lock size={10} className="mt-1" />
-                      )}
-                    </button>
-                  ))}
+              {/* Seletor de Mesas */}
+              <div className="space-y-3">
+                <div className="flex justify-between items-center px-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                    Selecione a Mesa de Destino
+                  </label>
+                  <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+                    Apenas mesas disponíveis
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-3 max-h-72 overflow-y-auto p-1 custom-scrollbar">
+                  {tables
+                    .filter((t) => t.id !== selectedTable.id)
+                    .sort((a, b) => (a.number || 0) - (b.number || 0))
+                    .map((t) => {
+                      const isSelected = transferToTableId === t.id;
+                      const isAvailable = t.status === "available";
+                      const numLabel = getTableNumLabel(t);
+
+                      return (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => isAvailable && setTransferToTableId(t.id)}
+                          disabled={!isAvailable}
+                          className={`relative h-24 p-2.5 rounded-2xl border-2 flex flex-col items-center justify-center gap-0.5 transition-all text-center overflow-hidden ${
+                            isSelected
+                              ? "border-indigo-600 bg-indigo-50/90 text-indigo-700 shadow-md shadow-indigo-100 ring-2 ring-indigo-600 ring-offset-1 scale-105 z-10"
+                              : isAvailable
+                                ? "border-slate-200 bg-white text-slate-700 hover:border-indigo-400 hover:bg-indigo-50/30"
+                                : "border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed opacity-60"
+                          }`}
+                        >
+                          <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">
+                            Mesa
+                          </span>
+                          <span className="text-xl sm:text-2xl font-black text-slate-800 leading-none truncate max-w-full">
+                            {numLabel}
+                          </span>
+
+                          {isSelected && (
+                            <span className="mt-1 text-[9px] font-extrabold text-indigo-600 bg-indigo-100 px-2 py-0.5 rounded-full">
+                              SELECIONADA
+                            </span>
+                          )}
+
+                          {!isSelected && isAvailable && (
+                            <span className="mt-1 text-[9px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+                              LIVRE
+                            </span>
+                          )}
+
+                          {!isAvailable && (
+                            <span className="mt-1 text-[8px] font-bold text-rose-500 bg-rose-50 px-1.5 py-0.5 rounded-md border border-rose-100 uppercase tracking-tight flex items-center gap-0.5">
+                              <Lock size={8} /> OCUPADA
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                </div>
               </div>
 
-              <div className="flex gap-3">
+              {/* Card Resumo de Transferência */}
+              {transferToTableId && (() => {
+                const targetTable = tables.find((t) => t.id === transferToTableId);
+                return (
+                  <div className="p-4 bg-indigo-50/80 border border-indigo-100 rounded-2xl space-y-1.5 animate-in fade-in duration-200">
+                    <p className="text-xs font-bold text-indigo-900 flex items-center gap-2">
+                      <span className="font-black text-indigo-700">{getTableDisplayNumber(selectedTable)}</span>
+                      <ArrowRight size={14} className="text-indigo-400" />
+                      <span className="font-black text-indigo-700">{targetTable ? getTableDisplayNumber(targetTable) : "Mesa Destino"}</span>
+                    </p>
+                    <p className="text-[11px] text-indigo-700 font-medium">
+                      Todos os <strong className="font-black">{selectedTable.items.length} itens</strong> da comanda ({new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(selectedTable.total)}) serão transferidos.
+                    </p>
+                  </div>
+                );
+              })()}
+
+              {/* Botões de Ação */}
+              <div className="flex gap-3 pt-2">
                 <button
-                  onClick={() => setShowTransferModal(false)}
-                  className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-slate-200 transition-all"
+                  type="button"
+                  onClick={() => {
+                    setShowTransferModal(false);
+                    setTransferToTableId(null);
+                  }}
+                  className="flex-1 py-3.5 bg-slate-100 text-slate-600 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-slate-200 transition-all"
                 >
                   Cancelar
                 </button>
                 <button
+                  type="button"
                   onClick={handleTransfer}
                   disabled={!transferToTableId || isTransferring}
-                  className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                  className="flex-1 py-3.5 bg-indigo-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all disabled:opacity-40 disabled:shadow-none flex items-center justify-center gap-2"
                 >
                   {isTransferring ? (
-                    <Loader2 size={14} className="animate-spin" />
+                    <Loader2 size={16} className="animate-spin" />
                   ) : (
-                    <Check size={14} />
+                    <Check size={16} />
                   )}
                   Confirmar Transferência
                 </button>
@@ -3360,7 +3471,7 @@ const Tables: React.FC<TablesProps> = memo(
                     <p className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">
                       {isCounterContext
                         ? "O pedido será excluído permanentemente"
-                        : `A Mesa ${selectedTable.id} será liberada`}
+                        : `A ${getTableDisplayNumber(selectedTable)} será liberada`}
                     </p>
                   </div>
                 </div>
@@ -3453,7 +3564,7 @@ const Tables: React.FC<TablesProps> = memo(
                           ? `PEDIDO #${pdvEditOrder.dailyNumber || pdvEditOrder.id.slice(-4)}`
                           : isCounterContext
                             ? "PDV BALCÃO"
-                            : `MESA ${selectedTable.id}`}
+                            : getTableDisplayNumber(selectedTable).toUpperCase()}
                       </span>
                     </h2>
                   </div>
@@ -4379,7 +4490,7 @@ const Tables: React.FC<TablesProps> = memo(
                   <div>
                     <h2 className="text-2xl font-black">
                       Finalizar{" "}
-                      {isCounterContext ? "Balcão" : `Mesa ${selectedTable.id}`}
+                      {isCounterContext ? "Balcão" : getTableDisplayNumber(selectedTable)}
                     </h2>
                     <p className="text-xs font-bold opacity-80 uppercase tracking-widest">
                       Total: R$ {selectedTable.total.toFixed(2)}
