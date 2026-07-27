@@ -3577,12 +3577,14 @@ const App: React.FC = () => {
 
     const activeStatus = activeOrderObj?.status;
 
-    // Ao fechar a mesa/comanda no caixa, o pedido é finalizado ('finished'), exceto se for uma entrega real em andamento
-    let determinedStatus: OrderStatus = 'finished';
-    if (isRealDelivery) {
-      determinedStatus = (activeStatus === 'ready' || activeStatus === 'delivering' || activeStatus === 'delivered') ? activeStatus : 'preparing';
+    // Ao registrar o pagamento/evento financeiro no caixa:
+    // Se o pedido já existe e está ativo na cozinha ou entrega (ex: 'pending', 'preparing', 'ready', 'delivering'),
+    // preservamos seu status para não sumir do KDS da cozinha. Se não existir status prévio, entra como 'preparing'.
+    let determinedStatus: OrderStatus = 'preparing';
+    if (activeStatus && activeStatus !== 'cancelled') {
+      determinedStatus = activeStatus;
     } else {
-      determinedStatus = 'finished';
+      determinedStatus = 'preparing';
     }
 
     const preparedItems = table.items.map(i => ({ ...i, sentToKitchen: true }));
@@ -3687,8 +3689,9 @@ const App: React.FC = () => {
     if (relatedOrdersToUpdate.length > 0) {
       const now = new Date();
       for (const ro of relatedOrdersToUpdate) {
-        // Se for uma entrega real em trânsito/pronta, preserva o status de entrega; para mesas e balcão, finaliza o pedido
-        const targetStatus = isRealDelivery && (ro.status === 'delivering' || ro.status === 'ready' || ro.status === 'preparing') ? ro.status : 'finished';
+        // Se o pedido está em produção/cozinha (pending, preparing, ready, delivering), preserva o status ativo
+        const isKitchenActive = ro.status === 'pending' || ro.status === 'preparing' || ro.status === 'ready' || ro.status === 'delivering';
+        const targetStatus = isKitchenActive ? ro.status : 'finished';
         
         const updates: Partial<Order> = {
           status: targetStatus,
