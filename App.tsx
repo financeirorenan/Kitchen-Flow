@@ -383,6 +383,7 @@ const App: React.FC = () => {
   const [cashSession, setCashSession] = useState<CashSession>({ isOpen: false, openingValue: 0, openedAt: null });
   const lastWriteTimeRef = useRef<number>(0);
   const ordersRef = useRef<Order[]>([]);
+  const processedEventIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     ordersRef.current = orders;
   }, [orders]);
@@ -1871,6 +1872,19 @@ const App: React.FC = () => {
       const unsubscribe = onSnapshot(q, (snapshot) => {
         snapshot.docChanges().forEach(async (change) => {
           const docData = change.doc.data();
+          
+          // Idempotência: Ignorar se este EventID de alteração já foi processado neste cliente
+          if (docData.lastEventId && processedEventIdsRef.current.has(docData.lastEventId)) {
+            return;
+          }
+          if (docData.lastEventId) {
+            processedEventIdsRef.current.add(docData.lastEventId);
+            if (processedEventIdsRef.current.size > 2000) {
+              const firstKey = processedEventIdsRef.current.values().next().value;
+              if (firstKey) processedEventIdsRef.current.delete(firstKey);
+            }
+          }
+
           const isPending = docData.status === 'pending';
 
           if (change.type === 'added' || change.type === 'modified') {
@@ -2458,14 +2472,14 @@ const App: React.FC = () => {
   };
 
   const handleSendToKitchen = async (tableId: number | string, items: OrderItem[], isCounter?: boolean) => {
-    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || (user?.uid ? user.uid : 't1');
     
     // Encontrar o número da mesa/comanda para exibir no KDS em vez do ID técnico
     const tableInfo = isCounter 
-      ? counterOrders.find(t => t.id === tableId)
-      : tables.find(t => t.id === tableId || (t as any).docId === tableId || t.number === tableId || Number(t.id) === Number(tableId));
+      ? counterOrders.find(t => t.id === tableId || String(t.id) === String(tableId))
+      : tables.find(t => t.id === tableId || (t as any).docId === tableId || t.number === tableId || String(t.id) === String(tableId) || Number(t.id) === Number(tableId));
     
-    const displayTableNumber = tableInfo ? tableInfo.number : tableId;
+    const displayTableNumber = tableInfo ? tableInfo.number : (typeof tableId === 'number' ? tableId : (Number(String(tableId).replace(/\D/g, '')) || tableId));
 
     // Buscar pedido ativo/existente desta mesa ou pedido em edição para NUNCA duplicar pedidos
     let activeOrder: Order | undefined = undefined;
@@ -2476,7 +2490,7 @@ const App: React.FC = () => {
     }
 
     // Priority 0.5: Se o próprio tableId for o ID de um pedido existente em orders
-    if (!activeOrder && typeof tableId === 'string') {
+    if (!activeOrder && typeof tableId === 'string' && tableId.startsWith('KDS-')) {
       activeOrder = orders.find(o => 
         (o.id === tableId || o.docId === tableId) && 
         o.status !== 'cancelled' && 
@@ -2484,7 +2498,7 @@ const App: React.FC = () => {
       );
     }
 
-    // Priority 1: Buscar pelo currentOrderId gravado na mesa/comanda se existir (mesmo se 'ready', 'delivered' etc., pois a mesa continua aberta)
+    // Priority 1: Buscar pelo currentOrderId gravado na mesa/comanda se existir
     if (!activeOrder && tableInfo?.currentOrderId) {
       activeOrder = orders.find(o => 
         (o.id === tableInfo.currentOrderId || o.docId === tableInfo.currentOrderId) && 
@@ -2493,19 +2507,22 @@ const App: React.FC = () => {
       );
     }
 
-    // Priority 2: Se não encontrou por currentOrderId, buscar qualquer pedido aberto da mesa que não esteja encerrado/cancelado
+    // Priority 2: Buscar qualquer pedido aberto da mesa que não esteja encerrado/cancelado
     if (!activeOrder) {
       activeOrder = orders.find(o => 
-        (String(o.tableNumber) === String(displayTableNumber)) && 
-        (isCounter ? (o.type === 'takeout' || o.type === 'counter') : (o.type === 'table' || o.type === 'dine_in')) && 
+        String(o.tableNumber) === String(displayTableNumber) && 
         o.status !== 'cancelled' &&
         o.status !== 'finished'
       );
     }
 
     if (activeOrder) {
-      // Já existe um pedido ativo para esta mesa! Vamos atualizar o pedido existente com os novos itens (Ex: Coca 2L)
-      const existingItems = [...activeOrder.items];
+      // Já existe um pedido ativo para esta mesa! Vamos atualizar o pedido existente com os novos itens
+      const existingItems = activeOrder.items.map(i => ({ ...i, isNew: false }));
+      const newBatchNumber = ((activeOrder as any).currentBatch || 1) + 1;
+      const now = new Date();
+      const newEventId = `evt_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+      const newVersion = (activeOrder.version || 1) + 1;
       
       items.forEach(newItem => {
         const existingIndex = existingItems.findIndex(i => 
@@ -2515,15 +2532,24 @@ const App: React.FC = () => {
         if (existingIndex !== -1) {
           existingItems[existingIndex] = { ...existingItems[existingIndex], ...newItem, sentToKitchen: true };
         } else {
-          existingItems.push({ ...newItem, sentToKitchen: true });
+          existingItems.push({ 
+            ...newItem, 
+            sentToKitchen: true,
+            batchNumber: newBatchNumber,
+            isNew: true,
+            sentAt: now.toISOString()
+          });
         }
       });
 
       const updates: Partial<Order> = {
         items: existingItems,
         total: existingItems.reduce((acc, i) => acc + (i.price * i.quantity), 0),
-        status: 'preparing', // Retorna o pedido para 'preparing' para a cozinha ver e preparar os novos itens!
-        updatedAt: new Date()
+        status: 'preparing', // Garante que vá/volte para 'preparing' para a cozinha ver e preparar
+        updatedAt: now,
+        version: newVersion,
+        lastEventId: newEventId,
+        currentBatch: newBatchNumber
       };
 
       if (effectiveTenantId) {
@@ -2533,62 +2559,85 @@ const App: React.FC = () => {
           
           // Garante vinculação do currentOrderId na mesa no Firestore
           if (!isCounter) {
-            const docId = (tableInfo as any)?.docId || (typeof tableId === 'string' ? tableId : null);
+            const docId = (tableInfo as any)?.docId || (typeof tableId === 'string' && !tableId.startsWith('KDS-') ? tableId : null);
             if (docId) {
-              await updateDoc(doc(db, 'diningTables', docId), { currentOrderId: activeOrder.id });
+              await updateDoc(doc(db, 'diningTables', docId), { currentOrderId: activeOrder.id, updatedAt: new Date() });
+            } else if (displayTableNumber) {
+              const qTable = query(collection(db, 'diningTables'), where('number', '==', Number(displayTableNumber)), where('tenantId', '==', effectiveTenantId));
+              const snapTable = await getDocs(qTable);
+              snapTable.docs.forEach(d => updateDoc(d.ref, { currentOrderId: activeOrder!.id, updatedAt: new Date() }));
             }
           }
         } catch (error) {
-          handleFirestoreError(error, OperationType.WRITE, `orders/${targetDocId}`);
+          console.error("Error updating KDS order in cloud:", error);
         }
       }
       
       await localDb.orders.update(activeOrder.id, updates);
-      setOrders(prev => prev.map(o => o.id === activeOrder!.id ? { ...o, ...updates } as Order : o));
+      setOrders(prev => prev.map(o => (o.id === activeOrder!.id || o.docId === activeOrder!.id) ? { ...o, ...updates } as Order : o));
 
       // Atualiza também o estado local da mesa/comanda
       if (isCounter) {
-        setCounterOrders(prev => prev.map(t => t.id === tableId ? { ...t, currentOrderId: activeOrder!.id } : t));
+        setCounterOrders(prev => prev.map(t => (t.id === tableId || String(t.id) === String(tableId)) ? { ...t, currentOrderId: activeOrder!.id } : t));
       } else {
-        setTables(prev => prev.map(t => t.id === tableId || (t as any).docId === tableId ? { ...t, currentOrderId: activeOrder!.id } : t));
+        setTables(prev => prev.map(t => (t.id === tableId || (t as any).docId === tableId || t.number === displayTableNumber) ? { ...t, currentOrderId: activeOrder!.id } : t));
       }
 
-      addLog('u1', 'COZINHA', `Pedido ${activeOrder.id} (Mesa ${displayTableNumber}) atualizado com novos itens`);
+      addLog('u1', 'COZINHA', `Pedido ${activeOrder.id} (Mesa ${displayTableNumber}) enviado à cozinha com novos itens (Lote ${newBatchNumber}, v${newVersion})`);
       return;
     }
 
     // Apenas se NÃO houver nenhum pedido ativo para esta mesa, cria um novo pedido KDS
+    const now = new Date();
     const rawKitchenOrder: Order = {
       id: `KDS-${Math.random().toString(36).substr(2, 4).toUpperCase()}`,
       tableNumber: displayTableNumber, 
       type: isCounter ? 'takeout' : 'table',
       status: 'preparing',
-      items: items.map(i => ({ ...i, sentToKitchen: true })),
+      items: items.map(i => ({ 
+        ...i, 
+        sentToKitchen: true,
+        batchNumber: 1,
+        isNew: false,
+        sentAt: now.toISOString()
+      })),
       total: items.reduce((acc, i) => acc + (i.price * i.quantity), 0),
-      createdAt: new Date(),
-      tenantId: effectiveTenantId || 't1'
+      createdAt: now,
+      updatedAt: now,
+      tenantId: effectiveTenantId,
+      version: 1,
+      lastEventId: `evt_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+      currentBatch: 1
     };
     const kitchenOrder = assignDailyNumberToOrder(rawKitchenOrder);
 
     if (effectiveTenantId) {
-       await setDoc(doc(db, 'orders', kitchenOrder.id), cleanObject({
-         ...kitchenOrder,
-         createdAt: new Date()
-       }));
-       
-       if (!isCounter) {
-          const docId = (tableInfo as any)?.docId || (typeof tableId === 'string' ? tableId : null);
-          if (docId) {
-            await updateDoc(doc(db, 'diningTables', docId), { currentOrderId: kitchenOrder.id });
-          }
+       try {
+         await setDoc(doc(db, 'orders', kitchenOrder.id), cleanObject({
+           ...kitchenOrder,
+           createdAt: new Date()
+         }));
+         
+         if (!isCounter) {
+            const docId = (tableInfo as any)?.docId || (typeof tableId === 'string' && !tableId.startsWith('KDS-') ? tableId : null);
+            if (docId) {
+              await updateDoc(doc(db, 'diningTables', docId), { currentOrderId: kitchenOrder.id, updatedAt: new Date() });
+            } else if (displayTableNumber) {
+              const qTable = query(collection(db, 'diningTables'), where('number', '==', Number(displayTableNumber)), where('tenantId', '==', effectiveTenantId));
+              const snapTable = await getDocs(qTable);
+              snapTable.docs.forEach(d => updateDoc(d.ref, { currentOrderId: kitchenOrder.id, updatedAt: new Date() }));
+            }
+         }
+       } catch (err) {
+         console.error("Error creating KDS order in Firestore:", err);
        }
     }
     
     // Atualizar estado local da mesa também
     if (isCounter) {
-      setCounterOrders(prev => prev.map(t => t.id === tableId ? { ...t, currentOrderId: kitchenOrder.id } : t));
+      setCounterOrders(prev => prev.map(t => (t.id === tableId || String(t.id) === String(tableId)) ? { ...t, currentOrderId: kitchenOrder.id } : t));
     } else {
-      setTables(prev => prev.map(t => t.id === tableId || (t as any).docId === tableId ? { ...t, currentOrderId: kitchenOrder.id } : t));
+      setTables(prev => prev.map(t => (t.id === tableId || (t as any).docId === tableId || t.number === displayTableNumber) ? { ...t, currentOrderId: kitchenOrder.id } : t));
     }
 
     await localDb.orders.put(kitchenOrder);
@@ -3540,17 +3589,10 @@ const App: React.FC = () => {
 
     const activeStatus = activeOrderObj?.status;
 
-    // Preservar o status de produção se o pedido ainda está na cozinha ('preparing' ou 'ready' ou 'pending')
+    // Ao fechar a mesa/comanda no caixa, o pedido é finalizado ('finished'), exceto se for uma entrega real em andamento
     let determinedStatus: OrderStatus = 'finished';
     if (isRealDelivery) {
       determinedStatus = (activeStatus === 'ready' || activeStatus === 'delivering' || activeStatus === 'delivered') ? activeStatus : 'preparing';
-    } else if (activeStatus === 'preparing' || activeStatus === 'ready' || activeStatus === 'pending') {
-      determinedStatus = activeStatus;
-    } else if (isCounter) {
-      // Pedidos de balcão recém-lançados/pagos devem ir para o KDS de produção ('preparing') para a cozinha preparar
-      determinedStatus = 'preparing';
-    } else if (table.items.some(i => i.sentToKitchen)) {
-      determinedStatus = 'preparing';
     } else {
       determinedStatus = 'finished';
     }
@@ -3644,7 +3686,7 @@ const App: React.FC = () => {
       }
     }
 
-    // Atualizar pedidos relacionados a esta mesa/balcão com status de pagamento mantendo status de cozinha
+    // Atualizar pedidos relacionados a esta mesa/balcão para encerrá-los ao fechar o caixa
     const relatedOrdersToUpdate = orders.filter(o => 
       o.id !== newOrder.id &&
       o.status !== 'cancelled' &&
@@ -3657,8 +3699,8 @@ const App: React.FC = () => {
     if (relatedOrdersToUpdate.length > 0) {
       const now = new Date();
       for (const ro of relatedOrdersToUpdate) {
-        const isKitchenActive = ro.status === 'preparing' || ro.status === 'pending' || ro.status === 'ready';
-        const targetStatus = isKitchenActive ? ro.status : 'finished';
+        // Se for uma entrega real em trânsito/pronta, preserva o status de entrega; para mesas e balcão, finaliza o pedido
+        const targetStatus = isRealDelivery && (ro.status === 'delivering' || ro.status === 'ready' || ro.status === 'preparing') ? ro.status : 'finished';
         
         const updates: Partial<Order> = {
           status: targetStatus,

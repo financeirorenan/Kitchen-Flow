@@ -362,7 +362,12 @@ const KDS: React.FC<KDSProps> = memo(({
                                         <span className="font-semibold text-indigo-600 bg-indigo-50/80 px-1.5 py-0.5 rounded text-[10px] min-w-[20px] text-center">
                                            {item.quantity}x
                                         </span>
-                                        <span className="font-semibold text-slate-700 flex-1 leading-tight">{item.name}</span>
+                                        <span className="font-semibold text-slate-700 leading-tight">{item.name}</span>
+                                        {((item as any).batchNumber > 1 || (item as any).isNew) && (
+                                          <span className="ml-1.5 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-amber-500 text-white animate-pulse inline-block">
+                                            ⚡ NOVO ITEM
+                                          </span>
+                                        )}
                                      </div>
                                      {item.selectedOptions && item.selectedOptions.length > 0 && (
                                         <div className="pl-9 mt-0.5 text-[10px] text-slate-400 font-bold space-y-0.5">

@@ -420,6 +420,7 @@ export interface Product {
 }
 
 export interface OrderItem {
+  id?: string;
   productId: string;
   name: string;
   quantity: number;
@@ -429,6 +430,9 @@ export interface OrderItem {
   seat?: string;
   selectedOptions?: ProductOption[];
   sentToKitchen?: boolean;
+  batchNumber?: number;
+  isNew?: boolean;
+  sentAt?: string;
 }
 
 export interface OrderPayment {
@@ -486,6 +490,11 @@ export interface Order {
   routePosition?: number;
   courierEarnings?: number;
   dailyNumber?: number;
+  version?: number;
+  lastEventId?: string;
+  currentBatch?: number;
+  observations?: string;
+  notes?: string;
 }
 
 export interface Table {

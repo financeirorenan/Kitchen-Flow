@@ -558,6 +558,11 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                                     }`}>
                                       {item.name}
                                     </span>
+                                    {((item as any).batchNumber > 1 || (item as any).isNew) && (
+                                      <span className="px-2 py-0.5 rounded-md text-[9px] sm:text-[10px] font-black uppercase tracking-wider shrink-0 bg-amber-500 text-white animate-pulse shadow-md">
+                                        ⚡ NOVO ITEM
+                                      </span>
+                                    )}
                                     {category && (
                                       <span className={`px-2 py-0.5 rounded-md text-[9px] sm:text-[10px] font-black uppercase tracking-wider shrink-0 border ${
                                         isLight 
