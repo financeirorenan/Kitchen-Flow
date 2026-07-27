@@ -1282,34 +1282,42 @@ const Marketplace: React.FC<MarketplaceProps> = ({
               // Persistir cliente na coleção 'customers' do tenant para CRM
               const customerPhone = order.customerPhone || profile?.phone;
               if (customerPhone) {
-                const customerData = {
-                  id: customerPhone,
-                  name:
-                    order.customerName ||
-                    profile?.name ||
-                    "Cliente Marketplace",
-                  phone: customerPhone,
-                  email: currentUser?.email || "",
-                  tenantId: selectedTenant.id,
-                  source: "marketplace",
-                  createdAt: new Date(),
-                  crmStatus: "active",
-                };
-                await setDoc(
-                  doc(db, "customers", customerPhone),
-                  customerData,
-                  { merge: true },
-                );
+                try {
+                  const customerData = {
+                    id: customerPhone,
+                    name:
+                      order.customerName ||
+                      profile?.name ||
+                      "Cliente Marketplace",
+                    phone: customerPhone,
+                    email: currentUser?.email || "",
+                    tenantId: selectedTenant.id,
+                    source: "marketplace",
+                    createdAt: new Date(),
+                    crmStatus: "active",
+                  };
+                  await setDoc(
+                    doc(db, "customers", customerPhone),
+                    customerData,
+                    { merge: true },
+                  );
+                } catch (cErr) {
+                  console.warn("Erro ao registrar cliente no CRM:", cErr);
+                }
               }
 
               // Registrar fatura de serviço do marketplace
-              await addDoc(collection(db, "marketplaceInvoices"), {
-                tenantId: selectedTenant.id,
-                orderId: orderRef.id,
-                amount: marketplaceFeeAmount,
-                status: "pending",
-                createdAt: new Date(),
-              });
+              try {
+                await addDoc(collection(db, "marketplaceInvoices"), {
+                  tenantId: selectedTenant.id,
+                  orderId: order.id,
+                  amount: marketplaceFeeAmount,
+                  status: "pending",
+                  createdAt: new Date(),
+                });
+              } catch (iErr) {
+                console.warn("Erro ao registrar fatura do marketplace:", iErr);
+              }
             } catch (err) {
               console.error("Erro ao salvar pedido do marketplace:", err);
               alert("Erro ao enviar pedido. Por favor, tente novamente.");

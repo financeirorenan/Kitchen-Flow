@@ -114,7 +114,17 @@ export const generateRawTextReceipt = (order: Partial<Order>, settings: AdminSet
     const nameLine = cleanName;
     out += `${qtyStr}${nameLine}\n`;
     if (item.observation) {
-      out += `  * OBS: ${item.observation.toUpperCase()} *\n`;
+      const obsLines = item.observation.split('\n');
+      obsLines.forEach((line, idx) => {
+        const trimmed = line.trim().toUpperCase();
+        if (trimmed) {
+          if (idx === 0) {
+            out += `  * OBS: ${trimmed}\n`;
+          } else {
+            out += `         ${trimmed}\n`;
+          }
+        }
+      });
     }
     if (item.selectedOptions && item.selectedOptions.length > 0) {
       item.selectedOptions.forEach(opt => {
@@ -262,7 +272,7 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
             ${item.quantity} UN X ${priceStr} Vl Unit. Vl Total ${totalItemRow}
           </div>
           ${item.observation ? `
-            <div style="font-size: ${fontSizeSmall}; font-weight: 900; margin-left: 10%; text-transform: uppercase; font-style: italic; color: #000000 !important;">
+            <div style="font-size: ${fontSizeSmall}; font-weight: 900; margin-left: 10%; text-transform: uppercase; font-style: italic; color: #000000 !important; white-space: pre-line;">
               * OBS: ${item.observation} *
             </div>
           ` : ''}
@@ -408,7 +418,7 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
           </div>
         </div>
         ${item.observation ? `
-          <div style="font-size: ${fontSizeSmall}; margin-left: 26px; margin-top: 2px; font-weight: 900; text-transform: uppercase; color: #000000 !important;">
+          <div style="font-size: ${fontSizeSmall}; margin-left: 26px; margin-top: 2px; font-weight: 900; text-transform: uppercase; color: #000000 !important; white-space: pre-line;">
             * OBS: ${item.observation} *
           </div>
         ` : ''}
@@ -520,6 +530,16 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
         <div style="display: flex; justify-content: space-between; font-size: ${fontSizeBase}; font-weight: 900; color: #000000 !important;">
           <span style="text-transform: uppercase;">${paymentMethodLabel(order.paymentMethod)}</span>
           <span class="bold">R$ ${(order.total || 0).toFixed(2).replace('.', ',')}</span>
+        </div>
+      ` : ''}
+
+      ${(order.observations || order.notes || order.observation) ? `
+        <div class="divider"></div>
+        <div style="font-size: ${fontSizeSmall}; font-weight: 900; color: #000000 !important;">
+          <strong>OBSERVAÇÕES DO PEDIDO:</strong>
+          <div style="margin-top: 3px; white-space: pre-line; font-weight: 800; text-transform: uppercase; line-height: 1.3;">
+            ${order.observations || order.notes || order.observation}
+          </div>
         </div>
       ` : ''}
 

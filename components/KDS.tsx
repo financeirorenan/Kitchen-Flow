@@ -373,7 +373,7 @@ const KDS: React.FC<KDSProps> = memo(({
                                      )}
                                      {item.observation && (
                                         <div className="pl-9 mt-1">
-                                           <p className="text-[9px] font-bold text-rose-600 bg-rose-50 border border-rose-100 px-2 py-0.5 rounded-md w-fit">
+                                           <p className="text-[9px] font-bold text-rose-600 bg-rose-50 border border-rose-100 px-2 py-0.5 rounded-md w-fit whitespace-pre-line">
                                               Obs: {item.observation}
                                            </p>
                                         </div>

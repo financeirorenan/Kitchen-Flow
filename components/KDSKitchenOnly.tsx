@@ -557,7 +557,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                                     </div>
                                   )}
                                   {item.observation && (
-                                    <p className={`text-xs sm:text-sm font-black border px-2.5 py-1 rounded-xl w-fit mt-1.5 shadow-sm ${
+                                    <p className={`text-xs sm:text-sm font-black border px-2.5 py-1 rounded-xl w-fit mt-1.5 shadow-sm whitespace-pre-line ${
                                       isLight 
                                         ? 'text-rose-700 bg-rose-50 border-rose-200' 
                                         : 'text-rose-300 bg-rose-950/40 border-rose-500/40'

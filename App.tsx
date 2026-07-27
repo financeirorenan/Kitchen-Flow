@@ -2856,6 +2856,9 @@ const App: React.FC = () => {
   const handleUpdateOrder = async (id: string, updates: Partial<Order>) => {
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
     
+    // Obter versão anterior do pedido para calcular diferenças de valor ou método de pagamento (Fiado)
+    const oldOrder = orders.find(o => o.id === id || o.docId === id);
+    
     await localDb.orders.update(id, updates);
     setOrders(prev => prev.map(o => o.id === id ? { ...o, ...updates } : o));
     
@@ -2869,6 +2872,78 @@ const App: React.FC = () => {
       }
     }
     
+    // Sincronizar alteração no saldo de Fiado do cliente se houver mudança de valor ou método de pagamento
+    if (oldOrder) {
+      const oldMethod = oldOrder.paymentMethod;
+      const newMethod = updates.paymentMethod || oldMethod;
+      const isOldFiado = oldMethod === 'conta_cliente' || oldMethod === 'fiado';
+      const isNewFiado = newMethod === 'conta_cliente' || newMethod === 'fiado';
+
+      const oldTotal = oldOrder.total || 0;
+      const newTotal = updates.total !== undefined ? updates.total : oldTotal;
+
+      const oldCustomerId = oldOrder.customerId;
+      const newCustomerId = updates.customerId !== undefined ? updates.customerId : oldCustomerId;
+
+      // Caso 1: Era fiado e continua fiado
+      if (isOldFiado && isNewFiado && newCustomerId) {
+        const diff = newTotal - oldTotal;
+        if (Math.abs(diff) > 0.001) {
+          const customer = customers.find(c => c.id === newCustomerId);
+          if (customer) {
+            const shortId = (oldOrder.dailyNumber ? String(oldOrder.dailyNumber) : id.slice(-4));
+            const transaction: CustomerTransaction = {
+              id: `tr-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+              type: diff > 0 ? 'debit' : 'credit',
+              amount: Math.abs(diff),
+              description: `Ajuste Pedido #${shortId} (${diff > 0 ? 'Acréscimo/Delivery' : 'Redução/Desconto'})`,
+              date: new Date()
+            };
+            await handleUpdateCustomer(newCustomerId, {
+              balance: (customer.balance || 0) + diff,
+              history: [transaction, ...(customer.history || [])]
+            });
+          }
+        }
+      }
+      // Caso 2: Não era fiado e passou a ser fiado
+      else if (!isOldFiado && isNewFiado && newCustomerId) {
+        const customer = customers.find(c => c.id === newCustomerId);
+        if (customer) {
+          const shortId = (oldOrder.dailyNumber ? String(oldOrder.dailyNumber) : id.slice(-4));
+          const transaction: CustomerTransaction = {
+            id: `tr-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+            type: 'debit',
+            amount: newTotal,
+            description: `Lançamento Fiado - Pedido #${shortId}`,
+            date: new Date()
+          };
+          await handleUpdateCustomer(newCustomerId, {
+            balance: (customer.balance || 0) + newTotal,
+            history: [transaction, ...(customer.history || [])]
+          });
+        }
+      }
+      // Caso 3: Era fiado e alterou para outro método de pagamento
+      else if (isOldFiado && !isNewFiado && oldCustomerId) {
+        const customer = customers.find(c => c.id === oldCustomerId);
+        if (customer) {
+          const shortId = (oldOrder.dailyNumber ? String(oldOrder.dailyNumber) : id.slice(-4));
+          const transaction: CustomerTransaction = {
+            id: `tr-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+            type: 'credit',
+            amount: oldTotal,
+            description: `Estorno de Fiado - Pedido #${shortId} alterado para ${newMethod || 'outro'}`,
+            date: new Date()
+          };
+          await handleUpdateCustomer(oldCustomerId, {
+            balance: Math.max(0, (customer.balance || 0) - oldTotal),
+            history: [transaction, ...(customer.history || [])]
+          });
+        }
+      }
+    }
+
     // Se forma de pagamento ou total foi alterada, sincronizar com o lançamento financeiro correspondente
     if (updates.paymentMethod || updates.total !== undefined) {
       const order = orders.find(o => o.id === id || o.docId === id);

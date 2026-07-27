@@ -160,6 +160,11 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products, onClos
                         {item.selectedOptions.map(o => o.name).join(', ')}
                       </p>
                     )}
+                    {item.observation && (
+                      <p className="text-[10px] font-bold text-rose-600 bg-rose-50 border border-rose-100 px-2 py-0.5 rounded-md w-fit mt-1 whitespace-pre-line">
+                        Obs: {item.observation}
+                      </p>
+                    )}
                     <p className="text-[10px] font-bold text-slate-400">R$ {item.price.toFixed(2)} un.</p>
                   </div>
                   <div className="flex items-center gap-3">
