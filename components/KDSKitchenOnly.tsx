@@ -96,6 +96,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
       const isKitchenStatus = o.status === 'pending' || o.status === 'preparing';
       if (!isKitchenStatus) return false;
       const createdDate = safeParseDate(o.createdAt);
+      if (!createdDate) return true;
       return createdDate > twelveHoursAgo;
     });
   }, [orders]);

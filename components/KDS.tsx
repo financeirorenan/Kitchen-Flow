@@ -153,7 +153,7 @@ const KDS: React.FC<KDSProps> = memo(({
 
     const isRecent = (date: any, status: string) => {
       const d = safeParseDate(date);
-      if (!d) return false;
+      if (!d) return true;
       
       // Regra de "Cozinha" (preparing/pending): 
       // Apenas hoje ou últimas 12 horas para evitar poluição de sobras de ontem

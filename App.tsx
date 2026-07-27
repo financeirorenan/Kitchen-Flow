@@ -1873,18 +1873,6 @@ const App: React.FC = () => {
         snapshot.docChanges().forEach(async (change) => {
           const docData = change.doc.data();
           
-          // Idempotência: Ignorar se este EventID de alteração já foi processado neste cliente
-          if (docData.lastEventId && processedEventIdsRef.current.has(docData.lastEventId)) {
-            return;
-          }
-          if (docData.lastEventId) {
-            processedEventIdsRef.current.add(docData.lastEventId);
-            if (processedEventIdsRef.current.size > 2000) {
-              const firstKey = processedEventIdsRef.current.values().next().value;
-              if (firstKey) processedEventIdsRef.current.delete(firstKey);
-            }
-          }
-
           const isPending = docData.status === 'pending';
 
           if (change.type === 'added' || change.type === 'modified') {
