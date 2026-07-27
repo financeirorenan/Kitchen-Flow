@@ -49,6 +49,7 @@ import {
   Utensils,
   ShoppingBag,
   Receipt,
+  Target,
 } from "lucide-react";
 import { generateReceiptHtml } from "../services/printService";
 import { maskCurrency, parseCurrency } from "../utils/masks";
@@ -358,6 +359,145 @@ const Finance: React.FC<FinanceProps> = memo(
         .reduce((acc, o) => acc + o.total, 0);
     }, [orders]);
 
+    // 1. Meta do Dia (Zero a Zero do Copiloto)
+    const copilotDailyBreakEven = useMemo(() => {
+      const monthlyRent = parseFloat(
+        localStorage.getItem("copilot_monthly_rent") || "2500"
+      );
+      const monthlyStaff = parseFloat(
+        localStorage.getItem("copilot_monthly_staff") || "6000"
+      );
+      const monthlyFixedsTotal = monthlyRent + monthlyStaff;
+
+      const now = new Date();
+      const currentMonth = now.getMonth();
+      const currentYear = now.getFullYear();
+      const daysInMonth =
+        new Date(currentYear, currentMonth + 1, 0).getDate() || 30;
+
+      const currentMonthOrders = orders.filter((o) => {
+        const d = new Date(o.createdAt);
+        return (
+          d.getMonth() === currentMonth &&
+          d.getFullYear() === currentYear &&
+          (o.status === "delivered" || o.status === "finished")
+        );
+      });
+
+      const monthRevenue = currentMonthOrders.reduce((acc, o) => acc + o.total, 0);
+
+      let cmvRatio = 0.35;
+      let deliveryRatio = 0.08;
+
+      if (monthRevenue > 0) {
+        let totalCmv = 0;
+        currentMonthOrders.forEach((o) => {
+          (o.items || []).forEach((item) => {
+            const prod = products.find(
+              (p) => p.id === item.productId || p.name === item.name
+            );
+            const cost = prod?.costPrice || item.price * 0.35;
+            totalCmv += cost * item.quantity;
+          });
+        });
+        cmvRatio = Math.min(0.85, totalCmv / monthRevenue);
+
+        const deliveryFees = currentMonthOrders.reduce(
+          (acc, o) => acc + (o.deliveryFee || 0),
+          0
+        );
+        deliveryRatio = Math.min(0.25, deliveryFees / monthRevenue);
+      }
+
+      const mcRatio = Math.max(0.12, 1 - cmvRatio - deliveryRatio);
+      const pontoEquilibrioMensal = monthlyFixedsTotal / mcRatio;
+      return pontoEquilibrioMensal / daysInMonth;
+    }, [orders, products]);
+
+    // 2. Faturamento do Dia (Vendas e Pedidos de Hoje)
+    const todayOrdersStats = useMemo(() => {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const todayOrders = orders.filter((o) => {
+        const orderDate = new Date(o.createdAt);
+        return (
+          orderDate >= today &&
+          (o.status === "delivered" || o.status === "finished")
+        );
+      });
+
+      const revenue = todayOrders.reduce((acc, o) => acc + o.total, 0);
+      const count = todayOrders.length;
+      const averageTicket = count > 0 ? revenue / count : 0;
+
+      return { revenue, count, averageTicket };
+    }, [orders]);
+
+    // 3. Valor em Caixa Operacional
+    const activeCashInDrawer = useMemo(() => {
+      if (!cashSession || !cashSession.isOpen) {
+        return {
+          isOpen: false,
+          amount: 0,
+          openingValue: cashSession?.openingValue || 0,
+          openedAt: null,
+        };
+      }
+
+      const openedDate = cashSession.openedAt
+        ? new Date(cashSession.openedAt)
+        : new Date();
+
+      const cashSales = orders
+        .filter((o) => {
+          const orderDate = new Date(o.createdAt);
+          return (
+            orderDate >= openedDate &&
+            (o.status === "delivered" || o.status === "finished") &&
+            o.paymentMethod === "dinheiro"
+          );
+        })
+        .reduce((acc, o) => acc + o.total, 0);
+
+      const cashIncomes = manualRecords
+        .filter((r) => {
+          const rDate = new Date(r.dueDate || r.date);
+          return (
+            rDate >= openedDate &&
+            r.type === "income" &&
+            r.status === "paid" &&
+            r.paymentMethod === "dinheiro"
+          );
+        })
+        .reduce((acc, r) => acc + r.amount, 0);
+
+      const cashExpenses = manualRecords
+        .filter((r) => {
+          const rDate = new Date(r.dueDate || r.date);
+          return (
+            rDate >= openedDate &&
+            r.type === "expense" &&
+            r.status === "paid" &&
+            r.paymentMethod === "dinheiro"
+          );
+        })
+        .reduce((acc, r) => acc + r.amount, 0);
+
+      const amount =
+        (cashSession.openingValue || 0) + cashSales + cashIncomes - cashExpenses;
+
+      return {
+        isOpen: true,
+        amount,
+        openingValue: cashSession.openingValue || 0,
+        openedAt: openedDate,
+        cashSales,
+        cashIncomes,
+        cashExpenses,
+      };
+    }, [cashSession, orders, manualRecords]);
+
     const stats = useMemo(() => {
       const totalIncome = allRecords
         .filter(
@@ -373,6 +513,19 @@ const Finance: React.FC<FinanceProps> = memo(
       const netProfit = totalIncome - totalExpense;
       return { totalIncome, totalExpense, netProfit };
     }, [allRecords]);
+
+    // 4. Balanço Projetado Mês
+    const monthlyProjectedBalance = useMemo(() => {
+      const total =
+        stats.netProfit +
+        financialProjection.totalReceivable -
+        financialProjection.totalPayable;
+      return {
+        total,
+        receivable: financialProjection.totalReceivable,
+        payable: financialProjection.totalPayable,
+      };
+    }, [stats.netProfit, financialProjection]);
 
     const dailyCashFlowChartData = useMemo(() => {
       const data = [];
@@ -1093,66 +1246,221 @@ const Finance: React.FC<FinanceProps> = memo(
               <div className="space-y-4">
                 {/* Top Hero Section: Projected Balance & Main KPIs */}
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-                  {/* Main Projected Balance Card */}
+                  {/* Main 4-Part Executive Dashboard Hero Card */}
                   <motion.div
                     initial={{ scale: 0.95, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
-                    className="lg:col-span-7 xl:col-span-8 bg-slate-900 rounded-[2.5rem] p-8 md:p-10 text-white relative overflow-hidden shadow-2xl flex flex-col justify-between min-h-[300px]"
+                    className="lg:col-span-7 xl:col-span-8 bg-slate-900 rounded-[2.5rem] p-6 md:p-8 text-white relative overflow-hidden shadow-2xl flex flex-col justify-between"
                   >
-                    <div className="absolute -right-20 -top-20 w-80 h-80 bg-indigo-500/10 rounded-full blur-[100px]"></div>
-                    <div className="absolute -left-10 -bottom-10 w-60 h-60 bg-emerald-500/10 rounded-full blur-[80px]"></div>
+                    <div className="absolute -right-20 -top-20 w-80 h-80 bg-indigo-500/10 rounded-full blur-[100px] pointer-events-none"></div>
+                    <div className="absolute -left-10 -bottom-10 w-60 h-60 bg-emerald-500/10 rounded-full blur-[80px] pointer-events-none"></div>
 
-                    <div className="relative z-10">
-                      <div className="flex justify-between items-start mb-10">
-                        <div>
-                          <div className="flex items-center gap-2 mb-2">
-                            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.25em]">
-                              Balanço Projetado
-                            </p>
-                          </div>
-                          <h2 className="text-4xl md:text-6xl font-black tracking-tighter tabular-nums leading-none">
-                            {formatCurrency(
-                              stats.netProfit +
-                                financialProjection.totalReceivable -
-                                financialProjection.totalPayable,
-                            )}
-                          </h2>
+                    <div className="relative z-10 space-y-4">
+                      {/* Header title */}
+                      <div className="flex justify-between items-center pb-3 border-b border-white/10">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                          <span className="text-[11px] font-black tracking-[0.2em] uppercase text-slate-300">
+                            Painel Operacional e Metas do Dia
+                          </span>
                         </div>
-                        <div className="p-4 bg-white/5 backdrop-blur-md rounded-3xl border border-white/10 hidden md:block">
-                          <Wallet size={24} className="text-indigo-300" />
-                        </div>
+                        <span className="text-[10px] font-bold text-indigo-300 uppercase bg-indigo-500/20 px-3 py-1 rounded-full border border-indigo-500/30">
+                          Copiloto & Caixa Real
+                        </span>
                       </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-8 border-t border-white/5">
-                        <div className="flex items-center gap-4 group">
-                          <div className="w-12 h-12 rounded-2xl bg-rose-500/10 flex items-center justify-center text-rose-400 border border-rose-500/20 group-hover:bg-rose-500 group-hover:text-white transition-all">
-                            <ArrowDownCircle size={20} />
+                      {/* Grid displaying the 4 requested metrics */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        
+                        {/* 1. Meta do Dia (Zero a Zero do Copiloto) */}
+                        <div className="bg-white/5 backdrop-blur-md p-4 rounded-2xl border border-white/10 hover:border-amber-500/40 transition-all flex flex-col justify-between group">
+                          <div className="flex justify-between items-start mb-2">
+                            <div className="flex items-center gap-2">
+                              <div className="p-2 bg-amber-500/10 rounded-xl border border-amber-500/20 text-amber-400 group-hover:scale-110 transition-transform">
+                                <Target size={16} />
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-black text-amber-400 uppercase tracking-wider">
+                                  Meta do Dia
+                                </p>
+                                <p className="text-[8px] text-slate-400 font-bold uppercase">
+                                  Zero a Zero (Copiloto)
+                                </p>
+                              </div>
+                            </div>
+                            {todayOrdersStats.revenue >= copilotDailyBreakEven ? (
+                              <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full text-[8px] font-black uppercase tracking-wider animate-pulse">
+                                🎯 Meta Batida
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 bg-amber-500/10 text-amber-300 border border-amber-500/20 rounded-full text-[8px] font-black uppercase tracking-wider">
+                                Em Progresso
+                              </span>
+                            )}
                           </div>
-                          <div>
-                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">
-                              Passivo Total
+
+                          <div className="my-1">
+                            <h3 className="text-2xl font-black text-amber-300 tracking-tight tabular-nums">
+                              {formatCurrency(copilotDailyBreakEven)}
+                            </h3>
+                            <p className="text-[9px] text-slate-300 font-medium mt-0.5">
+                              Faturado: <strong className="text-white">{formatCurrency(todayOrdersStats.revenue)}</strong>
                             </p>
-                            <p className="text-xl font-black text-white tabular-nums">
-                              {formatCurrency(financialProjection.totalPayable)}
-                            </p>
+                          </div>
+
+                          {/* Progress Bar towards break-even */}
+                          <div className="mt-2 pt-1.5 border-t border-white/10 space-y-1">
+                            <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden flex">
+                              <div
+                                className={`h-full transition-all duration-700 ${
+                                  todayOrdersStats.revenue >= copilotDailyBreakEven
+                                    ? "bg-emerald-400"
+                                    : "bg-amber-400"
+                                }`}
+                                style={{
+                                  width: `${Math.min(
+                                    100,
+                                    (todayOrdersStats.revenue / (copilotDailyBreakEven || 1)) * 100
+                                  )}%`,
+                                }}
+                              />
+                            </div>
+                            <div className="flex justify-between items-center text-[8px] font-extrabold uppercase text-slate-400">
+                              <span>Progresso Meta</span>
+                              <span className={todayOrdersStats.revenue >= copilotDailyBreakEven ? "text-emerald-400" : "text-amber-400"}>
+                                {((todayOrdersStats.revenue / (copilotDailyBreakEven || 1)) * 100).toFixed(0)}%
+                              </span>
+                            </div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-4 group">
-                          <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 border border-emerald-500/20 group-hover:bg-emerald-500 group-hover:text-white transition-all">
-                            <ArrowUpCircle size={20} />
+
+                        {/* 2. Faturamento do Dia */}
+                        <div className="bg-white/5 backdrop-blur-md p-4 rounded-2xl border border-white/10 hover:border-emerald-500/40 transition-all flex flex-col justify-between group">
+                          <div className="flex justify-between items-start mb-2">
+                            <div className="flex items-center gap-2">
+                              <div className="p-2 bg-emerald-500/10 rounded-xl border border-emerald-500/20 text-emerald-400 group-hover:scale-110 transition-transform">
+                                <TrendingUp size={16} />
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-black text-emerald-400 uppercase tracking-wider">
+                                  Faturamento do Dia
+                                </p>
+                                <p className="text-[8px] text-slate-400 font-bold uppercase">
+                                  Vendas Hoje
+                                </p>
+                              </div>
+                            </div>
+                            <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-[8px] font-black uppercase tracking-wider">
+                              {todayOrdersStats.count} Pedido{todayOrdersStats.count === 1 ? "" : "s"}
+                            </span>
                           </div>
-                          <div>
-                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">
-                              Ativo Total
+
+                          <div className="my-1">
+                            <h3 className="text-2xl font-black text-emerald-400 tracking-tight tabular-nums">
+                              {formatCurrency(todayOrdersStats.revenue)}
+                            </h3>
+                            <p className="text-[9px] text-slate-300 font-medium mt-0.5">
+                              Ticket Médio: <strong className="text-white">{formatCurrency(todayOrdersStats.averageTicket)}</strong>
                             </p>
-                            <p className="text-xl font-black text-white tabular-nums">
-                              {formatCurrency(
-                                financialProjection.totalReceivable,
-                              )}
-                            </p>
+                          </div>
+
+                          <div className="mt-2 pt-1.5 border-t border-white/10 flex justify-between items-center text-[8px] text-slate-400 font-extrabold uppercase">
+                            <span>Sobras Pós Equilíbrio</span>
+                            <span className={todayOrdersStats.revenue >= copilotDailyBreakEven ? "text-emerald-400 font-black" : "text-slate-400"}>
+                              {todayOrdersStats.revenue >= copilotDailyBreakEven
+                                ? `+ ${formatCurrency(todayOrdersStats.revenue - copilotDailyBreakEven)}`
+                                : `Falta ${formatCurrency(copilotDailyBreakEven - todayOrdersStats.revenue)}`}
+                            </span>
                           </div>
                         </div>
+
+                        {/* 3. Valor em Caixa */}
+                        <div className="bg-white/5 backdrop-blur-md p-4 rounded-2xl border border-white/10 hover:border-sky-500/40 transition-all flex flex-col justify-between group">
+                          <div className="flex justify-between items-start mb-2">
+                            <div className="flex items-center gap-2">
+                              <div className="p-2 bg-sky-500/10 rounded-xl border border-sky-500/20 text-sky-400 group-hover:scale-110 transition-transform">
+                                <Wallet size={16} />
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-black text-sky-400 uppercase tracking-wider">
+                                  Valor em Caixa
+                                </p>
+                                <p className="text-[8px] text-slate-400 font-bold uppercase">
+                                  Gaveta e Turno
+                                </p>
+                              </div>
+                            </div>
+                            {activeCashInDrawer.isOpen ? (
+                              <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full text-[8px] font-black uppercase tracking-wider flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                                Aberto
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 bg-rose-500/20 text-rose-300 border border-rose-500/30 rounded-full text-[8px] font-black uppercase tracking-wider">
+                                Fechado
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="my-1">
+                            <h3 className="text-2xl font-black text-sky-300 tracking-tight tabular-nums">
+                              {formatCurrency(activeCashInDrawer.isOpen ? activeCashInDrawer.amount : activeCashInDrawer.openingValue)}
+                            </h3>
+                            <p className="text-[9px] text-slate-300 font-medium mt-0.5">
+                              Fundo Inicial: <strong className="text-white">{formatCurrency(activeCashInDrawer.openingValue)}</strong>
+                            </p>
+                          </div>
+
+                          <div className="mt-2 pt-1.5 border-t border-white/10 flex justify-between items-center text-[8px] text-slate-400 font-extrabold uppercase">
+                            <span>Status da Operação</span>
+                            <span className={activeCashInDrawer.isOpen ? "text-sky-300 font-bold" : "text-rose-400 font-bold"}>
+                              {activeCashInDrawer.isOpen ? "Recebendo Vendas" : "Aguardando Abertura"}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* 4. Balanço Projetado (Mês) */}
+                        <div className="bg-white/5 backdrop-blur-md p-4 rounded-2xl border border-white/10 hover:border-indigo-500/40 transition-all flex flex-col justify-between group">
+                          <div className="flex justify-between items-start mb-2">
+                            <div className="flex items-center gap-2">
+                              <div className="p-2 bg-indigo-500/10 rounded-xl border border-indigo-500/20 text-indigo-300 group-hover:scale-110 transition-transform">
+                                <PieChart size={16} />
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-black text-indigo-300 uppercase tracking-wider">
+                                  Balanço Projetado Mês
+                                </p>
+                                <p className="text-[8px] text-slate-400 font-bold uppercase">
+                                  Saldo Estimado
+                                </p>
+                              </div>
+                            </div>
+                            <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider ${
+                              monthlyProjectedBalance.total >= 0 
+                                ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" 
+                                : "bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                            }`}>
+                              {monthlyProjectedBalance.total >= 0 ? "🟢 Positivo" : "🔴 Déficit"}
+                            </span>
+                          </div>
+
+                          <div className="my-1">
+                            <h3 className="text-2xl font-black text-white tracking-tight tabular-nums">
+                              {formatCurrency(monthlyProjectedBalance.total)}
+                            </h3>
+                            <div className="flex items-center gap-2 mt-0.5 text-[9px] font-medium text-slate-300">
+                              <span>Ativo: <strong className="text-emerald-400">{formatCurrency(monthlyProjectedBalance.receivable)}</strong></span>
+                              <span>•</span>
+                              <span>Passivo: <strong className="text-rose-400">{formatCurrency(monthlyProjectedBalance.payable)}</strong></span>
+                            </div>
+                          </div>
+
+                          <div className="mt-2 pt-1.5 border-t border-white/10 flex justify-between items-center text-[8px] text-slate-400 font-extrabold uppercase">
+                            <span>Lucro Líquido + A Receber</span>
+                            <span className="text-indigo-300 font-bold">Projeção Mensal</span>
+                          </div>
+                        </div>
+
                       </div>
                     </div>
                   </motion.div>

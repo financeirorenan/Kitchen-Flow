@@ -192,6 +192,19 @@ const KDS: React.FC<KDSProps> = memo(({
       return String(a.id).localeCompare(String(b.id));
     };
 
+    // Para pedidos finalizados (Turno Caixa): ordenar do MAIS RECENTE para o MAIS ANTIGO
+    const sortByNewestCompleted = (a: Order, b: Order) => {
+      const dateA = safeParseDate(a.completedAt || a.finishedAt || a.deliveredAt || a.updatedAt || a.createdAt);
+      const dateB = safeParseDate(b.completedAt || b.finishedAt || b.deliveredAt || b.updatedAt || b.createdAt);
+      const timeA = dateA ? dateA.getTime() : 0;
+      const timeB = dateB ? dateB.getTime() : 0;
+      if (timeA !== timeB) return timeB - timeA;
+      const dailyA = a.dailyNumber || 0;
+      const dailyB = b.dailyNumber || 0;
+      if (dailyA !== dailyB) return dailyB - dailyA;
+      return String(b.id).localeCompare(String(a.id));
+    };
+
     if (activeFilter === 'cancelled') {
       return {
         cancelled: [...filteredOrders].sort(sortByLaunchOrder)
@@ -212,13 +225,28 @@ const KDS: React.FC<KDSProps> = memo(({
         const isDeliveredOrFinished = o.status === 'delivered' || o.status === 'finished';
         if (!isDeliveredOrFinished) return false;
 
+        const createdDate = safeParseDate(o.createdAt);
+        const completionDate = safeParseDate(o.completedAt || o.finishedAt || o.deliveredAt || o.updatedAt);
+
+        // Se o caixa está aberto e a data de abertura é válida
         if (openedDate) {
-          const compDate = getOrderCompletionDate(o);
-          return compDate && compDate >= openedDate;
+          const now = new Date();
+          const twentyFourHoursAgo = new Date(now.getTime() - (24 * 60 * 60 * 1000));
+          
+          // Se o caixa foi aberto nas últimas 24 horas (turno ativo real):
+          if (openedDate >= twentyFourHoursAgo) {
+            const createdInTurn = createdDate ? createdDate >= openedDate : false;
+            const completedInTurn = completionDate ? completionDate >= openedDate : false;
+            return createdInTurn || completedInTurn;
+          }
         }
 
-        return (isToday(o.createdAt) || (new Date().getTime() - new Date(o.createdAt).getTime() < 12 * 60 * 60 * 1000)) && !o.isSettled;
-      }).sort(sortByLaunchOrder).slice(0, 40),
+        // Se o caixa está fechado ou se o caixa foi aberto há mais de 24h (sessão estagnada):
+        // Exibir apenas pedidos de HOJE
+        const isCreatedToday = createdDate ? isToday(createdDate) : false;
+        const isCompletedToday = completionDate ? isToday(completionDate) : false;
+        return isCreatedToday || isCompletedToday;
+      }).sort(sortByNewestCompleted).slice(0, 40),
     };
   }, [filteredOrders, activeFilter, cashSession]);
 
