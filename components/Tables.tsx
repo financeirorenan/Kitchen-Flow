@@ -874,22 +874,22 @@ const Tables: React.FC<TablesProps> = memo(
 
       let sourceOrders: Order[] = [];
       if (cashReport && cashReport.sessionOrders && cashReport.sessionOrders.length > 0) {
-        sourceOrders = cashReport.sessionOrders;
+        sourceOrders = cashReport.sessionOrders.filter((o) => !o.isSubTicket && !o.mergedIntoOrderId);
       } else if (lastClosingReport) {
         const openedAt = new Date(lastClosingReport.openedAt);
         const closedAt = new Date(lastClosingReport.closedAt);
         sourceOrders = orders.filter((o) => {
           const created = new Date(o.createdAt);
-          return created >= openedAt && created <= closedAt && o.status !== "cancelled";
+          return created >= openedAt && created <= closedAt && o.status !== "cancelled" && !o.isSubTicket && !o.mergedIntoOrderId;
         });
       } else if (cashSession.openedAt) {
         const openedAt = new Date(cashSession.openedAt);
         sourceOrders = orders.filter((o) => {
           const created = new Date(o.createdAt);
-          return created >= openedAt && o.status !== "cancelled";
+          return created >= openedAt && o.status !== "cancelled" && !o.isSubTicket && !o.mergedIntoOrderId;
         });
       } else {
-        sourceOrders = orders.filter((o) => o.status !== "cancelled");
+        sourceOrders = orders.filter((o) => o.status !== "cancelled" && !o.isSubTicket && !o.mergedIntoOrderId);
       }
 
       return sourceOrders

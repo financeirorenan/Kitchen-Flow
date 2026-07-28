@@ -378,6 +378,8 @@ const Finance: React.FC<FinanceProps> = memo(
       const currentMonthOrders = orders.filter((o) => {
         const d = new Date(o.createdAt);
         return (
+          !o.isSubTicket &&
+          !o.mergedIntoOrderId &&
           d.getMonth() === currentMonth &&
           d.getFullYear() === currentYear &&
           (o.status === "delivered" || o.status === "finished")
@@ -422,6 +424,8 @@ const Finance: React.FC<FinanceProps> = memo(
       const todayOrders = orders.filter((o) => {
         const orderDate = new Date(o.createdAt);
         return (
+          !o.isSubTicket &&
+          !o.mergedIntoOrderId &&
           orderDate >= today &&
           (o.status === "delivered" || o.status === "finished")
         );
@@ -451,7 +455,7 @@ const Finance: React.FC<FinanceProps> = memo(
 
       const cashSales = orders
         .filter((o) => {
-          if (o.status === "cancelled") return false;
+          if (o.status === "cancelled" || o.isSubTicket || o.mergedIntoOrderId) return false;
           const orderDate = new Date(o.paidAt || o.completedAt || o.finishedAt || o.updatedAt || o.createdAt);
           return orderDate >= openedDate;
         })
@@ -4298,7 +4302,7 @@ const Finance: React.FC<FinanceProps> = memo(
 
                     const closingOrders = orders.filter((o) => {
                       const created = new Date(o.createdAt);
-                      return created >= openedAt && created <= closedAt && o.status !== "cancelled";
+                      return created >= openedAt && created <= closedAt && o.status !== "cancelled" && !o.isSubTicket && !o.mergedIntoOrderId;
                     });
 
                     const targetMethod = selectedClosingMethodReport.id;

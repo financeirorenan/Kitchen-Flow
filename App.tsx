@@ -3634,15 +3634,10 @@ const App: React.FC = () => {
 
     const activeStatus = activeOrderObj?.status;
 
-    // Ao registrar o pagamento/evento financeiro no caixa:
-    // Se o pedido já existe e está ativo na cozinha ou entrega (ex: 'pending', 'preparing', 'ready', 'delivering'),
-    // preservamos seu status para não sumir do KDS da cozinha. Se não existir status prévio, entra como 'preparing'.
-    let determinedStatus: OrderStatus = 'preparing';
-    if (activeStatus && activeStatus !== 'cancelled') {
-      determinedStatus = activeStatus;
-    } else {
-      determinedStatus = 'preparing';
-    }
+    // Ao encerrar a mesa/pedido e registrar o pagamento:
+    // O pedido está sendo FINALIZADO/PAGO, portanto o status DEVE SER 'finished'
+    // para encerrar a comanda, liberar a mesa e remover do KDS.
+    const determinedStatus: OrderStatus = 'finished';
 
     const preparedItems = table.items.map(i => ({ ...i, sentToKitchen: true }));
 
@@ -3672,7 +3667,8 @@ const App: React.FC = () => {
       tenantId: viewingTenantId || currentUserData?.tenantId || 't1',
       source: table.currentOrderId ? (orders.find(o => o.id === table.currentOrderId)?.source || 'local') : 'local',
       isSettled: true,
-      finishedAt: determinedStatus === 'finished' ? new Date() : undefined,
+      finishedAt: new Date(),
+      completedAt: new Date(),
       updatedAt: new Date()
     };
     const newOrder = assignDailyNumberToOrder(rawOrder);
@@ -3746,17 +3742,16 @@ const App: React.FC = () => {
     if (relatedOrdersToUpdate.length > 0) {
       const now = new Date();
       for (const ro of relatedOrdersToUpdate) {
-        // Se o pedido está em produção/cozinha (pending, preparing, ready, delivering), preserva o status ativo
-        const isKitchenActive = ro.status === 'pending' || ro.status === 'preparing' || ro.status === 'ready' || ro.status === 'delivering';
-        const targetStatus = isKitchenActive ? ro.status : 'finished';
-        
         const updates: Partial<Order> = {
-          status: targetStatus,
+          status: 'finished',
           isSettled: true,
+          isSubTicket: true,
+          mergedIntoOrderId: newOrder.id,
           paymentMethod: method,
           payments: payments?.map(p => ({ ...p, timestamp: now })),
           updatedAt: now,
-          ...(targetStatus === 'finished' ? { finishedAt: now, completedAt: now } : {})
+          finishedAt: now,
+          completedAt: now
         };
 
         setOrders(prev => prev.map(o => o.id === ro.id ? { ...o, ...updates } : o));
@@ -3889,15 +3884,16 @@ const App: React.FC = () => {
         o.status !== 'cancelled'
       );
       for (const dup of duplicateOpenOrders) {
-        const isKitchenActive = dup.status === 'preparing' || dup.status === 'pending' || dup.status === 'ready';
-        const targetStatus = isKitchenActive ? dup.status : 'finished';
         try {
           const updates = { 
-            status: targetStatus, 
+            status: 'finished', 
             isSettled: true, 
+            isSubTicket: true,
+            mergedIntoOrderId: newOrder.id,
             paymentMethod: method,
             updatedAt: new Date(),
-            ...(targetStatus === 'finished' ? { finishedAt: new Date() } : {})
+            finishedAt: new Date(),
+            completedAt: new Date()
           };
           if (effectiveTenantId) {
             await setDoc(doc(db, 'orders', dup.id), updates, { merge: true });
@@ -4688,6 +4684,7 @@ const App: React.FC = () => {
 
       // ROBUST CALCULATION: Fetch ALL orders during the session
       let salesSinceOpen: Order[] = orders.filter(o => {
+        if (o.status === 'cancelled' || o.isSubTicket || o.mergedIntoOrderId) return false;
         const createdAt = parseToDate(o.createdAt);
         return createdAt >= openedDate;
       });
@@ -4714,6 +4711,7 @@ const App: React.FC = () => {
           if (!ordersSnapshot.empty) {
             const fetchedOrders = ordersSnapshot.docs.map(d => ({ ...d.data(), id: d.id, createdAt: (d.data().createdAt as any)?.toDate ? (d.data().createdAt as any).toDate() : new Date(d.data().createdAt) } as Order));
             salesSinceOpen = fetchedOrders.filter(o => {
+              if (o.status === 'cancelled' || o.isSubTicket || o.mergedIntoOrderId) return false;
               const createdAt = parseToDate(o.createdAt);
               return createdAt >= openedDate;
             });

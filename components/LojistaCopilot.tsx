@@ -125,6 +125,7 @@ export default function LojistaCopilot({
     // Count orders in current month
     const now = new Date();
     const currentMonthOrders = orders.filter(o => {
+      if (o.isSubTicket || o.mergedIntoOrderId || o.status === 'cancelled') return false;
       if (!o.createdAt) return false;
       const oDate = o.createdAt instanceof Date ? o.createdAt : (o.createdAt.toDate ? o.createdAt.toDate() : new Date(o.createdAt));
       return oDate.getMonth() === now.getMonth() && oDate.getFullYear() === now.getFullYear();
@@ -356,6 +357,7 @@ Como posso te ajudar a lucrar mais hoje? Pergunte abaixo ou clique em uma das su
     today.setHours(0, 0, 0, 0);
     
     const todayOrders = orders.filter(o => {
+      if (o.isSubTicket || o.mergedIntoOrderId) return false;
       const d = o.createdAt instanceof Date ? o.createdAt : new Date(o.createdAt);
       return d >= today && (o.status === 'finished' || o.status === 'delivered');
     });
@@ -1575,95 +1577,98 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
   return (
     <div id="merchant-copilot-module" className="p-4 md:p-6 lg:p-8 space-y-6 w-full">
       
-      {/* Upper header action bar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
-        <div className="max-w-xl">
+      {/* Upper header action bar with Command Center style */}
+      <div className="bg-[#121214] border border-slate-800 p-5 md:p-6 rounded-[2rem] text-white shadow-xl flex flex-col lg:flex-row lg:items-center justify-between gap-5 relative overflow-hidden">
+        {/* Subtle background glow */}
+        <div className="absolute top-0 right-0 w-80 h-32 bg-indigo-600/10 blur-3xl pointer-events-none rounded-full" />
+
+        <div className="max-w-xl z-10">
           <div className="flex items-center gap-2">
-            <span className="p-0.5 px-2.5 rounded-full text-[9px] bg-[#00B7FF]/10 text-[#00B7FF] font-extrabold flex items-center gap-1 uppercase tracking-widest border border-[#00B7FF]/20">
-              <Sparkles size={10} className="animate-spin" /> Analista Residente Kai
+            <span className="p-0.5 px-3 rounded-full text-[9px] bg-[#00B7FF]/15 text-[#00B7FF] font-black flex items-center gap-1.5 uppercase tracking-widest border border-[#00B7FF]/30 shadow-sm">
+              <Sparkles size={11} className="animate-spin text-[#00B7FF]" /> Analista Residente Kai
             </span>
           </div>
-          <h1 className="text-xl md:text-2xl font-black text-slate-800 tracking-tight mt-1">
+          <h1 className="text-2xl md:text-3xl font-black text-white tracking-tight mt-2 flex items-center gap-2">
             Módulo Lojista
           </h1>
-          <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
-            Acompanhe o raio-x operacional gerado em tempo real pelo Kai diretamente no navegador de sua loja.
+          <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+            Acompanhe o raio-x operacional e financeiro da sua loja gerado em tempo real com inteligência artificial.
           </p>
         </div>
 
-        {/* Subtabs and specific filters */}
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Subtab selection widget */}
-          <div className="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-2xl border shadow-sm">
-            <button 
-              onClick={() => setActiveSubTab('overview')}
-              className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${activeSubTab === 'overview' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-            >
-              <LayoutDashboard size={13} /> Painel de Diagnóstico Kai
-            </button>
-            <button 
-              onClick={() => setActiveSubTab('copilot')}
-              className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${activeSubTab === 'copilot' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-            >
-              <TrendingUp size={13} /> Demonstrativo Financeiro
-            </button>
-            <button 
-              onClick={() => setActiveSubTab('analista-estoque')}
-              className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${activeSubTab === 'analista-estoque' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-            >
-              <Package size={13} className="text-amber-500" /> Analista de Estoque
-            </button>
-            <button 
-              onClick={() => setActiveSubTab('cmv-cardapio')}
-              className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${activeSubTab === 'cmv-cardapio' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-            >
-              <BrainCircuit size={13} /> Assistente de Cardápio (CMV)
-            </button>
-            <button 
-              onClick={() => setActiveSubTab('chatbot')}
-              className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${activeSubTab === 'chatbot' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-            >
-              <MessageSquare size={13} className="text-indigo-500" /> Chatbot Kai
-            </button>
-          </div>
-
+        {/* Action Controls */}
+        <div className="flex flex-col sm:flex-row flex-wrap items-start sm:items-center gap-3 z-10">
           <button
             onClick={() => setIsConfigOpen(true)}
-            className="px-3.5 py-1.5 bg-indigo-50 border border-indigo-100 hover:bg-indigo-100 text-indigo-600 rounded-xl hover:border-indigo-300 transition-all flex items-center gap-1.5 font-bold text-[10px] shadow-sm"
+            className="px-4 py-2 bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/80 text-slate-200 rounded-xl transition-all flex items-center gap-2 font-bold text-xs shadow-sm cursor-pointer active:scale-95"
           >
-            <Sliders size={12} className="text-indigo-500 animate-pulse" />
+            <Sliders size={14} className="text-indigo-400 animate-pulse" />
             <span>Configurar Custos Fixos</span>
           </button>
 
           <button
             onClick={() => setIsMobileAppMode(!isMobileAppMode)}
-            className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-all flex items-center gap-1.5 font-bold text-[10px] shadow-sm cursor-pointer"
+            className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white rounded-xl transition-all flex items-center gap-2 font-bold text-xs shadow-md shadow-indigo-600/20 cursor-pointer active:scale-95"
           >
-            <Smartphone size={13} className="animate-pulse" />
+            <Smartphone size={14} />
             <span>{isMobileAppMode ? "Ver Painel Web" : "Simular App Lojista 📱"}</span>
           </button>
-
-          {/* Filters and Config togglers shown only inside Copiloto Financeiro subtab */}
-          {activeSubTab === 'copilot' && (
-            <div className="flex items-center gap-2 animate-in fade-in duration-300">
-              <div className="flex items-center gap-1 bg-white border border-slate-200 p-1 rounded-2xl shadow-sm">
-                {(["today", "last7", "thisMonth", "lastMonth"] as PeriodType[]).map((p) => (
-                  <button
-                    key={p}
-                    onClick={() => setSelectedPeriod(p)}
-                    className={`px-2.5 py-1 rounded-xl font-bold text-[10px] transition-all ${
-                      selectedPeriod === p
-                        ? "bg-indigo-600 text-white shadow-sm"
-                        : "text-slate-500 hover:bg-slate-50"
-                    }`}
-                  >
-                    {p === "today" ? "Hoje" : p === "last7" ? "7D" : p === "thisMonth" ? "Mês" : "Mês Ant."}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
+      </div>
+
+      {/* Navigation Subtabs Bar */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white border border-slate-200/80 p-2 rounded-2xl shadow-sm">
+        <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto">
+          <button 
+            onClick={() => setActiveSubTab('overview')}
+            className={`px-3.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-2 ${activeSubTab === 'overview' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'}`}
+          >
+            <LayoutDashboard size={14} /> Diagnóstico Kai
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('copilot')}
+            className={`px-3.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-2 ${activeSubTab === 'copilot' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'}`}
+          >
+            <TrendingUp size={14} /> Demonstrativo Financeiro
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('analista-estoque')}
+            className={`px-3.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-2 ${activeSubTab === 'analista-estoque' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'}`}
+          >
+            <Package size={14} className={activeSubTab === 'analista-estoque' ? 'text-white' : 'text-amber-500'} /> Estoque
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('cmv-cardapio')}
+            className={`px-3.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-2 ${activeSubTab === 'cmv-cardapio' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'}`}
+          >
+            <BrainCircuit size={14} /> Assistente CMV
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('chatbot')}
+            className={`px-3.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-2 ${activeSubTab === 'chatbot' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'}`}
+          >
+            <MessageSquare size={14} className={activeSubTab === 'chatbot' ? 'text-white' : 'text-indigo-500'} /> Chatbot Kai
+          </button>
+        </div>
+
+        {/* Filters shown only inside Copiloto Financeiro subtab */}
+        {activeSubTab === 'copilot' && (
+          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl w-full sm:w-auto justify-end">
+            {(["today", "last7", "thisMonth", "lastMonth"] as PeriodType[]).map((p) => (
+              <button
+                key={p}
+                onClick={() => setSelectedPeriod(p)}
+                className={`px-3 py-1.5 rounded-lg font-bold text-[10px] transition-all ${
+                  selectedPeriod === p
+                    ? "bg-white text-indigo-600 shadow-sm font-black"
+                    : "text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                {p === "today" ? "Hoje" : p === "last7" ? "7D" : p === "thisMonth" ? "Mês" : "Mês Ant."}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* RENDER ACTIVE TAB SEPARATORS */}

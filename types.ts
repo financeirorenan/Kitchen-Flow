@@ -483,6 +483,8 @@ export interface Order {
   wantsFiscalCoupon?: boolean;
   changeFor?: number;
   isSettled?: boolean;
+  isSubTicket?: boolean;
+  mergedIntoOrderId?: string;
   updatedAt?: Date;
   completedAt?: Date;
   latitude?: number;
