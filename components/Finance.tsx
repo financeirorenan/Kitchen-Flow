@@ -451,23 +451,36 @@ const Finance: React.FC<FinanceProps> = memo(
 
       const cashSales = orders
         .filter((o) => {
-          const orderDate = new Date(o.createdAt);
-          return (
-            orderDate >= openedDate &&
-            (o.status === "delivered" || o.status === "finished") &&
-            o.paymentMethod === "dinheiro"
-          );
+          if (o.status === "cancelled") return false;
+          const orderDate = new Date(o.paidAt || o.completedAt || o.finishedAt || o.updatedAt || o.createdAt);
+          return orderDate >= openedDate;
         })
-        .reduce((acc, o) => acc + o.total, 0);
+        .reduce((acc, o) => {
+          if (o.payments && o.payments.length > 0) {
+            const cashFromPayments = o.payments
+              .filter((p) => p.method === "dinheiro")
+              .reduce((s, p) => s + p.amount, 0);
+            return acc + cashFromPayments;
+          } else if (
+            o.paymentMethod === "dinheiro" &&
+            (o.isSettled || o.paymentStatus === "paid" || o.status === "delivered" || o.status === "finished")
+          ) {
+            return acc + o.total;
+          }
+          return acc;
+        }, 0);
 
       const cashIncomes = manualRecords
         .filter((r) => {
           const rDate = new Date(r.dueDate || r.date);
+          const cat = (r.category || "").toLowerCase();
           return (
             rDate >= openedDate &&
             r.type === "income" &&
             r.status === "paid" &&
-            r.paymentMethod === "dinheiro"
+            r.paymentMethod === "dinheiro" &&
+            !cat.includes("abertura") &&
+            !cat.startsWith("venda")
           );
         })
         .reduce((acc, r) => acc + r.amount, 0);
