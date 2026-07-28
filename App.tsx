@@ -2462,166 +2462,223 @@ const App: React.FC = () => {
   const handleSendToKitchen = async (tableId: number | string, items: OrderItem[], isCounter?: boolean) => {
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || (user?.uid ? user.uid : 't1');
     
-    // Encontrar o número da mesa/comanda para exibir no KDS em vez do ID técnico
+    // Encontrar o número da mesa/comanda ou balcão
     const tableInfo = isCounter 
       ? counterOrders.find(t => t.id === tableId || String(t.id) === String(tableId))
       : tables.find(t => t.id === tableId || (t as any).docId === tableId || t.number === tableId || String(t.id) === String(tableId) || Number(t.id) === Number(tableId));
     
     const displayTableNumber = tableInfo ? tableInfo.number : (typeof tableId === 'number' ? tableId : (Number(String(tableId).replace(/\D/g, '')) || tableId));
+    const now = new Date();
 
-    // Buscar pedido ativo/existente desta mesa ou pedido em edição para NUNCA duplicar pedidos
-    let activeOrder: Order | undefined = undefined;
-
-    // Priority 0: Se estivemos em modo de edição de pedido no PDV (pdvEditOrder), usar o próprio pedido diretamente
-    if (pdvEditOrder) {
-      activeOrder = orders.find(o => o.id === pdvEditOrder.id) || pdvEditOrder;
-    }
-
-    // Priority 0.5: Se o próprio tableId for o ID de um pedido existente em orders
-    if (!activeOrder && typeof tableId === 'string' && tableId.startsWith('KDS-')) {
-      activeOrder = orders.find(o => 
-        (o.id === tableId || o.docId === tableId) && 
-        o.status !== 'cancelled' && 
-        o.status !== 'finished'
-      );
-    }
-
-    // Priority 1: Buscar pelo currentOrderId gravado na mesa/comanda se existir
-    if (!activeOrder && tableInfo?.currentOrderId) {
-      activeOrder = orders.find(o => 
-        (o.id === tableInfo.currentOrderId || o.docId === tableInfo.currentOrderId) && 
-        o.status !== 'cancelled' &&
-        o.status !== 'finished'
-      );
-    }
-
-    // Priority 2: Buscar qualquer pedido aberto da mesa que não esteja encerrado/cancelado
-    if (!activeOrder) {
-      activeOrder = orders.find(o => 
+    if (!isCounter) {
+      // ==========================================
+      // REGRA DE MESAS:
+      // ==========================================
+      // Se a mesa já possui itens enviados anteriormente para a cozinha:
+      // O novo lançamento NÃO volta o que foi pedido anteriormente nem altera o status do pedido antigo na cozinha.
+      // É gerado um NOVO PEDIDO/TICKET no KDS contendo APENAS o novo produto lançado.
+      const hasSentItems = tableInfo?.items && tableInfo.items.some(i => i.sentToKitchen);
+      const existingTableOrder = orders.find(o => 
         String(o.tableNumber) === String(displayTableNumber) && 
+        o.type === 'table' &&
         o.status !== 'cancelled' &&
         o.status !== 'finished'
       );
-    }
 
-    if (activeOrder) {
-      // Já existe um pedido ativo para esta mesa! Vamos atualizar o pedido existente com os novos itens
-      const existingItems = activeOrder.items.map(i => ({ ...i, isNew: false }));
-      const newBatchNumber = ((activeOrder as any).currentBatch || 1) + 1;
-      const now = new Date();
-      const newEventId = `evt_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-      const newVersion = (activeOrder.version || 1) + 1;
-      
-      items.forEach(newItem => {
-        const existingIndex = existingItems.findIndex(i => 
-          i.id === newItem.id || 
-          (i.productId === newItem.productId && i.name === newItem.name && (i.observation || '') === (newItem.observation || '') && !i.sentToKitchen)
-        );
-        if (existingIndex !== -1) {
-          existingItems[existingIndex] = { ...existingItems[existingIndex], ...newItem, sentToKitchen: true };
-        } else {
-          existingItems.push({ 
-            ...newItem, 
-            sentToKitchen: true,
-            batchNumber: newBatchNumber,
-            isNew: true,
-            sentAt: now.toISOString()
-          });
+      if (hasSentItems || existingTableOrder) {
+        // Criar um novo ticket isolado de cozinha no KDS contendo APENAS os novos itens lançados
+        const newTicketItems = items.map(i => ({
+          ...i,
+          sentToKitchen: true,
+          batchNumber: ((existingTableOrder as any)?.currentBatch || 1) + 1,
+          isNew: true,
+          sentAt: now.toISOString()
+        }));
+
+        const newKdsOrder: Order = {
+          id: `KDS-${Math.random().toString(36).substr(2, 4).toUpperCase()}`,
+          tableNumber: displayTableNumber,
+          type: 'table',
+          status: 'preparing',
+          items: newTicketItems,
+          total: newTicketItems.reduce((acc, i) => acc + (i.price * i.quantity), 0),
+          createdAt: now,
+          updatedAt: now,
+          tenantId: effectiveTenantId,
+          version: 1,
+          lastEventId: `evt_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+          currentBatch: ((existingTableOrder as any)?.currentBatch || 1) + 1
+        };
+
+        const assignedKdsOrder = assignDailyNumberToOrder(newKdsOrder);
+
+        if (effectiveTenantId) {
+          try {
+            await setDoc(doc(db, 'orders', assignedKdsOrder.id), cleanObject({
+              ...assignedKdsOrder,
+              createdAt: now
+            }));
+          } catch (e) {
+            console.error("Error creating sub-ticket KDS order in cloud:", e);
+          }
         }
-      });
 
-      const updates: Partial<Order> = {
-        items: existingItems,
-        total: existingItems.reduce((acc, i) => acc + (i.price * i.quantity), 0),
-        status: 'preparing', // Garante que vá/volte para 'preparing' para a cozinha ver e preparar
-        updatedAt: now,
-        version: newVersion,
-        lastEventId: newEventId,
-        currentBatch: newBatchNumber
-      };
+        await localDb.orders.put(assignedKdsOrder);
+        setOrders(prev => [assignedKdsOrder, ...prev]);
 
-      if (effectiveTenantId) {
-        const targetDocId = activeOrder.docId || activeOrder.id;
-        try {
-          await setDoc(doc(db, 'orders', targetDocId), updates, { merge: true });
-          
-          // Garante vinculação do currentOrderId na mesa no Firestore
-          if (!isCounter) {
-            const docId = (tableInfo as any)?.docId || (typeof tableId === 'string' && !tableId.startsWith('KDS-') ? tableId : null);
-            if (docId) {
-              await updateDoc(doc(db, 'diningTables', docId), { currentOrderId: activeOrder.id, updatedAt: new Date() });
-            } else if (displayTableNumber) {
-              const qTable = query(collection(db, 'diningTables'), where('number', '==', Number(displayTableNumber)), where('tenantId', '==', effectiveTenantId));
-              const snapTable = await getDocs(qTable);
-              snapTable.docs.forEach(d => updateDoc(d.ref, { currentOrderId: activeOrder!.id, updatedAt: new Date() }));
+        // Atualizar conta acumulada da Mesa para manter o extrato/extrato do cliente completo
+        setTables(prev => prev.map(t => {
+          if (t.id === tableId || (t as any).docId === tableId || t.number === displayTableNumber) {
+            const updatedItems = [...t.items];
+            items.forEach(newItem => {
+              const idx = updatedItems.findIndex(it => !it.sentToKitchen && (it.id === newItem.id || (it.productId === newItem.productId && it.name === newItem.name)));
+              if (idx !== -1) {
+                updatedItems[idx] = { ...updatedItems[idx], sentToKitchen: true };
+              } else if (!updatedItems.some(it => it.id === newItem.id)) {
+                updatedItems.push({ ...newItem, sentToKitchen: true });
+              }
+            });
+            return {
+              ...t,
+              items: updatedItems,
+              total: updatedItems.reduce((acc, i) => acc + (i.price * i.quantity), 0),
+              currentOrderId: assignedKdsOrder.id
+            };
+          }
+          return t;
+        }));
+
+        addLog('u1', 'COZINHA', `Novo lote enviado à cozinha para Mesa ${displayTableNumber} (Pedido #${assignedKdsOrder.id})`);
+        return;
+      }
+    } else {
+      // ==========================================
+      // REGRA DE BALCÃO / DELIVERY:
+      // ==========================================
+      // Se o pedido já existe no KDS:
+      // - Caso NÃO tenha sido marcado como pronto pelo KDS (status 'preparing' ou 'pending'):
+      //   Atualiza os itens do pedido existente no KDS.
+      // - Caso JÁ tenha sido marcado como pronto (status 'ready', 'delivering', 'delivered', 'finished'):
+      //   Lança como NOVO PEDIDO no KDS com a MESMA referência de número de pedido (dailyNumber).
+
+      let activeCounterOrder: Order | undefined = undefined;
+
+      if (pdvEditOrder) {
+        activeCounterOrder = orders.find(o => o.id === pdvEditOrder.id) || pdvEditOrder;
+      } else if (tableInfo?.currentOrderId) {
+        activeCounterOrder = orders.find(o => o.id === tableInfo.currentOrderId && o.status !== 'cancelled' && o.status !== 'finished');
+      }
+
+      if (!activeCounterOrder) {
+        activeCounterOrder = orders.find(o => 
+          (o.type === 'takeout' || o.type === 'delivery' || o.type === 'counter') &&
+          o.status !== 'cancelled' &&
+          o.status !== 'finished'
+        );
+      }
+
+      if (activeCounterOrder) {
+        const isAlreadyReady = ['ready', 'delivering', 'delivered', 'finished'].includes(activeCounterOrder.status);
+
+        if (!isAlreadyReady) {
+          // NÃO marcado como pronto: Atualiza os itens do pedido existente no KDS
+          const existingItems = activeCounterOrder.items.map(i => ({ ...i, isNew: false }));
+          items.forEach(newItem => {
+            const existingIndex = existingItems.findIndex(i => 
+              i.id === newItem.id || 
+              (i.productId === newItem.productId && i.name === newItem.name && (i.observation || '') === (newItem.observation || '') && !i.sentToKitchen)
+            );
+            if (existingIndex !== -1) {
+              existingItems[existingIndex] = { ...existingItems[existingIndex], ...newItem, sentToKitchen: true };
+            } else {
+              existingItems.push({ ...newItem, sentToKitchen: true, isNew: true });
+            }
+          });
+
+          const updates: Partial<Order> = {
+            items: existingItems,
+            total: existingItems.reduce((acc, i) => acc + (i.price * i.quantity), 0),
+            status: 'preparing',
+            updatedAt: now
+          };
+
+          if (effectiveTenantId) {
+            try {
+              await setDoc(doc(db, 'orders', activeCounterOrder.docId || activeCounterOrder.id), updates, { merge: true });
+            } catch (e) {
+              console.error("Error updating counter order in cloud:", e);
             }
           }
-        } catch (error) {
-          console.error("Error updating KDS order in cloud:", error);
+
+          await localDb.orders.update(activeCounterOrder.id, updates);
+          setOrders(prev => prev.map(o => o.id === activeCounterOrder!.id ? { ...o, ...updates } as Order : o));
+
+          setCounterOrders(prev => prev.map(t => (t.id === tableId || String(t.id) === String(tableId)) ? { ...t, currentOrderId: activeCounterOrder!.id } : t));
+          addLog('u1', 'COZINHA', `Pedido Balcão #${activeCounterOrder.dailyNumber || activeCounterOrder.id} atualizado no KDS com novos itens`);
+          return;
+        } else {
+          // JÁ marcado como pronto pelo KDS: Lança como NOVO PEDIDO no KDS com a MESMA referência de número de pedido
+          const newOrderWithSameRef: Order = {
+            id: `KDS-${Math.random().toString(36).substr(2, 4).toUpperCase()}`,
+            dailyNumber: activeCounterOrder.dailyNumber, // Mesma referência de número do pedido!
+            customerName: activeCounterOrder.customerName,
+            customerPhone: activeCounterOrder.customerPhone,
+            customerAddress: activeCounterOrder.customerAddress,
+            type: activeCounterOrder.type,
+            status: 'preparing',
+            items: items.map(i => ({ ...i, sentToKitchen: true, isNew: true })),
+            total: items.reduce((acc, i) => acc + (i.price * i.quantity), 0),
+            createdAt: now,
+            updatedAt: now,
+            tenantId: effectiveTenantId
+          };
+
+          if (effectiveTenantId) {
+            try {
+              await setDoc(doc(db, 'orders', newOrderWithSameRef.id), cleanObject({
+                ...newOrderWithSameRef,
+                createdAt: now
+              }));
+            } catch (e) {
+              console.error("Error creating secondary counter ticket:", e);
+            }
+          }
+
+          await localDb.orders.put(newOrderWithSameRef);
+          setOrders(prev => [newOrderWithSameRef, ...prev]);
+          setCounterOrders(prev => prev.map(t => (t.id === tableId || String(t.id) === String(tableId)) ? { ...t, currentOrderId: newOrderWithSameRef.id } : t));
+          addLog('u1', 'COZINHA', `Novo item lançado para Balcão/Delivery (Ref #${activeCounterOrder.dailyNumber}) - Novo pedido KDS criado`);
+          return;
         }
       }
-      
-      await localDb.orders.update(activeOrder.id, updates);
-      setOrders(prev => prev.map(o => (o.id === activeOrder!.id || o.docId === activeOrder!.id) ? { ...o, ...updates } as Order : o));
-
-      // Atualiza também o estado local da mesa/comanda
-      if (isCounter) {
-        setCounterOrders(prev => prev.map(t => (t.id === tableId || String(t.id) === String(tableId)) ? { ...t, currentOrderId: activeOrder!.id } : t));
-      } else {
-        setTables(prev => prev.map(t => (t.id === tableId || (t as any).docId === tableId || t.number === displayTableNumber) ? { ...t, currentOrderId: activeOrder!.id } : t));
-      }
-
-      addLog('u1', 'COZINHA', `Pedido ${activeOrder.id} (Mesa ${displayTableNumber}) enviado à cozinha com novos itens (Lote ${newBatchNumber}, v${newVersion})`);
-      return;
     }
 
-    // Apenas se NÃO houver nenhum pedido ativo para esta mesa, cria um novo pedido KDS
-    const now = new Date();
+    // Criar pedido KDS inicial se não houver nenhum pedido ativo
     const rawKitchenOrder: Order = {
       id: `KDS-${Math.random().toString(36).substr(2, 4).toUpperCase()}`,
-      tableNumber: displayTableNumber, 
+      tableNumber: isCounter ? undefined : displayTableNumber,
       type: isCounter ? 'takeout' : 'table',
       status: 'preparing',
-      items: items.map(i => ({ 
-        ...i, 
-        sentToKitchen: true,
-        batchNumber: 1,
-        isNew: false,
-        sentAt: now.toISOString()
-      })),
+      items: items.map(i => ({ ...i, sentToKitchen: true, isNew: false })),
       total: items.reduce((acc, i) => acc + (i.price * i.quantity), 0),
       createdAt: now,
       updatedAt: now,
       tenantId: effectiveTenantId,
-      version: 1,
-      lastEventId: `evt_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-      currentBatch: 1
+      version: 1
     };
     const kitchenOrder = assignDailyNumberToOrder(rawKitchenOrder);
 
     if (effectiveTenantId) {
-       try {
-         await setDoc(doc(db, 'orders', kitchenOrder.id), cleanObject({
-           ...kitchenOrder,
-           createdAt: new Date()
-         }));
-         
-         if (!isCounter) {
-            const docId = (tableInfo as any)?.docId || (typeof tableId === 'string' && !tableId.startsWith('KDS-') ? tableId : null);
-            if (docId) {
-              await updateDoc(doc(db, 'diningTables', docId), { currentOrderId: kitchenOrder.id, updatedAt: new Date() });
-            } else if (displayTableNumber) {
-              const qTable = query(collection(db, 'diningTables'), where('number', '==', Number(displayTableNumber)), where('tenantId', '==', effectiveTenantId));
-              const snapTable = await getDocs(qTable);
-              snapTable.docs.forEach(d => updateDoc(d.ref, { currentOrderId: kitchenOrder.id, updatedAt: new Date() }));
-            }
-         }
-       } catch (err) {
-         console.error("Error creating KDS order in Firestore:", err);
-       }
+      try {
+        await setDoc(doc(db, 'orders', kitchenOrder.id), cleanObject({
+          ...kitchenOrder,
+          createdAt: now
+        }));
+      } catch (err) {
+        console.error("Error creating KDS order in Firestore:", err);
+      }
     }
-    
-    // Atualizar estado local da mesa também
+
     if (isCounter) {
       setCounterOrders(prev => prev.map(t => (t.id === tableId || String(t.id) === String(tableId)) ? { ...t, currentOrderId: kitchenOrder.id } : t));
     } else {

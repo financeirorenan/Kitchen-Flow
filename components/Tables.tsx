@@ -401,33 +401,47 @@ const Tables: React.FC<TablesProps> = memo(
       }[],
       receivedAmount?: number,
     ) => {
+      const computedTotal =
+        selectedTable!.total +
+        (isDeliveryOrder && isCounterContext
+          ? parseCurrency(deliveryFeeInput)
+          : 0) +
+        (additionalFee || 0) -
+        (discount || 0);
+
+      const computedPayments = payments?.map((p) => ({ ...p, timestamp: new Date() })) || [
+        {
+          method,
+          amount: computedTotal,
+          timestamp: new Date(),
+        },
+      ];
+
+      // Registrar movimento financeiro imediatamente no Caixa e Relatórios Financeiros
+      if (onAddFinancialRecord) {
+        computedPayments.forEach((p) => {
+          onAddFinancialRecord({
+            type: 'income',
+            amount: p.amount,
+            category: isDeliveryOrder ? 'Vendas Entrega' : (isCounterContext ? 'Vendas Balcão' : 'Vendas Mesa'),
+            description: `${isDeliveryOrder ? 'Entrega' : (isCounterContext ? 'Balcão' : `Mesa ${selectedTable?.number || selectedTable?.id}`)} - Pagamento: ${p.method}`,
+            date: new Date(),
+            paymentMethod: p.method,
+            orderId: pdvEditOrder ? pdvEditOrder.id : undefined
+          });
+        });
+      }
+
       if (pdvEditOrder && onUpdateOrder) {
         onUpdateOrder(pdvEditOrder.id, {
           items: selectedTable!.items,
-          total:
-            selectedTable!.total +
-            (isDeliveryOrder && isCounterContext
-              ? parseCurrency(deliveryFeeInput)
-              : 0) +
-            (additionalFee || 0) -
-            (discount || 0),
+          total: computedTotal,
           additionalFee: additionalFee || 0,
           additionalFeeReason: additionalFeeReason || "",
           discount: discount || 0,
           paymentMethod: method,
-          payments: payments?.map((p) => ({ ...p, timestamp: new Date() })) || [
-            {
-              method,
-              amount:
-                selectedTable!.total +
-                (isDeliveryOrder && isCounterContext
-                  ? parseCurrency(deliveryFeeInput)
-                  : 0) +
-                (additionalFee || 0) -
-                (discount || 0),
-              timestamp: new Date(),
-            },
-          ],
+          payments: computedPayments,
+          isSettled: true,
           customerName: customerName || undefined,
           customerPhone: customerPhone || undefined,
           customerAddress: deliveryAddress || undefined,
@@ -681,8 +695,10 @@ const Tables: React.FC<TablesProps> = memo(
       });
 
       const sessionOrders = orders.filter((o) => {
-        const createdAt = parseToDate(o.createdAt);
-        return createdAt >= sessionOpenedAt && o.status !== "cancelled";
+        if (o.status === "cancelled") return false;
+        const activityDate = parseToDate(o.paidAt || o.completedAt || o.finishedAt || o.updatedAt || o.createdAt);
+        const isPaid = o.isSettled || o.paymentStatus === "paid" || (o.payments && o.payments.length > 0) || o.status === "finished" || o.status === "delivered";
+        return isPaid && activityDate >= sessionOpenedAt;
       });
 
       // Monetary sums should exclude automated sale records (which already exist in sessionOrders)

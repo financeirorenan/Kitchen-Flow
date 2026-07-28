@@ -330,11 +330,23 @@ const KDS: React.FC<KDSProps> = memo(({
             </div>
           </div>
 
-          {/* Localização / Área */}
-          <div className="space-y-1">
+          {/* Localização / Área e Badges */}
+          <div className="flex items-center justify-between gap-1">
              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-tight">
                {order.type === 'delivery' ? 'Delivery' : order.type === 'takeout' ? 'Balcão' : `Mesa ${resolvedTableLabel || order.tableNumber}`}
              </p>
+             <div className="flex items-center gap-1">
+               {(order.isSettled || order.paymentStatus === 'paid') && (
+                 <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-emerald-500 text-white shadow-xs">
+                   💰 PAGO
+                 </span>
+               )}
+               {((order as any).currentBatch > 1 || order.items.some(i => (i as any).batchNumber > 1)) && (
+                 <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-amber-500 text-white animate-pulse">
+                   ⚡ NOVO LOTE
+                 </span>
+               )}
+             </div>
           </div>
 
           {/* Ícone da Origem */}
