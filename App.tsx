@@ -2569,14 +2569,6 @@ const App: React.FC = () => {
         activeCounterOrder = orders.find(o => o.id === tableInfo.currentOrderId && o.status !== 'cancelled' && o.status !== 'finished');
       }
 
-      if (!activeCounterOrder) {
-        activeCounterOrder = orders.find(o => 
-          (o.type === 'takeout' || o.type === 'delivery' || o.type === 'counter') &&
-          o.status !== 'cancelled' &&
-          o.status !== 'finished'
-        );
-      }
-
       if (activeCounterOrder) {
         const isAlreadyReady = ['ready', 'delivering', 'delivered', 'finished'].includes(activeCounterOrder.status);
 
@@ -3598,10 +3590,10 @@ const App: React.FC = () => {
 
     // Tentar localizar o pedido existente para reaproveitar seu ID e evitar duplicidade
     let existingOrderId = table.currentOrderId;
-    if (!existingOrderId) {
+    if (!existingOrderId && !isCounter && !isRealDelivery) {
       const activeOrd = orders.find(o => 
         (String(o.tableNumber) === String(tableNumber)) && 
-        (isCounter ? (o.type === 'takeout' || o.type === 'counter') : (o.type === 'table' || o.type === 'dine_in')) && 
+        (o.type === 'table' || o.type === 'dine_in') && 
         o.status !== 'cancelled' && 
         o.status !== 'finished'
       );
