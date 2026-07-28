@@ -2235,66 +2235,90 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
       {/* RESULTADO REAL DA OPERAÇÃO - CENTRAL OVERVIEW (Active when activeSubTab is 'copilot') */}
       {activeSubTab === 'copilot' && (
         <div className="space-y-6 w-full animate-in fade-in duration-500">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="flex flex-col gap-6 w-full">
 
-        {/* Score Card with speedometer */}
-        <div className="lg:col-span-4 bg-slate-900 text-white rounded-[2.5rem] p-6 shadow-xl relative overflow-hidden flex flex-col justify-between min-h-[360px] border border-slate-800">
-          {/* Subtle patterns */}
-          <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-505/20 blur-3xl pointer-events-none rounded-full"></div>
+        {/* Score Card with speedometer (Placed above Demonstrativo) */}
+        <div className="w-full bg-[#121214] text-white rounded-[2rem] p-5 md:p-6 shadow-xl relative overflow-hidden border border-slate-800">
+          {/* Subtle pattern glow */}
+          <div className="absolute top-0 right-0 w-48 h-48 bg-indigo-600/10 blur-3xl pointer-events-none rounded-full" />
 
-          <div>
-            <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">
-              Sua Saúde Operacional
-            </span>
-            <div className="flex items-center gap-2.5 mt-2">
-              <span className={`px-3.5 py-1 text-[11px] font-black uppercase tracking-wider rounded-full border ${stats.colorClass}`}>
-                {stats.emote}
-              </span>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center relative z-10">
+            {/* Card Header & Description */}
+            <div className="lg:col-span-5 flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
+                <div>
+                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 block">
+                    Saúde Operacional
+                  </span>
+                  <span className="text-base font-black text-white tracking-tight block mt-0.5">
+                    Diagnóstico Kai
+                  </span>
+                </div>
+                <span className={`px-3 py-1 text-[10px] font-black uppercase tracking-wider rounded-full border shadow-sm ${stats.colorClass}`}>
+                  {stats.emote}
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 font-medium leading-relaxed mt-1">
+                {stats.descriptionText}
+              </p>
             </div>
-            
-            <p className="text-[11px] text-slate-300 mt-3 font-semibold leading-relaxed">
-              {stats.descriptionText}
-            </p>
-          </div>
 
-          {/* Simple and elegant health Speedometer / Gauge */}
-          <div className="my-4 flex flex-col items-center justify-center relative">
-            <div className="relative w-44 h-24 flex items-end justify-center overflow-hidden">
-              {/* Arc background */}
-              <div className="absolute top-0 left-0 right-0 bottom-0 border-[14px] border-slate-800 rounded-t-full"></div>
-              {/* Progress Arc colored based on margin */}
-              <div className="absolute top-0 left-0 right-0 bottom-0 border-[14px] border-transparent rounded-t-full border-l-rose-500 border-t-amber-500 border-r-emerald-500 opacity-80"></div>
+            {/* Speedometer Gauge */}
+            <div className="lg:col-span-3 flex flex-col items-center justify-center relative py-1 border-y lg:border-y-0 lg:border-x border-slate-800/80 my-2 lg:my-0 lg:px-4">
+              <div className="relative w-36 h-20 flex items-end justify-center overflow-hidden">
+                {/* Arc background */}
+                <div className="absolute top-0 left-0 right-0 bottom-0 border-[12px] border-slate-800/90 rounded-t-full"></div>
+                {/* Progress Arc */}
+                <div className="absolute top-0 left-0 right-0 bottom-0 border-[12px] border-transparent rounded-t-full border-l-rose-500 border-t-amber-500 border-r-emerald-500 opacity-90"></div>
+                
+                {/* Speedometer needle */}
+                <div
+                  className="absolute w-0.5 h-12 bg-white origin-bottom bottom-0 transition-transform duration-1000 ease-out shadow-sm"
+                  style={{
+                    transform: `rotate(${Math.min(90, Math.max(-90, (stats.margem / 40) * 180 - 90))}deg)`
+                  }}
+                >
+                  <div className="w-2 h-2 bg-indigo-500 rounded-full -translate-x-[3px] absolute bottom-0"></div>
+                </div>
+              </div>
               
-              {/* Speedometer needle */}
-              <div
-                className="absolute w-1 h-14 bg-white origin-bottom bottom-0 transition-transform duration-1000 ease-out"
-                style={{
-                  transform: `rotate(${Math.min(90, Math.max(-90, (stats.margem / 40) * 180 - 90))}deg)`
-                }}
-              >
-                <div className="w-2.5 h-2.5 bg-indigo-500 rounded-full -translate-x-[3px] absolute bottom-0"></div>
+              <div className="text-center mt-2">
+                <span className="text-2xl md:text-3xl font-black tracking-tight text-white">
+                  {stats.margem.toFixed(1)}%
+                </span>
+                <p className="text-[10px] text-slate-400 uppercase font-extrabold tracking-wider mt-0.5">Margem Líquida Real</p>
               </div>
             </div>
-            
-            <div className="text-center mt-3">
-              <span className="text-3xl font-black tracking-tight text-white">
-                {stats.margem.toFixed(1)}%
-              </span>
-              <p className="text-[10px] text-slate-400 uppercase font-bold mt-0.5 tracking-wider">Margem Líquida Real</p>
+
+            {/* Micro Metrics Grid & Action Button */}
+            <div className="lg:col-span-4 flex flex-col gap-3 justify-center">
+              <div className="bg-slate-900/90 border border-slate-800/80 rounded-xl p-3 grid grid-cols-2 gap-3 text-left">
+                <div>
+                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Lucro Estimado</span>
+                  <span className={`text-xs font-black block mt-0.5 ${stats.lucroReal >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    R$ {stats.lucroReal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Ponto de Equilíbrio</span>
+                  <span className="text-xs font-black text-slate-200 block mt-0.5">
+                    R$ {stats.pontoEquilibrio.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                onClick={handleExplainOperation}
+                className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-extrabold uppercase text-[10px] tracking-wider rounded-xl transition-all shadow-md shadow-indigo-600/20 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Sparkles size={13} className="animate-pulse" /> Explique Minha Operação
+              </button>
             </div>
           </div>
-
-          {/* Quick Explainer triggers */}
-          <button
-            onClick={handleExplainOperation}
-            className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-black uppercase text-[10px] tracking-wider rounded-2xl transition-all shadow-lg shadow-indigo-600/20 flex items-center justify-center gap-2"
-          >
-            <Sparkles size={13} className="animate-pulse" /> Explique Minha Operação
-          </button>
         </div>
 
         {/* Complete Financial Report Card (Stripe-Like layout) */}
-        <div id="stripe-summary-card" className="lg:col-span-8 bg-white border border-slate-200/80 rounded-[2.5rem] p-6 shadow-sm flex flex-col justify-between">
+        <div id="stripe-summary-card" className="w-full bg-white border border-slate-200/80 rounded-[2.5rem] p-6 shadow-sm flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between border-b border-slate-50 pb-3 mb-4">
               <span className="text-xs font-black text-slate-800 uppercase tracking-wider">
