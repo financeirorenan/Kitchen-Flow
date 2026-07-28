@@ -3634,10 +3634,14 @@ const App: React.FC = () => {
 
     const activeStatus = activeOrderObj?.status;
 
-    // Ao encerrar a mesa/pedido e registrar o pagamento:
-    // O pedido está sendo FINALIZADO/PAGO, portanto o status DEVE SER 'finished'
-    // para encerrar a comanda, liberar a mesa e remover do KDS.
-    const determinedStatus: OrderStatus = 'finished';
+    // Regra Operacional: Para pedidos de Balcão e Delivery, o lançamento financeiro/pagamento
+    // NÃO DEVE alterar o status operacional para 'finished'!
+    // O pedido deve continuar em seu status operacional ativo (ex: 'pending', 'preparing', 'ready', 'delivering')
+    // para que a cozinha e o fluxo de entregas possam produzi-lo e entregá-lo normalmente.
+    const isCounterOrDelivery = isCounter || isRealDelivery;
+    const determinedStatus: OrderStatus = isCounterOrDelivery 
+      ? (activeStatus && activeStatus !== 'finished' && activeStatus !== 'cancelled' ? activeStatus : 'pending') 
+      : 'finished';
 
     const preparedItems = table.items.map(i => ({ ...i, sentToKitchen: true }));
 
@@ -3667,8 +3671,8 @@ const App: React.FC = () => {
       tenantId: viewingTenantId || currentUserData?.tenantId || 't1',
       source: table.currentOrderId ? (orders.find(o => o.id === table.currentOrderId)?.source || 'local') : 'local',
       isSettled: true,
-      finishedAt: new Date(),
-      completedAt: new Date(),
+      finishedAt: determinedStatus === 'finished' ? new Date() : (activeOrderObj?.finishedAt || undefined),
+      completedAt: determinedStatus === 'finished' ? new Date() : (activeOrderObj?.completedAt || undefined),
       updatedAt: new Date()
     };
     const newOrder = assignDailyNumberToOrder(rawOrder);
@@ -3742,16 +3746,16 @@ const App: React.FC = () => {
     if (relatedOrdersToUpdate.length > 0) {
       const now = new Date();
       for (const ro of relatedOrdersToUpdate) {
+        const targetStatus = isCounterOrDelivery ? (ro.status && ro.status !== 'finished' && ro.status !== 'cancelled' ? ro.status : 'pending') : 'finished';
         const updates: Partial<Order> = {
-          status: 'finished',
+          status: targetStatus,
           isSettled: true,
           isSubTicket: true,
           mergedIntoOrderId: newOrder.id,
           paymentMethod: method,
           payments: payments?.map(p => ({ ...p, timestamp: now })),
           updatedAt: now,
-          finishedAt: now,
-          completedAt: now
+          ...(targetStatus === 'finished' ? { finishedAt: now, completedAt: now } : {})
         };
 
         setOrders(prev => prev.map(o => o.id === ro.id ? { ...o, ...updates } : o));
