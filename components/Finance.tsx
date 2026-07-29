@@ -254,18 +254,25 @@ const Finance: React.FC<FinanceProps> = memo(
 
     const incomeFromOrders = useMemo(
       () =>
-        orders.map((order) => ({
-          id: `order-${order.id}`,
-          tenantId: order.tenantId,
-          type: "income" as const,
-          amount: order.total,
-          category: "Vendas PDV",
-          description: `Pedido #${order.id.slice(-4)} (${order.type})`,
-          date: order.createdAt,
-          status: "paid" as const,
-          dueDate: order.createdAt,
-          orderId: order.id,
-        })),
+        orders
+          .filter(
+            (o) =>
+              o.status !== "cancelled" &&
+              !o.isSubTicket &&
+              !o.mergedIntoOrderId,
+          )
+          .map((order) => ({
+            id: `order-${order.id}`,
+            tenantId: order.tenantId,
+            type: "income" as const,
+            amount: order.total,
+            category: "Vendas PDV",
+            description: `Pedido #${order.id.slice(-4)} (${order.type})`,
+            date: order.createdAt,
+            status: "paid" as const,
+            dueDate: order.createdAt,
+            orderId: order.id,
+          })),
       [orders],
     );
 
@@ -353,6 +360,8 @@ const Finance: React.FC<FinanceProps> = memo(
       return orders
         .filter(
           (o) =>
+            !o.isSubTicket &&
+            !o.mergedIntoOrderId &&
             new Date(o.createdAt) >= today &&
             (o.status === "delivered" || o.status === "finished"),
         )
@@ -1131,6 +1140,8 @@ const Finance: React.FC<FinanceProps> = memo(
 
       const filteredOrders = orders.filter(
         (o) =>
+          !o.isSubTicket &&
+          !o.mergedIntoOrderId &&
           (o.status === "delivered" || o.status === "finished") &&
           new Date(o.createdAt) >= startOfPeriod,
       );

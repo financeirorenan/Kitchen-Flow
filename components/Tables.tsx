@@ -418,23 +418,6 @@ const Tables: React.FC<TablesProps> = memo(
         },
       ];
 
-      // Registrar movimento financeiro no Caixa para pagamentos ainda não lançados
-      if (onAddFinancialRecord) {
-        computedPayments.forEach((p) => {
-          if (!p.alreadyRecorded) {
-            onAddFinancialRecord({
-              type: 'income',
-              amount: p.amount,
-              category: isDeliveryOrder ? 'Vendas Entrega' : (isCounterContext ? 'Vendas Balcão' : 'Vendas Mesa'),
-              description: `${isDeliveryOrder ? 'Entrega' : (isCounterContext ? 'Balcão' : `Mesa ${selectedTable?.number || selectedTable?.id}`)} - Pagamento: ${p.method}`,
-              date: new Date(),
-              paymentMethod: p.method,
-              orderId: pdvEditOrder ? pdvEditOrder.id : undefined
-            });
-          }
-        });
-      }
-
       if (pdvEditOrder && onUpdateOrder) {
         onUpdateOrder(pdvEditOrder.id, {
           items: selectedTable!.items,
@@ -698,7 +681,7 @@ const Tables: React.FC<TablesProps> = memo(
       });
 
       const sessionOrders = orders.filter((o) => {
-        if (o.status === "cancelled") return false;
+        if (o.status === "cancelled" || o.isSubTicket || o.mergedIntoOrderId) return false;
         const activityDate = parseToDate(o.paidAt || o.completedAt || o.finishedAt || o.updatedAt || o.createdAt);
         const isPaid = o.isSettled || o.paymentStatus === "paid" || (o.payments && o.payments.length > 0) || o.status === "finished" || o.status === "delivered";
         return isPaid && activityDate >= sessionOpenedAt;

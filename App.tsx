@@ -1753,6 +1753,7 @@ const App: React.FC = () => {
     today.setHours(0, 0, 0, 0);
     
     const todayOrders = orders.filter(o => {
+      if (o.status === 'cancelled' || o.isSubTicket || o.mergedIntoOrderId) return false;
       const d = o.createdAt instanceof Date ? o.createdAt : new Date(o.createdAt);
       return d >= today && (o.status === 'finished' || o.status === 'delivered');
     });
@@ -3588,6 +3589,8 @@ const App: React.FC = () => {
     const finalTotal = table.total + (deliveryInfo?.fee || 0) + (additionalFee || 0) - (discount || 0);
     const tableNumber = table?.number || tableId;
 
+    const isRealDelivery = !!(deliveryInfo && (deliveryInfo.address || (deliveryInfo.fee && deliveryInfo.fee > 0)));
+
     // Tentar localizar o pedido existente para reaproveitar seu ID e evitar duplicidade
     let existingOrderId = table.currentOrderId;
     if (!existingOrderId && !isCounter && !isRealDelivery) {
@@ -3614,8 +3617,6 @@ const App: React.FC = () => {
         }
       }
     }
-
-    const isRealDelivery = !!(deliveryInfo && (deliveryInfo.address || (deliveryInfo.fee && deliveryInfo.fee > 0)));
 
     const targetOrderId = existingOrderId || `KDS-${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
 

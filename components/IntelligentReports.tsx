@@ -60,9 +60,9 @@ const IntelligentReports: React.FC<IntelligentReportsProps> = memo(({
     if (dateRange === '7d') cutoff.setDate(now.getDate() - 7);
     else if (dateRange === '30d') cutoff.setDate(now.getDate() - 30);
     else if (dateRange === '90d') cutoff.setDate(now.getDate() - 90);
-    else return orders;
+    else return orders.filter(o => !o.isSubTicket && !o.mergedIntoOrderId);
 
-    return orders.filter(o => new Date(o.createdAt) >= cutoff);
+    return orders.filter(o => !o.isSubTicket && !o.mergedIntoOrderId && new Date(o.createdAt) >= cutoff);
   }, [orders, dateRange]);
 
   // Financial Stats
