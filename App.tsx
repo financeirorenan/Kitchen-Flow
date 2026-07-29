@@ -3111,7 +3111,7 @@ const App: React.FC = () => {
       try {
         const order = orders.find(o => o.id === orderId);
         const targetDocId = order?.docId || order?.id || orderId;
-        await updateDoc(doc(db, 'orders', targetDocId), updates);
+        await updateDoc(doc(db, 'orders', targetDocId), cleanObject(updates));
       } catch (e) {
         console.error(`Error syncing courier assignment ${orderId}:`, e);
       }
@@ -3757,7 +3757,7 @@ const App: React.FC = () => {
         if (viewingTenantId || currentUserData?.tenantId) {
           try {
             const targetDocId = ro.docId || ro.id;
-            await updateDoc(doc(db, 'orders', targetDocId), updates);
+            await updateDoc(doc(db, 'orders', targetDocId), cleanObject(updates));
           } catch (e) {
             console.error("Error syncing payment update to related order:", e);
           }
