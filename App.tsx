@@ -3764,7 +3764,9 @@ const App: React.FC = () => {
       }
     }
 
-    // Redução de Estoque
+    // Redução de Estoque com suporte a Ficha Técnica Inteligente por Canal (Mesa, Balcão, Delivery)
+    const orderChannel = isRealDelivery ? 'delivery' : (isCounter ? 'takeout' : 'dine_in');
+
     for (const item of table.items) {
       const product = products.find(p => p.id === item.productId);
       if (product) {
@@ -3779,11 +3781,21 @@ const App: React.FC = () => {
           for (const tsItem of product.technicalSheet) {
             const rawMaterial = rawMaterials.find(rm => rm.id === tsItem.rawMaterialId);
             if (rawMaterial) {
-              const reduction = tsItem.quantity * item.quantity;
-              await handleUpdateRawMaterial({
-                ...rawMaterial,
-                currentStock: Math.max(0, rawMaterial.currentStock - reduction)
-              });
+              const ch = tsItem.channel || 'all';
+              const isMatch = 
+                ch === 'all' ||
+                (ch === 'dine_in' && orderChannel === 'dine_in') ||
+                (ch === 'takeout_delivery' && (orderChannel === 'takeout' || orderChannel === 'delivery')) ||
+                (ch === 'delivery' && orderChannel === 'delivery') ||
+                (ch === 'takeout' && orderChannel === 'takeout');
+
+              if (isMatch) {
+                const reduction = tsItem.quantity * item.quantity;
+                await handleUpdateRawMaterial({
+                  ...rawMaterial,
+                  currentStock: Math.max(0, rawMaterial.currentStock - reduction)
+                });
+              }
             }
           }
         }

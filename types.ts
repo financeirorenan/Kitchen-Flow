@@ -367,6 +367,7 @@ export interface TechnicalSheetItem {
   rawMaterialId: string;
   quantity: number; // Quantidade usada na unidade do insumo (ex: 0.2 para 200g se a unidade for kg)
   unit?: string;
+  channel?: 'all' | 'dine_in' | 'takeout_delivery' | 'delivery' | 'takeout';
 }
 
 export interface ProductOption {

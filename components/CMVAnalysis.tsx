@@ -61,9 +61,19 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
     localStorage.setItem('kf_target_margins', JSON.stringify(targetMargins));
   }, [targetMargins]);
 
-  const calculateProductCost = (product: Product) => {
+  const calculateProductCost = (product: Product, channel: 'all' | 'dine_in' | 'takeout_delivery' | 'delivery' | 'takeout' = 'all') => {
     if (!product.technicalSheet || product.technicalSheet.length === 0) return product.cost;
     return product.technicalSheet.reduce((total, item) => {
+      const ch = item.channel || 'all';
+      if (channel !== 'all') {
+        const isMatch = 
+          ch === 'all' ||
+          (ch === 'dine_in' && channel === 'dine_in') ||
+          (ch === 'takeout_delivery' && (channel === 'takeout_delivery' || channel === 'delivery' || channel === 'takeout')) ||
+          (ch === 'delivery' && channel === 'delivery') ||
+          (ch === 'takeout' && channel === 'takeout');
+        if (!isMatch) return total;
+      }
       const material = rawMaterials.find(rm => rm.id === item.rawMaterialId);
       return total + (material ? material.costPerUnit * item.quantity : 0);
     }, 0);
@@ -344,6 +354,14 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
     if (!editingSheetProduct) return;
     const newSheet = (editingSheetProduct.technicalSheet || []).map(i => 
       i.rawMaterialId === rawMaterialId ? { ...i, quantity } : i
+    );
+    handleUpdateTechnicalSheet(editingSheetProduct.id, newSheet);
+  };
+
+  const updateIngredientChannel = (rawMaterialId: string, channel: 'all' | 'dine_in' | 'takeout_delivery' | 'delivery' | 'takeout') => {
+    if (!editingSheetProduct) return;
+    const newSheet = (editingSheetProduct.technicalSheet || []).map(i => 
+      i.rawMaterialId === rawMaterialId ? { ...i, channel } : i
     );
     handleUpdateTechnicalSheet(editingSheetProduct.id, newSheet);
   };
@@ -725,19 +743,25 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
           <div className="lg:col-span-2">
             {editingSheetProduct ? (
               <div className="bg-white rounded-3xl border shadow-sm overflow-hidden animate-in slide-in-from-right-4 duration-300">
-                <div className="p-6 border-b bg-slate-50/50 flex justify-between items-center">
+                <div className="p-6 border-b bg-slate-50/50 flex flex-wrap justify-between items-center gap-4">
                   <div className="flex items-center gap-4">
                     <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center shadow-inner">
                       <Edit3 size={24} />
                     </div>
                     <div>
                       <h3 className="text-xl font-black text-slate-800 tracking-tighter">{editingSheetProduct.name}</h3>
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ficha Técnica Operacional</p>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ficha Técnica Operacional por Canal</p>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Custo Calculado</p>
-                    <p className="text-2xl font-black text-indigo-600 tracking-tighter">R$ {calculateProductCost(editingSheetProduct).toFixed(2)}</p>
+                  <div className="flex items-center gap-6 text-right">
+                    <div>
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Custo Mesa (Salão)</p>
+                      <p className="text-sm font-black text-slate-700">R$ {calculateProductCost(editingSheetProduct, 'dine_in').toFixed(2)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">Custo Balcão / Delivery</p>
+                      <p className="text-2xl font-black text-indigo-600 tracking-tighter">R$ {calculateProductCost(editingSheetProduct, 'takeout_delivery').toFixed(2)}</p>
+                    </div>
                   </div>
                 </div>
 
@@ -745,7 +769,7 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                   {/* Ingredients List */}
                   <div className="space-y-3">
                     <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
-                      <Scale size={14} className="text-indigo-500" /> Insumos e Quantidades
+                      <Scale size={14} className="text-indigo-500" /> Insumos, Embalagens e Quantidades
                     </h4>
                     
                     <div className="space-y-2">
@@ -753,24 +777,42 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                         const material = rawMaterials.find(rm => rm.id === item.rawMaterialId);
                         if (!material) return null;
                         return (
-                          <div key={idx} className="flex items-center gap-4 p-3 bg-slate-50 rounded-2xl border border-slate-100 group">
-                            <div className="flex-1">
+                          <div key={idx} className="flex flex-wrap md:flex-nowrap items-center gap-4 p-3 bg-slate-50 rounded-2xl border border-slate-100 group">
+                            <div className="flex-1 min-w-[150px]">
                               <p className="text-sm font-black text-slate-800">{material.name}</p>
                               <p className="text-[9px] font-bold text-slate-400 uppercase">Custo: R$ {material.costPerUnit.toFixed(2)} / {material.unit}</p>
                             </div>
-                            <div className="flex items-center gap-2">
+
+                            {/* Canal Selector */}
+                            <div className="shrink-0">
+                              <select 
+                                value={item.channel || 'all'}
+                                onChange={(e) => updateIngredientChannel(item.rawMaterialId, e.target.value as any)}
+                                className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl text-[10px] font-black text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-sm"
+                              >
+                                <option value="all">🌐 Todos os Canais</option>
+                                <option value="dine_in">🍽️ Apenas Mesa (Salão)</option>
+                                <option value="takeout_delivery">📦 Balcão & Delivery</option>
+                                <option value="delivery">🛵 Apenas Delivery</option>
+                                <option value="takeout">🏪 Apenas Balcão</option>
+                              </select>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
                               <input 
                                 type="number" 
                                 value={item.quantity}
                                 onChange={(e) => updateIngredientQuantity(item.rawMaterialId, parseFloat(e.target.value) || 0)}
-                                className="w-24 px-3 py-1.5 bg-white border rounded-xl text-sm font-black text-center focus:ring-2 focus:ring-indigo-500 outline-none"
+                                className="w-20 px-3 py-1.5 bg-white border rounded-xl text-sm font-black text-center focus:ring-2 focus:ring-indigo-500 outline-none"
                               />
                               <span className="text-[10px] font-black text-slate-400 uppercase w-8">{material.unit}</span>
                             </div>
-                            <div className="w-24 text-right">
+
+                            <div className="w-20 text-right shrink-0">
                               <p className="text-[9px] font-black text-slate-400 uppercase">Subtotal</p>
                               <p className="text-sm font-black text-slate-800">R$ {(material.costPerUnit * item.quantity).toFixed(2)}</p>
                             </div>
+
                             <button 
                               onClick={() => removeIngredient(item.rawMaterialId)}
                               className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
