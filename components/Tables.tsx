@@ -162,6 +162,7 @@ interface SplitPart {
   fiscalKey?: string;
   customerDocument?: string;
   items?: OrderItem[];
+  alreadyRecorded?: boolean;
 }
 
 const Tables: React.FC<TablesProps> = memo(
@@ -417,18 +418,20 @@ const Tables: React.FC<TablesProps> = memo(
         },
       ];
 
-      // Registrar movimento financeiro imediatamente no Caixa e Relatórios Financeiros
+      // Registrar movimento financeiro no Caixa para pagamentos ainda não lançados
       if (onAddFinancialRecord) {
         computedPayments.forEach((p) => {
-          onAddFinancialRecord({
-            type: 'income',
-            amount: p.amount,
-            category: isDeliveryOrder ? 'Vendas Entrega' : (isCounterContext ? 'Vendas Balcão' : 'Vendas Mesa'),
-            description: `${isDeliveryOrder ? 'Entrega' : (isCounterContext ? 'Balcão' : `Mesa ${selectedTable?.number || selectedTable?.id}`)} - Pagamento: ${p.method}`,
-            date: new Date(),
-            paymentMethod: p.method,
-            orderId: pdvEditOrder ? pdvEditOrder.id : undefined
-          });
+          if (!p.alreadyRecorded) {
+            onAddFinancialRecord({
+              type: 'income',
+              amount: p.amount,
+              category: isDeliveryOrder ? 'Vendas Entrega' : (isCounterContext ? 'Vendas Balcão' : 'Vendas Mesa'),
+              description: `${isDeliveryOrder ? 'Entrega' : (isCounterContext ? 'Balcão' : `Mesa ${selectedTable?.number || selectedTable?.id}`)} - Pagamento: ${p.method}`,
+              date: new Date(),
+              paymentMethod: p.method,
+              orderId: pdvEditOrder ? pdvEditOrder.id : undefined
+            });
+          }
         });
       }
 
@@ -1604,11 +1607,26 @@ const Tables: React.FC<TablesProps> = memo(
           amount: amountToPay,
           method: method,
           isPaid: true,
+          alreadyRecorded: true,
           items:
             splitMode === "items"
               ? selectedSplitItems.map((idx) => selectedTable.items[idx])
               : undefined,
         };
+
+        // Lançar IMEDIATAMENTE o pagamento parcial no Caixa/Financeiro
+        if (onAddFinancialRecord) {
+          onAddFinancialRecord({
+            type: 'income',
+            amount: amountToPay,
+            category: isDeliveryOrder ? 'Vendas Entrega' : (isCounterContext ? 'Vendas Balcão' : 'Vendas Mesa'),
+            description: `${isDeliveryOrder ? 'Entrega' : (isCounterContext ? 'Balcão' : `Mesa ${selectedTable?.number || selectedTable?.id}`)} - Pagamento Parcial: ${method}`,
+            date: new Date(),
+            paymentMethod: method,
+            orderId: pdvEditOrder ? pdvEditOrder.id : undefined
+          });
+        }
+
         const newRemaining = Math.max(0, remainingBalance - amountToPay);
         const updatedParts = [...splitParts, newPart];
 
@@ -1631,18 +1649,10 @@ const Tables: React.FC<TablesProps> = memo(
         onUpdateTable(selectedTable.id, selectedTable.items, "occupied", isCounterContext, updatedParts);
 
         if (newRemaining <= 0.01) {
-          if (autoCloseAfterPayment || isCounterContext) {
-            finishSplitPayment(updatedParts);
-          } else {
-            if (showToast)
-              showToast(
-                "Pagamento registrado! Mesa mantida aberta para emissão de cupons.",
-                "success",
-              );
-          }
+          finishSplitPayment(updatedParts);
         } else {
           if (showToast) {
-            showToast(`Pagamento parcial de R$ ${amountToPay.toFixed(2)} registrado! Mesa mantida aberta (Saldo rest: R$ ${newRemaining.toFixed(2)}).`, "success");
+            showToast(`Pagamento parcial de R$ ${amountToPay.toFixed(2)} registrado no Caixa! Mesa mantida aberta (Saldo restante: R$ ${newRemaining.toFixed(2)}).`, "success");
           }
         }
         return;
@@ -1737,11 +1747,26 @@ const Tables: React.FC<TablesProps> = memo(
           amount: amountToPay,
           method: "dinheiro",
           isPaid: true,
+          alreadyRecorded: true,
           items:
             splitMode === "items"
               ? selectedSplitItems.map((idx) => selectedTable.items[idx])
               : undefined,
         };
+
+        // Lançar IMEDIATAMENTE o pagamento em dinheiro no Caixa/Financeiro
+        if (onAddFinancialRecord) {
+          onAddFinancialRecord({
+            type: 'income',
+            amount: amountToPay,
+            category: isDeliveryOrder ? 'Vendas Entrega' : (isCounterContext ? 'Vendas Balcão' : 'Vendas Mesa'),
+            description: `${isDeliveryOrder ? 'Entrega' : (isCounterContext ? 'Balcão' : `Mesa ${selectedTable?.number || selectedTable?.id}`)} - Pagamento Parcial: Dinheiro`,
+            date: new Date(),
+            paymentMethod: 'dinheiro',
+            orderId: pdvEditOrder ? pdvEditOrder.id : undefined
+          });
+        }
+
         const newRemaining = Math.max(0, remainingBalance - amountToPay);
         const updatedParts = [...splitParts, newPart];
         setSplitParts(updatedParts);
@@ -1764,18 +1789,10 @@ const Tables: React.FC<TablesProps> = memo(
         onUpdateTable(selectedTable.id, selectedTable.items, "occupied", isCounterContext, updatedParts);
 
         if (newRemaining <= 0.01) {
-          if (autoCloseAfterPayment || isCounterContext) {
-            finishSplitPayment(updatedParts);
-          } else {
-            if (showToast)
-              showToast(
-                "Pagamento em dinheiro registrado! Mesa mantida aberta para emissão de cupons.",
-                "success",
-              );
-          }
+          finishSplitPayment(updatedParts);
         } else {
           if (showToast) {
-            showToast(`Pagamento em dinheiro de R$ ${amountToPay.toFixed(2)} registrado! Mesa mantida aberta (Saldo rest: R$ ${newRemaining.toFixed(2)}).`, "success");
+            showToast(`Pagamento em dinheiro de R$ ${amountToPay.toFixed(2)} registrado no Caixa! Mesa mantida aberta (Saldo restante: R$ ${newRemaining.toFixed(2)}).`, "success");
           }
         }
         return;
@@ -1988,18 +2005,10 @@ const Tables: React.FC<TablesProps> = memo(
         onUpdateTable(selectedTable.id, selectedTable.items, "occupied", isCounterContext, updatedParts);
 
         if (newRemaining <= 0.01) {
-          if (autoCloseAfterPayment) {
-            finishSplitPayment(updatedParts);
-          } else {
-            if (showToast)
-              showToast(
-                "Lançamento fiado registrado! Mesa mantida aberta para emissão de cupons.",
-                "success",
-              );
-          }
+          finishSplitPayment(updatedParts);
         } else {
           if (showToast) {
-            showToast(`Lançamento de R$ ${amountToPay.toFixed(2)} registrado! Mesa mantida aberta (Saldo rest: R$ ${newRemaining.toFixed(2)}).`, "success");
+            showToast(`Lançamento de R$ ${amountToPay.toFixed(2)} na conta do cliente registrado! Mesa mantida aberta (Saldo rest: R$ ${newRemaining.toFixed(2)}).`, "success");
           }
         }
         return;

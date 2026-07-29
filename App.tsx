@@ -3851,17 +3851,28 @@ const App: React.FC = () => {
         };
 
         if (docId) {
-          await updateDoc(doc(db, 'diningTables', docId), resetData);
-        } else {
-          const q = query(collection(db, 'diningTables'), where('id', '==', tableId), where('tenantId', '==', effectiveTenantId));
-          const snapshot = await getDocs(q);
-          if (!snapshot.empty) {
-            await updateDoc(snapshot.docs[0].ref, resetData);
+          try {
+            await updateDoc(doc(db, 'diningTables', docId), resetData);
+          } catch (e) {
+            console.error("Error updating table by docId:", e);
           }
         }
         
+        try {
+          const q = query(collection(db, 'diningTables'), where('tenantId', '==', effectiveTenantId));
+          const snapshot = await getDocs(q);
+          for (const d of snapshot.docs) {
+            const data = d.data();
+            if (String(data.id) === String(tableId) || String(data.number) === String(tableNumber) || d.id === docId) {
+              await updateDoc(d.ref, resetData);
+            }
+          }
+        } catch (e) {
+          console.error("Error querying and updating diningTables:", e);
+        }
+        
         // Atualizar local para garantir feedback instantâneo
-        setTables(prev => prev.map(t => t.id === tableId || (t as any).docId === docId ? { ...t, ...resetData } : t));
+        setTables(prev => prev.map(t => (String(t.id) === String(tableId) || String(t.number) === String(tableNumber) || (t as any).docId === docId) ? { ...t, ...resetData } : t));
       }
     } else {
       await localDb.orders.put(newOrder);
@@ -3873,8 +3884,20 @@ const App: React.FC = () => {
       
       if (!isCounter) {
         const resetData = { items: [], status: 'available' as const, total: 0, currentOrderId: undefined, partialPayments: [] };
-        await localDb.diningTables.update(tableId, resetData);
-        setTables(prev => prev.map(t => t.id === tableId ? { ...t, ...resetData } : t));
+        try {
+          await localDb.diningTables.toCollection().modify(t => {
+            if (String(t.id) === String(tableId) || String(t.number) === String(tableNumber)) {
+              t.items = [];
+              t.status = 'available';
+              t.total = 0;
+              t.currentOrderId = undefined;
+              t.partialPayments = [];
+            }
+          });
+        } catch (e) {
+          await localDb.diningTables.update(tableId, resetData);
+        }
+        setTables(prev => prev.map(t => (String(t.id) === String(tableId) || String(t.number) === String(tableNumber)) ? { ...t, ...resetData } : t));
       }
     }
 
@@ -3955,7 +3978,7 @@ const App: React.FC = () => {
             date: new Date(),
             items: newOrder.items?.map(it => ({ name: it.name, quantity: it.quantity, price: it.price }))
           });
-        } else {
+        } else if (!(p as any).alreadyRecorded) {
           await handleAddFinancialRecord({
             type: 'income',
             amount: p.amount,
