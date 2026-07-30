@@ -1,4 +1,5 @@
 import React, { useState, useMemo, memo } from "react";
+import { deduplicateOrders, deduplicateFinancialRecords } from "../utils/deduplicate";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   FinancialRecord,
@@ -254,36 +255,38 @@ const Finance: React.FC<FinanceProps> = memo(
 
     const incomeFromOrders = useMemo(
       () =>
-        orders
-          .filter(
+        deduplicateOrders(
+          orders.filter(
             (o) =>
               o.status !== "cancelled" &&
               !o.isSubTicket &&
               !o.mergedIntoOrderId,
           )
-          .map((order) => ({
-            id: `order-${order.id}`,
-            tenantId: order.tenantId,
-            type: "income" as const,
-            amount: order.total,
-            category: "Vendas PDV",
-            description: `Pedido #${order.id.slice(-4)} (${order.type})`,
-            date: order.createdAt,
-            status: "paid" as const,
-            dueDate: order.createdAt,
-            orderId: order.id,
-          })),
+        ).map((order) => ({
+          id: `order-${order.id}`,
+          tenantId: order.tenantId,
+          type: "income" as const,
+          amount: order.total,
+          category: "Vendas PDV",
+          description: `Pedido #${order.id.slice(-4)} (${order.type})`,
+          date: order.createdAt,
+          status: "paid" as const,
+          dueDate: order.createdAt,
+          orderId: order.id,
+        })),
       [orders],
     );
 
     const allRecords = useMemo(
       () =>
-        [
-          ...incomeFromOrders,
-          ...manualRecords.filter(
-            (r) => !(r.category || "").toLowerCase().startsWith("venda"),
-          ),
-        ].sort((a, b) => {
+        deduplicateFinancialRecords(
+          [
+            ...incomeFromOrders,
+            ...manualRecords.filter(
+              (r) => !(r.category || "").toLowerCase().startsWith("venda"),
+            ),
+          ] as FinancialRecord[]
+        ).sort((a, b) => {
           const dateA = (a as any).dueDate || a.date;
           const dateB = (b as any).dueDate || b.date;
           return dateB.getTime() - dateA.getTime();

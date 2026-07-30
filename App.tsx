@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { maskPhone, maskCPF, maskCEP } from './utils/masks';
+import { deduplicateOrders, deduplicateFinancialRecords } from './utils/deduplicate';
 import Sidebar from './components/Sidebar';
 import Tables from './components/Tables';
 import KDS from './components/KDS';
@@ -1002,8 +1003,6 @@ const App: React.FC = () => {
               if (existingIdx > -1) {
                 const localStatus = updated[existingIdx].status;
                 const cloudStatus = cloudOrder.status;
-                const localPriority = STATUS_PRIORITY[localStatus] || 0;
-                const cloudPriority = STATUS_PRIORITY[cloudStatus] || 0;
 
                 const terminalStatuses = ['delivered', 'finished', 'cancelled'];
                 const localIsTerminal = terminalStatuses.includes(localStatus);
@@ -1019,7 +1018,7 @@ const App: React.FC = () => {
                 updated.push(cloudOrder);
               }
             });
-            return updated;
+            return deduplicateOrders(updated);
           });
         } else if (col.name === 'users') {
           const seenEmails = new Set<string>();
@@ -1045,6 +1044,8 @@ const App: React.FC = () => {
             return true;
           });
           col.setter(uniqueLogs);
+        } else if (col.name === 'financialRecords') {
+          col.setter(deduplicateFinancialRecords(items));
         } else {
           col.setter(items);
         }
@@ -1752,11 +1753,11 @@ const App: React.FC = () => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    const todayOrders = orders.filter(o => {
+    const todayOrders = deduplicateOrders(orders.filter(o => {
       if (o.status === 'cancelled' || o.isSubTicket || o.mergedIntoOrderId) return false;
       const d = o.createdAt instanceof Date ? o.createdAt : new Date(o.createdAt);
       return d >= today && (o.status === 'finished' || o.status === 'delivered');
-    });
+    }));
 
     return {
       total: todayOrders.reduce((acc, o) => acc + (o.total || 0), 0),
@@ -2035,6 +2036,20 @@ const App: React.FC = () => {
       return;
     }
 
+    // Prevenção estrita contra duplicidade de lançamentos por pedido
+    if (record.orderId && record.type === 'income') {
+      const isAlreadyRecorded = financialRecords.some(r => 
+        r.orderId === record.orderId && 
+        r.type === 'income' && 
+        r.paymentMethod === record.paymentMethod && 
+        Math.abs((r.amount || 0) - (record.amount || 0)) < 0.01
+      );
+      if (isAlreadyRecorded) {
+        console.warn(`[Financial] Lançamento já registrado anteriormente para o pedido ${record.orderId}`);
+        return;
+      }
+    }
+
     // Calculo automático de taxas com base na forma de pagamento
     let feeAmount = record.feeAmount || 0;
     if (record.paymentMethod && record.type === 'income' && !record.feeAmount && adminSettings?.paymentMethods) {
@@ -2060,11 +2075,12 @@ const App: React.FC = () => {
       description: record.description || 'Lançamento manual',
       date: record.date || new Date(),
       status: record.status || 'paid',
+      orderId: record.orderId,
       shiftOpenedAt: cashSession.isOpen ? (cashSession.openedAt || new Date()) : undefined
     };
     
     // Optimistic Update
-    setFinancialRecords(prev => [newRecord, ...prev]);
+    setFinancialRecords(prev => deduplicateFinancialRecords([newRecord, ...prev]));
 
     if (effectiveTenantId) {
       try {
@@ -2525,7 +2541,7 @@ const App: React.FC = () => {
         }
 
         await localDb.orders.put(assignedKdsOrder);
-        setOrders(prev => [assignedKdsOrder, ...prev]);
+        setOrders(prev => deduplicateOrders([assignedKdsOrder, ...prev]));
 
         // Atualizar conta acumulada da Mesa para manter o extrato/extrato do cliente completo
         setTables(prev => prev.map(t => {
@@ -2638,7 +2654,7 @@ const App: React.FC = () => {
           }
 
           await localDb.orders.put(newOrderWithSameRef);
-          setOrders(prev => [newOrderWithSameRef, ...prev]);
+          setOrders(prev => deduplicateOrders([newOrderWithSameRef, ...prev]));
           setCounterOrders(prev => prev.map(t => (t.id === tableId || String(t.id) === String(tableId)) ? { ...t, currentOrderId: newOrderWithSameRef.id } : t));
           addLog('u1', 'COZINHA', `Novo item lançado para Balcão/Delivery (Ref #${activeCounterOrder.dailyNumber}) - Novo pedido KDS criado`);
           return;
@@ -2679,7 +2695,7 @@ const App: React.FC = () => {
     }
 
     await localDb.orders.put(kitchenOrder);
-    setOrders(prev => [kitchenOrder, ...prev.filter(o => o.id !== kitchenOrder.id)]);
+    setOrders(prev => deduplicateOrders([kitchenOrder, ...prev]));
     addLog('u1', 'COZINHA', `Pedido enviado para cozinha: ${isCounter ? 'Balcão' : `Mesa ${displayTableNumber}`}`);
   };
 
@@ -3834,11 +3850,7 @@ const App: React.FC = () => {
         ...newOrder
       }));
       // OPTIMISTIC LOCAL STATE UPDATE - CRITICAL FOR REALTIME RESPONSIVENESS AND IMMEDIATE TOTALS
-      setOrders(prev => {
-        const exists = prev.some(o => o.id === newOrder.id);
-        if (exists) return prev.map(o => o.id === newOrder.id ? newOrder : o);
-        return [newOrder, ...prev];
-      });
+      setOrders(prev => deduplicateOrders([newOrder, ...prev.filter(o => o.id !== newOrder.id && o.docId !== newOrder.id)]));
       
       if (!isCounter) {
         // RESET ROBUSTO DA MESA
@@ -3877,11 +3889,7 @@ const App: React.FC = () => {
       }
     } else {
       await localDb.orders.put(newOrder);
-      setOrders(prev => {
-        const exists = prev.some(o => o.id === newOrder.id);
-        if (exists) return prev.map(o => o.id === newOrder.id ? newOrder : o);
-        return [newOrder, ...prev];
-      });
+      setOrders(prev => deduplicateOrders([newOrder, ...prev.filter(o => o.id !== newOrder.id && o.docId !== newOrder.id)]));
       
       if (!isCounter) {
         const resetData = { items: [], status: 'available' as const, total: 0, currentOrderId: undefined, partialPayments: [] };
@@ -4715,13 +4723,13 @@ const App: React.FC = () => {
       };
 
       // ROBUST CALCULATION: Fetch ALL orders during the session
-      let salesSinceOpen: Order[] = orders.filter(o => {
+      let salesSinceOpen: Order[] = deduplicateOrders(orders.filter(o => {
         if (o.status === 'cancelled' || o.isSubTicket || o.mergedIntoOrderId) return false;
         const createdAt = parseToDate(o.createdAt);
         return createdAt >= openedDate;
-      });
+      }));
 
-      let recordsDuringSession: FinancialRecord[] = financialRecords.filter(r => {
+      let recordsDuringSession: FinancialRecord[] = deduplicateFinancialRecords(financialRecords.filter(r => {
         const isPaid = r.status === 'paid' || !r.status;
         if (!isPaid) return false;
         if (r.shiftOpenedAt) {
@@ -4730,7 +4738,7 @@ const App: React.FC = () => {
         }
         const date = parseToDate(r.date);
         return date >= openedDate;
-      });
+      }));
 
       // Try to get fresh data if online
       if (effectiveTenantId) {
@@ -4741,24 +4749,33 @@ const App: React.FC = () => {
           ]);
           
           if (!ordersSnapshot.empty) {
-            const fetchedOrders = ordersSnapshot.docs.map(d => ({ ...d.data(), id: d.id, createdAt: (d.data().createdAt as any)?.toDate ? (d.data().createdAt as any).toDate() : new Date(d.data().createdAt) } as Order));
-            salesSinceOpen = fetchedOrders.filter(o => {
+            const fetchedOrders = ordersSnapshot.docs.map(d => {
+              const data = d.data();
+              return { 
+                ...data, 
+                id: data.id || d.id, 
+                docId: d.id, 
+                createdAt: (data.createdAt as any)?.toDate ? (data.createdAt as any).toDate() : new Date(data.createdAt) 
+              } as Order;
+            });
+            salesSinceOpen = deduplicateOrders(fetchedOrders.filter(o => {
               if (o.status === 'cancelled' || o.isSubTicket || o.mergedIntoOrderId) return false;
               const createdAt = parseToDate(o.createdAt);
               return createdAt >= openedDate;
-            });
+            }));
           }
           if (!recordsSnapshot.empty) {
             const fetchedRecords = recordsSnapshot.docs.map(d => {
               const data = d.data() as any;
               return {
                 ...data,
-                id: d.id,
+                id: data.id || d.id,
+                docId: d.id,
                 date: data.date?.toDate ? data.date.toDate() : new Date(data.date),
                 shiftOpenedAt: data.shiftOpenedAt?.toDate ? data.shiftOpenedAt.toDate() : (data.shiftOpenedAt ? new Date(data.shiftOpenedAt) : undefined)
               } as FinancialRecord;
             });
-            recordsDuringSession = fetchedRecords.filter(r => {
+            recordsDuringSession = deduplicateFinancialRecords(fetchedRecords.filter(r => {
               const isPaid = r.status === 'paid' || !r.status;
               if (!isPaid) return false;
               if (r.shiftOpenedAt) {
@@ -4767,7 +4784,7 @@ const App: React.FC = () => {
               }
               const date = parseToDate(r.date);
               return date >= openedDate;
-            });
+            }));
           }
         } catch (err) {
           console.warn('Usando dados locais para o fechamento devido a falha na nuvem:', err);

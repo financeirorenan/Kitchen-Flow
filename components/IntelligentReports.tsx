@@ -1,5 +1,6 @@
 
 import React, { useState, useMemo, memo } from 'react';
+import { deduplicateOrders, deduplicateFinancialRecords } from '../utils/deduplicate';
 import { motion } from 'framer-motion';
 import { 
   Order, 
@@ -57,12 +58,14 @@ const IntelligentReports: React.FC<IntelligentReportsProps> = memo(({
     const now = new Date();
     let cutoff = new Date();
     
+    const validOrders = deduplicateOrders(orders.filter(o => !o.isSubTicket && !o.mergedIntoOrderId));
+
     if (dateRange === '7d') cutoff.setDate(now.getDate() - 7);
     else if (dateRange === '30d') cutoff.setDate(now.getDate() - 30);
     else if (dateRange === '90d') cutoff.setDate(now.getDate() - 90);
-    else return orders.filter(o => !o.isSubTicket && !o.mergedIntoOrderId);
+    else return validOrders;
 
-    return orders.filter(o => !o.isSubTicket && !o.mergedIntoOrderId && new Date(o.createdAt) >= cutoff);
+    return validOrders.filter(o => new Date(o.createdAt) >= cutoff);
   }, [orders, dateRange]);
 
   // Financial Stats

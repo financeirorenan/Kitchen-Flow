@@ -25,6 +25,7 @@ import {
   printTestReceipt,
 } from "../services/printService";
 import { maskCurrency, parseCurrency, maskPhone } from "../utils/masks";
+import { deduplicateOrders, deduplicateFinancialRecords } from "../utils/deduplicate";
 import {
   Users,
   CreditCard,
@@ -658,7 +659,7 @@ const Tables: React.FC<TablesProps> = memo(
 
       const sessionOpenedAt = parseToDate(cashSession.openedAt);
 
-      const sessionRecords = financialRecords.filter((r) => {
+      const sessionRecords = deduplicateFinancialRecords(financialRecords.filter((r) => {
         const isPaid = r.status === "paid" || !r.status;
         if (!isPaid) return false;
 
@@ -678,14 +679,14 @@ const Tables: React.FC<TablesProps> = memo(
             r.description?.toLowerCase().includes("suprimento") ||
             r.description?.toLowerCase().includes("sangria"))
         );
-      });
+      }));
 
-      const sessionOrders = orders.filter((o) => {
+      const sessionOrders = deduplicateOrders(orders.filter((o) => {
         if (o.status === "cancelled" || o.isSubTicket || o.mergedIntoOrderId) return false;
         const activityDate = parseToDate(o.paidAt || o.completedAt || o.finishedAt || o.updatedAt || o.createdAt);
         const isPaid = o.isSettled || o.paymentStatus === "paid" || (o.payments && o.payments.length > 0) || o.status === "finished" || o.status === "delivered";
         return isPaid && activityDate >= sessionOpenedAt;
-      });
+      }));
 
       // Monetary sums should exclude automated sale records (which already exist in sessionOrders)
       // and also exclude the opening cash record itself to avoid double counting
@@ -877,6 +878,8 @@ const Tables: React.FC<TablesProps> = memo(
       } else {
         sourceOrders = orders.filter((o) => o.status !== "cancelled" && !o.isSubTicket && !o.mergedIntoOrderId);
       }
+
+      sourceOrders = deduplicateOrders(sourceOrders);
 
       return sourceOrders
         .map((o) => {
