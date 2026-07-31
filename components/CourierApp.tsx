@@ -143,13 +143,12 @@ const MAPS_API_KEY =
 const hasValidKey = Boolean(MAPS_API_KEY) && MAPS_API_KEY !== 'YOUR_API_KEY';
 
 interface CourierAppProps {
-  currentUser?: User | null;
-  onLogout?: () => void;
+  currentUser: User;
 }
 
 type CourierTab = 'home' | 'deliveries' | 'earnings' | 'profile';
 
-const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout }) => {
+const CourierApp: React.FC<CourierAppProps> = ({ currentUser }) => {
   const [courierData, setCourierData] = useState<Courier | null>(null);
   const [assignedOrders, setAssignedOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1006,7 +1005,7 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout }) => {
         </div>
         <div>
           <button 
-             onClick={() => onLogout ? onLogout() : auth.signOut()}
+             onClick={() => auth.signOut()}
              className="flex items-center gap-2 px-3.5 py-2.5 bg-white/10 rounded-xl border border-white/10 hover:bg-white/20 active:scale-95 transition-all text-white text-[9px] font-black uppercase tracking-widest"
           >
              <LogOut size={14} /> Sair
