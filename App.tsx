@@ -1633,10 +1633,7 @@ const App: React.FC = () => {
       setUser(null);
       setCurrentUserData(null);
       setTenantData(null);
-      if (window.location.pathname === '/' || window.location.pathname.startsWith('/site')) {
-        navigate('/saas');
-      }
-      window.location.reload();
+      window.location.href = '/';
     }
   };
 
