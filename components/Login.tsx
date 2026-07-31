@@ -444,6 +444,7 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
             console.warn("Erro ao auto-sincronizar senha ou status no Firestore após login:", syncErr);
           }
 
+          localStorage.removeItem('kitchenflow_demo_user');
           onLoginSuccess();
           return;
         } else {

@@ -1608,23 +1608,35 @@ const App: React.FC = () => {
   }, [currentUserData, activeTab, rolePermissions]);
 
   const handleLogout = async () => {
-    if (user) {
-      try {
-        await updateDoc(doc(db, 'users', user.uid), { status: 'offline', updatedAt: new Date() });
-      } catch (err) {
-        console.warn("Erro ao atualizar status para offline no Firestore durante o logout:", err);
-      }
-    }
-    signOut(auth);
     try {
-      localStorage.removeItem('kitchenflow_demo_user');
-      localStorage.removeItem('kitchenflow_cached_user');
-      localStorage.removeItem('kitchenflow_cached_tenant_data');
-      localStorage.removeItem('gastroai_cached_user');
-      localStorage.removeItem('gastroai_cached_tenant_data');
+      if (user && user.uid && !user.uid.startsWith('demo-')) {
+        try {
+          await updateDoc(doc(db, 'users', user.uid), { status: 'offline', updatedAt: new Date() });
+        } catch (err) {
+          console.warn("Erro ao atualizar status para offline no Firestore durante o logout:", err);
+        }
+      }
+      await signOut(auth);
+    } catch (err) {
+      console.warn("Erro ao fazer signOut do Firebase Auth:", err);
+    } finally {
+      try {
+        localStorage.removeItem('kitchenflow_demo_user');
+        localStorage.removeItem('kitchenflow_cached_user');
+        localStorage.removeItem('kitchenflow_cached_tenant_data');
+        localStorage.removeItem('gastroai_cached_user');
+        localStorage.removeItem('gastroai_cached_tenant_data');
+        sessionStorage.clear();
+      } catch (e) {
+        console.warn("Erro ao limpar dados locais:", e);
+      }
+      setUser(null);
+      setCurrentUserData(null);
+      setTenantData(null);
+      if (window.location.pathname === '/' || window.location.pathname.startsWith('/site')) {
+        navigate('/saas');
+      }
       window.location.reload();
-    } catch (e) {
-      console.warn(e);
     }
   };
 
@@ -5200,7 +5212,7 @@ const App: React.FC = () => {
             <Route path="/entregador" element={
                user ? (
                  (currentUserData?.role === 'COURIER' || getUserPermissions(currentUserData).includes('courier_app_access')) ? (
-                   <CourierApp currentUser={currentUserData} />
+                   <CourierApp currentUser={currentUserData} onLogout={handleLogout} />
                  ) : (
                    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6 text-center">
                       <div className="bg-white p-8 rounded-[2.5rem] shadow-xl max-w-sm">
