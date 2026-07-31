@@ -77,7 +77,8 @@ import {
   TrendingUp,
   Utensils,
   Bike,
-  Fingerprint
+  Fingerprint,
+  ShieldAlert
 } from 'lucide-react';
 
 interface CashSession {

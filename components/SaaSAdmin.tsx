@@ -77,7 +77,12 @@ import {
   Wifi,
   ShieldCheck,
   Layers,
-  Radio
+  Radio,
+  Truck,
+  Award,
+  ShoppingBag,
+  Megaphone,
+  Tag
 } from 'lucide-react';
 
 const ALL_MODULES: { id: Permission; label: string }[] = [
@@ -979,6 +984,27 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   const [replyText, setReplyText] = useState('');
   const [editingLead, setEditingLead] = useState<any | null>(null);
   const [marketplaceFee, setMarketplaceFee] = useState(2.5); // 2.5% padrão
+  const [marketplaceConsumerFee, setMarketplaceConsumerFee] = useState<number>(1.99);
+  const [marketplaceMinOrderValue, setMarketplaceMinOrderValue] = useState<number>(15.00);
+  const [marketplaceMaxRadius, setMarketplaceMaxRadius] = useState<number>(20);
+  const [marketplaceAutoApproveOrders, setMarketplaceAutoApproveOrders] = useState<boolean>(false);
+  const [marketplaceOrderTimeoutMinutes, setMarketplaceOrderTimeoutMinutes] = useState<number>(10);
+  const [marketplaceAllowPickup, setMarketplaceAllowPickup] = useState<boolean>(true);
+  const [marketplaceAllowDelivery, setMarketplaceAllowDelivery] = useState<boolean>(true);
+  const [marketplaceRankingStrategy, setMarketplaceRankingStrategy] = useState<string>('distance');
+  const [marketplaceEnableSponsored, setMarketplaceEnableSponsored] = useState<boolean>(true);
+  const [marketplaceAnnouncementBanner, setMarketplaceAnnouncementBanner] = useState<string>('🎉 Cupom BEMVINDO10 para R$ 10 OFF no seu 1º pedido pelo app!');
+  const [marketplaceCategories, setMarketplaceCategories] = useState<string[]>([
+    'Burgers & Lanches', 'Pizzas', 'Comida Japonesa', 'Marmitas & Almoço', 'Açaí & Doces', 'Saudável & Fit', 'Bebidas & Adega'
+  ]);
+  const [marketplaceNewCategoryInput, setMarketplaceNewCategoryInput] = useState<string>('');
+  const [marketplacePaymentMethods, setMarketplacePaymentMethods] = useState({
+    pixOnline: true,
+    creditCardOnline: true,
+    cardOnDelivery: true,
+    cashOnDelivery: true
+  });
+  const [marketplaceConfigSubTab, setMarketplaceConfigSubTab] = useState<'fees' | 'operations' | 'marketing' | 'ranking' | 'maintenance'>('fees');
   const [marketplaceBanner, setMarketplaceBanner] = useState('https://images.unsplash.com/photo-1504674900247-0877df9cc836?q=80&w=800&auto=format&fit=crop');
   const [marketplacePromotions, setMarketplacePromotions] = useState<{ id: string; title: string; active: boolean; participatingTenantIds: string[]; bannerUrl?: string }[]>([]);
   const [maintenanceConfig, setMaintenanceConfig] = useState({
@@ -1028,13 +1054,25 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         const data = snapshot.data();
         if (data.serviceFee !== undefined) setMarketplaceFee(data.serviceFee);
         if (data.fixedFee !== undefined) setMarketplaceFixedFee(data.fixedFee);
+        if (data.consumerFee !== undefined) setMarketplaceConsumerFee(data.consumerFee);
+        if (data.minOrderValue !== undefined) setMarketplaceMinOrderValue(data.minOrderValue);
+        if (data.maxRadius !== undefined) setMarketplaceMaxRadius(data.maxRadius);
+        if (data.autoApproveOrders !== undefined) setMarketplaceAutoApproveOrders(data.autoApproveOrders);
+        if (data.orderTimeoutMinutes !== undefined) setMarketplaceOrderTimeoutMinutes(data.orderTimeoutMinutes);
+        if (data.allowPickup !== undefined) setMarketplaceAllowPickup(data.allowPickup);
+        if (data.allowDelivery !== undefined) setMarketplaceAllowDelivery(data.allowDelivery);
+        if (data.rankingStrategy) setMarketplaceRankingStrategy(data.rankingStrategy);
+        if (data.enableSponsored !== undefined) setMarketplaceEnableSponsored(data.enableSponsored);
+        if (data.announcementBanner !== undefined) setMarketplaceAnnouncementBanner(data.announcementBanner);
+        if (data.categories && Array.isArray(data.categories)) setMarketplaceCategories(data.categories);
+        if (data.paymentMethods) setMarketplacePaymentMethods(prev => ({ ...prev, ...data.paymentMethods }));
         if (data.bannerUrl) setMarketplaceBanner(data.bannerUrl);
         if (data.promotions) setMarketplacePromotions(data.promotions);
         if (data.maintenance) {
           setMaintenanceConfig({
             active: data.maintenance.active || false,
-            startAt: data.maintenance.startAt ? new Date(data.maintenance.startAt.toDate()).toISOString().slice(0, 16) : '',
-            endAt: data.maintenance.endAt ? new Date(data.maintenance.endAt.toDate()).toISOString().slice(0, 16) : '',
+            startAt: data.maintenance.startAt ? new Date(data.maintenance.startAt.toDate ? data.maintenance.startAt.toDate() : data.maintenance.startAt).toISOString().slice(0, 16) : '',
+            endAt: data.maintenance.endAt ? new Date(data.maintenance.endAt.toDate ? data.maintenance.endAt.toDate() : data.maintenance.endAt).toISOString().slice(0, 16) : '',
             message: data.maintenance.message || ''
           });
         }
@@ -1063,6 +1101,18 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         id: 'marketplace',
         serviceFee: marketplaceFee,
         fixedFee: marketplaceFixedFee,
+        consumerFee: marketplaceConsumerFee,
+        minOrderValue: marketplaceMinOrderValue,
+        maxRadius: marketplaceMaxRadius,
+        autoApproveOrders: marketplaceAutoApproveOrders,
+        orderTimeoutMinutes: marketplaceOrderTimeoutMinutes,
+        allowPickup: marketplaceAllowPickup,
+        allowDelivery: marketplaceAllowDelivery,
+        rankingStrategy: marketplaceRankingStrategy,
+        enableSponsored: marketplaceEnableSponsored,
+        announcementBanner: marketplaceAnnouncementBanner,
+        categories: marketplaceCategories,
+        paymentMethods: marketplacePaymentMethods,
         bannerUrl: marketplaceBanner,
         promotions: marketplacePromotions,
         maintenance: {
@@ -1073,8 +1123,10 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         },
         updatedAt: new Date()
       });
+      showToast("Configurações do Marketplace salvas com sucesso!", "success");
     } catch (error) {
       console.error("Error saving marketplace config:", error);
+      showToast("Erro ao salvar configurações do marketplace", "error");
     }
   };
 
@@ -4419,8 +4471,8 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                     </tr>
                   )) : (
                     <tr>
-                      <td colSpan={5} className="px-6 py-12 text-center text-slate-400 font-bold uppercase text-[9px] tracking-widest">
-                        Nenhuma renovação registrada ainda. Use as ferramentas do menu de Clientes para prorrogar planos e registrar recebimentos aqui.
+                      <td colSpan={6} className="px-6 py-8 text-center text-slate-400 font-medium text-xs">
+                        Nenhum pagamento recebido registrado.
                       </td>
                     </tr>
                   )}
@@ -4432,206 +4484,637 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
       ) : activeTab === 'marketplace_config' ? (
         <div className="space-y-6 animate-in slide-in-from-right-4 duration-500">
            <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden">
-              <div className="p-8 border-b border-slate-50 flex justify-between items-center bg-indigo-900 text-white">
+              <div className="p-8 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-900 text-white gap-4">
                  <div>
-                   <h3 className="text-lg font-black tracking-tighter">Configuração do Marketplace</h3>
-                   <p className="text-[10px] font-black opacity-60 uppercase tracking-widest">Configure promoções, taxas e visibilidade global</p>
+                   <div className="flex items-center gap-2 mb-1">
+                     <span className="px-2.5 py-0.5 bg-indigo-500/30 text-indigo-300 rounded-full text-[9px] font-black uppercase tracking-wider border border-indigo-400/20">
+                       Painel B2C & Delivery
+                     </span>
+                   </div>
+                   <h3 className="text-xl font-black tracking-tighter">Configuração do Marketplace Nova</h3>
+                   <p className="text-[11px] font-medium text-slate-400 mt-0.5">Gestão completa de taxas, operação, logística, banners, promoções e algoritmos do aplicativo consumidor</p>
                  </div>
                  <button 
                    onClick={() => confirmAction("Salvar Configurações", "Deseja salvar as alterações no marketplace global?", handleSaveMarketplaceConfig, 'info')}
-                   className="px-6 py-3 bg-indigo-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-900/20"
+                   className="px-6 py-3 bg-indigo-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-900/30 flex items-center gap-2 shrink-0"
                  >
-                   <Save size={16} className="inline mr-2" />
+                   <Save size={16} />
                    Salvar Alterações
                  </button>
               </div>
-              
-              <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
-                 <div className="space-y-6">
-                    <div className="space-y-2">
-                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Taxa de Serviço Global (%)</label>
-                       <input 
-                         type="number" 
-                         step="0.1"
-                         className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-600 transition-all" 
-                         value={marketplaceFee}
-                         onChange={(e) => setMarketplaceFee(Number(e.target.value))}
-                       />
-                       <p className="text-[9px] text-slate-400 font-medium">Esta taxa será aplicada sobre o valor total de cada pedido realizado via marketplace.</p>
-                    </div>
 
-                    <div className="space-y-2">
-                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Taxa Fixa por Pedido no Marketplace (R$)</label>
-                       <input 
-                         type="number" 
-                         step="0.05"
-                         className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-600 transition-all" 
-                         value={marketplaceFixedFee}
-                         onChange={(e) => setMarketplaceFixedFee(Number(e.target.value))}
-                       />
-                       <p className="text-[9px] text-slate-400 font-medium">Este valor fixo de R$ (ex: 1.50) será cobrado por pedido faturado do lojista no marketplace.</p>
-                    </div>
+              {/* Sub-tab Navigation */}
+              <div className="px-8 pt-6 pb-2 border-b border-slate-100 flex flex-wrap gap-2 bg-slate-50/50">
+                <button
+                  onClick={() => setMarketplaceConfigSubTab('fees')}
+                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 ${
+                    marketplaceConfigSubTab === 'fees'
+                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
+                  }`}
+                >
+                  <DollarSign size={14} /> Taxas & Comissões
+                </button>
 
-                    <div className="space-y-4">
-                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Banner Promocional Principal</label>
-                       <div className="p-4 bg-slate-50 border-2 border-dashed border-slate-100 rounded-3xl space-y-4">
-                          <img 
-                            src={marketplaceBanner} 
-                            className="w-full h-32 object-cover rounded-2xl" 
-                            alt="Preview"
-                          />
-                          <label className="w-full py-3 bg-white border border-slate-200 text-indigo-600 rounded-xl font-black text-[9px] uppercase tracking-widest hover:bg-indigo-50 transition-all cursor-pointer flex items-center justify-center">
-                             <Upload size={14} className="inline mr-2" /> Trocar Imagem do Banner
-                             <input type="file" className="hidden" accept="image/*" onChange={handleBannerUpload} />
-                          </label>
-                       </div>
-                    </div>
-                 </div>
+                <button
+                  onClick={() => setMarketplaceConfigSubTab('operations')}
+                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 ${
+                    marketplaceConfigSubTab === 'operations'
+                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
+                  }`}
+                >
+                  <Truck size={14} /> Logística & Operação
+                </button>
 
-                  <div className="space-y-6">
-                 <div className="space-y-4">
-                    <h4 className="text-[10px] font-black text-slate-800 uppercase tracking-widest border-b pb-2">Programação de Manutenção</h4>
-                    <div className="bg-white p-6 rounded-3xl border border-slate-100 space-y-4">
-                       <div className="flex items-center justify-between">
-                          <div>
-                             <p className="text-[11px] font-bold text-slate-700">Ativar Período de Manutenção</p>
-                             <p className="text-[9px] text-slate-400 font-medium tracking-tight">Informa clientes e bloqueia pedidos no marketplace</p>
-                          </div>
-                          <div 
-                            onClick={() => setMaintenanceConfig({ ...maintenanceConfig, active: !maintenanceConfig.active })}
-                            className={`w-12 h-6 rounded-full p-1 cursor-pointer transition-all ${maintenanceConfig.active ? 'bg-amber-500 shadow-lg shadow-amber-100' : 'bg-slate-200'}`}
-                          >
-                             <div className={`w-4 h-4 bg-white rounded-full transition-all ${maintenanceConfig.active ? 'translate-x-6' : 'translate-x-0'}`} />
-                          </div>
-                       </div>
-                       <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-1">
-                             <label className="text-[9px] font-black text-slate-400 uppercase">Início</label>
-                             <input 
-                               type="datetime-local" 
-                               className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl text-[10px] font-bold outline-none focus:border-indigo-600"
-                               value={maintenanceConfig.startAt}
-                               onChange={(e) => setMaintenanceConfig({ ...maintenanceConfig, startAt: e.target.value })}
-                             />
-                          </div>
-                          <div className="space-y-1">
-                             <label className="text-[9px] font-black text-slate-400 uppercase">Fim Previsto</label>
-                             <input 
-                               type="datetime-local" 
-                               className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl text-[10px] font-bold outline-none focus:border-indigo-600"
-                               value={maintenanceConfig.endAt}
-                               onChange={(e) => setMaintenanceConfig({ ...maintenanceConfig, endAt: e.target.value })}
-                             />
-                          </div>
-                       </div>
-                       <div className="space-y-1">
-                          <label className="text-[9px] font-black text-slate-400 uppercase">Mensagem de Aviso</label>
-                          <textarea 
-                            className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl text-[10px] font-bold outline-none focus:border-indigo-600 min-h-[60px]"
-                            placeholder="Ex: Estamos em manutenção programada..."
-                            value={maintenanceConfig.message}
-                            onChange={(e) => setMaintenanceConfig({ ...maintenanceConfig, message: e.target.value })}
-                          />
-                       </div>
-                    </div>
+                <button
+                  onClick={() => setMarketplaceConfigSubTab('marketing')}
+                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 ${
+                    marketplaceConfigSubTab === 'marketing'
+                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
+                  }`}
+                >
+                  <Sparkles size={14} /> Banners, Promoções & Categorias
+                </button>
 
-                    <h4 className="text-[10px] font-black text-slate-800 uppercase tracking-widest border-b pb-2">Promoções em Destaque</h4>
-                       <div className="space-y-3">
-                          {marketplacePromotions.map((promo, idx) => (
-                             <div key={idx} className="p-4 bg-white border border-slate-100 rounded-2xl flex items-center justify-between shadow-sm">
-                                <div className="flex items-center gap-3">
-                                   <button 
-                                     onClick={() => {
-                                        const newPromos = marketplacePromotions.filter((_, i) => i !== idx);
-                                        setMarketplacePromotions(newPromos);
-                                     }}
-                                     className="p-1.5 text-slate-300 hover:text-rose-500 transition-all"
-                                   >
-                                      <Trash2 size={14} />
-                                   </button>
-                                   <button 
-                                     onClick={() => {
-                                       setEditingPromo({...promo, index: idx});
-                                       setShowPromoModal(true);
-                                     }}
-                                     className="p-1.5 text-slate-300 hover:text-indigo-600 transition-all"
-                                   >
-                                      <Edit3 size={14} />
-                                   </button>
-                                   <span className="text-sm font-bold text-slate-700">{promo.title}</span>
-                                   <span className="text-[8px] font-black bg-slate-100 px-1.5 py-0.5 rounded uppercase">{promo.participatingTenantIds?.length || 0} Lojas</span>
-                                </div>
-                                <div 
-                                  onClick={() => {
-                                    const newPromos = [...marketplacePromotions];
-                                    newPromos[idx].active = !newPromos[idx].active;
-                                    setMarketplacePromotions(newPromos);
-                                  }}
-                                  className={`w-10 h-5 rounded-full p-0.5 cursor-pointer transition-all ${promo.active ? 'bg-emerald-500' : 'bg-slate-200'}`}
-                                >
-                                   <div className={`w-4 h-4 bg-white rounded-full transition-all ${promo.active ? 'translate-x-5' : 'translate-x-0'}`} />
-                                </div>
-                             </div>
-                          ))}
-                          <button 
-                            onClick={() => {
-                               setEditingPromo({ id: `promo_${Date.now()}`, title: '', active: true, participatingTenantIds: [] });
-                               setShowPromoModal(true);
-                            }}
-                            className="w-full py-3 bg-slate-50 text-slate-500 border border-slate-100 border-dashed rounded-xl font-black text-[9px] uppercase tracking-widest hover:bg-slate-100 transition-all"
-                          >
-                             <Plus size={14} className="inline mr-2" /> Nova Promoção
-                          </button>
-                       </div>
-                    </div>
+                <button
+                  onClick={() => setMarketplaceConfigSubTab('ranking')}
+                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 ${
+                    marketplaceConfigSubTab === 'ranking'
+                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
+                  }`}
+                >
+                  <Award size={14} /> Algoritmos & Destaque
+                </button>
 
-                    <div className="p-6 bg-amber-50 rounded-3xl border border-amber-100 space-y-4">
-                       <div className="flex items-center gap-3">
-                          <AlertCircle className="text-amber-500" size={20} />
-                          <h4 className="text-xs font-black text-amber-800 uppercase tracking-widest">Agendamento de Manutenção</h4>
-                       </div>
-                       
-                       <div className="space-y-4">
-                          <div className="grid grid-cols-2 gap-3">
-                             <div className="space-y-1">
-                                <label className="text-[8px] font-black text-slate-400 uppercase ml-1">Início</label>
-                                <input 
-                                  type="datetime-local" 
-                                  className="w-full p-3 bg-white border border-amber-200 rounded-xl text-[10px] font-bold outline-none focus:border-amber-500"
-                                  value={maintenanceConfig.startAt}
-                                  onChange={(e) => setMaintenanceConfig({...maintenanceConfig, startAt: e.target.value})}
-                                />
-                             </div>
-                             <div className="space-y-1">
-                                <label className="text-[8px] font-black text-slate-400 uppercase ml-1">Fim</label>
-                                <input 
-                                  type="datetime-local" 
-                                  className="w-full p-3 bg-white border border-amber-200 rounded-xl text-[10px] font-bold outline-none focus:border-amber-500"
-                                  value={maintenanceConfig.endAt}
-                                  onChange={(e) => setMaintenanceConfig({...maintenanceConfig, endAt: e.target.value})}
-                                />
-                             </div>
-                          </div>
+                <button
+                  onClick={() => setMarketplaceConfigSubTab('maintenance')}
+                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 ${
+                    marketplaceConfigSubTab === 'maintenance'
+                      ? 'bg-amber-500 text-white shadow-md shadow-amber-200'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
+                  }`}
+                >
+                  <AlertTriangle size={14} /> Manutenção Programada
+                </button>
+              </div>
+
+              <div className="p-8">
+                 {/* SUB-TAB 1: TAXAS & COMISSÕES */}
+                 {marketplaceConfigSubTab === 'fees' && (
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-in fade-in duration-300">
+                     <div className="space-y-6">
+                        <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100 space-y-4">
+                          <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
+                            <Percent size={16} className="text-indigo-600" /> Cobrança dos Restaurantes (Lojistas)
+                          </h4>
                           
-                          <div className="space-y-1">
-                             <label className="text-[8px] font-black text-slate-400 uppercase ml-1">Mensagem para Clientes</label>
-                             <textarea 
-                               className="w-full p-3 bg-white border border-amber-200 rounded-xl text-[10px] font-medium outline-none focus:border-amber-500 h-20"
-                               placeholder="Ex: Estamos em manutenção programada para melhorias..."
-                               value={maintenanceConfig.message}
-                               onChange={(e) => setMaintenanceConfig({...maintenanceConfig, message: e.target.value})}
-                             />
+                          <div className="space-y-2">
+                             <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Comissão Percentual Global (%)</label>
+                             <div className="relative">
+                               <input 
+                                 type="number" 
+                                 step="0.1"
+                                 className="w-full p-4 bg-white border-2 border-slate-200 rounded-2xl font-bold text-base outline-none focus:border-indigo-600 transition-all pr-12" 
+                                 value={marketplaceFee}
+                                 onChange={(e) => setMarketplaceFee(Number(e.target.value))}
+                               />
+                               <span className="absolute right-4 top-4 font-black text-slate-400">%</span>
+                             </div>
+                             <p className="text-[10px] text-slate-400 font-medium">Percentual cobrado da loja sobre o valor dos produtos em cada pedido.</p>
                           </div>
 
-                          <button 
-                            onClick={() => setMaintenanceConfig({...maintenanceConfig, active: !maintenanceConfig.active})}
-                            className={`w-full py-3 rounded-xl font-black text-[9px] uppercase tracking-widest transition-all shadow-lg ${maintenanceConfig.active ? 'bg-rose-500 text-white shadow-rose-100' : 'bg-amber-500 text-white shadow-amber-200'} hover:opacity-90`}
-                          >
-                             {maintenanceConfig.active ? 'Desativar Manutenção Agora' : 'Ativar Manutenção / Agendamento'}
-                          </button>
-                       </div>
-                    </div>
-                 </div>
+                          <div className="space-y-2">
+                             <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Taxa Fixa por Pedido (R$)</label>
+                             <div className="relative">
+                               <span className="absolute left-4 top-4 font-black text-slate-400">R$</span>
+                               <input 
+                                 type="number" 
+                                 step="0.10"
+                                 className="w-full p-4 bg-white border-2 border-slate-200 rounded-2xl font-bold text-base outline-none focus:border-indigo-600 transition-all pl-12" 
+                                 value={marketplaceFixedFee}
+                                 onChange={(e) => setMarketplaceFixedFee(Number(e.target.value))}
+                               />
+                             </div>
+                             <p className="text-[10px] text-slate-400 font-medium">Valor fixo de cobrança por pedido concluído (ex: R$ 1,50).</p>
+                          </div>
+                        </div>
+
+                        <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100 space-y-4">
+                          <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
+                            <ShoppingBag size={16} className="text-emerald-600" /> Taxas & Pedido do Consumidor
+                          </h4>
+
+                          <div className="space-y-2">
+                             <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Taxa de Conveniência do Consumidor (R$)</label>
+                             <div className="relative">
+                               <span className="absolute left-4 top-4 font-black text-slate-400">R$</span>
+                               <input 
+                                 type="number" 
+                                 step="0.10"
+                                 className="w-full p-4 bg-white border-2 border-slate-200 rounded-2xl font-bold text-base outline-none focus:border-indigo-600 transition-all pl-12" 
+                                 value={marketplaceConsumerFee}
+                                 onChange={(e) => setMarketplaceConsumerFee(Number(e.target.value))}
+                               />
+                             </div>
+                             <p className="text-[10px] text-slate-400 font-medium">Adicionado ao total do carrinho do cliente no app do marketplace.</p>
+                          </div>
+
+                          <div className="space-y-2">
+                             <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Valor Mínimo para Pedido (R$)</label>
+                             <div className="relative">
+                               <span className="absolute left-4 top-4 font-black text-slate-400">R$</span>
+                               <input 
+                                 type="number" 
+                                 step="1.00"
+                                 className="w-full p-4 bg-white border-2 border-slate-200 rounded-2xl font-bold text-base outline-none focus:border-indigo-600 transition-all pl-12" 
+                                 value={marketplaceMinOrderValue}
+                                 onChange={(e) => setMarketplaceMinOrderValue(Number(e.target.value))}
+                               />
+                             </div>
+                             <p className="text-[10px] text-slate-400 font-medium">Mínimo necessário nos subtotais dos itens para permitir checkout.</p>
+                          </div>
+                        </div>
+                     </div>
+
+                     <div className="space-y-6">
+                        <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100 space-y-4">
+                          <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
+                            <CreditCard size={16} className="text-indigo-600" /> Formas de Pagamento Aceitas no App
+                          </h4>
+                          <p className="text-[10px] text-slate-500 font-medium">Habilite os métodos autorizados para pagamentos no marketplace:</p>
+
+                          <div className="space-y-3 pt-2">
+                            <div className="flex items-center justify-between p-3.5 bg-white rounded-2xl border border-slate-200">
+                              <div>
+                                <p className="text-xs font-bold text-slate-800">Pix Online (Instantâneo)</p>
+                                <p className="text-[9px] text-slate-400 font-medium">Confirmação automática de pagamento</p>
+                              </div>
+                              <input 
+                                type="checkbox"
+                                className="w-5 h-5 rounded text-indigo-600 accent-indigo-600 cursor-pointer"
+                                checked={marketplacePaymentMethods.pixOnline}
+                                onChange={(e) => setMarketplacePaymentMethods({ ...marketplacePaymentMethods, pixOnline: e.target.checked })}
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-between p-3.5 bg-white rounded-2xl border border-slate-200">
+                              <div>
+                                <p className="text-xs font-bold text-slate-800">Cartão de Crédito Online</p>
+                                <p className="text-[9px] text-slate-400 font-medium">Processamento direto pelo gateway do app</p>
+                              </div>
+                              <input 
+                                type="checkbox"
+                                className="w-5 h-5 rounded text-indigo-600 accent-indigo-600 cursor-pointer"
+                                checked={marketplacePaymentMethods.creditCardOnline}
+                                onChange={(e) => setMarketplacePaymentMethods({ ...marketplacePaymentMethods, creditCardOnline: e.target.checked })}
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-between p-3.5 bg-white rounded-2xl border border-slate-200">
+                              <div>
+                                <p className="text-xs font-bold text-slate-800">Cartão na Entrega (Maquininha)</p>
+                                <p className="text-[9px] text-slate-400 font-medium">Pagamento realizado com o entregador</p>
+                              </div>
+                              <input 
+                                type="checkbox"
+                                className="w-5 h-5 rounded text-indigo-600 accent-indigo-600 cursor-pointer"
+                                checked={marketplacePaymentMethods.cardOnDelivery}
+                                onChange={(e) => setMarketplacePaymentMethods({ ...marketplacePaymentMethods, cardOnDelivery: e.target.checked })}
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-between p-3.5 bg-white rounded-2xl border border-slate-200">
+                              <div>
+                                <p className="text-xs font-bold text-slate-800">Dinheiro na Entrega</p>
+                                <p className="text-[9px] text-slate-400 font-medium">Solicitação de troco ao entregador</p>
+                              </div>
+                              <input 
+                                type="checkbox"
+                                className="w-5 h-5 rounded text-indigo-600 accent-indigo-600 cursor-pointer"
+                                checked={marketplacePaymentMethods.cashOnDelivery}
+                                onChange={(e) => setMarketplacePaymentMethods({ ...marketplacePaymentMethods, cashOnDelivery: e.target.checked })}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                     </div>
+                   </div>
+                 )}
+
+                 {/* SUB-TAB 2: LOGÍSTICA & OPERAÇÃO */}
+                 {marketplaceConfigSubTab === 'operations' && (
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-in fade-in duration-300">
+                     <div className="space-y-6">
+                        <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100 space-y-4">
+                          <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
+                            <Truck size={16} className="text-indigo-600" /> Raio & Alcance de Atendimento
+                          </h4>
+
+                          <div className="space-y-2">
+                             <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Raio Máximo de Exibição de Lojas (km)</label>
+                             <div className="relative">
+                               <input 
+                                 type="number" 
+                                 step="1"
+                                 className="w-full p-4 bg-white border-2 border-slate-200 rounded-2xl font-bold text-base outline-none focus:border-indigo-600 transition-all pr-12" 
+                                 value={marketplaceMaxRadius}
+                                 onChange={(e) => setMarketplaceMaxRadius(Number(e.target.value))}
+                               />
+                               <span className="absolute right-4 top-4 font-black text-slate-400">km</span>
+                             </div>
+                             <p className="text-[10px] text-slate-400 font-medium">Lojas além desta distância do cliente não aparecem nas buscas.</p>
+                          </div>
+
+                          <div className="space-y-3 pt-2">
+                             <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Modalidades Aceitas no Checkout</p>
+                             <div className="flex items-center justify-between p-3.5 bg-white rounded-2xl border border-slate-200">
+                                <div>
+                                  <p className="text-xs font-bold text-slate-800">Permitir Entrega (Delivery)</p>
+                                  <p className="text-[9px] text-slate-400 font-medium">Lojas entregam ou usam motoboys</p>
+                                </div>
+                                <input 
+                                  type="checkbox"
+                                  className="w-5 h-5 rounded text-indigo-600 accent-indigo-600 cursor-pointer"
+                                  checked={marketplaceAllowDelivery}
+                                  onChange={(e) => setMarketplaceAllowDelivery(e.target.checked)}
+                                />
+                             </div>
+
+                             <div className="flex items-center justify-between p-3.5 bg-white rounded-2xl border border-slate-200">
+                                <div>
+                                  <p className="text-xs font-bold text-slate-800">Permitir Retirada no Balcão (Takeaway)</p>
+                                  <p className="text-[9px] text-slate-400 font-medium">Cliente retira presencialmente no restaurante</p>
+                                </div>
+                                <input 
+                                  type="checkbox"
+                                  className="w-5 h-5 rounded text-indigo-600 accent-indigo-600 cursor-pointer"
+                                  checked={marketplaceAllowPickup}
+                                  onChange={(e) => setMarketplaceAllowPickup(e.target.checked)}
+                                />
+                             </div>
+                          </div>
+                        </div>
+                     </div>
+
+                     <div className="space-y-6">
+                        <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100 space-y-4">
+                          <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
+                            <Clock size={16} className="text-indigo-600" /> Fluxo & Tempo de Aceite
+                          </h4>
+
+                          <div className="space-y-2">
+                             <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Tempo Limite para Aceite pela Loja (Minutos)</label>
+                             <div className="relative">
+                               <input 
+                                 type="number" 
+                                 step="1"
+                                 className="w-full p-4 bg-white border-2 border-slate-200 rounded-2xl font-bold text-base outline-none focus:border-indigo-600 transition-all pr-16" 
+                                 value={marketplaceOrderTimeoutMinutes}
+                                 onChange={(e) => setMarketplaceOrderTimeoutMinutes(Number(e.target.value))}
+                               />
+                               <span className="absolute right-4 top-4 font-black text-slate-400">min</span>
+                             </div>
+                             <p className="text-[10px] text-slate-400 font-medium">Se o restaurante não aceitar neste prazo, o pedido é alertado e pode ser cancelado.</p>
+                          </div>
+
+                          <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-200 mt-2">
+                            <div>
+                              <p className="text-xs font-bold text-slate-800">Auto-Aprovação de Pedidos</p>
+                              <p className="text-[9px] text-slate-400 font-medium">Aprova e envia direto para produção em restaurantes parceiros verificados</p>
+                            </div>
+                            <div 
+                              onClick={() => setMarketplaceAutoApproveOrders(!marketplaceAutoApproveOrders)}
+                              className={`w-12 h-6 rounded-full p-1 cursor-pointer transition-all ${marketplaceAutoApproveOrders ? 'bg-emerald-500 shadow-lg shadow-emerald-100' : 'bg-slate-200'}`}
+                            >
+                               <div className={`w-4 h-4 bg-white rounded-full transition-all ${marketplaceAutoApproveOrders ? 'translate-x-6' : 'translate-x-0'}`} />
+                            </div>
+                          </div>
+                        </div>
+                     </div>
+                   </div>
+                 )}
+
+                 {/* SUB-TAB 3: BANNERS, PROMOÇÕES & CATEGORIAS */}
+                 {marketplaceConfigSubTab === 'marketing' && (
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-in fade-in duration-300">
+                     <div className="space-y-6">
+                        <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100 space-y-4">
+                           <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
+                             <Megaphone size={16} className="text-indigo-600" /> Anúncio Notificação no Topo do App
+                           </h4>
+                           <textarea 
+                             className="w-full p-4 bg-white border-2 border-slate-200 rounded-2xl text-xs font-bold outline-none focus:border-indigo-600 transition-all min-h-[70px]"
+                             placeholder="Ex: 🎉 Cupom BEMVINDO10 para R$ 10 OFF no seu 1º pedido pelo app!"
+                             value={marketplaceAnnouncementBanner}
+                             onChange={(e) => setMarketplaceAnnouncementBanner(e.target.value)}
+                           />
+                           <p className="text-[10px] text-slate-400 font-medium">Aparece na barra fixa de topo em destaque para todos os usuários do marketplace.</p>
+                        </div>
+
+                        <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100 space-y-4">
+                           <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
+                             <Upload size={16} className="text-indigo-600" /> Banner Principal em Destaque
+                           </h4>
+                           <div className="p-4 bg-white border-2 border-dashed border-slate-200 rounded-3xl space-y-4 text-center">
+                              <img 
+                                src={marketplaceBanner} 
+                                className="w-full h-36 object-cover rounded-2xl shadow-sm" 
+                                alt="Preview Banner"
+                              />
+                              <label className="w-full py-3 bg-indigo-50 text-indigo-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-indigo-100 transition-all cursor-pointer flex items-center justify-center border border-indigo-200">
+                                 <Upload size={14} className="inline mr-2" /> Selecionar Nova Imagem para o Banner
+                                 <input type="file" className="hidden" accept="image/*" onChange={handleBannerUpload} />
+                              </label>
+                           </div>
+                        </div>
+
+                        <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100 space-y-4">
+                          <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
+                            <Tag size={16} className="text-indigo-600" /> Categorias do Marketplace
+                          </h4>
+                          <p className="text-[10px] text-slate-400 font-medium">Categorias exibidas no carrossel superior de navegação:</p>
+
+                          <div className="flex flex-wrap gap-2 pt-1">
+                            {marketplaceCategories.map((cat, idx) => (
+                              <span key={idx} className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs">
+                                {cat}
+                                <button 
+                                  onClick={() => setMarketplaceCategories(marketplaceCategories.filter((_, i) => i !== idx))}
+                                  className="text-slate-300 hover:text-rose-500 font-bold ml-1"
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+
+                          <div className="flex gap-2 pt-2">
+                            <input 
+                              type="text" 
+                              className="flex-1 p-3 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-600"
+                              placeholder="Nova categoria (ex: Vegano)"
+                              value={marketplaceNewCategoryInput}
+                              onChange={(e) => setMarketplaceNewCategoryInput(e.target.value)}
+                            />
+                            <button 
+                              onClick={() => {
+                                if (marketplaceNewCategoryInput.trim()) {
+                                  setMarketplaceCategories([...marketplaceCategories, marketplaceNewCategoryInput.trim()]);
+                                  setMarketplaceNewCategoryInput('');
+                                }
+                              }}
+                              className="px-4 py-3 bg-indigo-600 text-white rounded-xl font-bold text-xs hover:bg-indigo-500 transition-all"
+                            >
+                              Adicionar
+                            </button>
+                          </div>
+                        </div>
+                     </div>
+
+                     <div className="space-y-6">
+                        <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100 space-y-4">
+                           <div className="flex items-center justify-between">
+                              <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
+                                <Sparkles size={16} className="text-amber-500" /> Campanhas e Cupons Promocionais
+                              </h4>
+                              <button 
+                                onClick={() => {
+                                   setEditingPromo({ id: `promo_${Date.now()}`, title: '', active: true, participatingTenantIds: [] });
+                                   setShowPromoModal(true);
+                                }}
+                                className="px-3 py-1.5 bg-indigo-600 text-white rounded-xl font-black text-[9px] uppercase tracking-wider hover:bg-indigo-500 transition-all flex items-center gap-1 shadow-sm"
+                              >
+                                <Plus size={12} /> Nova Promoção
+                              </button>
+                           </div>
+
+                           <div className="space-y-3 pt-2">
+                              {marketplacePromotions.map((promo, idx) => (
+                                 <div key={idx} className="p-4 bg-white border border-slate-200 rounded-2xl flex items-center justify-between shadow-xs">
+                                    <div className="flex items-center gap-3">
+                                       <button 
+                                         onClick={() => {
+                                            const newPromos = marketplacePromotions.filter((_, i) => i !== idx);
+                                            setMarketplacePromotions(newPromos);
+                                         }}
+                                         className="p-1.5 text-slate-300 hover:text-rose-500 transition-all"
+                                       >
+                                          <Trash2 size={14} />
+                                       </button>
+                                       <button 
+                                         onClick={() => {
+                                           setEditingPromo({...promo, index: idx});
+                                           setShowPromoModal(true);
+                                         }}
+                                         className="p-1.5 text-slate-300 hover:text-indigo-600 transition-all"
+                                       >
+                                          <Edit3 size={14} />
+                                       </button>
+                                       <div>
+                                         <p className="text-xs font-bold text-slate-800">{promo.title}</p>
+                                         <span className="text-[9px] font-black text-indigo-600 uppercase">{promo.participatingTenantIds?.length || 0} Lojas Participantes</span>
+                                       </div>
+                                    </div>
+                                    <div 
+                                      onClick={() => {
+                                        const newPromos = [...marketplacePromotions];
+                                        newPromos[idx].active = !newPromos[idx].active;
+                                        setMarketplacePromotions(newPromos);
+                                      }}
+                                      className={`w-10 h-5 rounded-full p-0.5 cursor-pointer transition-all ${promo.active ? 'bg-emerald-500' : 'bg-slate-200'}`}
+                                    >
+                                       <div className={`w-4 h-4 bg-white rounded-full transition-all ${promo.active ? 'translate-x-5' : 'translate-x-0'}`} />
+                                    </div>
+                                 </div>
+                              ))}
+
+                              {marketplacePromotions.length === 0 && (
+                                <p className="text-center py-6 text-slate-400 font-bold text-xs uppercase tracking-wider">
+                                  Nenhuma promoção cadastrada ainda.
+                                </p>
+                              )}
+                           </div>
+                        </div>
+                     </div>
+                   </div>
+                 )}
+
+                 {/* SUB-TAB 4: ALGORITMOS & DESTAQUE DE LOJAS */}
+                 {marketplaceConfigSubTab === 'ranking' && (
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-in fade-in duration-300">
+                     <div className="space-y-6">
+                        <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100 space-y-4">
+                          <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
+                            <Award size={16} className="text-indigo-600" /> Estratégia de Ordenação Padrão no Feed
+                          </h4>
+                          <p className="text-[10px] text-slate-400 font-medium">Como as lojas são ordenadas por padrão para os clientes no aplicativo:</p>
+
+                          <div className="space-y-3 pt-2">
+                            <label className={`flex items-center justify-between p-4 rounded-2xl border cursor-pointer transition-all ${marketplaceRankingStrategy === 'distance' ? 'bg-indigo-50 border-indigo-500 text-indigo-950 font-bold' : 'bg-white border-slate-200 text-slate-700'}`}>
+                              <div>
+                                <p className="text-xs font-bold">Mais Próximos Primeiro (Proximidade GPS)</p>
+                                <p className="text-[9px] opacity-70">Prioriza restaurantes com menor raio de entrega em km</p>
+                              </div>
+                              <input 
+                                type="radio" 
+                                name="ranking" 
+                                checked={marketplaceRankingStrategy === 'distance'}
+                                onChange={() => setMarketplaceRankingStrategy('distance')}
+                                className="accent-indigo-600 w-4 h-4"
+                              />
+                            </label>
+
+                            <label className={`flex items-center justify-between p-4 rounded-2xl border cursor-pointer transition-all ${marketplaceRankingStrategy === 'rating' ? 'bg-indigo-50 border-indigo-500 text-indigo-950 font-bold' : 'bg-white border-slate-200 text-slate-700'}`}>
+                              <div>
+                                <p className="text-xs font-bold">Maior Avaliação dos Clientes (Rating 5 estrelas)</p>
+                                <p className="text-[9px] opacity-70">Lojas com melhores notas e mais avaliações positivas no topo</p>
+                              </div>
+                              <input 
+                                type="radio" 
+                                name="ranking" 
+                                checked={marketplaceRankingStrategy === 'rating'}
+                                onChange={() => setMarketplaceRankingStrategy('rating')}
+                                className="accent-indigo-600 w-4 h-4"
+                              />
+                            </label>
+
+                            <label className={`flex items-center justify-between p-4 rounded-2xl border cursor-pointer transition-all ${marketplaceRankingStrategy === 'delivery_time' ? 'bg-indigo-50 border-indigo-500 text-indigo-950 font-bold' : 'bg-white border-slate-200 text-slate-700'}`}>
+                              <div>
+                                <p className="text-xs font-bold">Menor Tempo Estimado de Entrega</p>
+                                <p className="text-[9px] opacity-70">Destaca restaurantes mais rápidos para despacho</p>
+                              </div>
+                              <input 
+                                type="radio" 
+                                name="ranking" 
+                                checked={marketplaceRankingStrategy === 'delivery_time'}
+                                onChange={() => setMarketplaceRankingStrategy('delivery_time')}
+                                className="accent-indigo-600 w-4 h-4"
+                              />
+                            </label>
+
+                            <label className={`flex items-center justify-between p-4 rounded-2xl border cursor-pointer transition-all ${marketplaceRankingStrategy === 'sponsored_first' ? 'bg-indigo-50 border-indigo-500 text-indigo-950 font-bold' : 'bg-white border-slate-200 text-slate-700'}`}>
+                              <div>
+                                <p className="text-xs font-bold">Lojas Patrocinadas e Impulsionadas no Topo</p>
+                                <p className="text-[9px] opacity-70">Exibe banners e restaurantes do plano Premium/Patrocinado primeiro</p>
+                              </div>
+                              <input 
+                                type="radio" 
+                                name="ranking" 
+                                checked={marketplaceRankingStrategy === 'sponsored_first'}
+                                onChange={() => setMarketplaceRankingStrategy('sponsored_first')}
+                                className="accent-indigo-600 w-4 h-4"
+                              />
+                            </label>
+                          </div>
+                        </div>
+                     </div>
+
+                     <div className="space-y-6">
+                        <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100 space-y-4">
+                          <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
+                            <Sparkles size={16} className="text-amber-500" /> Monetização & Lojas Patrocinadas
+                          </h4>
+
+                          <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-200">
+                             <div>
+                               <p className="text-xs font-bold text-slate-800">Ativar Venda de Destaques / Patrocínio</p>
+                               <p className="text-[9px] text-slate-400 font-medium">Permite que restaurantes comprem selo "Destaque" no topo do app</p>
+                             </div>
+                             <div 
+                               onClick={() => setMarketplaceEnableSponsored(!marketplaceEnableSponsored)}
+                               className={`w-12 h-6 rounded-full p-1 cursor-pointer transition-all ${marketplaceEnableSponsored ? 'bg-indigo-600 shadow-lg shadow-indigo-100' : 'bg-slate-200'}`}
+                             >
+                                <div className={`w-4 h-4 bg-white rounded-full transition-all ${marketplaceEnableSponsored ? 'translate-x-6' : 'translate-x-0'}`} />
+                             </div>
+                          </div>
+                        </div>
+                     </div>
+                   </div>
+                 )}
+
+                 {/* SUB-TAB 5: MANUTENÇÃO PROGRAMADA */}
+                 {marketplaceConfigSubTab === 'maintenance' && (
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-in fade-in duration-300">
+                     <div className="space-y-6">
+                        <div className="p-6 bg-amber-50/60 rounded-3xl border border-amber-200/80 space-y-4">
+                           <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <AlertTriangle className="text-amber-600" size={20} />
+                                <h4 className="text-xs font-black text-amber-900 uppercase tracking-widest">Modo de Manutenção do Marketplace</h4>
+                              </div>
+                              <div 
+                                onClick={() => setMaintenanceConfig({ ...maintenanceConfig, active: !maintenanceConfig.active })}
+                                className={`w-12 h-6 rounded-full p-1 cursor-pointer transition-all ${maintenanceConfig.active ? 'bg-amber-500 shadow-lg shadow-amber-200' : 'bg-slate-300'}`}
+                              >
+                                 <div className={`w-4 h-4 bg-white rounded-full transition-all ${maintenanceConfig.active ? 'translate-x-6' : 'translate-x-0'}`} />
+                              </div>
+                           </div>
+
+                           <p className="text-[10px] text-amber-800 font-medium leading-relaxed">
+                             Quando ativo, bloqueia a criação de novos pedidos no marketplace e exibe uma tela informativa com a justificativa programada aos consumidores.
+                           </p>
+
+                           <div className="space-y-4 pt-2">
+                              <div className="grid grid-cols-2 gap-3">
+                                 <div className="space-y-1">
+                                    <label className="text-[9px] font-black text-slate-500 uppercase ml-1">Início da Manutenção</label>
+                                    <input 
+                                      type="datetime-local" 
+                                      className="w-full p-3 bg-white border border-amber-200 rounded-xl text-xs font-bold outline-none focus:border-amber-500"
+                                      value={maintenanceConfig.startAt}
+                                      onChange={(e) => setMaintenanceConfig({ ...maintenanceConfig, startAt: e.target.value })}
+                                    />
+                                 </div>
+                                 <div className="space-y-1">
+                                    <label className="text-[9px] font-black text-slate-500 uppercase ml-1">Previsão de Término</label>
+                                    <input 
+                                      type="datetime-local" 
+                                      className="w-full p-3 bg-white border border-amber-200 rounded-xl text-xs font-bold outline-none focus:border-amber-500"
+                                      value={maintenanceConfig.endAt}
+                                      onChange={(e) => setMaintenanceConfig({ ...maintenanceConfig, endAt: e.target.value })}
+                                    />
+                                 </div>
+                              </div>
+
+                              <div className="space-y-1">
+                                 <label className="text-[9px] font-black text-slate-500 uppercase ml-1">Mensagem Exibida aos Consumidores</label>
+                                 <textarea 
+                                   className="w-full p-3 bg-white border border-amber-200 rounded-xl text-xs font-medium outline-none focus:border-amber-500 h-24"
+                                   placeholder="Ex: Estamos em manutenção programada para atualização de servidores. Retornaremos em breve!"
+                                   value={maintenanceConfig.message}
+                                   onChange={(e) => setMaintenanceConfig({ ...maintenanceConfig, message: e.target.value })}
+                                 />
+                              </div>
+
+                              <button 
+                                onClick={() => setMaintenanceConfig({ ...maintenanceConfig, active: !maintenanceConfig.active })}
+                                className={`w-full py-3.5 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-md ${
+                                  maintenanceConfig.active 
+                                    ? 'bg-rose-500 text-white shadow-rose-200 hover:bg-rose-600' 
+                                    : 'bg-amber-500 text-white shadow-amber-200 hover:bg-amber-600'
+                                }`}
+                              >
+                                 {maintenanceConfig.active ? 'Desativar Manutenção Agora' : 'Ativar Modo Manutenção'}
+                              </button>
+                           </div>
+                        </div>
+                     </div>
+
+                     <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100 flex flex-col justify-center items-center text-center space-y-3">
+                        <Clock size={40} className="text-amber-500 opacity-80" />
+                        <h4 className="text-sm font-black text-slate-800">Status Atual do Marketplace</h4>
+                        <span className={`px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider ${maintenanceConfig.active ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-emerald-100 text-emerald-800 border border-emerald-300'}`}>
+                          {maintenanceConfig.active ? '⚠️ Em Manutenção' : '✅ 100% Operacional e Ativo'}
+                        </span>
+                        <p className="text-[11px] text-slate-400 font-medium max-w-xs">
+                          {maintenanceConfig.active ? (maintenanceConfig.message || 'Manutenção programada ativa.') : 'Os clientes podem navegar, escolher produtos e realizar pedidos normalmente.'}
+                        </p>
+                     </div>
+                   </div>
+                 )}
               </div>
            </div>
         </div>

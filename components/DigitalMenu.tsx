@@ -6,7 +6,7 @@ import {
   User, Wallet, CreditCard, Smartphone, Receipt, MessageCircle,
   Menu as MenuIcon, ChevronDown, Trash2, Sparkles, Star, Filter, Zap,
   Truck, ShoppingBag, Package, AlertTriangle, DollarSign, ChefHat, UtensilsCrossed, Bike, Heart,
-  CheckCircle2, Navigation
+  CheckCircle2, Navigation, ShieldCheck, Tag, Copy
 } from 'lucide-react';
 import { maskPhone } from '../utils/masks';
 import { DigitalMenuSettings, Product, ProductOption } from '../types';
@@ -179,6 +179,12 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
   const [isCepLoading, setIsCepLoading] = useState(false);
   const [cepError, setCepError] = useState<string | null>(null);
   const [cepData, setCepData] = useState<{ street?: string; neighborhood?: string; city?: string; state?: string } | null>(null);
+
+  // Conversion & Promo Coupon states
+  const [couponInput, setCouponInput] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState<{ code: string; discount: number; isPercentage: boolean; freeShipping?: boolean } | null>(null);
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [pixCopied, setPixCopied] = useState(false);
 
   // Sync CEP components into customerAddress
   React.useEffect(() => {
@@ -493,6 +499,39 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
   }, 0);
   const cartCount = cart.reduce((acc, item) => acc + item.quantity, 0);
 
+  const freeDeliveryMin = 50;
+  const missingForFreeDelivery = Math.max(0, freeDeliveryMin - cartTotal);
+  const freeDeliveryProgress = Math.min(100, (cartTotal / freeDeliveryMin) * 100);
+
+  const effectiveDeliveryFee = (orderType === 'delivery' && !appliedCoupon?.freeShipping) ? deliveryFee : 0;
+  
+  const discountAmount = useMemo(() => {
+    if (!appliedCoupon) return 0;
+    if (appliedCoupon.isPercentage) {
+      return (cartTotal * appliedCoupon.discount) / 100;
+    }
+    return appliedCoupon.discount;
+  }, [appliedCoupon, cartTotal]);
+
+  const finalTotal = Math.max(0, cartTotal - discountAmount + (orderType === 'delivery' ? effectiveDeliveryFee : 0));
+
+  const handleApplyCoupon = () => {
+    const code = couponInput.trim().toUpperCase();
+    if (!code) return;
+    if (code === 'PRIMEIRA10' || code === 'PRIMEIRA') {
+      setAppliedCoupon({ code: 'PRIMEIRA10', discount: 10, isPercentage: true });
+      setCouponError(null);
+    } else if (code === 'BENVINDO' || code === 'VIP5') {
+      setAppliedCoupon({ code: 'BENVINDO', discount: 5, isPercentage: false });
+      setCouponError(null);
+    } else if (code === 'FRETEGRATIS' || code === 'FRETE') {
+      setAppliedCoupon({ code: 'FRETEGRATIS', discount: 0, isPercentage: false, freeShipping: true });
+      setCouponError(null);
+    } else {
+      setCouponError('Cupom inválido. Dica: Use PRIMEIRA10 ou BENVINDO');
+    }
+  };
+
   const addToCart = (product: Product, options?: ProductOption[], customQuantity = 1) => {
     const hasOptions = (product.optionCategories && product.optionCategories.length > 0) || (product.options && product.options.length > 0);
     
@@ -607,7 +646,9 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
         category: item.product.category,
         selectedOptions: item.selectedOptions
       })),
-      total: cartTotal + (orderType === 'delivery' ? deliveryFee : 0),
+      total: finalTotal,
+      coupon: appliedCoupon ? appliedCoupon.code : undefined,
+      discount: discountAmount > 0 ? discountAmount : undefined,
       customerName,
       customerPhone,
       customerAddress: orderType === 'delivery' ? customerAddress : undefined,
@@ -1021,29 +1062,46 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
         </div>
       )}
 
-      {/* BOTTOM NAV / CART BUTTON */}
+      {/* BOTTOM NAV / EXPRESS CHECKOUT BAR */}
       {cartCount > 0 && checkoutStep !== 'success' && (
-        <div className="fixed bottom-0 inset-x-0 bg-white border-t p-4 z-50 flex items-center justify-between shadow-[0_-10px_20px_rgba(0,0,0,0.05)]">
-          <div className="flex items-center gap-4">
+        <motion.div 
+          initial={{ y: 50, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-md border-t border-slate-100 p-4 z-50 flex items-center justify-between shadow-[0_-12px_25px_rgba(0,0,0,0.08)]"
+        >
+          <div className="flex items-center gap-3.5">
             <div className="relative">
-              <ShoppingCart size={24} style={{ color: effectivePrimaryColor }} />
-              <span className="absolute -top-2 -right-2 text-slate-900 text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center border-2 border-white" style={{ backgroundColor: accentColor }}>
+              <div 
+                className="w-12 h-12 rounded-2xl flex items-center justify-center text-slate-900 shadow-md"
+                style={{ backgroundColor: accentColor }}
+              >
+                <ShoppingBag size={22} strokeWidth={2.5} />
+              </div>
+              <span className="absolute -top-1.5 -right-1.5 bg-slate-900 text-white text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center border-2 border-white shadow-sm">
                 {cartCount}
               </span>
             </div>
             <div>
-              <p className="text-[10px] font-bold text-slate-400 uppercase">Total</p>
-              <p className="text-lg font-black leading-none" style={{ color: effectivePrimaryColor }}>R$ {cartTotal.toFixed(2)}</p>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest">Total com Descontos</span>
+                {missingForFreeDelivery === 0 && (
+                  <span className="text-[8px] font-black bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded uppercase">Frete Grátis</span>
+                )}
+              </div>
+              <p className="text-xl font-black leading-none tracking-tight text-slate-900">
+                R$ {finalTotal.toFixed(2)}
+              </p>
             </div>
           </div>
           <button 
             onClick={() => { setShowCart(true); setCheckoutStep('cart'); }}
-            className="text-slate-900 px-8 py-3 rounded-xl font-black text-xs uppercase tracking-widest shadow-lg active:scale-95 transition-all"
-            style={{ backgroundColor: accentColor, boxShadow: `0 10px 15px -3px ${accentColor}33` }}
+            className="text-slate-900 px-6 py-3.5 rounded-2xl font-black text-xs uppercase tracking-wider shadow-lg hover:brightness-105 active:scale-95 transition-all flex items-center gap-2"
+            style={{ backgroundColor: accentColor, boxShadow: `0 8px 20px -4px ${accentColor}66` }}
           >
-            Ver Carrinho
+            <span>Ver Sacola</span>
+            <ChevronRight size={16} strokeWidth={3} />
           </button>
-        </div>
+        </motion.div>
       )}
 
       {/* CART MODAL */}
@@ -1213,6 +1271,95 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
 
                     {/* SCREEN 8 SUMMARY INTEGRATION */}
                     <div className="mt-6 space-y-6">
+                      {/* FREE DELIVERY PROGRESS BAR */}
+                      {orderType === 'delivery' && (
+                        <div className="bg-emerald-50/90 border border-emerald-100 rounded-2xl p-3.5 space-y-2 shadow-sm">
+                          <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-wider text-emerald-800">
+                            <span className="flex items-center gap-1.5">
+                              <Bike size={14} className="text-emerald-600" />
+                              {missingForFreeDelivery > 0 ? `Faltam R$ ${missingForFreeDelivery.toFixed(2)} para Frete Grátis!` : '🎉 Parabéns! Você ganhou Frete Grátis!'}
+                            </span>
+                            <span>{freeDeliveryProgress.toFixed(0)}%</span>
+                          </div>
+                          <div className="w-full h-2 bg-emerald-200/50 rounded-full overflow-hidden">
+                            <div 
+                              className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+                              style={{ width: `${freeDeliveryProgress}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* COUPON INPUT CARD */}
+                      <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                            <Tag size={12} className="text-brand-primary" /> Cupom de Desconto
+                          </label>
+                          {appliedCoupon && (
+                            <button 
+                              type="button"
+                              onClick={() => { setAppliedCoupon(null); setCouponInput(''); }}
+                              className="text-[9px] font-black text-rose-500 uppercase tracking-widest hover:underline"
+                            >
+                              Remover
+                            </button>
+                          )}
+                        </div>
+                        
+                        {appliedCoupon ? (
+                          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between text-emerald-800">
+                            <div className="flex items-center gap-2">
+                              <CheckCircle2 size={16} className="text-emerald-500 shrink-0" />
+                              <span className="text-xs font-black uppercase tracking-wide">
+                                Cupom <span className="font-extrabold">{appliedCoupon.code}</span> aplicado!
+                              </span>
+                            </div>
+                            <span className="text-xs font-black">
+                              {appliedCoupon.freeShipping ? 'Frete Grátis' : appliedCoupon.isPercentage ? `-${appliedCoupon.discount}%` : `-R$ ${appliedCoupon.discount.toFixed(2)}`}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              placeholder="Ex: PRIMEIRA10, BENVINDO"
+                              value={couponInput}
+                              onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
+                              className="flex-1 px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold uppercase placeholder:normal-case outline-none focus:bg-white focus:border-brand-primary transition-all"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleApplyCoupon}
+                              className="px-4 py-2.5 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-slate-800 transition-all active:scale-95"
+                            >
+                              Aplicar
+                            </button>
+                          </div>
+                        )}
+                        {couponError && (
+                          <p className="text-[10px] font-bold text-rose-500 uppercase tracking-tight">{couponError}</p>
+                        )}
+                      </div>
+
+                      {/* TRUST & CONVERSION BADGES */}
+                      <div className="bg-slate-900 text-white rounded-2xl p-3.5 flex items-center justify-around gap-2 text-center text-[9px] font-bold uppercase tracking-wider shadow-md">
+                        <div className="flex items-center gap-1.5 text-emerald-400">
+                          <ShieldCheck size={14} />
+                          <span>Compra 100% Segura</span>
+                        </div>
+                        <div className="w-px h-4 bg-white/20" />
+                        <div className="flex items-center gap-1.5 text-amber-300">
+                          <Clock size={14} />
+                          <span>Preparo Rápido</span>
+                        </div>
+                        <div className="w-px h-4 bg-white/20" />
+                        <div className="flex items-center gap-1.5 text-sky-300">
+                          <Truck size={14} />
+                          <span>Entrega Direta</span>
+                        </div>
+                      </div>
+
                       <div className="bg-white rounded-[3rem] p-8 shadow-sm border border-slate-50 space-y-5">
                          <div className="flex justify-between items-center text-slate-500">
                            <div className="flex items-center gap-3">
@@ -1223,6 +1370,18 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                            </div>
                            <span className="text-sm font-black text-slate-800">R$ {cartTotal.toFixed(2)}</span>
                          </div>
+
+                         {discountAmount > 0 && (
+                           <div className="flex justify-between items-center text-emerald-600">
+                             <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 bg-emerald-50 rounded-xl flex items-center justify-center text-emerald-500">
+                                   <Tag size={14} />
+                                </div>
+                                <span className="text-[10px] font-black uppercase tracking-widest">Desconto Cupom</span>
+                             </div>
+                             <span className="text-sm font-black tracking-tight">-R$ {discountAmount.toFixed(2)}</span>
+                           </div>
+                         )}
                          
                          {orderType === 'delivery' && (
                            <div className="flex justify-between items-center text-emerald-500">
@@ -1232,7 +1391,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                                 </div>
                                 <span className="text-[10px] font-black uppercase tracking-widest">Taxa de Entrega</span>
                              </div>
-                             <span className="text-sm font-black tracking-tight">{deliveryFee > 0 ? `R$ ${deliveryFee.toFixed(2)}` : 'Grátis'}</span>
+                             <span className="text-sm font-black tracking-tight">{effectiveDeliveryFee > 0 ? `R$ ${effectiveDeliveryFee.toFixed(2)}` : 'Grátis'}</span>
                            </div>
                          )}
 
@@ -1242,7 +1401,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                               <span className="text-lg font-black uppercase tracking-tighter text-slate-900">Total do Pedido</span>
                            </div>
                            <span className="text-4xl font-black tracking-tighter italic" style={{ color: effectivePrimaryColor }}>
-                             R$ {(cartTotal + (orderType === 'delivery' ? deliveryFee : 0)).toFixed(2)}
+                             R$ {finalTotal.toFixed(2)}
                            </span>
                          </div>
                       </div>
@@ -1461,15 +1620,73 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                         {['pix', 'cartao', 'dinheiro'].map(method => (
                           <button 
                             key={method}
+                            type="button"
                             onClick={() => setPaymentMethod(method)}
                             className={`p-3 rounded-xl border-2 flex flex-col items-center gap-2 transition-all ${paymentMethod === method ? 'text-white' : 'bg-white border-slate-100 text-slate-400'}`}
                             style={{ backgroundColor: paymentMethod === method ? effectivePrimaryColor : undefined, borderColor: paymentMethod === method ? effectivePrimaryColor : undefined }}
                           >
                             {method === 'pix' ? <Smartphone size={16} /> : method === 'cartao' ? <CreditCard size={16} /> : <Wallet size={16} />}
-                            <span className="text-[8px] font-black uppercase">{method}</span>
+                            <span className="text-[8px] font-black uppercase">{method === 'pix' ? 'Pix ⚡' : method}</span>
                           </button>
                         ))}
                       </div>
+
+                      {paymentMethod === 'pix' && (
+                        <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl space-y-3 animate-in fade-in duration-200">
+                          <div className="flex items-center justify-between text-emerald-900">
+                            <span className="text-xs font-black uppercase tracking-wider flex items-center gap-1.5">
+                              <Zap size={14} className="text-amber-500 fill-amber-500" /> Pix Instantâneo
+                            </span>
+                            <span className="text-[9px] font-bold bg-emerald-200/60 text-emerald-800 px-2 py-0.5 rounded-full uppercase">Aprovação Imediata</span>
+                          </div>
+                          <p className="text-[10px] text-emerald-700 font-medium">
+                            Você poderá pagar via QR Code ou Chave Copia e Cola após confirmar o pedido.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              try {
+                                navigator.clipboard.writeText('00020126580014br.gov.bcb.pix0136123e4567-e89b-12d3-a456-426614174000520400005303986540510.005802BR5913PIX MERCADO6008BRASILIA62070503***6304E2CA');
+                              } catch {}
+                              setPixCopied(true);
+                              setTimeout(() => setPixCopied(false), 3000);
+                            }}
+                            className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl font-black text-[10px] uppercase tracking-wider flex items-center justify-center gap-2 shadow-md transition-all"
+                          >
+                            <Copy size={13} />
+                            {pixCopied ? 'Chave Pix Copiada com Sucesso! 🎉' : 'Copiar Chave Pix de Teste'}
+                          </button>
+                        </div>
+                      )}
+
+                      {paymentMethod === 'dinheiro' && (
+                        <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 animate-in fade-in duration-200">
+                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">Troco para quanto?</label>
+                          <div className="flex gap-2">
+                            {[
+                              { label: 'Exato', val: 'sem troco' },
+                              { label: 'R$ 50', val: '50' },
+                              { label: 'R$ 100', val: '100' }
+                            ].map((opt) => (
+                              <button
+                                type="button"
+                                key={opt.val}
+                                onClick={() => setChangeFor(opt.val)}
+                                className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${changeFor === opt.val ? 'bg-slate-900 text-white shadow' : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'}`}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                          <input
+                            type="number"
+                            placeholder="Ou digite outro valor (ex: 75)"
+                            value={changeFor === 'sem troco' ? '' : changeFor}
+                            onChange={(e) => setChangeFor(e.target.value)}
+                            className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-brand-primary"
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

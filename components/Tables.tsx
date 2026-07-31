@@ -213,7 +213,7 @@ const Tables: React.FC<TablesProps> = memo(
     // Split logic states
     const [isSplitting, setIsSplitting] = useState(false);
     const [splitMode, setSplitMode] = useState<"value" | "items" | null>(null);
-    const [selectedSplitItems, setSelectedSplitItems] = useState<number[]>([]);
+    const [selectedSplitQtys, setSelectedSplitQtys] = useState<Record<number, number>>({});
     const [customSplitValue, setCustomSplitValue] = useState("");
     const [splitParts, setSplitParts] = useState<SplitPart[]>([]);
     const [remainingBalance, setRemainingBalance] = useState(0);
@@ -221,7 +221,6 @@ const Tables: React.FC<TablesProps> = memo(
     const [additionalFeeReason, setAdditionalFeeReason] = useState<string>("");
     const [showReasonInput, setShowReasonInput] = useState<boolean>(false);
     const [discount, setDiscount] = useState<number>(0);
-    const [paidItemIndices, setPaidItemIndices] = useState<number[]>([]);
 
     // Extra states for partial fiscal coupon emission
     const [issuingPartId, setIssuingPartId] = useState<string | null>(null);
@@ -1462,7 +1461,7 @@ const Tables: React.FC<TablesProps> = memo(
       setAdditionalFeeReason("");
       setShowReasonInput(false);
       setDiscount(0);
-      setPaidItemIndices([]);
+      setSelectedSplitQtys({});
       setSplitMode(null);
       setIsFiscalEmission(adminSettings.fiscal?.autoIssueNfce || false);
       setAutoCloseAfterPayment(true);
@@ -1562,13 +1561,7 @@ const Tables: React.FC<TablesProps> = memo(
         ? splitMode === "value"
           ? parseFloat(customSplitValue) || remainingBalance
           : splitMode === "items"
-            ? selectedSplitItems.reduce(
-                (acc, idx) =>
-                  acc +
-                  selectedTable.items[idx].price *
-                    selectedTable.items[idx].quantity,
-                0,
-              )
+            ? getSelectedSplitTotal()
             : remainingBalance
         : (customSplitValue && parseFloat(customSplitValue) > 0 && parseFloat(customSplitValue) < remainingBalance - 0.01)
           ? parseFloat(customSplitValue)
@@ -1596,7 +1589,7 @@ const Tables: React.FC<TablesProps> = memo(
           alreadyRecorded: true,
           items:
             splitMode === "items"
-              ? selectedSplitItems.map((idx) => selectedTable.items[idx])
+              ? getSelectedSplitItemsList()
               : undefined,
         };
 
@@ -1621,12 +1614,8 @@ const Tables: React.FC<TablesProps> = memo(
         setSplitParts(updatedParts);
         setRemainingBalance(newRemaining);
 
-        if (splitMode === "items") {
-          setPaidItemIndices([...paidItemIndices, ...selectedSplitItems]);
-        }
-
         setSplitMode(null);
-        setSelectedSplitItems([]);
+        setSelectedSplitQtys({});
         setCustomSplitValue("");
 
         // Persistir pagamento parcial no objeto da mesa
@@ -1707,13 +1696,7 @@ const Tables: React.FC<TablesProps> = memo(
         ? splitMode === "value"
           ? parseFloat(customSplitValue) || remainingBalance
           : splitMode === "items"
-            ? selectedSplitItems.reduce(
-                (acc, idx) =>
-                  acc +
-                  selectedTable.items[idx].price *
-                    selectedTable.items[idx].quantity,
-                0,
-              )
+            ? getSelectedSplitTotal()
             : remainingBalance
         : selectedTable.total +
           (isDeliveryOrder && isCounterContext
@@ -1736,7 +1719,7 @@ const Tables: React.FC<TablesProps> = memo(
           alreadyRecorded: true,
           items:
             splitMode === "items"
-              ? selectedSplitItems.map((idx) => selectedTable.items[idx])
+              ? getSelectedSplitItemsList()
               : undefined,
         };
 
@@ -1758,12 +1741,8 @@ const Tables: React.FC<TablesProps> = memo(
         setSplitParts(updatedParts);
         setRemainingBalance(newRemaining);
 
-        if (splitMode === "items") {
-          setPaidItemIndices([...paidItemIndices, ...selectedSplitItems]);
-        }
-
         setSplitMode(null);
-        setSelectedSplitItems([]);
+        setSelectedSplitQtys({});
         setCustomSplitValue("");
         setShowChangeModal(false);
 
@@ -1946,13 +1925,7 @@ const Tables: React.FC<TablesProps> = memo(
         ? splitMode === "value"
           ? parseFloat(customSplitValue) || remainingBalance
           : splitMode === "items"
-            ? selectedSplitItems.reduce(
-                (acc, idx) =>
-                  acc +
-                  selectedTable.items[idx].price *
-                    selectedTable.items[idx].quantity,
-                0,
-              )
+            ? getSelectedSplitTotal()
             : remainingBalance
         : remainingBalance;
 
@@ -1965,7 +1938,7 @@ const Tables: React.FC<TablesProps> = memo(
           customerId: selectedCustomerId,
           items:
             splitMode === "items"
-              ? selectedSplitItems.map((idx) => selectedTable.items[idx])
+              ? getSelectedSplitItemsList()
               : undefined,
         };
         const newRemaining = Math.max(0, remainingBalance - amountToPay);
@@ -1974,12 +1947,8 @@ const Tables: React.FC<TablesProps> = memo(
         setSplitParts(updatedParts);
         setRemainingBalance(newRemaining);
 
-        if (splitMode === "items") {
-          setPaidItemIndices([...paidItemIndices, ...selectedSplitItems]);
-        }
-
         setSplitMode(null);
-        setSelectedSplitItems([]);
+        setSelectedSplitQtys({});
         setCustomSplitValue("");
         setShowCustomerSelection(false);
 
@@ -2048,10 +2017,77 @@ const Tables: React.FC<TablesProps> = memo(
       }, 1500);
     };
 
+    const getPaidQtyForItem = useCallback((idx: number) => {
+      if (!selectedTable || !selectedTable.items || !selectedTable.items[idx]) return 0;
+      const targetItem = selectedTable.items[idx];
+      let paid = 0;
+      splitParts.forEach((part) => {
+        if (part.items && Array.isArray(part.items)) {
+          part.items.forEach((pItem) => {
+            if (
+              (pItem.productId && targetItem.productId && pItem.productId === targetItem.productId) ||
+              (pItem.name && targetItem.name && pItem.name === targetItem.name)
+            ) {
+              paid += (pItem.quantity || 1);
+            }
+          });
+        }
+      });
+      return Math.min(targetItem.quantity || 1, paid);
+    }, [selectedTable, splitParts]);
+
+    const getRemainingQtyForItem = useCallback((idx: number) => {
+      if (!selectedTable || !selectedTable.items || !selectedTable.items[idx]) return 0;
+      const totalQty = selectedTable.items[idx].quantity || 1;
+      const paidQty = getPaidQtyForItem(idx);
+      return Math.max(0, totalQty - paidQty);
+    }, [selectedTable, getPaidQtyForItem]);
+
+    const getSelectedSplitTotal = useCallback(() => {
+      if (!selectedTable || !selectedTable.items) return 0;
+      return Object.entries(selectedSplitQtys).reduce((acc, [idxStr, qty]) => {
+        const idx = Number(idxStr);
+        const item = selectedTable.items[idx];
+        if (!item || !qty || qty <= 0) return acc;
+        return acc + item.price * qty;
+      }, 0);
+    }, [selectedTable, selectedSplitQtys]);
+
+    const getSelectedSplitItemsList = useCallback((): OrderItem[] => {
+      if (!selectedTable || !selectedTable.items) return [];
+      return Object.entries(selectedSplitQtys)
+        .filter(([_, qty]) => qty > 0)
+        .map(([idxStr, qty]) => {
+          const idx = Number(idxStr);
+          return {
+            ...selectedTable.items[idx],
+            quantity: qty,
+          };
+        });
+    }, [selectedTable, selectedSplitQtys]);
+
+    const handleSetSplitQty = (idx: number, newQty: number) => {
+      const remaining = getRemainingQtyForItem(idx);
+      const clamped = Math.max(0, Math.min(remaining, newQty));
+      setSelectedSplitQtys((prev) => {
+        const next = { ...prev };
+        if (clamped > 0) {
+          next[idx] = clamped;
+        } else {
+          delete next[idx];
+        }
+        return next;
+      });
+    };
+
     const toggleSplitItem = (idx: number) => {
-      setSelectedSplitItems((prev) =>
-        prev.includes(idx) ? prev.filter((i) => i !== idx) : [...prev, idx],
-      );
+      const remaining = getRemainingQtyForItem(idx);
+      const current = selectedSplitQtys[idx] || 0;
+      if (current > 0) {
+        handleSetSplitQty(idx, 0);
+      } else {
+        handleSetSplitQty(idx, remaining);
+      }
     };
 
     const filteredProducts = useMemo(() => {
@@ -3201,13 +3237,7 @@ const Tables: React.FC<TablesProps> = memo(
                       ? splitMode === "value"
                         ? parseFloat(customSplitValue) || remainingBalance
                         : splitMode === "items"
-                          ? selectedSplitItems.reduce(
-                              (acc, idx) =>
-                                acc +
-                                selectedTable.items[idx].price *
-                                  selectedTable.items[idx].quantity,
-                              0,
-                            )
+                          ? getSelectedSplitTotal()
                           : remainingBalance
                       : selectedTable.total +
                         (isDeliveryOrder && isCounterContext
@@ -3253,13 +3283,7 @@ const Tables: React.FC<TablesProps> = memo(
                             ? splitMode === "value"
                               ? parseFloat(customSplitValue) || remainingBalance
                               : splitMode === "items"
-                                ? selectedSplitItems.reduce(
-                                    (acc, idx) =>
-                                      acc +
-                                      selectedTable.items[idx].price *
-                                        selectedTable.items[idx].quantity,
-                                    0,
-                                  )
+                                ? getSelectedSplitTotal()
                                 : remainingBalance
                             : selectedTable.total +
                               (isDeliveryOrder && isCounterContext
@@ -3292,13 +3316,7 @@ const Tables: React.FC<TablesProps> = memo(
                         ? splitMode === "value"
                           ? parseFloat(customSplitValue) || remainingBalance
                           : splitMode === "items"
-                            ? selectedSplitItems.reduce(
-                                (acc, idx) =>
-                                  acc +
-                                  selectedTable.items[idx].price *
-                                    selectedTable.items[idx].quantity,
-                                0,
-                              )
+                            ? getSelectedSplitTotal()
                             : remainingBalance
                         : selectedTable.total +
                           (isDeliveryOrder && isCounterContext
@@ -5075,64 +5093,127 @@ const Tables: React.FC<TablesProps> = memo(
                               {splitMode === "items" && (
                                 <div className="space-y-4">
                                   <div className="flex justify-between items-center px-1">
-                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                                      Marque os Itens
-                                    </label>
-                                    <p className="text-xs font-black text-indigo-600">
-                                      Subtotal: R${" "}
-                                      {selectedSplitItems
-                                        .reduce(
-                                          (acc, idx) =>
-                                            acc +
-                                            selectedTable.items[idx].price *
-                                              selectedTable.items[idx].quantity,
-                                          0,
-                                        )
-                                        .toFixed(2)}
-                                    </p>
+                                    <div>
+                                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">
+                                        Selecione os itens e quantidades
+                                      </label>
+                                      <p className="text-[11px] font-medium text-slate-500">
+                                        Ajuste a quantidade para cada pagador no pedido.
+                                      </p>
+                                    </div>
+                                    <div className="text-right">
+                                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Subtotal</span>
+                                      <p className="text-sm font-black text-indigo-600">
+                                        R$ {getSelectedSplitTotal().toFixed(2)}
+                                      </p>
+                                    </div>
                                   </div>
-                                  <div className="max-h-[300px] overflow-y-auto space-y-2 custom-scrollbar pr-2">
+
+                                  <div className="max-h-[320px] overflow-y-auto space-y-2.5 custom-scrollbar pr-1">
                                     {selectedTable.items.map((item, idx) => {
-                                      const isPaid =
-                                        paidItemIndices.includes(idx);
+                                      const remainingQty = getRemainingQtyForItem(idx);
+                                      const paidQty = getPaidQtyForItem(idx);
+                                      const isFullyPaid = remainingQty === 0;
+                                      const currentQty = selectedSplitQtys[idx] || 0;
+                                      const isSelected = currentQty > 0;
+
                                       return (
-                                        <button
+                                        <div
                                           key={`split-item-${selectedTable.id}-${idx}`}
-                                          disabled={isPaid}
-                                          onClick={() => toggleSplitItem(idx)}
-                                          className={`w-full flex items-center justify-between p-4 rounded-2xl border-2 transition-all ${isPaid ? "opacity-40 grayscale bg-slate-100 border-slate-200" : selectedSplitItems.includes(idx) ? "border-indigo-600 bg-indigo-50" : "bg-white border-slate-50"}`}
+                                          className={`w-full flex items-center justify-between p-3.5 rounded-2xl border-2 transition-all ${
+                                            isFullyPaid
+                                              ? "opacity-50 grayscale bg-slate-100 border-slate-200"
+                                              : isSelected
+                                              ? "border-indigo-600 bg-indigo-50/80 shadow-sm"
+                                              : "bg-white border-slate-100 hover:border-slate-200"
+                                          }`}
                                         >
-                                          <div className="flex items-center gap-3">
+                                          <div
+                                            className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer"
+                                            onClick={() => !isFullyPaid && toggleSplitItem(idx)}
+                                          >
                                             <div
-                                              className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center transition-all ${isPaid ? "bg-slate-400 border-slate-400 text-white" : selectedSplitItems.includes(idx) ? "bg-indigo-600 border-indigo-600 text-white" : "border-slate-200"}`}
+                                              className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center shrink-0 transition-all ${
+                                                isFullyPaid
+                                                  ? "bg-emerald-500 border-emerald-500 text-white"
+                                                  : isSelected
+                                                  ? "bg-indigo-600 border-indigo-600 text-white"
+                                                  : "border-slate-300 bg-white"
+                                              }`}
                                             >
-                                              {(isPaid ||
-                                                selectedSplitItems.includes(
-                                                  idx,
-                                                )) && (
-                                                <Check
-                                                  size={14}
-                                                  strokeWidth={4}
-                                                />
+                                              {(isFullyPaid || isSelected) && (
+                                                <Check size={13} strokeWidth={3.5} />
                                               )}
                                             </div>
-                                            <div className="text-left">
-                                              <p className="text-xs font-black text-slate-700">
-                                                {item.name}
-                                              </p>
-                                              <p className="text-[10px] font-bold text-slate-400">
-                                                {item.quantity}x R${" "}
-                                                {item.price.toFixed(2)}
-                                              </p>
+
+                                            <div className="text-left min-w-0 flex-1">
+                                              <div className="flex items-center gap-2">
+                                                <p
+                                                  className={`text-xs sm:text-sm font-black tracking-tight truncate ${
+                                                    isFullyPaid ? "line-through text-slate-400" : "text-slate-800"
+                                                  }`}
+                                                >
+                                                  {item.name}
+                                                </p>
+                                                {isFullyPaid && (
+                                                  <span className="text-[9px] font-black uppercase px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-md border border-emerald-200">
+                                                    Pago
+                                                  </span>
+                                                )}
+                                              </div>
+
+                                              <div className="flex items-center gap-2 text-[10px] font-bold text-slate-500 mt-0.5">
+                                                <span>Total: {item.quantity}x</span>
+                                                <span>•</span>
+                                                <span>R$ {item.price.toFixed(2)} un.</span>
+                                                {paidQty > 0 && !isFullyPaid && (
+                                                  <>
+                                                    <span>•</span>
+                                                    <span className="text-emerald-600 font-extrabold">({paidQty} já pago)</span>
+                                                  </>
+                                                )}
+                                              </div>
                                             </div>
                                           </div>
-                                          <p className="font-black text-slate-800 text-sm">
-                                            R${" "}
-                                            {(
-                                              item.price * item.quantity
-                                            ).toFixed(2)}
-                                          </p>
-                                        </button>
+
+                                          {!isFullyPaid && (
+                                            <div className="flex items-center gap-3 ml-3 shrink-0">
+                                              <div className="flex items-center bg-white border border-slate-200 rounded-xl p-0.5 shadow-sm">
+                                                <button
+                                                  type="button"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleSetSplitQty(idx, currentQty - 1);
+                                                  }}
+                                                  disabled={currentQty <= 0}
+                                                  className="w-7 h-7 flex items-center justify-center rounded-lg font-black text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent transition-all"
+                                                >
+                                                  -
+                                                </button>
+                                                <span className="w-8 text-center text-xs font-black text-slate-900">
+                                                  {currentQty}
+                                                </span>
+                                                <button
+                                                  type="button"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleSetSplitQty(idx, currentQty + 1);
+                                                  }}
+                                                  disabled={currentQty >= remainingQty}
+                                                  className="w-7 h-7 flex items-center justify-center rounded-lg font-black text-indigo-600 hover:bg-indigo-50 disabled:opacity-30 disabled:hover:bg-transparent transition-all"
+                                                >
+                                                  +
+                                                </button>
+                                              </div>
+
+                                              <div className="text-right min-w-[60px]">
+                                                <p className="font-black text-slate-900 text-xs sm:text-sm">
+                                                  R$ {(item.price * currentQty).toFixed(2)}
+                                                </p>
+                                              </div>
+                                            </div>
+                                          )}
+                                        </div>
                                       );
                                     })}
                                   </div>
@@ -5228,7 +5309,7 @@ const Tables: React.FC<TablesProps> = memo(
                                         disabled={
                                           isProcessing ||
                                           (splitMode === "items" &&
-                                            selectedSplitItems.length === 0)
+                                            !Object.values(selectedSplitQtys).some(q => q > 0))
                                         }
                                         onClick={() =>
                                           handleProcessPayment(method.name)
@@ -5431,13 +5512,7 @@ const Tables: React.FC<TablesProps> = memo(
                             ? splitMode === "value"
                               ? parseFloat(customSplitValue) || remainingBalance
                               : splitMode === "items"
-                                ? selectedSplitItems.reduce(
-                                    (acc, idx) =>
-                                      acc +
-                                      selectedTable.items[idx].price *
-                                        selectedTable.items[idx].quantity,
-                                    0,
-                                  )
+                                ? getSelectedSplitTotal()
                                 : remainingBalance
                             : remainingBalance
                           ).toFixed(2)}

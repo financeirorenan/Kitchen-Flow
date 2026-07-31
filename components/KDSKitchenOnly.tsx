@@ -542,7 +542,8 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                                     : 'bg-slate-950/60 border-slate-800/90 hover:bg-slate-850 hover:border-slate-700 text-slate-100'
                               }`}
                             >
-                              <div className="flex items-start gap-3 flex-1">
+                              <div className="flex items-start gap-2.5 flex-1">
+                                {/* Checkbox */}
                                 <div className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 mt-1 transition-all ${
                                   isChecked 
                                     ? 'bg-emerald-500 border-emerald-400 text-white' 
@@ -552,28 +553,50 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                                 }`}>
                                   <Check size={13} strokeWidth={3} />
                                 </div>
-                                <div className="flex flex-col gap-1 flex-1">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <span className={`text-base sm:text-lg font-black tracking-tight leading-snug ${
-                                      isChecked ? 'text-slate-400 font-semibold' : isLight ? 'text-slate-900' : 'text-slate-100'
-                                    }`}>
-                                      {item.name}
-                                    </span>
-                                    {((item as any).batchNumber > 1 || (item as any).isNew) && (
-                                      <span className="px-2 py-0.5 rounded-md text-[9px] sm:text-[10px] font-black uppercase tracking-wider shrink-0 bg-amber-500 text-white animate-pulse shadow-md">
-                                        ⚡ NOVO ITEM
-                                      </span>
-                                    )}
-                                    {category && (
-                                      <span className={`px-2 py-0.5 rounded-md text-[9px] sm:text-[10px] font-black uppercase tracking-wider shrink-0 border ${
-                                        isLight 
-                                          ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
-                                          : 'bg-indigo-500/15 border-indigo-500/30 text-indigo-300'
-                                      }`}>
-                                        {category}
-                                      </span>
-                                    )}
-                                  </div>
+
+                                {/* Quantidade à esquerda, antes do nome do produto */}
+                                <span className={`font-black text-sm sm:text-base px-2 py-0.5 rounded-lg shrink-0 border mt-0.5 ${
+                                  isChecked 
+                                    ? isLight 
+                                      ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                                      : 'bg-emerald-950/40 text-emerald-400 border-emerald-900/40' 
+                                    : isLight
+                                      ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                      : 'bg-indigo-950/80 text-indigo-300 border-indigo-500/30 shadow'
+                                }`}>
+                                  {item.quantity}x
+                                </span>
+
+                                {/* Conteúdo do item */}
+                                <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                                  {/* Categoria exibida ABOVE os produtos */}
+                                  {(category || (item as any).batchNumber > 1 || (item as any).isNew) && (
+                                    <div className="flex flex-wrap items-center gap-1.5 mb-0.5">
+                                      {category && (
+                                        <span className={`px-2 py-0.5 rounded-md text-[9px] sm:text-[10px] font-black uppercase tracking-wider shrink-0 border ${
+                                          isLight 
+                                            ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                                            : 'bg-indigo-500/15 border-indigo-500/30 text-indigo-300'
+                                        }`}>
+                                          {category}
+                                        </span>
+                                      )}
+                                      {((item as any).batchNumber > 1 || (item as any).isNew) && (
+                                        <span className="px-2 py-0.5 rounded-md text-[9px] sm:text-[10px] font-black uppercase tracking-wider shrink-0 bg-amber-500 text-white animate-pulse shadow-md">
+                                          ⚡ NOVO ITEM
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {/* Nome do Produto */}
+                                  <span className={`text-base sm:text-lg font-black tracking-tight leading-snug ${
+                                    isChecked ? 'text-slate-400 font-semibold' : isLight ? 'text-slate-900' : 'text-slate-100'
+                                  }`}>
+                                    {item.name}
+                                  </span>
+
+                                  {/* Opções e Observações */}
                                   {item.selectedOptions && item.selectedOptions.length > 0 && (
                                     <div className={`text-xs sm:text-sm space-y-0.5 font-bold pl-1 mt-0.5 ${
                                       isLight ? 'text-slate-600' : 'text-slate-400'
@@ -583,6 +606,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                                       ))}
                                     </div>
                                   )}
+
                                   {item.observation && (
                                     <p className={`text-xs sm:text-sm font-black border px-2.5 py-1 rounded-xl w-fit mt-1.5 shadow-sm whitespace-pre-line ${
                                       isLight 
@@ -594,17 +618,6 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                                   )}
                                 </div>
                               </div>
-                              <span className={`font-black text-sm sm:text-base px-2.5 py-1 rounded-xl shrink-0 border ${
-                                isChecked 
-                                  ? isLight 
-                                    ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
-                                    : 'bg-emerald-950/40 text-emerald-400 border-emerald-900/40' 
-                                  : isLight
-                                    ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                                    : 'bg-indigo-950/80 text-indigo-300 border-indigo-500/30 shadow'
-                              }`}>
-                                {item.quantity}x
-                              </span>
                             </div>
                           );
                         })}
