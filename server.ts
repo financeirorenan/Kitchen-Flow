@@ -940,11 +940,11 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
     if (fs.existsSync(distPath)) {
       app.use(express.static(distPath));
 
-      app.use((_req, res) => {
+      app.get("*all", (_req, res) => {
         res.sendFile(path.join(distPath, "index.html"));
       });
     } else {
-      app.use((_req, res) => {
+      app.get("*all", (_req, res) => {
         res.status(500).send("Build do frontend não encontrado.");
       });
     }
