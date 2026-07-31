@@ -546,16 +546,17 @@ const App: React.FC = () => {
           return;
         }
         if (!isSuperAdmin) {
-          const userTenant = currentUserData.tenantId;
-          const targetUrl = userTenant ? `/lojista/${userTenant}` : '/lojista';
-          navigate(targetUrl, { replace: true });
+          const userTenant = (currentUserData.tenantId && currentUserData.tenantId !== 'default-tenant')
+            ? currentUserData.tenantId
+            : 'HCL1177LRQVPEKCTYRAHU7IGBQ42';
+          navigate(`/lojista/${userTenant}`, { replace: true });
           setCurrentProject('RESTAURANT');
           setActiveTab('merchant-copilot');
           return;
         }
       } else if (!isSuperAdmin) {
         // Se ainda estiver carregando os dados do usuário e não for superadmin reconhecido, evita PLATFORM
-        navigate('/lojista', { replace: true });
+        navigate('/lojista/HCL1177LRQVPEKCTYRAHU7IGBQ42', { replace: true });
         setCurrentProject('RESTAURANT');
         setActiveTab('merchant-copilot');
         return;
@@ -579,23 +580,29 @@ const App: React.FC = () => {
         }
 
         const urlTenantParam = parts[1];
-        const userTenantId = currentUserData.tenantId;
+        const userTenantId = (currentUserData.tenantId && currentUserData.tenantId !== 'default-tenant')
+          ? currentUserData.tenantId
+          : 'HCL1177LRQVPEKCTYRAHU7IGBQ42';
 
         if (isSuperAdmin) {
-          if (urlTenantParam && urlTenantParam !== viewingTenantId) {
+          if (urlTenantParam && urlTenantParam !== viewingTenantId && urlTenantParam !== 'default-tenant') {
             setViewingTenantId(urlTenantParam);
+          } else if (urlTenantParam === 'default-tenant') {
+            setViewingTenantId('HCL1177LRQVPEKCTYRAHU7IGBQ42');
+            navigate('/lojista/HCL1177LRQVPEKCTYRAHU7IGBQ42', { replace: true });
+            return;
           }
         } else {
           // Lojista acessando o painel
-          if (userTenantId) {
-            if (urlTenantParam && urlTenantParam !== userTenantId && urlTenantParam !== tenantData?.slug) {
+          if (urlTenantParam && urlTenantParam !== userTenantId && urlTenantParam !== tenantData?.slug) {
+            if (urlTenantParam !== 'default-tenant') {
               showToast("Acesso restrito: Você só tem permissão para acessar o painel da sua loja.", "warning");
-              navigate(`/lojista/${userTenantId}`, { replace: true });
-              return;
-            } else if (!urlTenantParam) {
-              navigate(`/lojista/${userTenantId}`, { replace: true });
-              return;
             }
+            navigate(`/lojista/${userTenantId}`, { replace: true });
+            return;
+          } else if (!urlTenantParam || urlTenantParam === 'default-tenant') {
+            navigate(`/lojista/${userTenantId}`, { replace: true });
+            return;
           }
         }
       }
