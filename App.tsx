@@ -223,7 +223,14 @@ const App: React.FC = () => {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   
   const [quotaExceeded, setQuotaExceeded] = useState(false);
-  const [authLoading, setAuthLoading] = useState(true);
+  const [authLoading, setAuthLoading] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const cachedUser = localStorage.getItem('kitchenflow_cached_user') || localStorage.getItem('kitchenflow_demo_user');
+      const isPublic = window.location.pathname === '/' || window.location.pathname.startsWith('/site') || window.location.pathname.startsWith('/marketplace') || window.location.pathname.startsWith('/cardapio') || window.location.pathname.startsWith('/c/') || window.location.pathname.startsWith('/m/');
+      if (cachedUser || isPublic) return false;
+    }
+    return true;
+  });
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
   const [activePrintJob, setActivePrintJob] = useState<{
@@ -427,7 +434,7 @@ const App: React.FC = () => {
       isUnlimited
     };
   }, [tenantData, plans, orders]);
-  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
+  const [hasApiKey, setHasApiKey] = useState<boolean | null>(true);
   const [currentProject, setCurrentProject] = useState<'PLATFORM' | 'RESTAURANT' | 'MARKETPLACE' | 'COURIER' | 'WEBSITE'>(() => {
     const path = typeof window !== 'undefined' ? window.location.pathname : '/';
     if (path.startsWith('/marketplace') || path.startsWith('/perfil') || path.startsWith('/cardapio') || path.startsWith('/c/') || path.startsWith('/m/')) {
@@ -820,7 +827,7 @@ const App: React.FC = () => {
       series: 1, 
       taxRegime: 'simples_nacional',
       cnpj: '12.345.678/0001-90',
-      razaoSocial: 'Viva Lá Fome!',
+      razaoSocial: 'KitchenFlow AI',
       inscricaoEstadual: '123.456.789.110',
       address: {
         logradouro: 'Av. Paulista',
@@ -832,7 +839,7 @@ const App: React.FC = () => {
         codigoMunicipio: '3550308'
       }
     } as any,
-    printing: { paperWidth: '80mm', autoPrintOrder: false, headerText: 'BEM VINDO AO VIVA LÁ FOME!', footerText: 'Obrigado!', showLogo: true },
+    printing: { paperWidth: '80mm', autoPrintOrder: false, headerText: 'BEM VINDO AO KITCHENFLOW AI!', footerText: 'Obrigado!', showLogo: true },
     apis: { googleMapsKey: '', whatsappToken: '', ifoodWebhook: '', integrationActive: false },
     deliveryFee: 7.00,
     isDeliveryEnabled: true,
@@ -1012,12 +1019,12 @@ const App: React.FC = () => {
       setTenantData(null);
       setAdminSettings(prev => ({
         ...prev,
-        companyName: 'Viva Lá Fome!',
+        companyName: 'KitchenFlow AI',
         logoUrl: ''
       }));
       setDigitalMenuSettings(prev => ({
         ...prev,
-        restaurantName: 'Viva Lá Fome!',
+        restaurantName: 'KitchenFlow AI',
         logoUrl: ''
       }));
       return;
@@ -5101,14 +5108,17 @@ const App: React.FC = () => {
     }
   };
 
-  const isMarketplace = location.pathname.startsWith('/marketplace') || location.pathname.startsWith('/perfil') || location.pathname === '/';
+  const isCardapioRoute = location.pathname.startsWith('/cardapio') || location.pathname.startsWith('/c/') || location.pathname.startsWith('/m/');
+  const isMarketplaceRoute = location.pathname.startsWith('/marketplace') || location.pathname.startsWith('/perfil') || isCardapioRoute;
+  const isWebsiteRoute = (location.pathname.startsWith('/site') || location.pathname.startsWith('/kitchenflow') || location.pathname === '/') && !isCardapioRoute;
+  const isPublicRoute = isMarketplaceRoute || isWebsiteRoute || isCardapioRoute;
 
-  if (authLoading || (hasApiKey === null && !isMarketplace)) {
+  if (authLoading && !isPublicRoute) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-slate-400 font-black text-[10px] uppercase tracking-widest animate-pulse">Carregando Viva Lá Fome...</p>
+          <p className="text-slate-400 font-black text-[10px] uppercase tracking-widest animate-pulse">Carregando KitchenFlow AI...</p>
         </div>
       </div>
     );
@@ -5142,11 +5152,6 @@ const App: React.FC = () => {
     );
   }
 
-  const isCardapioRoute = location.pathname.startsWith('/cardapio') || location.pathname.startsWith('/c/') || location.pathname.startsWith('/m/');
-  const isMarketplaceRoute = location.pathname.startsWith('/marketplace') || location.pathname.startsWith('/perfil') || isCardapioRoute;
-  const isWebsiteRoute = (location.pathname.startsWith('/site') || location.pathname.startsWith('/kitchenflow') || location.pathname === '/') && !isCardapioRoute;
-  const isPublicRoute = isMarketplaceRoute || isWebsiteRoute || isCardapioRoute;
-
   // 1. Se o usuário NÃO está autenticado no Firebase Auth
   // e tenta acessar uma rota privada/privilegiada (não pública):
   if (!user && !isPublicRoute && location.pathname !== '/') {
@@ -5160,7 +5165,7 @@ const App: React.FC = () => {
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-slate-400 font-black text-[10px] uppercase tracking-widest animate-pulse">Buscando perfil de acesso...</p>
+          <p className="text-slate-400 font-black text-[10px] uppercase tracking-widest animate-pulse">Carregando KitchenFlow AI...</p>
         </div>
       </div>
     );
@@ -5173,7 +5178,7 @@ const App: React.FC = () => {
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-slate-400 font-black text-[10px] uppercase tracking-widest animate-pulse">Sincronizando perfil de acesso...</p>
+          <p className="text-slate-400 font-black text-[10px] uppercase tracking-widest animate-pulse">Sincronizando KitchenFlow AI...</p>
         </div>
       </div>
     );
@@ -5235,7 +5240,7 @@ const App: React.FC = () => {
     );
   }
 
-  if (!isDbLoaded && !isMarketplace) {
+  if (!isDbLoaded && !isPublicRoute) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
