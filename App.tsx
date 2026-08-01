@@ -1734,17 +1734,17 @@ const App: React.FC = () => {
         console.warn("Erro ao atualizar status para offline no Firestore durante o logout:", err);
       }
     }
-    signOut(auth);
     try {
       localStorage.removeItem('kitchenflow_demo_user');
       localStorage.removeItem('kitchenflow_cached_user');
       localStorage.removeItem('kitchenflow_cached_tenant_data');
       localStorage.removeItem('gastroai_cached_user');
       localStorage.removeItem('gastroai_cached_tenant_data');
-      window.location.reload();
     } catch (e) {
       console.warn(e);
     }
+    await signOut(auth);
+    window.location.href = '/login';
   };
 
   const handleSaveSettings = async () => {
@@ -5110,7 +5110,7 @@ const App: React.FC = () => {
 
   const isCardapioRoute = location.pathname.startsWith('/cardapio') || location.pathname.startsWith('/c/') || location.pathname.startsWith('/m/');
   const isMarketplaceRoute = location.pathname.startsWith('/marketplace') || location.pathname.startsWith('/perfil') || isCardapioRoute;
-  const isWebsiteRoute = (location.pathname.startsWith('/site') || location.pathname.startsWith('/kitchenflow') || location.pathname === '/') && !isCardapioRoute;
+  const isWebsiteRoute = (location.pathname.startsWith('/site') || location.pathname.startsWith('/kitchenflow') || location.pathname === '/' || location.pathname === '/login') && !isCardapioRoute;
   const isPublicRoute = isMarketplaceRoute || isWebsiteRoute || isCardapioRoute;
 
   if (authLoading && !isPublicRoute) {
@@ -5154,7 +5154,12 @@ const App: React.FC = () => {
 
   // 1. Se o usuário NÃO está autenticado no Firebase Auth
   // e tenta acessar uma rota privada/privilegiada (não pública):
-  if (!user && !isPublicRoute && location.pathname !== '/') {
+  if (!user && !isPublicRoute) {
+    window.history.replaceState({}, '', '/login');
+    return <Login onLoginSuccess={() => {}} />;
+  }
+
+  if (!user && location.pathname === '/login') {
     return <Login onLoginSuccess={() => {}} />;
   }
 
@@ -5311,7 +5316,7 @@ const App: React.FC = () => {
             <Route path="/entregador" element={
                user ? (
                  (currentUserData?.role === 'COURIER' || getUserPermissions(currentUserData).includes('courier_app_access')) ? (
-                   <CourierApp currentUser={currentUserData} />
+                   <CourierApp currentUser={currentUserData} onLogout={handleLogout} />
                  ) : (
                    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6 text-center">
                       <div className="bg-white p-8 rounded-[2.5rem] shadow-xl max-w-sm">
