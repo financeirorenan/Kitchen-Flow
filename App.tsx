@@ -223,14 +223,7 @@ const App: React.FC = () => {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   
   const [quotaExceeded, setQuotaExceeded] = useState(false);
-  const [authLoading, setAuthLoading] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const cachedUser = localStorage.getItem('kitchenflow_cached_user') || localStorage.getItem('kitchenflow_demo_user');
-      const isPublic = window.location.pathname === '/' || window.location.pathname.startsWith('/site') || window.location.pathname.startsWith('/marketplace') || window.location.pathname.startsWith('/cardapio') || window.location.pathname.startsWith('/c/') || window.location.pathname.startsWith('/m/');
-      if (cachedUser || isPublic) return false;
-    }
-    return true;
-  });
+  const [authLoading, setAuthLoading] = useState(true);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
   const [activePrintJob, setActivePrintJob] = useState<{
@@ -5155,7 +5148,6 @@ const App: React.FC = () => {
   // 1. Se o usuário NÃO está autenticado no Firebase Auth
   // e tenta acessar uma rota privada/privilegiada (não pública):
   if (!user && !isPublicRoute) {
-    window.history.replaceState({}, '', '/login');
     return <Login onLoginSuccess={() => {}} />;
   }
 
