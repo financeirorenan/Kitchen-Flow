@@ -699,7 +699,7 @@ const App: React.FC = () => {
       } else if (subPath === 'equipe' || subPath === 'users') {
         targetTab = 'users';
       } else if (subPath === 'configuracoes' || subPath === 'settings' || subPath === 'admin-settings') {
-        targetTab = 'admin-settings';
+        targetTab = 'settings';
       } else if (subPath === 'marketplace') {
         targetTab = 'marketplace-config';
       } else if (subPath === 'suporte' || subPath === 'support') {
@@ -6032,7 +6032,7 @@ const App: React.FC = () => {
             tenantId={currentUserData?.tenantId}
           />
         )}
-        {activeTab === 'settings' && hasPermission('admin_settings_manage') && (
+        {(activeTab === 'settings' || activeTab === 'admin-settings') && hasPermission('admin_settings_manage') && (
           <AdminSettingsComponent 
             settings={adminSettings} 
             onUpdateSettings={setAdminSettings}
