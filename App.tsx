@@ -527,9 +527,79 @@ const App: React.FC = () => {
     localStorage.setItem('marketplace_profile', JSON.stringify(data));
   };
 
+  const getTabUrl = useCallback((tab: string, tenantId?: string) => {
+    const currentTenant = tenantId || viewingTenantId || currentUserData?.tenantId || tenantData?.slug || 'default-tenant';
+    switch (tab) {
+      case 'finance':
+        return `/lojista/${currentTenant}/financeiro`;
+      case 'tables':
+        return `/lojista/${currentTenant}/mesas`;
+      case 'kds':
+        return `/lojista/${currentTenant}/kds`;
+      case 'kds-kitchen-only':
+        return `/lojista/${currentTenant}/kds-cozinha`;
+      case 'delivery':
+        return `/lojista/${currentTenant}/entregas`;
+      case 'inventory':
+        return `/lojista/${currentTenant}/estoque`;
+      case 'digital-menu':
+        return `/lojista/${currentTenant}/cardapio-digital`;
+      case 'customers':
+        return `/lojista/${currentTenant}/clientes`;
+      case 'cmv':
+        return `/lojista/${currentTenant}/cmv`;
+      case 'users':
+        return `/lojista/${currentTenant}/equipe`;
+      case 'settings':
+      case 'admin-settings':
+        return `/lojista/${currentTenant}/configuracoes`;
+      case 'marketplace-config':
+        return `/lojista/${currentTenant}/marketplace`;
+      case 'support':
+        return `/lojista/${currentTenant}/suporte`;
+      case 'intelligent-reports':
+        return `/lojista/${currentTenant}/relatorios`;
+      case 'ai-insights':
+        return `/lojista/${currentTenant}/insights`;
+      case 'alerts':
+        return `/lojista/${currentTenant}/alertas`;
+      case 'partner-hub':
+        return `/lojista/${currentTenant}/parceiros`;
+      case 'merchant-copilot':
+      default:
+        return `/lojista/${currentTenant}`;
+    }
+  }, [viewingTenantId, currentUserData?.tenantId, tenantData?.slug]);
+
+  const handleSelectTab = useCallback((tab: string) => {
+    if (tab === 'marketplace') {
+      navigate('/marketplace');
+      return;
+    }
+    if (tab === 'saas-admin') {
+      navigate('/saas');
+      return;
+    }
+    setActiveTab(tab);
+    const tenant = viewingTenantId || currentUserData?.tenantId || tenantData?.slug || 'default-tenant';
+    const targetUrl = getTabUrl(tab, tenant);
+    if (location.pathname !== targetUrl) {
+      navigate(targetUrl);
+    }
+  }, [navigate, viewingTenantId, currentUserData?.tenantId, tenantData?.slug, getTabUrl, location.pathname]);
+
   useEffect(() => {
     const path = location.pathname;
     const parts = path.split('/').filter(Boolean);
+
+    if (path === '/login') {
+      if (user && currentUserData) {
+        const userTenant = currentUserData.tenantId || 'default-tenant';
+        const targetUrl = isSuperAdmin ? '/saas' : `/lojista/${userTenant}`;
+        navigate(targetUrl, { replace: true });
+      }
+      return;
+    }
 
     if (path.startsWith('/marketplace') || path.startsWith('/perfil') || path.startsWith('/cardapio') || path.startsWith('/c/') || path.startsWith('/m/')) {
       if (currentProject !== 'MARKETPLACE') setCurrentProject('MARKETPLACE');
@@ -547,7 +617,7 @@ const App: React.FC = () => {
         }
         if (!isSuperAdmin) {
           const userTenant = currentUserData.tenantId;
-          const targetUrl = userTenant ? `/lojista/${userTenant}` : '/lojista';
+          const targetUrl = userTenant ? `/lojista/${userTenant}` : '/lojista/default-tenant';
           navigate(targetUrl, { replace: true });
           setCurrentProject('RESTAURANT');
           setActiveTab('merchant-copilot');
@@ -555,7 +625,7 @@ const App: React.FC = () => {
         }
       } else if (!isSuperAdmin) {
         // Se ainda estiver carregando os dados do usuário e não for superadmin reconhecido, evita PLATFORM
-        navigate('/lojista', { replace: true });
+        navigate('/lojista/default-tenant', { replace: true });
         setCurrentProject('RESTAURANT');
         setActiveTab('merchant-copilot');
         return;
@@ -590,7 +660,8 @@ const App: React.FC = () => {
           if (userTenantId) {
             if (urlTenantParam && urlTenantParam !== userTenantId && urlTenantParam !== tenantData?.slug) {
               showToast("Acesso restrito: Você só tem permissão para acessar o painel da sua loja.", "warning");
-              navigate(`/lojista/${userTenantId}`, { replace: true });
+              const sub = parts[2] ? `/${parts[2]}` : '';
+              navigate(`/lojista/${userTenantId}${sub}`, { replace: true });
               return;
             } else if (!urlTenantParam) {
               navigate(`/lojista/${userTenantId}`, { replace: true });
@@ -598,27 +669,68 @@ const App: React.FC = () => {
             }
           }
         }
+      } else if (!parts[1]) {
+        navigate('/lojista/default-tenant', { replace: true });
+        return;
       }
+
       if (currentProject !== 'RESTAURANT') setCurrentProject('RESTAURANT');
-      if (activeTab === 'saas-admin' || activeTab === 'courier-app') setActiveTab('merchant-copilot');
+
+      const subPath = (parts[2] || '').toLowerCase();
+      let targetTab = 'merchant-copilot';
+      if (subPath === 'financeiro' || subPath === 'finance') {
+        targetTab = 'finance';
+      } else if (subPath === 'mesas' || subPath === 'tables' || subPath === 'pdv') {
+        targetTab = 'tables';
+      } else if (subPath === 'kds') {
+        targetTab = 'kds';
+      } else if (subPath === 'kds-cozinha') {
+        targetTab = 'kds-kitchen-only';
+      } else if (subPath === 'entregas' || subPath === 'delivery') {
+        targetTab = 'delivery';
+      } else if (subPath === 'estoque' || subPath === 'inventory') {
+        targetTab = 'inventory';
+      } else if (subPath === 'cardapio-digital' || subPath === 'cardapio') {
+        targetTab = 'digital-menu';
+      } else if (subPath === 'clientes' || subPath === 'customers') {
+        targetTab = 'customers';
+      } else if (subPath === 'cmv') {
+        targetTab = 'cmv';
+      } else if (subPath === 'equipe' || subPath === 'users') {
+        targetTab = 'users';
+      } else if (subPath === 'configuracoes' || subPath === 'settings' || subPath === 'admin-settings') {
+        targetTab = 'admin-settings';
+      } else if (subPath === 'marketplace') {
+        targetTab = 'marketplace-config';
+      } else if (subPath === 'suporte' || subPath === 'support') {
+        targetTab = 'support';
+      } else if (subPath === 'relatorios' || subPath === 'reports') {
+        targetTab = 'intelligent-reports';
+      } else if (subPath === 'insights') {
+        targetTab = 'ai-insights';
+      } else if (subPath === 'alertas' || subPath === 'alerts') {
+        targetTab = 'alerts';
+      } else if (subPath === 'parceiros' || subPath === 'partners') {
+        targetTab = 'partner-hub';
+      } else if (subPath === 'copilot' || subPath === '') {
+        targetTab = 'merchant-copilot';
+      }
+
+      if (activeTab !== targetTab) {
+        setActiveTab(targetTab);
+      }
     } else if (path.startsWith('/entregador')) {
       if (currentProject !== 'COURIER') setCurrentProject('COURIER');
-      setActiveTab('courier-app');
-    } else if (path.startsWith('/marketplace') || path.startsWith('/perfil')) {
-      if (currentProject !== 'MARKETPLACE') setCurrentProject('MARKETPLACE');
+      if (activeTab !== 'courier-app') setActiveTab('courier-app');
     }
-  }, [location.pathname, isSuperAdmin, currentProject, activeTab, navigate, currentUserData, tenantData?.slug, viewingTenantId]);
+  }, [location.pathname, isSuperAdmin, currentProject, activeTab, navigate, user, currentUserData, tenantData?.slug, viewingTenantId]);
 
   useEffect(() => {
     (window as any).setActiveTab = (tab: string) => {
-      if (tab === 'marketplace') {
-        navigate('/marketplace');
-      } else {
-        setActiveTab(tab);
-      }
+      handleSelectTab(tab);
     };
     return () => { delete (window as any).setActiveTab; };
-  }, [navigate]);
+  }, [handleSelectTab]);
 
   const handleViewTenant = (tenantId: string, name?: string, logo?: string) => {
     setViewingTenantId(tenantId);
@@ -5171,13 +5283,7 @@ const App: React.FC = () => {
       {currentProject !== 'MARKETPLACE' && currentProject !== 'COURIER' && currentProject !== 'WEBSITE' && !isKDSOnlyUser && (
         <Sidebar 
           activeTab={activeTab} 
-          setActiveTab={(tab) => {
-            if (tab === 'marketplace') {
-              navigate('/marketplace');
-            } else {
-              setActiveTab(tab);
-            }
-          }}
+          setActiveTab={(tab) => handleSelectTab(tab)}
           isOpen={isSidebarOpen}
           onClose={() => setIsSidebarOpen(false)}
           user={currentUserData || { name: user.displayName || 'Usuário', role: 'WAITER', avatar: user.photoURL || undefined } as any}

@@ -504,7 +504,7 @@ export default function KitchenflowWebsite() {
           {/* CTAs */}
           <div className="hidden md:flex items-center gap-4">
             <Link 
-              to="/saas" 
+              to="/login" 
               className="text-xs font-bold text-slate-300 hover:text-white uppercase tracking-widest transition-colors"
             >
               Fazer Login
@@ -544,7 +544,7 @@ export default function KitchenflowWebsite() {
               </div>
               <div className="border-t border-white/5 pt-4 flex flex-col gap-3">
                 <Link 
-                  to="/saas" 
+                  to="/login" 
                   onClick={() => setIsMobileMenuOpen(false)}
                   className="text-center py-3 bg-slate-900 text-slate-300 hover:text-white rounded-xl text-xs font-bold uppercase"
                 >
