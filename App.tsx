@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { maskPhone, maskCPF, maskCEP } from './utils/masks';
 import { deduplicateOrders, deduplicateFinancialRecords } from './utils/deduplicate';
 import Sidebar from './components/Sidebar';
