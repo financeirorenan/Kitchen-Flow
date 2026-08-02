@@ -946,30 +946,17 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
     });
 
     app.use(vite.middlewares);
-
-    // Fallback de SPA no modo dev para processar rotas do React Router (ex: /marketplace, /c/:slug, /entregas)
-    app.use("*", async (req, res, next) => {
-      const url = req.originalUrl;
-      try {
-        let template = fs.readFileSync(path.resolve("index.html"), "utf-8");
-        template = await vite.transformIndexHtml(url, template);
-        res.status(200).set({ "Content-Type": "text/html" }).end(template);
-      } catch (e) {
-        vite.ssrFixStacktrace(e as Error);
-        next(e);
-      }
-    });
   } else {
     const distPath = path.resolve("dist");
 
     if (fs.existsSync(distPath)) {
       app.use(express.static(distPath));
 
-      app.use("*", (_req, res) => {
+      app.get("*", (_req, res) => {
         res.sendFile(path.join(distPath, "index.html"));
       });
     } else {
-      app.use("*", (_req, res) => {
+      app.get("*", (_req, res) => {
         res.status(500).send("Build do frontend não encontrado.");
       });
     }
