@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { PwaInstallPrompt } from "./PwaInstallPrompt";
 import {
   Search,
   MapPin,
@@ -1361,16 +1362,17 @@ const Marketplace: React.FC<MarketplaceProps> = ({
             </div>
           </div>
           <div
-            className="flex items-center gap-3"
+            className="flex items-center gap-2"
             onClick={(e) => e.stopPropagation()}
           >
+            <PwaInstallPrompt compact />
             <motion.button 
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
-              className="w-12 h-12 flex items-center justify-center text-slate-700 relative bg-slate-50/80 backdrop-blur-md rounded-2xl hover:bg-slate-100/90 transition-all border border-slate-100 shadow-sm"
+              className="w-10 h-10 flex items-center justify-center text-slate-700 relative bg-slate-50/80 backdrop-blur-md rounded-2xl hover:bg-slate-100/90 transition-all border border-slate-100 shadow-sm"
             >
-              <Bell size={21} />
-              <div className="absolute top-3.5 right-3.5 w-2.5 h-2.5 bg-rose-500 rounded-full border-2 border-white shadow-md animate-pulse" />
+              <Bell size={18} />
+              <div className="absolute top-2.5 right-2.5 w-2 h-2 bg-rose-500 rounded-full border-2 border-white shadow-md animate-pulse" />
             </motion.button>
           </div>
         </header>

@@ -15,10 +15,51 @@ let notifiedOrderIds = new Set();
 // Cache and setup essentials
 self.addEventListener('install', (event) => {
   self.skipWaiting();
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll([
+        '/',
+        '/manifest.json',
+        '/icon-192.png',
+        '/icon-512.png',
+        '/icon.svg'
+      ]).catch((err) => console.warn('[SW] Pre-cache initial assets warning:', err));
+    })
+  );
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim());
+});
+
+// Fetch handler for PWA caching and offline fallback
+self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
+  const url = new URL(event.request.url);
+  
+  // Ignore API requests and browser extension schemes
+  if (url.pathname.startsWith('/api/') || !url.protocol.startsWith('http')) return;
+
+  event.respondWith(
+    caches.match(event.request).then((cachedResponse) => {
+      const fetchPromise = fetch(event.request).then((networkResponse) => {
+        if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
+          const responseToCache = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseToCache);
+          });
+        }
+        return networkResponse;
+      }).catch(() => {
+        if (cachedResponse) return cachedResponse;
+        if (event.request.headers.get('accept')?.includes('text/html')) {
+          return caches.match('/');
+        }
+      });
+
+      return cachedResponse || fetchPromise;
+    })
+  );
 });
 
 // Cache Storage helper to persist credentials and states

@@ -32,6 +32,7 @@ import { onAuthStateChanged, signOut, User as FirebaseUser, updateEmail, updateP
 import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, onSnapshot, query, where, orderBy, limit, addDoc, writeBatch } from 'firebase/firestore';
 import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import Login from './components/Login';
+import { PwaInstallPrompt } from './components/PwaInstallPrompt';
 import { UserProfileModal } from './components/UserProfileModal';
 import { PrintPreviewModal } from './components/PrintPreviewModal';
 import { 
@@ -6298,6 +6299,7 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
+      <PwaInstallPrompt />
     </div>
   );
 };

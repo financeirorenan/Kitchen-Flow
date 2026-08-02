@@ -1,5 +1,17 @@
-# Protect .env file from public access
+# Proteger arquivo .env
 <Files .env>
-Order allow,deny
-Deny from all
+  Order allow,deny
+  Deny from all
 </Files>
+
+# Redirecionamento de rotas SPA (Single Page Application - React Router)
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+  RewriteRule ^index\.html$ - [L]
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteCond %{REQUEST_FILENAME} !-l
+  RewriteRule . /index.html [L]
+</IfModule>
+

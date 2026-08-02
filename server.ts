@@ -283,6 +283,9 @@ async function startServer() {
     }
   });
 
+  // Servir arquivos estáticos da pasta public (manifest.json, ícones, sw.js, etc)
+  app.use(express.static(path.join(process.cwd(), "public")));
+
   // Serve o Service Worker explicitamente com o Content-Type correto
   app.get("/sw.js", (req, res) => {
     const swPath = path.join(process.cwd(), "public", "sw.js");
@@ -291,6 +294,15 @@ async function startServer() {
       return res.sendFile(swPath);
     }
     res.status(404).send("sw.js não encontrado no diretório public");
+  });
+
+  app.get("/manifest.json", (req, res) => {
+    const manifestPath = path.join(process.cwd(), "public", "manifest.json");
+    if (fs.existsSync(manifestPath)) {
+      res.set("Content-Type", "application/manifest+json");
+      return res.sendFile(manifestPath);
+    }
+    res.status(404).send("manifest.json não encontrado");
   });
 
   // Auxiliar para gerar consultoria automática em caso de insisponibilidade da nuvem ou ausência de chave
@@ -940,11 +952,11 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
     if (fs.existsSync(distPath)) {
       app.use(express.static(distPath));
 
-      app.get("*all", (_req, res) => {
+      app.use((_req, res) => {
         res.sendFile(path.join(distPath, "index.html"));
       });
     } else {
-      app.get("*all", (_req, res) => {
+      app.use((_req, res) => {
         res.status(500).send("Build do frontend não encontrado.");
       });
     }
