@@ -965,13 +965,30 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
     });
 
     app.use(vite.middlewares);
+
+    // Fallback absoluto para modo dev (garante que F5 / recarregar / voltar receba index.html)
+    app.use(async (req, res, next) => {
+      if (req.method === "GET" && !req.path.startsWith("/api/")) {
+        try {
+          const indexPath = path.resolve("index.html");
+          if (fs.existsSync(indexPath)) {
+            let template = fs.readFileSync(indexPath, "utf8");
+            template = await vite.transformIndexHtml(req.originalUrl, template);
+            return res.status(200).set({ "Content-Type": "text/html" }).end(template);
+          }
+        } catch (e) {
+          return next(e);
+        }
+      }
+      res.status(404).json({ error: "Rota API não encontrada" });
+    });
   } else {
     const distPath = path.resolve("dist");
 
     if (fs.existsSync(distPath)) {
       app.use(express.static(distPath));
 
-      app.use((req, res, next) => {
+      app.use((req, res) => {
         if (req.method === "GET" && !req.path.startsWith("/api/")) {
           return res.sendFile(path.join(distPath, "index.html"));
         }
