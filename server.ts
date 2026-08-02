@@ -13,9 +13,28 @@ dotenv.config();
 const isProduction = process.env.NODE_ENV === "production";
 
 // Safely read and parse the Firebase Applet Config to avoid experimental JSON import assertions in ESM
-const firebaseConfig = JSON.parse(
-  fs.readFileSync(path.resolve("firebase-applet-config.json"), "utf8")
-);
+let firebaseConfig: any = {};
+try {
+  const configFile = path.resolve("firebase-applet-config.json");
+  if (fs.existsSync(configFile)) {
+    firebaseConfig = JSON.parse(fs.readFileSync(configFile, "utf8"));
+  }
+} catch (e) {
+  console.warn("Could not read firebase-applet-config.json from disk:", e);
+}
+
+if (!firebaseConfig || !firebaseConfig.projectId) {
+  firebaseConfig = {
+    projectId: process.env.FIREBASE_PROJECT_ID || "gen-lang-client-0510005534",
+    appId: process.env.FIREBASE_APP_ID || "1:962186130985:web:d91f039ee615badecace38",
+    apiKey: process.env.FIREBASE_API_KEY || "AIzaSyB0W3IE_ska3PsdBytrBZySLp9_zeeRYyU",
+    authDomain: process.env.FIREBASE_AUTH_DOMAIN || "gen-lang-client-0510005534.firebaseapp.com",
+    firestoreDatabaseId: process.env.FIREBASE_DATABASE_ID || "ai-studio-a2f13cdd-6132-4b0a-bec9-cdb7d1da2816",
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || "gen-lang-client-0510005534.firebasestorage.app",
+    messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || "962186130985",
+    measurementId: ""
+  };
+}
 
 import { initializeApp as initializeClientApp } from "firebase/app";
 import {
@@ -952,11 +971,11 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
     if (fs.existsSync(distPath)) {
       app.use(express.static(distPath));
 
-      app.get("*", (_req, res) => {
+      app.use((_req, res) => {
         res.sendFile(path.join(distPath, "index.html"));
       });
     } else {
-      app.get("*", (_req, res) => {
+      app.use((_req, res) => {
         res.status(500).send("Build do frontend não encontrado.");
       });
     }
