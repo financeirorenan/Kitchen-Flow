@@ -1,15 +1,8 @@
-# Configuration for Apache / cPanel / Hostinger SPA Routing
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
   RewriteRule ^index\.html$ - [L]
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
-  RewriteRule ^ index.html [L]
+  RewriteRule . /index.html [L]
 </IfModule>
-
-# Protect sensitive files
-<Files .env>
-  Order allow,deny
-  Deny from all
-</Files>

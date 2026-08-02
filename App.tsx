@@ -531,6 +531,8 @@ const App: React.FC = () => {
   const getTabUrl = useCallback((tab: string, tenantId?: string) => {
     const currentTenant = tenantId || viewingTenantId || currentUserData?.tenantId || tenantData?.slug || 'default-tenant';
     switch (tab) {
+      case 'pos':
+        return `/lojista/${currentTenant}/pdv`;
       case 'finance':
         return `/lojista/${currentTenant}/financeiro`;
       case 'tables':
@@ -551,6 +553,10 @@ const App: React.FC = () => {
         return `/lojista/${currentTenant}/cmv`;
       case 'users':
         return `/lojista/${currentTenant}/equipe`;
+      case 'couriers':
+        return `/lojista/${currentTenant}/entregadores`;
+      case 'fiscal':
+        return `/lojista/${currentTenant}/fiscal`;
       case 'settings':
       case 'admin-settings':
         return `/lojista/${currentTenant}/configuracoes`;
@@ -673,16 +679,18 @@ const App: React.FC = () => {
 
       let subPath = '';
       if (parts[0] === 'lojista' || parts[0] === 'painel' || parts[0] === 'admin' || parts[0] === 'loja') {
-        subPath = (parts[2] || parts[1] || '').toLowerCase();
+        subPath = (parts[2] || '').toLowerCase();
       } else {
         subPath = (parts[0] || '').toLowerCase();
       }
 
       let targetTab = 'merchant-copilot';
-      if (subPath === 'financeiro' || subPath === 'finance') {
-        targetTab = 'finance';
-      } else if (subPath === 'mesas' || subPath === 'tables' || subPath === 'pdv') {
+      if (subPath === 'pdv' || subPath === 'pos') {
+        targetTab = 'pos';
+      } else if (subPath === 'mesas' || subPath === 'tables') {
         targetTab = 'tables';
+      } else if (subPath === 'financeiro' || subPath === 'finance') {
+        targetTab = 'finance';
       } else if (subPath === 'kds') {
         targetTab = 'kds';
       } else if (subPath === 'kds-cozinha') {
@@ -699,6 +707,10 @@ const App: React.FC = () => {
         targetTab = 'cmv';
       } else if (subPath === 'equipe' || subPath === 'users') {
         targetTab = 'users';
+      } else if (subPath === 'entregadores' || subPath === 'couriers') {
+        targetTab = 'couriers';
+      } else if (subPath === 'fiscal') {
+        targetTab = 'fiscal';
       } else if (subPath === 'configuracoes' || subPath === 'settings' || subPath === 'admin-settings') {
         targetTab = 'settings';
       } else if (subPath === 'marketplace') {
@@ -5830,7 +5842,7 @@ const App: React.FC = () => {
             </div>
           </div>
         )}
-        {activeTab === 'tables' && hasPermission('tables_manage') && <Tables 
+        {(activeTab === 'tables' || activeTab === 'pos') && hasPermission('tables_manage') && <Tables 
           tables={tables} 
           counterOrders={counterOrders} 
           products={products} 
