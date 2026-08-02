@@ -971,8 +971,11 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
     if (fs.existsSync(distPath)) {
       app.use(express.static(distPath));
 
-      app.use((_req, res) => {
-        res.sendFile(path.join(distPath, "index.html"));
+      app.use((req, res, next) => {
+        if (req.method === "GET" && !req.path.startsWith("/api/")) {
+          return res.sendFile(path.join(distPath, "index.html"));
+        }
+        res.status(404).json({ error: "Rota API não encontrada" });
       });
     } else {
       app.use((_req, res) => {

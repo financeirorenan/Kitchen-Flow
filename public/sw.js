@@ -51,9 +51,16 @@ self.addEventListener('fetch', (event) => {
   // Ignore API requests and browser extension schemes
   if (url.pathname.startsWith('/api/') || !url.protocol.startsWith('http')) return;
 
+  const isNavigation = event.request.mode === 'navigate' || 
+                       (event.request.headers.get('accept') && event.request.headers.get('accept').includes('text/html'));
+
   event.respondWith(
     fetch(event.request)
       .then((networkResponse) => {
+        // If the server returns a 404 or server error for a SPA page navigation, fallback to index.html ('/')
+        if (isNavigation && (!networkResponse || networkResponse.status === 404 || networkResponse.status >= 500)) {
+          return caches.match('/').then((cached) => cached || networkResponse);
+        }
         if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
           const responseToCache = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => {
@@ -65,7 +72,7 @@ self.addEventListener('fetch', (event) => {
       .catch(() => {
         return caches.match(event.request).then((cachedResponse) => {
           if (cachedResponse) return cachedResponse;
-          if (event.request.headers.get('accept')?.includes('text/html')) {
+          if (isNavigation) {
             return caches.match('/');
           }
         });

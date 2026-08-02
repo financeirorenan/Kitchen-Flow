@@ -1035,8 +1035,11 @@ Forne\xE7a a resposta em formato JSON estrito correspondente ao esquema de respo
     const distPath = path.resolve("dist");
     if (fs.existsSync(distPath)) {
       app.use(express.static(distPath));
-      app.use((_req, res) => {
-        res.sendFile(path.join(distPath, "index.html"));
+      app.use((req, res, next) => {
+        if (req.method === "GET" && !req.path.startsWith("/api/")) {
+          return res.sendFile(path.join(distPath, "index.html"));
+        }
+        res.status(404).json({ error: "Rota API n\xE3o encontrada" });
       });
     } else {
       app.use((_req, res) => {
