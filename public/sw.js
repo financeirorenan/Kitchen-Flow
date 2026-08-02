@@ -4,7 +4,7 @@
 importScripts('https://www.gstatic.com/firebasejs/10.10.0/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.10.0/firebase-firestore-compat.js');
 
-const CACHE_NAME = 'kitchenflow-courier-cache-v1';
+const CACHE_NAME = 'kitchenflow-courier-cache-v2';
 let firebaseApp = null;
 let firestoreDb = null;
 let ordersListener = null;
@@ -29,10 +29,21 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    caches.keys().then((cacheNames) => {
+      return Promise.all(
+        cacheNames.map((cache) => {
+          if (cache !== CACHE_NAME) {
+            console.log('[SW] Clearing old cache:', cache);
+            return caches.delete(cache);
+          }
+        })
+      );
+    }).then(() => self.clients.claim())
+  );
 });
 
-// Fetch handler for PWA caching and offline fallback
+// Fetch handler for PWA caching and offline fallback (Network First)
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
@@ -41,8 +52,8 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/api/') || !url.protocol.startsWith('http')) return;
 
   event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      const fetchPromise = fetch(event.request).then((networkResponse) => {
+    fetch(event.request)
+      .then((networkResponse) => {
         if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
           const responseToCache = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => {
@@ -50,15 +61,15 @@ self.addEventListener('fetch', (event) => {
           });
         }
         return networkResponse;
-      }).catch(() => {
-        if (cachedResponse) return cachedResponse;
-        if (event.request.headers.get('accept')?.includes('text/html')) {
-          return caches.match('/');
-        }
-      });
-
-      return cachedResponse || fetchPromise;
-    })
+      })
+      .catch(() => {
+        return caches.match(event.request).then((cachedResponse) => {
+          if (cachedResponse) return cachedResponse;
+          if (event.request.headers.get('accept')?.includes('text/html')) {
+            return caches.match('/');
+          }
+        });
+      })
   );
 });
 

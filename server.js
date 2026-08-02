@@ -432,6 +432,7 @@ async function startServer() {
       return res.status(500).json({ error: "Erro interno no servidor de autentica\xE7\xE3o." });
     }
   });
+  app.use(express.static(path.join(process.cwd(), "public")));
   app.get("/sw.js", (req, res) => {
     const swPath = path.join(process.cwd(), "public", "sw.js");
     if (fs.existsSync(swPath)) {
@@ -439,6 +440,14 @@ async function startServer() {
       return res.sendFile(swPath);
     }
     res.status(404).send("sw.js n\xE3o encontrado no diret\xF3rio public");
+  });
+  app.get("/manifest.json", (req, res) => {
+    const manifestPath = path.join(process.cwd(), "public", "manifest.json");
+    if (fs.existsSync(manifestPath)) {
+      res.set("Content-Type", "application/manifest+json");
+      return res.sendFile(manifestPath);
+    }
+    res.status(404).send("manifest.json n\xE3o encontrado");
   });
   const generateLocalHeuristicAnalysis = (summaryData, isFallback = false) => {
     const faturamento = summaryData.faturamento || 0;
@@ -1008,16 +1017,18 @@ Forne\xE7a a resposta em formato JSON estrito correspondente ao esquema de respo
     const distPath = path.resolve("dist");
     if (fs.existsSync(distPath)) {
       app.use(express.static(distPath));
-      app.get("*all", (_req, res) => {
+      app.get("*", (_req, res) => {
         res.sendFile(path.join(distPath, "index.html"));
       });
     } else {
-      app.get("*all", (_req, res) => {
+      app.get("*", (_req, res) => {
         res.status(500).send("Build do frontend n\xE3o encontrado.");
       });
     }
   }
-  app.listen(port, "0.0.0.0");
+  app.listen(port, "0.0.0.0", () => {
+    console.log(`Server running on http://0.0.0.0:${port}`);
+  });
 }
 startServer().catch((err) => {
   console.error("Server failed to start:", err);
