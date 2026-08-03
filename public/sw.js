@@ -1,10 +1,14 @@
 /* KitchenFlow AI - Service Worker for Courier Notifications */
 
-// Import Firebase Compat in the background Service Worker
-importScripts('https://www.gstatic.com/firebasejs/10.10.0/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/10.10.0/firebase-firestore-compat.js');
+// Import Firebase Compat safely in the background Service Worker
+try {
+  importScripts('https://www.gstatic.com/firebasejs/10.10.0/firebase-app-compat.js');
+  importScripts('https://www.gstatic.com/firebasejs/10.10.0/firebase-firestore-compat.js');
+} catch (e) {
+  console.warn('[SW] Could not import external Firebase scripts in SW:', e);
+}
 
-const CACHE_NAME = 'kitchenflow-courier-cache-v3';
+const CACHE_NAME = 'kitchenflow-courier-cache-v4';
 let firebaseApp = null;
 let firestoreDb = null;
 let ordersListener = null;
@@ -48,7 +52,7 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
   
-  // Ignore API requests and browser extension schemes
+  // Ignore API requests and non-http schemes
   if (url.pathname.startsWith('/api/') || !url.protocol.startsWith('http')) return;
 
   const isNavigation = event.request.mode === 'navigate' || 
@@ -63,14 +67,17 @@ self.addEventListener('fetch', (event) => {
             caches.open(CACHE_NAME).then((cache) => {
               // Always update the root index.html cache so offline mode has latest assets
               cache.put('/', responseToCache);
-            });
+            }).catch(() => {});
+            return networkResponse;
           } else if (!networkResponse || networkResponse.status === 404 || networkResponse.status >= 500) {
             return caches.match('/').then((cached) => cached || networkResponse);
           }
           return networkResponse;
         })
-        .catch(() => {
-          return caches.match('/').then((cachedResponse) => cachedResponse || Response.error());
+        .catch(async () => {
+          const cached = await caches.match('/');
+          if (cached) return cached;
+          return fetch(event.request);
         })
     );
     return;
@@ -84,12 +91,14 @@ self.addEventListener('fetch', (event) => {
           const responseToCache = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => {
             cache.put(event.request, responseToCache);
-          });
+          }).catch(() => {});
         }
         return networkResponse;
       })
-      .catch(() => {
-        return caches.match(event.request);
+      .catch(async () => {
+        const cached = await caches.match(event.request);
+        if (cached) return cached;
+        return new Response('', { status: 404, statusText: 'Not Found' });
       })
   );
 });

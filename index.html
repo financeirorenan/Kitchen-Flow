@@ -26,37 +26,39 @@
     <link rel="icon" type="image/svg+xml" href="/icon.svg">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            fontFamily: {
-              sans: ['Inter', 'sans-serif'],
-              display: ['Space Grotesk', 'sans-serif'],
-              mono: ['JetBrains Mono', 'monospace'],
-            },
-            colors: {
-              brand: {
-                primary: '#FF4F18', // Vibrant Red-Orange Food/Delivery Vibe
-                secondary: '#FF3B30', // Urgent Coral Red
-                black: '#111111',
-                white: '#FFFFFF',
+      if (typeof tailwind !== 'undefined') {
+        tailwind.config = {
+          theme: {
+            extend: {
+              fontFamily: {
+                sans: ['Inter', 'sans-serif'],
+                display: ['Space Grotesk', 'sans-serif'],
+                mono: ['JetBrains Mono', 'monospace'],
               },
-              indigo: {
-                50: '#FFF5F2',
-                100: '#FFE6DF',
-                500: '#FF4F18',
-                600: '#E03D0C',
-                700: '#FF3B30',
-                800: '#B82300',
-                900: '#111111',
-              },
-              slate: {
-                900: '#111111',
-                950: '#0A0A0A',
+              colors: {
+                brand: {
+                  primary: '#FF4F18', // Vibrant Red-Orange Food/Delivery Vibe
+                  secondary: '#FF3B30', // Urgent Coral Red
+                  black: '#111111',
+                  white: '#FFFFFF',
+                },
+                indigo: {
+                  50: '#FFF5F2',
+                  100: '#FFE6DF',
+                  500: '#FF4F18',
+                  600: '#E03D0C',
+                  700: '#FF3B30',
+                  800: '#B82300',
+                  900: '#111111',
+                },
+                slate: {
+                  900: '#111111',
+                  950: '#0A0A0A',
+                }
               }
             }
           }
-        }
+        };
       }
     </script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">

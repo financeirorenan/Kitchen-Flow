@@ -1077,6 +1077,8 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
           });
         }
       }
+    }, (error) => {
+      console.warn("SaaSAdmin marketplace settings snapshot error:", error);
     });
 
     const unsubSaas = onSnapshot(doc(db, 'settings', 'saas_config'), (snapshot) => {
@@ -1086,7 +1088,9 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         if (data.maxExtraOrdersLimit !== undefined) setSaasMaxExtraOrders(data.maxExtraOrdersLimit);
         if (data.enableExtraOrdersLimit !== undefined) setSaasEnableExtraLimit(data.enableExtraOrdersLimit);
         if (data.volumeDiscounts !== undefined) setSaasVolumeDiscounts(data.volumeDiscounts);
-      }
+        }
+    }, (error) => {
+      console.warn("SaaSAdmin saas_config snapshot error:", error);
     });
 
     return () => {

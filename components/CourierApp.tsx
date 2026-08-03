@@ -285,6 +285,8 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout }) => {
             .catch(err => console.warn("Lojista geocoding error in CourierApp:", err));
         }
       }
+    }, (error) => {
+      console.warn("Error subscribing to tenant settings in CourierApp:", error);
     });
 
     return () => {

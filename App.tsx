@@ -1252,6 +1252,11 @@ const App: React.FC = () => {
         loadedPlans.push({ id: doc.id, ...doc.data() } as Plan);
       });
       setPlans(loadedPlans);
+    }, (error) => {
+      console.warn("Error loading plans:", error.message);
+      if (error.message?.includes("Quota") || error.message?.includes("quota") || (error as any).code === "resource-exhausted") {
+        setQuotaExceeded(true);
+      }
     });
 
     const saasConfigUnsub = onSnapshot(doc(db, 'settings', 'saas_config'), (snapshot) => {
@@ -1266,6 +1271,11 @@ const App: React.FC = () => {
             { threshold: 1000, discountPercent: 20 }
           ]
         });
+      }
+    }, (error) => {
+      console.warn("Error loading saas_config:", error.message);
+      if (error.message?.includes("Quota") || error.message?.includes("quota") || (error as any).code === "resource-exhausted") {
+        setQuotaExceeded(true);
       }
     });
 

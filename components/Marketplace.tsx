@@ -803,6 +803,9 @@ const Marketplace: React.FC<MarketplaceProps> = ({
           setMarketplaceSettings(snapshot.data() as MarketplaceSettings);
         }
       },
+      (error) => {
+        console.warn("Erro ao carregar configurações do marketplace:", error);
+      },
     );
 
     const unsubscribeSettings = onSnapshot(
@@ -856,6 +859,8 @@ const Marketplace: React.FC<MarketplaceProps> = ({
         (doc) => ({ ...doc.data(), id: doc.id }) as Order,
       );
       setActiveOrders(orders);
+    }, (error) => {
+      console.warn("Erro ao monitorar pedidos ativos:", error);
     });
 
     return () => unsubscribe();
@@ -885,6 +890,8 @@ const Marketplace: React.FC<MarketplaceProps> = ({
           return dateB - dateA;
         });
       setOrderHistory(orders);
+    }, (error) => {
+      console.warn("Erro ao buscar histórico de pedidos:", error);
     });
 
     return () => unsubscribe();
@@ -907,6 +914,9 @@ const Marketplace: React.FC<MarketplaceProps> = ({
             id: snapshot.id,
           } as Courier);
         }
+      },
+      (error) => {
+        console.warn("Erro ao monitorar dados do entregador:", error);
       },
     );
 
