@@ -6376,7 +6376,9 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
-      <PwaInstallPrompt />
+      {(currentProject === 'COURIER' || currentProject === 'MARKETPLACE' || activeTab === 'courier-app' || activeTab === 'marketplace' || location.pathname.startsWith('/entregador') || location.pathname.startsWith('/cardapio') || location.pathname.startsWith('/marketplace') || location.pathname.startsWith('/c/') || location.pathname.startsWith('/m/')) && (
+        <PwaInstallPrompt />
+      )}
     </div>
   );
 };

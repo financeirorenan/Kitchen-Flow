@@ -40,7 +40,28 @@ export const PwaInstallPrompt: React.FC<{ compact?: boolean }> = ({ compact = fa
     };
   }, []);
 
+  // Verify if current path is allowed (only Entregador and Cardápio Digital)
+  const isAllowedPath = () => {
+    if (typeof window === 'undefined') return false;
+    const path = window.location.pathname.toLowerCase();
+    return (
+      path.startsWith('/entregador') ||
+      path.startsWith('/motoboy') ||
+      path.startsWith('/courier') ||
+      path.startsWith('/cardapio') ||
+      path.startsWith('/marketplace') ||
+      path.startsWith('/c/') ||
+      path.startsWith('/m/') ||
+      path.startsWith('/menu')
+    );
+  };
+
   if (isStandalone || dismissed) {
+    return null;
+  }
+
+  // Floating banner should ONLY show for Entregador and Cardápio Digital
+  if (!compact && !isAllowedPath()) {
     return null;
   }
 
