@@ -4,7 +4,7 @@
 importScripts('https://www.gstatic.com/firebasejs/10.10.0/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.10.0/firebase-firestore-compat.js');
 
-const CACHE_NAME = 'kitchenflow-courier-cache-v2';
+const CACHE_NAME = 'kitchenflow-courier-cache-v3';
 let firebaseApp = null;
 let firestoreDb = null;
 let ordersListener = null;
@@ -19,7 +19,6 @@ self.addEventListener('install', (event) => {
     caches.open(CACHE_NAME).then((cache) => {
       return cache.addAll([
         '/',
-        '/marketplace',
         '/manifest.json',
         '/icon-192.png',
         '/icon-512.png',
@@ -44,7 +43,7 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch handler for PWA caching and offline fallback (Network First)
+// Fetch handler for PWA caching and offline fallback (Network First for navigation)
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
@@ -55,14 +54,33 @@ self.addEventListener('fetch', (event) => {
   const isNavigation = event.request.mode === 'navigate' || 
                        (event.request.headers.get('accept') && event.request.headers.get('accept').includes('text/html'));
 
+  if (isNavigation) {
+    event.respondWith(
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const responseToCache = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              // Always update the root index.html cache so offline mode has latest assets
+              cache.put('/', responseToCache);
+            });
+          } else if (!networkResponse || networkResponse.status === 404 || networkResponse.status >= 500) {
+            return caches.match('/').then((cached) => cached || networkResponse);
+          }
+          return networkResponse;
+        })
+        .catch(() => {
+          return caches.match('/').then((cachedResponse) => cachedResponse || Response.error());
+        })
+    );
+    return;
+  }
+
+  // Static assets (js, css, images, fonts)
   event.respondWith(
     fetch(event.request)
       .then((networkResponse) => {
-        // If the server returns a 404 or server error for a SPA page navigation, fallback to index.html ('/')
-        if (isNavigation && (!networkResponse || networkResponse.status === 404 || networkResponse.status >= 500)) {
-          return caches.match('/').then((cached) => cached || networkResponse);
-        }
-        if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
+        if (networkResponse && networkResponse.status === 200 && (networkResponse.type === 'basic' || networkResponse.type === 'cors')) {
           const responseToCache = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => {
             cache.put(event.request, responseToCache);
@@ -71,12 +89,7 @@ self.addEventListener('fetch', (event) => {
         return networkResponse;
       })
       .catch(() => {
-        return caches.match(event.request).then((cachedResponse) => {
-          if (cachedResponse) return cachedResponse;
-          if (isNavigation) {
-            return caches.match('/');
-          }
-        });
+        return caches.match(event.request);
       })
   );
 });

@@ -971,6 +971,10 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
     // Fallback absoluto para modo dev (garante que F5 / recarregar / voltar receba index.html)
     app.use(async (req, res, next) => {
       if (req.method === "GET" && !req.path.startsWith("/api/")) {
+        const ext = path.extname(req.path);
+        if (ext && ext !== '.html') {
+          return res.status(404).send("Arquivo estático não encontrado.");
+        }
         try {
           const indexPath = path.resolve("index.html");
           if (fs.existsSync(indexPath)) {
@@ -1000,6 +1004,10 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
 
       app.use((req, res) => {
         if (req.method === "GET" && !req.path.startsWith("/api/")) {
+          const ext = path.extname(req.path);
+          if (ext && ext !== '.html') {
+            return res.status(404).send("Arquivo estático não encontrado.");
+          }
           return res.sendFile(path.join(distPath, "index.html"));
         }
         res.status(404).json({ error: "Rota API não encontrada" });
