@@ -435,6 +435,7 @@ const App: React.FC = () => {
       path.startsWith('/marketplace') || 
       path.startsWith('/perfil') || 
       path.startsWith('/cardapio') || 
+      path.startsWith('/cardapio-digital') || 
       path.startsWith('/c/') || 
       path.startsWith('/m/') || 
       path.startsWith('/menu')
@@ -447,7 +448,7 @@ const App: React.FC = () => {
     if (path.startsWith('/entregador')) {
       return 'COURIER';
     }
-    if (path.startsWith('/lojista') || path.startsWith('/painel') || path.startsWith('/admin') || path.startsWith('/loja') || path.startsWith('/pdv') || path.startsWith('/mesas') || path.startsWith('/financeiro') || path.startsWith('/kds') || path.startsWith('/cardapio-digital') || path.startsWith('/estoque') || path.startsWith('/suporte') || path.startsWith('/relatorios') || path.startsWith('/insights') || path.startsWith('/configuracoes')) {
+    if (path.startsWith('/lojista') || path.startsWith('/painel') || path.startsWith('/admin') || path.startsWith('/loja') || path.startsWith('/pdv') || path.startsWith('/mesas') || path.startsWith('/financeiro') || path.startsWith('/kds') || path.startsWith('/estoque') || path.startsWith('/suporte') || path.startsWith('/relatorios') || path.startsWith('/insights') || path.startsWith('/configuracoes')) {
       return 'RESTAURANT';
     }
     if (path.startsWith('/saas')) {
@@ -619,6 +620,7 @@ const App: React.FC = () => {
       path.startsWith('/marketplace') || 
       path.startsWith('/perfil') || 
       path.startsWith('/cardapio') || 
+      path.startsWith('/cardapio-digital') || 
       path.startsWith('/c/') || 
       path.startsWith('/m/') || 
       path.startsWith('/menu')
@@ -650,7 +652,7 @@ const App: React.FC = () => {
       }
       if (currentProject !== 'PLATFORM') setCurrentProject('PLATFORM');
       if (activeTab === 'merchant-copilot') setActiveTab('saas-admin');
-    } else if (path.startsWith('/lojista') || path.startsWith('/painel') || path.startsWith('/admin') || path.startsWith('/loja') || path.startsWith('/pdv') || path.startsWith('/mesas') || path.startsWith('/financeiro') || path.startsWith('/kds') || path.startsWith('/cardapio-digital') || path.startsWith('/estoque') || path.startsWith('/suporte') || path.startsWith('/relatorios') || path.startsWith('/insights') || path.startsWith('/configuracoes')) {
+    } else if (path.startsWith('/lojista') || path.startsWith('/painel') || path.startsWith('/admin') || path.startsWith('/loja') || path.startsWith('/pdv') || path.startsWith('/mesas') || path.startsWith('/financeiro') || path.startsWith('/kds') || path.startsWith('/estoque') || path.startsWith('/suporte') || path.startsWith('/relatorios') || path.startsWith('/insights') || path.startsWith('/configuracoes')) {
       if (authLoading) return; // Aguarda autenticação
       if (currentUserData) {
         if (currentUserData.role === 'COURIER') {

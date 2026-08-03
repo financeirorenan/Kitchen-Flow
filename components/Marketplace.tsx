@@ -471,7 +471,13 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   >("home");
 
   const isDirectCardapioRoute = useMemo(() => {
-    return location.pathname.startsWith('/cardapio') || location.pathname.startsWith('/c/') || location.pathname.startsWith('/m/');
+    return (
+      location.pathname.startsWith('/cardapio') || 
+      location.pathname.startsWith('/cardapio-digital') || 
+      location.pathname.startsWith('/c/') || 
+      location.pathname.startsWith('/m/') || 
+      location.pathname.startsWith('/menu')
+    );
   }, [location.pathname]);
 
   useEffect(() => {
@@ -990,14 +996,17 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     if (routeTenantId) {
       const targetNorm = normalizeSlug(routeTenantId);
 
-      // Try matching by exact ID, customSlug, or normalized name in currently loaded tenants
+      // Try matching by exact ID, customSlug, t.slug, or normalized name in currently loaded tenants
       let tenant = tenants.find((t) => {
         const tSettings = tenantsSettings[t.id];
         const customSlug = tSettings?.digitalMenu?.customSlug;
+        const tenantSlug = (t as any).slug;
         if (customSlug && normalizeSlug(customSlug) === targetNorm) return true;
+        if (tenantSlug && normalizeSlug(tenantSlug) === targetNorm) return true;
         return (
           t.id === routeTenantId || 
           t.id.toLowerCase() === routeTenantId.toLowerCase() ||
+          (tenantSlug && tenantSlug.toLowerCase() === routeTenantId.toLowerCase()) ||
           normalizeSlug(t.name) === targetNorm ||
           normalizeSlug(t.id) === targetNorm
         );
@@ -1031,10 +1040,13 @@ const Marketplace: React.FC<MarketplaceProps> = ({
             const matchedBySlug = allTenants.find(t => {
               const tSettings = tenantsSettings[t.id];
               const customSlug = tSettings?.digitalMenu?.customSlug;
+              const tenantSlug = (t as any).slug;
               if (customSlug && normalizeSlug(customSlug) === targetNorm) return true;
+              if (tenantSlug && normalizeSlug(tenantSlug) === targetNorm) return true;
               return (
                 t.id === routeTenantId ||
                 t.id.toLowerCase() === routeTenantId.toLowerCase() ||
+                (tenantSlug && tenantSlug.toLowerCase() === routeTenantId.toLowerCase()) ||
                 normalizeSlug(t.name) === targetNorm ||
                 normalizeSlug(t.id) === targetNorm
               );
@@ -1082,9 +1094,9 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     const cleanNameSlug = tenant.name 
       ? tenant.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
       : '';
-    const preferredSlug = customSlug || cleanNameSlug || tenant.id;
+    const preferredSlug = customSlug || (tenant as any).slug || cleanNameSlug || tenant.id;
 
-    const isCardapioRoute = location.pathname.startsWith('/cardapio') || location.pathname.startsWith('/c/') || location.pathname.startsWith('/m/');
+    const isCardapioRoute = location.pathname.startsWith('/cardapio') || location.pathname.startsWith('/cardapio-digital') || location.pathname.startsWith('/c/') || location.pathname.startsWith('/m/') || location.pathname.startsWith('/menu');
     if (isCardapioRoute) {
       navigate(`/cardapio/${preferredSlug}`);
     } else {
