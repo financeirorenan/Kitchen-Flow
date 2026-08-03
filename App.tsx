@@ -726,7 +726,38 @@ const App: React.FC = () => {
       } else if (subPath === 'parceiros' || subPath === 'partners') {
         targetTab = 'partner-hub';
       } else if (subPath === 'copilot' || subPath === '' || subPath === 'dashboard') {
-        targetTab = 'merchant-copilot';
+        if (currentUserData) {
+          const userPerms = getUserPermissions(currentUserData);
+          const hasKDSKitchenOnly = userPerms.includes('kds_kitchen_only_view');
+          const isKDSOnlyUser = (hasKDSKitchenOnly || currentUserData.role === 'KDS') && 
+            !userPerms.includes('admin_settings_manage') && 
+            !userPerms.includes('finance_view') &&
+            !userPerms.includes('pos_access') &&
+            !userPerms.includes('tables_manage');
+
+          if (isKDSOnlyUser) {
+            targetTab = 'kds-kitchen-only';
+          } else {
+            const isOwnerOrAdmin = currentUserData.role === 'OWNER' || currentUserData.role === 'ADMIN' || isSuperAdmin;
+            if (!isOwnerOrAdmin && !userPerms.includes('finance_view')) {
+              if (userPerms.includes('pos_access')) targetTab = 'pos';
+              else if (userPerms.includes('tables_manage')) targetTab = 'tables';
+              else if (userPerms.includes('kds_view')) targetTab = 'kds';
+              else if (userPerms.includes('kds_kitchen_only_view')) targetTab = 'kds-kitchen-only';
+              else if (userPerms.includes('delivery_manage')) targetTab = 'delivery';
+              else if (userPerms.includes('digital_menu_manage')) targetTab = 'digital-menu';
+              else if (userPerms.includes('customers_manage')) targetTab = 'customers';
+              else if (userPerms.includes('inventory_edit')) targetTab = 'inventory';
+              else if (userPerms.includes('users_manage')) targetTab = 'users';
+              else if (userPerms.includes('admin_settings_manage')) targetTab = 'settings';
+              else targetTab = 'support';
+            } else {
+              targetTab = 'merchant-copilot';
+            }
+          }
+        } else {
+          targetTab = 'merchant-copilot';
+        }
       }
 
       if (activeTab !== targetTab) {
@@ -1690,6 +1721,8 @@ const App: React.FC = () => {
     if (isKDSOnlyUser) {
       if (activeTab !== 'kds-kitchen-only') {
         setActiveTab('kds-kitchen-only');
+        const targetTenant = currentUserData?.tenantId || viewingTenantId || tenantData?.slug || 'default-tenant';
+        navigate(`/lojista/${targetTenant}/kds-cozinha`, { replace: true });
       }
       return;
     }
@@ -1705,6 +1738,7 @@ const App: React.FC = () => {
     // Verify if activeTab matches permitted menus
     const tabPermissions: Record<string, string> = {
       'merchant-copilot': 'finance_view',
+      'pos': 'pos_access',
       'tables': 'tables_manage',
       'kds': 'kds_view',
       'kds-kitchen-only': 'kds_kitchen_only_view',
@@ -1730,6 +1764,7 @@ const App: React.FC = () => {
         // Active tab is not allowed, redirect to first allowed tab
         const menuTabsOrder = [
           { tab: 'merchant-copilot', perm: 'finance_view' },
+          { tab: 'pos', perm: 'pos_access' },
           { tab: 'tables', perm: 'tables_manage' },
           { tab: 'kds', perm: 'kds_view' },
           { tab: 'kds-kitchen-only', perm: 'kds_kitchen_only_view' },
@@ -1750,10 +1785,13 @@ const App: React.FC = () => {
           return userPerms.includes(m.perm as any);
         });
 
+        const targetTenant = currentUserData?.tenantId || viewingTenantId || tenantData?.slug || 'default-tenant';
         if (firstAllowed) {
           setActiveTab(firstAllowed.tab);
+          navigate(getTabUrl(firstAllowed.tab, targetTenant), { replace: true });
         } else {
           setActiveTab('support');
+          navigate(getTabUrl('support', targetTenant), { replace: true });
         }
       }
     }
