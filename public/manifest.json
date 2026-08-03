@@ -1,6 +1,6 @@
 {
-  "short_name": "KitchenFlow",
-  "name": "KitchenFlow AI - Gestão, Marketplace e Entregas",
+  "short_name": "Marketplace",
+  "name": "Marketplace - Pedidos & Cardápio Digital",
   "icons": [
     {
       "src": "/icon-192.png",
@@ -21,11 +21,11 @@
       "purpose": "any maskable"
     }
   ],
-  "start_url": "/",
+  "start_url": "/marketplace",
   "background_color": "#111111",
   "theme_color": "#FF4F18",
   "display": "standalone",
   "orientation": "portrait-primary",
   "scope": "/",
-  "description": "Aplicativo PWA para Pedidos, Marketplace e Entregadores do KitchenFlow AI"
+  "description": "Aplicativo de Pedidos e Cardápio Digital do Marketplace"
 }

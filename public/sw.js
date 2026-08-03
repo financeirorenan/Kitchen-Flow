@@ -19,6 +19,7 @@ self.addEventListener('install', (event) => {
     caches.open(CACHE_NAME).then((cache) => {
       return cache.addAll([
         '/',
+        '/marketplace',
         '/manifest.json',
         '/icon-192.png',
         '/icon-512.png',
