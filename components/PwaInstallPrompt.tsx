@@ -40,14 +40,24 @@ export const PwaInstallPrompt: React.FC<{ compact?: boolean }> = ({ compact = fa
     };
   }, []);
 
-  // Verify if current path is allowed (only Entregador and Cardápio Digital)
+  // Verify if current path is allowed (EXCLUSIVELY Cardápio Digital / Marketplace)
   const isAllowedPath = () => {
     if (typeof window === 'undefined') return false;
     const path = window.location.pathname.toLowerCase();
+    
+    // Explicitly reject Lojista, SaaS, Admin, KDS, Entregador
+    if (
+      path.includes('/lojista') || 
+      path.includes('/saas') || 
+      path.includes('/admin') || 
+      path.includes('/entregador') ||
+      path.includes('/courier') ||
+      path.includes('/motoboy')
+    ) {
+      return false;
+    }
+
     return (
-      path.startsWith('/entregador') ||
-      path.startsWith('/motoboy') ||
-      path.startsWith('/courier') ||
       path.startsWith('/cardapio') ||
       path.startsWith('/marketplace') ||
       path.startsWith('/c/') ||
@@ -56,12 +66,7 @@ export const PwaInstallPrompt: React.FC<{ compact?: boolean }> = ({ compact = fa
     );
   };
 
-  if (isStandalone || dismissed) {
-    return null;
-  }
-
-  // Floating banner should ONLY show for Entregador and Cardápio Digital
-  if (!compact && !isAllowedPath()) {
+  if (isStandalone || dismissed || !isAllowedPath()) {
     return null;
   }
 

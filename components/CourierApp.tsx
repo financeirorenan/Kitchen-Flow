@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { PwaInstallPrompt } from './PwaInstallPrompt';
 import { db, auth } from '../firebase';
 import firebaseConfig from '../firebase-applet-config.json';
 import { 
@@ -1006,7 +1005,6 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout }) => {
            </div>
         </div>
         <div className="flex items-center gap-2">
-          <PwaInstallPrompt compact />
           <button 
              onClick={() => {
                if (onLogout) {
