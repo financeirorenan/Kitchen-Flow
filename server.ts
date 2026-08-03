@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import cors from "cors";
+import compression from "compression";
 import dotenv from "dotenv";
 import fs from "fs";
 
@@ -76,6 +77,7 @@ async function startServer() {
   const port = Number(process.env.PORT) || 3000;
 
   app.use(cors());
+  app.use(compression());
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true }));
 
@@ -986,7 +988,15 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
     const distPath = path.resolve("dist");
 
     if (fs.existsSync(distPath)) {
-      app.use(express.static(distPath));
+      app.use(express.static(distPath, {
+        maxAge: '1d',
+        etag: true,
+        setHeaders: (res, filePath) => {
+          if (filePath.includes('/assets/')) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          }
+        }
+      }));
 
       app.use((req, res) => {
         if (req.method === "GET" && !req.path.startsWith("/api/")) {
