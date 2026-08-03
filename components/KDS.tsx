@@ -596,16 +596,15 @@ const KDS: React.FC<KDSProps> = memo(({
         )}
         
         <div className="flex-1 p-3 overflow-y-auto space-y-4 custom-scrollbar-kds relative min-h-0">
-          <AnimatePresence mode="popLayout" initial={false}>
+          <AnimatePresence initial={false}>
             {orders.length > 0 ? (
               orders.map(order => (
                 <motion.div
                   key={order.id}
-                  layout
-                  initial={{ opacity: 0, scale: 0.9, y: 20 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.8, x: -20 }}
-                  transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  transition={{ duration: 0.15 }}
                 >
                   <OrderCard order={order} />
                 </motion.div>

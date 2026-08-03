@@ -240,13 +240,13 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
   };
 
   // Custom component for the elapsed timer (live updates)
-  const TimerBadge: React.FC<{ createdAt: Date }> = ({ createdAt }) => {
-    const [seconds, setSeconds] = useState(0);
+  const TimerBadge: React.FC<{ createdAt: Date }> = React.memo(({ createdAt }) => {
+    const [, setTick] = useState(0);
 
     useEffect(() => {
       const interval = setInterval(() => {
-        setSeconds(prev => prev + 1);
-      }, 5000); // update color stats every 5 seconds
+        setTick(t => t + 1);
+      }, 10000); // update color stats every 10 seconds safely
       return () => clearInterval(interval);
     }, []);
 
@@ -254,14 +254,16 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
 
     return (
       <div className={`flex items-center gap-1 p-1 px-2.5 rounded-full border text-[10px] font-black tracking-wider ${colorClass}`}>
-        <Clock size={11} className="animate-pulse" />
+        <Clock size={11} />
         <span>{minutes} MIN</span>
       </div>
     );
-  };
+  });
 
   return (
-    <div className={`flex flex-col flex-1 rounded-3xl border shadow-2xl overflow-hidden h-full min-h-0 select-none transition-colors duration-300 ${
+    <div 
+      style={{ touchAction: 'manipulation' }}
+      className={`flex flex-col flex-1 rounded-3xl border shadow-2xl overflow-hidden h-full min-h-0 select-none transition-colors duration-300 touch-manipulation overscroll-contain ${
       isLight ? 'bg-slate-100 text-slate-800 border-slate-200' : 'bg-slate-950 text-slate-100 border-slate-900'
     }`}>
       
@@ -273,7 +275,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
           <div className={`p-3 rounded-2xl border shadow-lg ${
             isLight ? 'bg-rose-50 text-rose-600 border-rose-200' : 'bg-rose-500/10 text-rose-500 border-rose-500/20'
           }`}>
-            <ChefHat size={24} className="animate-bounce" />
+            <ChefHat size={24} />
           </div>
           <div>
             <h1 className={`text-lg sm:text-xl font-black uppercase tracking-wider flex items-center gap-2 ${
@@ -408,7 +410,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
       }`}>
         {filteredKitchenOrders.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            <AnimatePresence mode="popLayout">
+            <AnimatePresence>
               {filteredKitchenOrders.map(order => {
                 const isPreparing = order.status === 'preparing';
                 
@@ -421,11 +423,10 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                 return (
                   <motion.div
                     key={order.id}
-                    layout
-                    initial={{ opacity: 0, scale: 0.9 }}
+                    initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.8 }}
-                    transition={{ type: "spring", stiffness: 220, damping: 22 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    transition={{ duration: 0.15 }}
                     className={`border rounded-3xl flex flex-col overflow-hidden shadow-xl transition-all relative h-[420px] ${
                       isLight
                         ? isPreparing

@@ -292,7 +292,7 @@ export const MonitorPedidos: React.FC<MonitorPedidosProps> = ({ orders }) => {
           <div className="flex-1 p-4 sm:p-6 overflow-y-auto space-y-3 custom-scrollbar-monitor">
             {preparingOrders.length > 0 ? (
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                <AnimatePresence mode="popLayout">
+                <AnimatePresence>
                   {preparingOrders.map(order => (
                     <motion.div
                       key={order.id}
@@ -354,7 +354,7 @@ export const MonitorPedidos: React.FC<MonitorPedidosProps> = ({ orders }) => {
           <div className="flex-1 p-4 sm:p-6 overflow-y-auto space-y-3 custom-scrollbar-monitor">
             {readyOrders.length > 0 ? (
               <div className="grid grid-cols-2 sm:grid-cols-2 gap-4">
-                <AnimatePresence mode="popLayout">
+                <AnimatePresence>
                   {readyOrders.map(order => (
                     <motion.div
                       key={order.id}

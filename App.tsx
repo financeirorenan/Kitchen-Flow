@@ -5434,7 +5434,7 @@ const App: React.FC = () => {
                 </header>
               )}
 
-              <div className={`flex-1 custom-scrollbar ${isKDSOnlyUser ? 'h-screen max-h-screen overflow-hidden flex flex-col p-0' : (activeTab === 'kds' || activeTab === 'kds-kitchen-only' || activeTab === 'order-monitor') ? 'h-[calc(100vh-64px)] lg:h-[calc(100vh-20px)] overflow-hidden flex flex-col p-1' : 'overflow-y-auto max-h-screen p-1'}`}>
+              <div className={`flex-1 custom-scrollbar ${isKDSOnlyUser ? 'h-screen max-h-screen overflow-hidden flex flex-col p-0' : (activeTab === 'kds' || activeTab === 'kds-kitchen-only' || activeTab === 'order-monitor') ? 'h-[calc(100dvh-64px)] lg:h-[calc(100dvh-20px)] overflow-hidden flex flex-col p-1' : 'overflow-y-auto max-h-screen p-1'}`}>
           {currentProject === 'PLATFORM' && isSuperAdmin ? (
             <SaaSAdmin 
               activeTab={activeTab}
