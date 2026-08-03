@@ -353,7 +353,15 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   profile,
   onUpdateProfile,
 }) => {
-  const { tenantId: routeTenantId } = useParams<{ tenantId: string }>();
+  const params = useParams<{ tenantId?: string; "*"?: string }>();
+  const location = useLocation();
+  let routeTenantId = params.tenantId;
+  if (!routeTenantId) {
+    const parts = location.pathname.split('/').filter(Boolean);
+    if (parts.length > 1 && ['cardapio', 'cardapio-digital', 'c', 'm', 'menu', 'marketplace'].includes(parts[0].toLowerCase())) {
+      routeTenantId = parts[1];
+    }
+  }
   const navigate = useNavigate();
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [tenantsSettings, setTenantsSettings] = useState<Record<string, any>>({});
@@ -461,8 +469,6 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   const [navView, setNavView] = useState<
     "home" | "orders" | "favorites" | "profile"
   >("home");
-
-  const location = useLocation();
 
   const isDirectCardapioRoute = useMemo(() => {
     return location.pathname.startsWith('/cardapio') || location.pathname.startsWith('/c/') || location.pathname.startsWith('/m/');

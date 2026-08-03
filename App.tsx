@@ -431,7 +431,14 @@ const App: React.FC = () => {
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(true);
   const [currentProject, setCurrentProject] = useState<'PLATFORM' | 'RESTAURANT' | 'MARKETPLACE' | 'COURIER' | 'WEBSITE'>(() => {
     const path = typeof window !== 'undefined' ? window.location.pathname : '/';
-    if (path.startsWith('/marketplace') || path.startsWith('/perfil') || path.startsWith('/cardapio') || path.startsWith('/c/') || path.startsWith('/m/')) {
+    if (
+      path.startsWith('/marketplace') || 
+      path.startsWith('/perfil') || 
+      path.startsWith('/cardapio') || 
+      path.startsWith('/c/') || 
+      path.startsWith('/m/') || 
+      path.startsWith('/menu')
+    ) {
       return 'MARKETPLACE';
     }
     if (path === '/' || path.startsWith('/site') || path.startsWith('/kitchenflow')) {
@@ -608,7 +615,14 @@ const App: React.FC = () => {
       return;
     }
 
-    if (path.startsWith('/marketplace') || path.startsWith('/perfil') || path.startsWith('/cardapio') || path.startsWith('/c/') || path.startsWith('/m/')) {
+    if (
+      path.startsWith('/marketplace') || 
+      path.startsWith('/perfil') || 
+      path.startsWith('/cardapio') || 
+      path.startsWith('/c/') || 
+      path.startsWith('/m/') || 
+      path.startsWith('/menu')
+    ) {
       if (currentProject !== 'MARKETPLACE') setCurrentProject('MARKETPLACE');
     } else if (path === '/' || path.startsWith('/site') || path.startsWith('/kitchenflow')) {
       if (currentProject !== 'WEBSITE') setCurrentProject('WEBSITE');
@@ -5179,7 +5193,7 @@ const App: React.FC = () => {
     }
   };
 
-  const isCardapioRoute = location.pathname.startsWith('/cardapio') || location.pathname.startsWith('/c/') || location.pathname.startsWith('/m/');
+  const isCardapioRoute = location.pathname.startsWith('/cardapio') || location.pathname.startsWith('/c/') || location.pathname.startsWith('/m/') || location.pathname.startsWith('/menu') || location.pathname.startsWith('/cardapio-digital');
   const isMarketplaceRoute = location.pathname.startsWith('/marketplace') || location.pathname.startsWith('/perfil') || isCardapioRoute;
   const isWebsiteRoute = (location.pathname.startsWith('/site') || location.pathname.startsWith('/kitchenflow') || location.pathname === '/' || location.pathname === '/login') && !isCardapioRoute;
   const isPublicRoute = isMarketplaceRoute || isWebsiteRoute || isCardapioRoute;
@@ -5398,7 +5412,15 @@ const App: React.FC = () => {
                  )
                ) : <Login onLoginSuccess={() => {}} />
             } />
-            {["/marketplace", "/marketplace/:tenantId", "/cardapio", "/cardapio/:tenantId", "/c/:tenantId", "/m/:tenantId", "/perfil"].map((path) => (
+            {[
+              "/marketplace", "/marketplace/*", "/marketplace/:tenantId",
+              "/cardapio", "/cardapio/*", "/cardapio/:tenantId",
+              "/cardapio-digital", "/cardapio-digital/*", "/cardapio-digital/:tenantId",
+              "/c/*", "/c/:tenantId",
+              "/m/*", "/m/:tenantId",
+              "/menu/*", "/menu/:tenantId",
+              "/perfil"
+            ].map((path) => (
               <Route 
                 key={path}
                 path={path} 
