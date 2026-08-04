@@ -1567,8 +1567,9 @@ const Tables: React.FC<TablesProps> = memo(
           ? parseFloat(customSplitValue)
           : remainingBalance;
 
+      setSelectedPaymentMethod(method);
+
       if (method === "dinheiro" || methodType === "cash") {
-        setSelectedPaymentMethod(method);
         setAmountReceived("");
         setShowChangeModal(true);
         return;
@@ -1686,7 +1687,7 @@ const Tables: React.FC<TablesProps> = memo(
         setCustomerPhone("");
         setIsSplitting(false);
         setSplitParts([]);
-      }, 1500);
+      }, 0);
     };
 
     const finishCashPayment = () => {
@@ -1790,7 +1791,7 @@ const Tables: React.FC<TablesProps> = memo(
         setIsDeliveryOrder(false);
         setDeliveryAddress("");
         setDeliveryFeeInput("0");
-      }, 1000);
+      }, 0);
     };
 
     const finishSplitPayment = (finalParts?: SplitPart[]) => {
@@ -1835,7 +1836,7 @@ const Tables: React.FC<TablesProps> = memo(
         setDeliveryAddress("");
         setDeliveryFeeInput("0");
         setSelectedCustomerId("");
-      }, 2000);
+      }, 0);
     };
 
     const handleEmitPartialFiscal = async (partId: string) => {
@@ -2014,7 +2015,7 @@ const Tables: React.FC<TablesProps> = memo(
         setDeliveryFeeInput("0");
         setIsSplitting(false);
         setSplitParts([]);
-      }, 1500);
+      }, 0);
     };
 
     const getPaidQtyForItem = useCallback((idx: number) => {

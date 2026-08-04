@@ -587,6 +587,9 @@ const App: React.FC = () => {
         return `/lojista/${currentTenant}/marketplace`;
       case 'support':
         return `/lojista/${currentTenant}/suporte`;
+      case 'order-monitor':
+      case 'monitor-pedidos':
+        return `/lojista/${currentTenant}/monitor-pedidos`;
       case 'intelligent-reports':
         return `/lojista/${currentTenant}/relatorios`;
       case 'ai-insights':
@@ -748,6 +751,8 @@ const App: React.FC = () => {
         targetTab = 'marketplace-config';
       } else if (subPath === 'suporte' || subPath === 'support') {
         targetTab = 'support';
+      } else if (subPath === 'monitor-pedidos' || subPath === 'order-monitor' || subPath === 'monitor') {
+        targetTab = 'order-monitor';
       } else if (subPath === 'relatorios' || subPath === 'reports') {
         targetTab = 'intelligent-reports';
       } else if (subPath === 'insights') {
@@ -4077,68 +4082,69 @@ const App: React.FC = () => {
     }
 
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
-    if (effectiveTenantId) {
-      await setDoc(doc(db, 'orders', newOrder.id), cleanObject({
-        ...newOrder
-      }));
-      // OPTIMISTIC LOCAL STATE UPDATE - CRITICAL FOR REALTIME RESPONSIVENESS AND IMMEDIATE TOTALS
-      setOrders(prev => deduplicateOrders([newOrder, ...prev.filter(o => o.id !== newOrder.id && o.docId !== newOrder.id)]));
-      
-      if (!isCounter) {
-        // RESET ROBUSTO DA MESA
-        const resetData = { 
-          items: [], 
-          status: 'available' as const, 
-          total: 0, 
-          currentOrderId: null, 
-          partialPayments: [],
-          updatedAt: new Date() 
-        };
+    const resetData = { 
+      items: [], 
+      status: 'available' as const, 
+      total: 0, 
+      currentOrderId: null, 
+      partialPayments: [],
+      updatedAt: new Date() 
+    };
 
+    // 1. UPDATE LOCAL REACT STATE INSTANTLY FOR OPTIMISTIC FEEDBACK
+    setOrders(prev => deduplicateOrders([newOrder, ...prev.filter(o => o.id !== newOrder.id && o.docId !== newOrder.id)]));
+    if (!isCounter) {
+      setTables(prev => prev.map(t => (String(t.id) === String(tableId) || String(t.number) === String(tableNumber) || (t as any).docId === docId) ? { ...t, ...resetData } : t));
+    }
+
+    // 2. ALWAYS PERSIST TO LOCAL INDEXEDDB IMMEDIATELY
+    try {
+      await localDb.orders.put(newOrder);
+      if (!isCounter) {
+        await localDb.diningTables.toCollection().modify(t => {
+          if (String(t.id) === String(tableId) || String(t.number) === String(tableNumber)) {
+            t.items = [];
+            t.status = 'available';
+            t.total = 0;
+            t.currentOrderId = undefined;
+            t.partialPayments = [];
+          }
+        });
+      }
+    } catch (e) {
+      console.warn("Error updating localDb on close table:", e);
+    }
+
+    // 3. ASYNCHRONOUS NON-BLOCKING FIRESTORE PERSISTENCE
+    if (effectiveTenantId) {
+      try {
+        await setDoc(doc(db, 'orders', newOrder.id), cleanObject({ ...newOrder }));
+      } catch (e) {
+        console.warn("Error syncing order to Firestore on close table:", e);
+      }
+
+      if (!isCounter) {
         if (docId) {
           try {
             await updateDoc(doc(db, 'diningTables', docId), resetData);
           } catch (e) {
-            console.error("Error updating table by docId:", e);
+            console.warn("Error updating diningTable by docId:", e);
           }
-        }
-        
-        try {
-          const q = query(collection(db, 'diningTables'), where('tenantId', '==', effectiveTenantId));
-          const snapshot = await getDocs(q);
-          for (const d of snapshot.docs) {
-            const data = d.data();
-            if (String(data.id) === String(tableId) || String(data.number) === String(tableNumber) || d.id === docId) {
+        } else {
+          try {
+            const q = query(
+              collection(db, 'diningTables'), 
+              where('tenantId', '==', effectiveTenantId),
+              where('number', '==', Number(tableNumber))
+            );
+            const snapshot = await getDocs(q);
+            for (const d of snapshot.docs) {
               await updateDoc(d.ref, resetData);
             }
+          } catch (e) {
+            console.warn("Error querying and updating diningTables:", e);
           }
-        } catch (e) {
-          console.error("Error querying and updating diningTables:", e);
         }
-        
-        // Atualizar local para garantir feedback instantâneo
-        setTables(prev => prev.map(t => (String(t.id) === String(tableId) || String(t.number) === String(tableNumber) || (t as any).docId === docId) ? { ...t, ...resetData } : t));
-      }
-    } else {
-      await localDb.orders.put(newOrder);
-      setOrders(prev => deduplicateOrders([newOrder, ...prev.filter(o => o.id !== newOrder.id && o.docId !== newOrder.id)]));
-      
-      if (!isCounter) {
-        const resetData = { items: [], status: 'available' as const, total: 0, currentOrderId: undefined, partialPayments: [] };
-        try {
-          await localDb.diningTables.toCollection().modify(t => {
-            if (String(t.id) === String(tableId) || String(t.number) === String(tableNumber)) {
-              t.items = [];
-              t.status = 'available';
-              t.total = 0;
-              t.currentOrderId = undefined;
-              t.partialPayments = [];
-            }
-          });
-        } catch (e) {
-          await localDb.diningTables.update(tableId, resetData);
-        }
-        setTables(prev => prev.map(t => (String(t.id) === String(tableId) || String(t.number) === String(tableNumber)) ? { ...t, ...resetData } : t));
       }
     }
 
