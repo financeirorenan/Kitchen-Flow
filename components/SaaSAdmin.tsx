@@ -389,21 +389,21 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     const unsubscribeLeads = onSnapshot(qLeads, (snapshot) => {
       setLeads(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })));
     }, (error) => {
-      console.error("SaaSAdmin leads error:", error);
+      console.warn("SaaSAdmin leads error:", error);
     });
 
     const qTickets = query(collection(db, 'tickets'), orderBy('createdAt', 'desc'));
     const unsubscribeTickets = onSnapshot(qTickets, (snapshot) => {
       setSupportTickets(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })));
     }, (error) => {
-      console.error("SaaSAdmin tickets error:", error);
+      console.warn("SaaSAdmin tickets error:", error);
     });
 
     const qUsers = query(collection(db, 'users'), orderBy('createdAt', 'desc'));
     const unsubscribeUsers = onSnapshot(qUsers, (snapshot) => {
       setSaasUsers(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }) as User).filter(u => u.role === 'SAAS_ADMIN'));
     }, (error) => {
-      console.error("SaaSAdmin users error:", error);
+      console.warn("SaaSAdmin users error:", error);
     });
 
     return () => {
@@ -1421,7 +1421,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
       setTenants(data);
       setLoading(false);
     }, (error) => {
-      console.error("SaaSAdmin onSnapshot error (tenants):", error);
+      console.warn("SaaSAdmin onSnapshot error (tenants):", error);
       setLoading(false);
     });
     return () => unsubscribe();
@@ -1436,7 +1436,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
       })) as Plan[];
       setPlans(data);
     }, (error) => {
-      console.error("SaaSAdmin plans onSnapshot error:", error);
+      console.warn("SaaSAdmin plans onSnapshot error:", error);
     });
     return () => unsubscribe();
   }, []);

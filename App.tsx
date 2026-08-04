@@ -143,8 +143,11 @@ const STATUS_PRIORITY: Record<string, number> = {
 };
 
 const handleFirestoreError = (error: unknown, operationType: OperationType, path: string | null) => {
+  const errMsg = error instanceof Error ? error.message : String(error);
+  const errCode = (error as any)?.code || '';
+
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errMsg,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -158,8 +161,20 @@ const handleFirestoreError = (error: unknown, operationType: OperationType, path
     },
     operationType,
     path
+  };
+
+  if (
+    errMsg.includes('Quota') || 
+    errMsg.includes('quota') || 
+    errCode === 'resource-exhausted' || 
+    errCode === 'unavailable' ||
+    errMsg.includes('unavailable') ||
+    errMsg.includes('Could not reach Cloud Firestore backend')
+  ) {
+    console.warn('Firestore connectivity or quota notice:', errMsg);
+  } else {
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
   }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
   return errInfo;
 };
 

@@ -422,7 +422,7 @@ export default function KitchenflowWebsite() {
         setActivePlans(DEFAULT_PLANS);
       }
     }, (error) => {
-      console.error("Error loading plans:", error);
+      console.warn("Error loading plans:", error);
       setActivePlans(DEFAULT_PLANS);
     });
 

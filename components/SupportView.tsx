@@ -37,7 +37,7 @@ const SupportView: React.FC<SupportViewProps> = ({ restaurantName, tenantId }) =
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setTickets(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     }, (error) => {
-      console.error("SupportView onSnapshot error:", error);
+      console.warn("SupportView onSnapshot error:", error);
     });
 
     return () => unsubscribe();
