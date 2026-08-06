@@ -199,6 +199,7 @@ export type SubscriptionPlan = 'FREE' | 'BASIC' | 'PRO' | 'ENTERPRISE';
 
 export interface Subscription {
   plan: SubscriptionPlan;
+  planId?: string;
   status: 'active' | 'past_due' | 'canceled' | 'trialing';
   startDate: Date;
   expiryDate: Date;
@@ -221,6 +222,8 @@ export interface Plan {
 export interface Tenant {
   id: string;
   name: string;
+  slug?: string;
+  subdomain?: string;
   ownerId: string;
   planId: string;
   subscription: Subscription;
@@ -240,6 +243,9 @@ export interface Tenant {
 export interface MarketplaceInvoice {
   id: string;
   tenantId: string;
+  tenantName?: string;
+  description?: string;
+  pixCode?: string;
   orderId: string;
   amount: number;
   status: 'pending' | 'paid';
@@ -463,7 +469,9 @@ export interface Order {
   deliveryMethod?: string;
   courierId?: string;
   customerId?: string; // Link para conta fiado
-  source?: 'local' | 'partner_app' | 'iFood' | 'whatsapp' | 'marketplace';
+  source?: 'local' | 'partner_app' | 'iFood' | 'whatsapp' | 'marketplace' | 'digital_menu' | 'pos' | 'table' | string;
+  paymentStatus?: 'pending' | 'paid';
+  paidAt?: Date;
   marketplaceFee?: number;
   acceptedAt?: Date;
   readyAt?: Date;

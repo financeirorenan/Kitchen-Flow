@@ -11,6 +11,7 @@ import {
   AlertCircle, Info, Terminal, Copy
 } from 'lucide-react';
 import { PayrollSimulator } from './PayrollSimulator';
+import { sendWelcomeEmailResend } from '../services/emailService';
 
 interface UsersPanelProps {
   users: User[];
@@ -275,6 +276,17 @@ const UsersPanel: React.FC<UsersPanelProps> = memo(({
         await onUpdateUser(editingUser.id, userData);
       } else {
         await onAddUser(userData);
+        // Tentar enviar e-mail de boas-vindas via Resend
+        try {
+          await sendWelcomeEmailResend({
+            email: emailVal,
+            name: nameVal,
+            role: newRole,
+            temporaryPassword: passwordVal
+          });
+        } catch (emailErr) {
+          console.warn("Could not send welcome email via Resend:", emailErr);
+        }
       }
       
       setShowModal(false);

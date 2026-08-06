@@ -4,6 +4,7 @@ import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, create
 import { doc, setDoc, getDoc, collection, query, where, getDocs, limit, deleteDoc } from 'firebase/firestore';
 import { LogIn, Mail, Lock, Sparkles, Loader2, UserPlus, Phone, User, Store, Bike, Shield, Check, Eye, EyeOff } from 'lucide-react';
 import { maskPhone } from '../utils/masks';
+import { sendPasswordResetEmailResend } from '../services/emailService';
 
 interface LoginProps {
   onLoginSuccess: () => void;
@@ -94,8 +95,19 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
     setSuccessMessage(null);
     
     try {
-      await sendPasswordResetEmail(auth, trimmedEmail);
-      setSuccessMessage('Um e-mail de recuperação foi enviado! Verifique sua caixa de entrada e spam.');
+      // 1. Tentar enviar link via Firebase Auth
+      try {
+        await sendPasswordResetEmail(auth, trimmedEmail);
+      } catch (fbErr) {
+        console.warn("Firebase Auth password reset warning:", fbErr);
+      }
+
+      // 2. Enviar e-mail de recuperação formatado via API do Resend
+      await sendPasswordResetEmailResend({
+        email: trimmedEmail
+      });
+
+      setSuccessMessage('Um e-mail de recuperação foi enviado com sucesso via Resend! Verifique sua caixa de entrada.');
     } catch (err: any) {
       console.error("Error sending password reset:", err);
       let errMsg = 'Erro ao enviar e-mail de recuperação. Verifique se o e-mail está correto.';

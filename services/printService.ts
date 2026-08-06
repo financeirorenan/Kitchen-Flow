@@ -533,12 +533,12 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
         </div>
       ` : ''}
 
-      ${(order.observations || order.notes || order.observation) ? `
+      ${(order.observations || order.notes || (order as any).observation) ? `
         <div class="divider"></div>
         <div style="font-size: ${fontSizeSmall}; font-weight: 900; color: #000000 !important;">
           <strong>OBSERVAÇÕES DO PEDIDO:</strong>
           <div style="margin-top: 3px; white-space: pre-line; font-weight: 800; text-transform: uppercase; line-height: 1.3;">
-            ${order.observations || order.notes || order.observation}
+            ${order.observations || order.notes || (order as any).observation}
           </div>
         </div>
       ` : ''}

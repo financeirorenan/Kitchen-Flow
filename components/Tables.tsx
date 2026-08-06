@@ -96,6 +96,7 @@ interface TablesProps {
     items: OrderItem[],
     status: Table["status"],
     isCounter?: boolean,
+    partialPayments?: SplitPart[]
   ) => void;
   onAddTable: () => Promise<void>;
   onDeleteTable: (tableId: number | string) => Promise<void>;
@@ -154,10 +155,10 @@ interface TablesProps {
 }
 
 interface SplitPart {
-  id: string;
+  id?: string;
   amount: number;
   method: PaymentMethod;
-  isPaid: boolean;
+  isPaid?: boolean;
   customerId?: string;
   isFiscalIssued?: boolean;
   fiscalKey?: string;

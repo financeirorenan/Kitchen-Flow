@@ -5,6 +5,7 @@ import { collection, onSnapshot, doc, setDoc, updateDoc, query, orderBy, deleteD
 import { compressImage } from '../lib/imageUtils';
 import { Tenant, Plan, Permission, User, MarketplaceInvoice, MarketplaceSettings } from '../types';
 import { maskPhone } from '../utils/masks';
+import { sendSaasInvoiceEmailResend } from '../services/emailService';
 import { 
   AreaChart, 
   Area, 
@@ -120,6 +121,8 @@ const DEFAULT_COMMERCE_CATEGORIES = [
   { id: 'pizza', name: 'Pizza', description: 'Pizzarias, calzones e massas' },
   { id: 'sobremesas', name: 'Sobremesas', description: 'Doces, bolos, sorvetes e açaí' },
   { id: 'bebidas', name: 'Bebidas', description: 'Sucos, refrigerantes, cervejas e coquetéis' },
+  { id: 'restaurantes', name: 'Restaurantes', description: 'Refeições, pratos executivos e gastronomia' },
+  { id: 'tabacaria', name: 'Tabacaria', description: 'Narguile, essências, fumo e acessórios' },
   { id: 'mercado', name: 'Mercado', description: 'Supermercados, mercearias e hortifrúti' },
   { id: 'farmacia', name: 'Farmácia', description: 'Medicamentos, cosméticos e cuidados pessoais' }
 ];
@@ -285,12 +288,14 @@ interface SaaSAdminProps {
   activeTab: string;
   onViewTenant: (tenantId: string, name?: string, logo?: string) => void;
   onNavigate: (tab: string) => void;
+  showToast?: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
 const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({ 
   activeTab: parentActiveTab, 
   onViewTenant,
-  onNavigate
+  onNavigate,
+  showToast
 }) => {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1127,10 +1132,18 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         },
         updatedAt: new Date()
       });
-      showToast("Configurações do Marketplace salvas com sucesso!", "success");
+      if (showToast) {
+        showToast("Configurações do Marketplace salvas com sucesso!", "success");
+      } else {
+        alert("Configurações do Marketplace salvas com sucesso!");
+      }
     } catch (error) {
       console.error("Error saving marketplace config:", error);
-      showToast("Erro ao salvar configurações do marketplace", "error");
+      if (showToast) {
+        showToast("Erro ao salvar configurações do marketplace", "error");
+      } else {
+        alert("Erro ao salvar configurações do marketplace");
+      }
     }
   };
 
@@ -6907,6 +6920,30 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                     className="w-full flex items-center justify-center gap-2 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black text-[9px] uppercase tracking-wider transition-all cursor-pointer shadow-md shadow-emerald-100"
                   >
                     <MessageSquare size={13} /> Enviar Cobrança por WhatsApp
+                  </button>
+
+                  {/* Resend Email Quick Button */}
+                  <button
+                    onClick={async () => {
+                      const targetEmail = prompt(`Digite o e-mail para envio da fatura de ${selectedBilling.tenantName}:`, 'financeirorenanuk@gmail.com');
+                      if (!targetEmail) return;
+                      try {
+                        await sendSaasInvoiceEmailResend({
+                          email: targetEmail,
+                          tenantName: selectedBilling.tenantName,
+                          amount: selectedBilling.amount,
+                          description: selectedBilling.description || `Fechamento de Ciclo SaaS - ${selectedBilling.tenantName}`,
+                          qrCodePix: selectedBilling.pixCode,
+                          dueDate: new Date().toLocaleDateString('pt-BR')
+                        });
+                        alert(`Fatura enviada com sucesso para ${targetEmail} via Resend!`);
+                      } catch (err: any) {
+                        alert(`Erro ao enviar e-mail via Resend: ${err.message || err}`);
+                      }
+                    }}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black text-[9px] uppercase tracking-wider transition-all cursor-pointer shadow-md shadow-indigo-100"
+                  >
+                    <Mail size={13} /> Enviar Fatura por E-mail (Resend)
                   </button>
 
                   {/* Settle Invoice manually */}

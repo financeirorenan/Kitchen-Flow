@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { PwaInstallPrompt } from "./PwaInstallPrompt";
+import { useClickOutside } from "../hooks/useClickOutside";
 import {
   Search,
   MapPin,
@@ -40,6 +41,8 @@ import {
   Settings,
   HelpCircle,
   Copy,
+  Beer,
+  Flame,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { db } from "../firebase";
@@ -86,6 +89,8 @@ const resolveIcon = (iconName: string) => {
     Store,
     Clock,
     Search,
+    Beer,
+    Flame,
   };
   return iconMap[iconName] || UtensilsCrossed;
 };
@@ -155,7 +160,7 @@ const getCategoryPresets = (name: string) => {
       activeBorder: "border-pink-500",
       ring: "ring-pink-500/20",
       color: "text-pink-500",
-      img: "https://cdn-icons-png.flaticon.com/512/2454/2454512.png", // IceCream
+      img: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none'><path d='M18 32l4 22c0 2 2 4 4 4h12c2 0 4-2 4-4l4-22H18z' fill='%23F43F5E'/><path d='M22 32l3 22M28 32l1 22M34 32l-1 22M40 32l-3 22' stroke='%23BE123C' stroke-width='2'/><path d='M14 32c0-5 4-8 9-8c2-4 7-6 11-4c3-3 8-3 11 1c4 1 6 5 5 9c3 1 4 5 2 8H12c-2-3-1-5 2-6z' fill='%23FB7185'/><path d='M16 32c3 3 7 3 10 0c3 3 7 3 10 0c3 3 7 3 10 0' stroke='%23FFF1F2' stroke-width='3' stroke-linecap='round'/><circle cx='32' cy='14' r='6' fill='%23E11D48'/><path d='M32 8c2-4 6-5 9-3' stroke='%23059669' stroke-width='2.5' stroke-linecap='round'/><circle cx='24' cy='24' r='1.5' fill='%23FEF08A'/><circle cx='38' cy='22' r='1.5' fill='%23FEF08A'/><circle cx='30' cy='26' r='1.5' fill='%23FEF08A'/></svg>", // Cupcake / Doces
       icon: IceCream,
     };
   }
@@ -174,8 +179,46 @@ const getCategoryPresets = (name: string) => {
       activeBorder: "border-cyan-500",
       ring: "ring-cyan-500/20",
       color: "text-cyan-500",
-      img: "https://cdn-icons-png.flaticon.com/512/3126/3126504.png", // Drink straw
-      icon: Coffee,
+      img: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none'><rect x='20' y='12' width='24' height='42' rx='5' fill='%23EF4444'/><ellipse cx='32' cy='12' rx='11' ry='3' fill='%23E2E8F0'/><ellipse cx='32' cy='12' rx='9' ry='2' fill='%2394A3B8'/><rect x='30' y='8' width='4' height='5' rx='1' fill='%2364748B'/><path d='M20 28c4 3 10 3 14-1s6-3 10 0v10c-4-3-10-3-14 1s-6 3-10 0V28z' fill='%23FFFFFF' opacity='0.85'/><circle cx='25' cy='22' r='1.2' fill='%23FFFFFF' opacity='0.8'/><circle cx='38' cy='20' r='1.5' fill='%23FFFFFF' opacity='0.8'/><circle cx='24' cy='44' r='1.2' fill='%23FFFFFF' opacity='0.8'/></svg>", // Lata de Refrigerante
+      icon: Beer,
+    };
+  }
+  if (
+    normalized.includes("restaurante") ||
+    normalized.includes("gastronomia") ||
+    normalized.includes("culinaria") ||
+    normalized.includes("bistro") ||
+    normalized.includes("refeicao")
+  ) {
+    return {
+      bg: "bg-emerald-50",
+      border: "border-emerald-100",
+      activeBorder: "border-emerald-500",
+      ring: "ring-emerald-500/20",
+      color: "text-emerald-500",
+      img: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none'><path d='M16 26C11 26 8 21 11 16C9 11 14 6 20 7C23 2 33 2 36 7C42 6 47 11 45 16C48 21 45 26 40 26H16Z' fill='%2310B981'/><path d='M22 26V16M28 26V12M34 26V16' stroke='%23047857' stroke-width='2.5' stroke-linecap='round'/><rect x='15' y='26' width='26' height='16' rx='3' fill='%23059669'/><rect x='12' y='42' width='32' height='4' rx='2' fill='%23047857'/><path d='M18 34h20' stroke='%23A7F3D0' stroke-width='2' stroke-linecap='round'/></svg>", // Chapéu de Cozinheiro / Restaurante
+      icon: ChefHat,
+    };
+  }
+  if (
+    normalized.includes("tabacaria") ||
+    normalized.includes("narguile") ||
+    normalized.includes("tabaco") ||
+    normalized.includes("headshop") ||
+    normalized.includes("vape") ||
+    normalized.includes("hookah") ||
+    normalized.includes("essencia") ||
+    normalized.includes("fumo") ||
+    normalized.includes("cigarro")
+  ) {
+    return {
+      bg: "bg-orange-50",
+      border: "border-orange-100",
+      activeBorder: "border-orange-500",
+      ring: "ring-orange-500/20",
+      color: "text-orange-500",
+      img: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none'><path d='M26 10h12l2 6H24l2-6z' fill='%23EF4444'/><path d='M18 16h28v3H18z' fill='%2394A3B8'/><rect x='30' y='19' width='4' height='18' rx='2' fill='%23CBD5E1'/><circle cx='32' cy='24' r='3.5' fill='%2364748B'/><circle cx='32' cy='32' r='3' fill='%2364748B'/><path d='M24 37c0-2 2-3 8-3s8 1 8 3l4 18c0 3-3 5-12 5s-12-2-12-5l4-18z' fill='%2338BDF8' opacity='0.85'/><path d='M22.5 48c3 2 16 2 19 0l2.5 7c0 3-3 5-12 5s-12-2-12-5l2.5-7z' fill='%230284C7'/><path d='M34 27c10 0 16 6 16 16v6' stroke='%23F97316' stroke-width='3.5' stroke-linecap='round'/><path d='M50 49l4 6' stroke='%23E11D48' stroke-width='4' stroke-linecap='round'/><circle cx='32' cy='6' r='2.5' fill='%23CBD5E1' opacity='0.8'/><circle cx='28' cy='4' r='2' fill='%23E2E8F0' opacity='0.6'/><circle cx='36' cy='3' r='1.5' fill='%2394A3B8' opacity='0.5'/></svg>", // Narguile / Hookah
+      icon: Flame,
     };
   }
   if (
@@ -420,31 +463,64 @@ const Marketplace: React.FC<MarketplaceProps> = ({
         },
         {
           id: "doces",
-          label: "Doces",
+          label: "Sobremesas",
           icon: IceCream,
           bg: "bg-pink-50",
           border: "border-pink-100",
           activeBorder: "border-pink-500",
           ring: "ring-pink-500/20",
           color: "text-pink-500",
-          img: "https://cdn-icons-png.flaticon.com/512/2454/2454512.png",
+          img: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none'><path d='M18 32l4 22c0 2 2 4 4 4h12c2 0 4-2 4-4l4-22H18z' fill='%23F43F5E'/><path d='M22 32l3 22M28 32l1 22M34 32l-1 22M40 32l-3 22' stroke='%23BE123C' stroke-width='2'/><path d='M14 32c0-5 4-8 9-8c2-4 7-6 11-4c3-3 8-3 11 1c4 1 6 5 5 9c3 1 4 5 2 8H12c-2-3-1-5 2-6z' fill='%23FB7185'/><path d='M16 32c3 3 7 3 10 0c3 3 7 3 10 0c3 3 7 3 10 0' stroke='%23FFF1F2' stroke-width='3' stroke-linecap='round'/><circle cx='32' cy='14' r='6' fill='%23E11D48'/><path d='M32 8c2-4 6-5 9-3' stroke='%23059669' stroke-width='2.5' stroke-linecap='round'/><circle cx='24' cy='24' r='1.5' fill='%23FEF08A'/><circle cx='38' cy='22' r='1.5' fill='%23FEF08A'/><circle cx='30' cy='26' r='1.5' fill='%23FEF08A'/></svg>",
         },
         {
           id: "bebidas",
           label: "Bebidas",
-          icon: Coffee,
+          icon: Beer,
           bg: "bg-cyan-50",
           border: "border-cyan-100",
           activeBorder: "border-cyan-500",
           ring: "ring-cyan-500/20",
           color: "text-cyan-500",
-          img: "https://cdn-icons-png.flaticon.com/512/3126/3126504.png",
+          img: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none'><rect x='20' y='12' width='24' height='42' rx='5' fill='%23EF4444'/><ellipse cx='32' cy='12' rx='11' ry='3' fill='%23E2E8F0'/><ellipse cx='32' cy='12' rx='9' ry='2' fill='%2394A3B8'/><rect x='30' y='8' width='4' height='5' rx='1' fill='%2364748B'/><path d='M20 28c4 3 10 3 14-1s6-3 10 0v10c-4-3-10-3-14 1s-6 3-10 0V28z' fill='%23FFFFFF' opacity='0.85'/><circle cx='25' cy='22' r='1.2' fill='%23FFFFFF' opacity='0.8'/><circle cx='38' cy='20' r='1.5' fill='%23FFFFFF' opacity='0.8'/><circle cx='24' cy='44' r='1.2' fill='%23FFFFFF' opacity='0.8'/></svg>",
+        },
+        {
+          id: "restaurantes",
+          label: "Restaurantes",
+          icon: ChefHat,
+          bg: "bg-emerald-50",
+          border: "border-emerald-100",
+          activeBorder: "border-emerald-500",
+          ring: "ring-emerald-500/20",
+          color: "text-emerald-500",
+          img: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none'><path d='M16 26C11 26 8 21 11 16C9 11 14 6 20 7C23 2 33 2 36 7C42 6 47 11 45 16C48 21 45 26 40 26H16Z' fill='%2310B981'/><path d='M22 26V16M28 26V12M34 26V16' stroke='%23047857' stroke-width='2.5' stroke-linecap='round'/><rect x='15' y='26' width='26' height='16' rx='3' fill='%23059669'/><rect x='12' y='42' width='32' height='4' rx='2' fill='%23047857'/><path d='M18 34h20' stroke='%23A7F3D0' stroke-width='2' stroke-linecap='round'/></svg>",
+        },
+        {
+          id: "tabacaria",
+          label: "Tabacaria",
+          icon: Flame,
+          bg: "bg-orange-50",
+          border: "border-orange-100",
+          activeBorder: "border-orange-500",
+          ring: "ring-orange-500/20",
+          color: "text-orange-500",
+          img: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none'><path d='M26 10h12l2 6H24l2-6z' fill='%23EF4444'/><path d='M18 16h28v3H18z' fill='%2394A3B8'/><rect x='30' y='19' width='4' height='18' rx='2' fill='%23CBD5E1'/><circle cx='32' cy='24' r='3.5' fill='%2364748B'/><circle cx='32' cy='32' r='3' fill='%2364748B'/><path d='M24 37c0-2 2-3 8-3s8 1 8 3l4 18c0 3-3 5-12 5s-12-2-12-5l4-18z' fill='%2338BDF8' opacity='0.85'/><path d='M22.5 48c3 2 16 2 19 0l2.5 7c0 3-3 5-12 5s-12-2-12-5l2.5-7z' fill='%230284C7'/><path d='M34 27c10 0 16 6 16 16v6' stroke='%23F97316' stroke-width='3.5' stroke-linecap='round'/><path d='M50 49l4 6' stroke='%23E11D48' stroke-width='4' stroke-linecap='round'/><circle cx='32' cy='6' r='2.5' fill='%23CBD5E1' opacity='0.8'/><circle cx='28' cy='4' r='2' fill='%23E2E8F0' opacity='0.6'/><circle cx='36' cy='3' r='1.5' fill='%2394A3B8' opacity='0.5'/></svg>",
         },
       ];
     }
 
     const mapped = commerceCategories.map((cat) => {
       const presets = getCategoryPresets(cat.name);
+      const nameLower = (cat.name || "").toLowerCase();
+      const isBebida = nameLower.includes("bebida") || nameLower.includes("suco") || nameLower.includes("refrigerante");
+      const isRestaurante = nameLower.includes("restaurante") || nameLower.includes("gastronomia") || nameLower.includes("culinaria");
+      const isTabacaria = nameLower.includes("tabacaria") || nameLower.includes("narguile") || nameLower.includes("tabaco");
+      const isSobremesa = nameLower.includes("sobremesa") || nameLower.includes("doce") || nameLower.includes("bolo") || nameLower.includes("acai") || nameLower.includes("sorvete");
+
+      let finalImg = presets.img || cat.img;
+      if (!finalImg || isBebida || isRestaurante || isTabacaria || isSobremesa || finalImg.includes("3126504") || finalImg.includes("3075929") || finalImg.includes("1046784") || finalImg.includes("2454512")) {
+        finalImg = presets.img || cat.img;
+      }
+
       return {
         id: cat.name.toLowerCase(),
         label: cat.name,
@@ -454,7 +530,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
         activeBorder: presets.activeBorder,
         ring: presets.ring,
         color: cat.color || presets.color,
-        img: cat.img || presets.img,
+        img: finalImg,
       };
     });
 
@@ -746,6 +822,20 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   const [selectedOrderForHelp, setSelectedOrderForHelp] =
     useState<Order | null>(null);
   const [helpModalLoading, setHelpModalLoading] = useState(false);
+
+  // Modal Refs & Click-Outside Hooks for Marketplace Modals
+  const profileModalRef = useRef<HTMLDivElement>(null);
+  const addressModalRef = useRef<HTMLDivElement>(null);
+  const paymentModalRef = useRef<HTMLDivElement>(null);
+  const helpModalRef = useRef<HTMLDivElement>(null);
+
+  useClickOutside(profileModalRef, () => setShowProfileModal(false), showProfileModal);
+  useClickOutside(addressModalRef, () => setShowAddressModal(false), showAddressModal);
+  useClickOutside(paymentModalRef, () => {
+    setShowPaymentModal(false);
+    setIsAddingCard(false);
+  }, showPaymentModal);
+  useClickOutside(helpModalRef, () => setShowHelpModal(false), showHelpModal);
 
   // Store Detail State
   const [selectedTenant, setSelectedTenant] = useState<Tenant | null>(null);
@@ -2302,13 +2392,24 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
       {/* Profile Modal */}
       {showProfileModal && (
-        <div className="fixed inset-0 bg-brand-black/60 backdrop-blur-md z-[200] flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-300">
-          <div className="bg-brand-white w-full max-w-md rounded-t-[3rem] sm:rounded-[3rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom-20 duration-500">
+        <div 
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowProfileModal(false);
+          }}
+          className="fixed inset-0 bg-brand-black/60 backdrop-blur-md z-[200] flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-300 cursor-pointer"
+        >
+          <div 
+            ref={profileModalRef}
+            onClick={(e) => e.stopPropagation()}
+            className="bg-brand-white w-full max-w-md rounded-t-[3rem] sm:rounded-[3rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom-20 duration-500 cursor-default"
+          >
             <div className="p-8 pb-12 border-b bg-brand-black text-white relative">
               <div className="absolute top-0 left-0 w-full h-full bg-brand-primary/5 -translate-y-1/2 blur-[100px] pointer-events-none" />
               <button
+                type="button"
                 onClick={() => setShowProfileModal(false)}
-                className="absolute top-6 right-6 text-white/30 hover:text-white transition-colors bg-white/5 p-2 rounded-full"
+                className="absolute top-6 right-6 text-white/50 hover:text-white transition-colors bg-white/10 hover:bg-white/20 p-2.5 rounded-full cursor-pointer z-30"
+                title="Fechar"
               >
                 <X size={20} />
               </button>
@@ -2434,12 +2535,23 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
       {/* Address Selection Modal (Screen 4) */}
       {showAddressModal && (
-        <div className="fixed inset-0 bg-brand-black/60 backdrop-blur-md z-[200] flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-300">
-          <div className="bg-brand-white w-full max-w-md rounded-t-[3rem] sm:rounded-[3rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom-20 duration-500">
+        <div 
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowAddressModal(false);
+          }}
+          className="fixed inset-0 bg-brand-black/60 backdrop-blur-md z-[200] flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-300 cursor-pointer"
+        >
+          <div 
+            ref={addressModalRef}
+            onClick={(e) => e.stopPropagation()}
+            className="bg-brand-white w-full max-w-md rounded-t-[3rem] sm:rounded-[3rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom-20 duration-500 cursor-default"
+          >
             <div className="p-8 pb-12 border-b bg-brand-primary text-white relative">
               <button
+                type="button"
                 onClick={() => setShowAddressModal(false)}
-                className="absolute top-6 right-6 text-white/30 hover:text-white transition-colors bg-white/5 p-2 rounded-full"
+                className="absolute top-6 right-6 text-white/70 hover:text-white transition-colors bg-white/10 hover:bg-white/20 p-2.5 rounded-full cursor-pointer z-30"
+                title="Fechar"
               >
                 <X size={20} />
               </button>
@@ -2653,15 +2765,29 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
       {/* Payment Methods Modal */}
       {showPaymentModal && (
-        <div className="fixed inset-0 bg-brand-black/60 backdrop-blur-md z-[200] flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-300">
-          <div className="bg-brand-white w-full max-w-md rounded-t-[3rem] sm:rounded-[3rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom-20 duration-500">
+        <div 
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowPaymentModal(false);
+              setIsAddingCard(false);
+            }
+          }}
+          className="fixed inset-0 bg-brand-black/60 backdrop-blur-md z-[200] flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-300 cursor-pointer"
+        >
+          <div 
+            ref={paymentModalRef}
+            onClick={(e) => e.stopPropagation()}
+            className="bg-brand-white w-full max-w-md rounded-t-[3rem] sm:rounded-[3rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom-20 duration-500 cursor-default"
+          >
             <div className="p-8 pb-12 border-b bg-gradient-to-r from-indigo-950 to-slate-900 text-white relative">
               <button
+                type="button"
                 onClick={() => {
                   setShowPaymentModal(false);
                   setIsAddingCard(false);
                 }}
-                className="absolute top-6 right-6 text-white/30 hover:text-white transition-colors bg-white/5 p-2 rounded-full"
+                className="absolute top-6 right-6 text-white/70 hover:text-white transition-colors bg-white/10 hover:bg-white/20 p-2.5 rounded-full cursor-pointer z-30"
+                title="Fechar"
               >
                 <X size={20} />
               </button>
@@ -2853,12 +2979,23 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       )}
 
       {showHelpModal && selectedOrderForHelp && (
-        <div className="fixed inset-0 bg-brand-black/60 backdrop-blur-md z-[200] flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-300">
-          <div className="bg-brand-white w-full max-w-md rounded-t-[3rem] sm:rounded-[3rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom-20 duration-500">
+        <div 
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowHelpModal(false);
+          }}
+          className="fixed inset-0 bg-brand-black/60 backdrop-blur-md z-[200] flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-300 cursor-pointer"
+        >
+          <div 
+            ref={helpModalRef}
+            onClick={(e) => e.stopPropagation()}
+            className="bg-brand-white w-full max-w-md rounded-t-[3rem] sm:rounded-[3rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom-20 duration-500 cursor-default"
+          >
             <div className="p-8 pb-12 border-b bg-rose-500 text-white relative">
               <button
+                type="button"
                 onClick={() => setShowHelpModal(false)}
-                className="absolute top-6 right-6 text-white/30 hover:text-white transition-colors bg-white/5 p-2 rounded-full"
+                className="absolute top-6 right-6 text-white/70 hover:text-white transition-colors bg-white/10 hover:bg-white/20 p-2.5 rounded-full cursor-pointer z-30"
+                title="Fechar"
               >
                 <X size={20} />
               </button>

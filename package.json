@@ -40,6 +40,7 @@
     "react-dom": "^19.2.3",
     "react-router-dom": "^7.3.0",
     "recharts": "^3.6.0",
+    "resend": "^6.18.1",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0",

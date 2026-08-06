@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useClickOutside } from '../hooks/useClickOutside';
 import { 
   Search, ShoppingCart, ChevronRight, Plus, Minus, 
   MapPin, Clock, Info, X, Check, ArrowLeft,
@@ -77,6 +78,20 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
   const [showTotemUpsell, setShowTotemUpsell] = useState(false);
   const [totemUpsellViewed, setTotemUpsellViewed] = useState(false);
   const [totemActiveTab, setTotemActiveTab] = useState<'sides' | 'drinks' | 'desserts'>('sides');
+
+  // Refs & Click-Outside Hooks for DigitalMenu Modals
+  const cartModalRef = useRef<HTMLDivElement>(null);
+  const totemModalRef = useRef<HTMLDivElement>(null);
+  const productModalRef = useRef<HTMLDivElement>(null);
+  const optionsModalRef = useRef<HTMLDivElement>(null);
+
+  useClickOutside(cartModalRef, () => setShowCart(false), showCart);
+  useClickOutside(totemModalRef, () => {
+    setShowTotemUpsell(false);
+    setCheckoutStep('details');
+  }, showTotemUpsell);
+  useClickOutside(productModalRef, () => setShowProductModal(false), showProductModal);
+  useClickOutside(optionsModalRef, () => setShowOptionsModal(false), showOptionsModal);
 
   const hasExternalFavorite = isFavorite !== undefined && onToggleFavorite !== undefined;
   const [internalFavorite, setInternalFavorite] = useState<boolean>(() => {
@@ -1117,6 +1132,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
             />
             
             <motion.div 
+              ref={cartModalRef}
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
@@ -1130,7 +1146,13 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                     {checkoutStep === 'cart' ? 'Seu Carrinho' : checkoutStep === 'details' ? 'Finalizar Pedido' : 'Pedido Confirmado'}
                   </h3>
                 </div>
-                <button onClick={() => setShowCart(false)} className="text-white"><ShoppingCart size={24} /></button>
+                <button 
+                  onClick={() => setShowCart(false)} 
+                  className="text-white/80 hover:text-white p-2 rounded-full bg-white/10 hover:bg-white/20 transition-all cursor-pointer"
+                  title="Fechar"
+                >
+                  <X size={22} />
+                </button>
               </div>
 
               {/* STEPPER INDICATOR */}
@@ -1843,6 +1865,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
             />
             
             <motion.div 
+              ref={totemModalRef}
               initial={{ scale: 0.9, opacity: 0, y: 50 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.9, opacity: 0, y: 50 }}
@@ -2038,6 +2061,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
               className="absolute inset-0 bg-slate-900/60 backdrop-blur-md"
             />
             <motion.div 
+              ref={productModalRef}
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
@@ -2163,6 +2187,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
             />
             
             <motion.div 
+              ref={optionsModalRef}
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}

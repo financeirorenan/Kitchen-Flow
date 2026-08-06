@@ -8,8 +8,17 @@ import fs from "fs";
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
+import { Resend } from "resend";
 
 dotenv.config();
+
+const getResendClient = () => {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    throw new Error("A variável de ambiente RESEND_API_KEY não foi configurada.");
+  }
+  return new Resend(apiKey);
+};
 
 const isProduction = process.env.NODE_ENV === "production";
 
@@ -88,6 +97,240 @@ async function startServer() {
   // API routes
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  // Resend Email Integration Endpoints
+  app.post("/api/email/test", async (req, res) => {
+    try {
+      const resend = getResendClient();
+      const targetEmail = req.body.to || "financeirorenanuk@gmail.com";
+      const response = await resend.emails.send({
+        from: "onboarding@resend.dev",
+        to: targetEmail,
+        subject: "Hello World",
+        html: "<p>Congrats on sending your <strong>first email</strong>!</p>"
+      });
+
+      if (response.error) {
+        console.error("[Resend Test Error]:", response.error);
+        return res.status(400).json({ success: false, error: response.error });
+      }
+      return res.json({ success: true, data: response.data });
+    } catch (err: any) {
+      console.error("Resend test email exception:", err);
+      return res.status(500).json({ success: false, error: err.message || "Erro ao enviar e-mail de teste." });
+    }
+  });
+
+  app.post("/api/email/send", async (req, res) => {
+    try {
+      const { to, subject, html, text, from } = req.body;
+      if (!to || !subject || (!html && !text)) {
+        return res.status(400).json({ error: "Parâmetros 'to', 'subject' e 'html' ou 'text' são obrigatórios." });
+      }
+
+      const resend = getResendClient();
+      const sender = from || "KitchenFlow <onboarding@resend.dev>";
+
+      const result = await resend.emails.send({
+        from: sender,
+        to: Array.isArray(to) ? to : [to],
+        subject,
+        html: html || `<p>${text}</p>`,
+        text: text || undefined
+      });
+
+      if (result.error) {
+        console.error("[Resend Send Error]:", result.error);
+        return res.status(400).json({ success: false, error: result.error });
+      }
+
+      console.log(`[Resend API] E-mail enviado com sucesso para ${to}. ID: ${result.data?.id}`);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      console.error("[Resend API Exception]:", err);
+      return res.status(500).json({ success: false, error: err.message || "Erro interno ao enviar e-mail." });
+    }
+  });
+
+  app.post("/api/email/send-password-reset", async (req, res) => {
+    try {
+      const { email, resetLink, temporaryPassword } = req.body;
+      if (!email) {
+        return res.status(400).json({ error: "E-mail do usuário é obrigatório." });
+      }
+
+      const resend = getResendClient();
+      const subject = "🔒 Recuperação de Senha - KitchenFlow";
+      const htmlContent = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+          <div style="text-align: center; margin-bottom: 24px;">
+            <h2 style="color: #4f46e5; margin: 0;">KitchenFlow AI</h2>
+            <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Sistema Operacional para Restaurantes</p>
+          </div>
+          
+          <div style="padding: 20px; background-color: #f8fafc; border-radius: 8px; margin-bottom: 24px;">
+            <h3 style="color: #1e293b; margin-top: 0;">Solicitação de Recuperação de Senha</h3>
+            <p style="color: #475569; font-size: 14px; line-height: 1.6;">
+              Recebemos uma solicitação para redefinir a senha associada à sua conta (<strong>${email}</strong>).
+            </p>
+            ${temporaryPassword ? `
+              <div style="margin: 20px 0; padding: 16px; background-color: #e0e7ff; border-left: 4px solid #4f46e5; border-radius: 4px;">
+                <p style="margin: 0; color: #3730a3; font-size: 13px; font-weight: bold;">Sua senha temporária de acesso:</p>
+                <p style="margin: 8px 0 0 0; color: #1e1b4b; font-family: monospace; font-size: 18px; font-weight: bold;">${temporaryPassword}</p>
+              </div>
+            ` : ''}
+            ${resetLink ? `
+              <div style="text-align: center; margin: 24px 0;">
+                <a href="${resetLink}" style="display: inline-block; padding: 12px 24px; background-color: #4f46e5; color: #ffffff; text-decoration: none; font-weight: bold; border-radius: 6px; font-size: 14px;">Redefinir Minha Senha</a>
+              </div>
+            ` : ''}
+            <p style="color: #94a3b8; font-size: 12px; margin-bottom: 0;">Se você não solicitou a alteração de senha, ignore este e-mail.</p>
+          </div>
+          
+          <div style="text-align: center; border-top: 1px solid #f1f5f9; padding-top: 16px;">
+            <p style="color: #94a3b8; font-size: 12px; margin: 0;">KitchenFlow AI • Suporte Técnico e Operacional</p>
+          </div>
+        </div>
+      `;
+
+      const result = await resend.emails.send({
+        from: "KitchenFlow <onboarding@resend.dev>",
+        to: email,
+        subject,
+        html: htmlContent
+      });
+
+      if (result.error) {
+        return res.status(400).json({ success: false, error: result.error });
+      }
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      console.error("Password reset email error:", err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/email/send-welcome", async (req, res) => {
+    try {
+      const { email, name, role, tenantName, temporaryPassword, loginUrl } = req.body;
+      if (!email) {
+        return res.status(400).json({ error: "E-mail do usuário é obrigatório." });
+      }
+
+      const resend = getResendClient();
+      const subject = `🎉 Bem-vindo ao KitchenFlow - ${tenantName || 'Sua Conta está Pronta'}`;
+      const htmlContent = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+          <div style="text-align: center; margin-bottom: 24px;">
+            <h2 style="color: #4f46e5; margin: 0;">KitchenFlow AI</h2>
+            <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Plataforma de Gestão de Restaurantes e Delivery</p>
+          </div>
+          
+          <div style="padding: 20px; background-color: #f8fafc; border-radius: 8px; margin-bottom: 24px;">
+            <h3 style="color: #1e293b; margin-top: 0;">Olá, ${name || 'novo usuário'}!</h3>
+            <p style="color: #475569; font-size: 14px; line-height: 1.6;">
+              Sua conta de acesso ao sistema <strong>${tenantName || 'KitchenFlow'}</strong> foi criada com sucesso!
+            </p>
+            
+            <div style="margin: 20px 0; padding: 16px; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px;">
+              <p style="margin: 0 0 8px 0; color: #334155; font-size: 13px;"><strong>E-mail de Acesso:</strong> ${email}</p>
+              <p style="margin: 0 0 8px 0; color: #334155; font-size: 13px;"><strong>Cargo / Função:</strong> ${role || 'Usuário Operacional'}</p>
+              ${temporaryPassword ? `<p style="margin: 0; color: #334155; font-size: 13px;"><strong>Senha Inicial:</strong> <code style="background-color: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${temporaryPassword}</code></p>` : ''}
+            </div>
+
+            <div style="text-align: center; margin: 24px 0;">
+              <a href="${loginUrl || 'https://ais-pre-sxhhxzv44xcfxjuxxjixtw-101514438395.us-west1.run.app/login'}" style="display: inline-block; padding: 12px 24px; background-color: #10b981; color: #ffffff; text-decoration: none; font-weight: bold; border-radius: 6px; font-size: 14px;">Acessar o Painel Agora</a>
+            </div>
+          </div>
+          
+          <div style="text-align: center; border-top: 1px solid #f1f5f9; padding-top: 16px;">
+            <p style="color: #94a3b8; font-size: 12px; margin: 0;">KitchenFlow AI • Gestão Inteligente para Gastronomia</p>
+          </div>
+        </div>
+      `;
+
+      const result = await resend.emails.send({
+        from: "KitchenFlow <onboarding@resend.dev>",
+        to: email,
+        subject,
+        html: htmlContent
+      });
+
+      if (result.error) {
+        return res.status(400).json({ success: false, error: result.error });
+      }
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      console.error("Welcome email error:", err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/email/send-saas-billing", async (req, res) => {
+    try {
+      const { email, tenantName, planName, amount, dueDate, description, qrCodePix, paymentUrl } = req.body;
+      if (!email) {
+        return res.status(400).json({ error: "E-mail do cliente é obrigatório." });
+      }
+
+      const resend = getResendClient();
+      const formattedAmount = typeof amount === 'number' ? `R$ ${amount.toFixed(2)}` : amount;
+      const subject = `💳 Fatura / Cobrança KitchenFlow SaaS - ${tenantName || 'Sua Assinatura'}`;
+      const htmlContent = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+          <div style="text-align: center; margin-bottom: 24px;">
+            <h2 style="color: #4f46e5; margin: 0;">KitchenFlow SaaS</h2>
+            <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Cobrança de Assinatura da Plataforma</p>
+          </div>
+          
+          <div style="padding: 20px; background-color: #f8fafc; border-radius: 8px; margin-bottom: 24px;">
+            <h3 style="color: #1e293b; margin-top: 0;">Fatura Gerada para ${tenantName || 'Seu Estabelecimento'}</h3>
+            <p style="color: #475569; font-size: 14px; line-height: 1.6;">
+              ${description || `Segue a cobrança referente ao ciclo do plano ${planName || 'PRO'} do KitchenFlow.`}
+            </p>
+            
+            <div style="margin: 20px 0; padding: 16px; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; text-align: center;">
+              <span style="color: #64748b; font-size: 12px; font-weight: bold; text-transform: uppercase;">Valor Total da Fatura</span>
+              <h1 style="color: #059669; margin: 8px 0; font-size: 28px;">${formattedAmount}</h1>
+              ${dueDate ? `<p style="color: #e11d48; font-size: 13px; font-weight: bold; margin: 0;">Vencimento: ${dueDate}</p>` : ''}
+            </div>
+
+            ${qrCodePix ? `
+              <div style="margin: 20px 0; padding: 16px; background-color: #ecfdf5; border: 1px dashed #10b981; border-radius: 8px; text-align: center;">
+                <p style="margin: 0 0 8px 0; color: #065f46; font-size: 13px; font-weight: bold;">Chave PIX para Pagamento Rápido:</p>
+                <p style="margin: 0; color: #047857; font-family: monospace; font-size: 14px; word-break: break-all; background: #ffffff; padding: 8px; border-radius: 4px;">${qrCodePix}</p>
+              </div>
+            ` : ''}
+
+            ${paymentUrl ? `
+              <div style="text-align: center; margin: 24px 0;">
+                <a href="${paymentUrl}" style="display: inline-block; padding: 12px 24px; background-color: #4f46e5; color: #ffffff; text-decoration: none; font-weight: bold; border-radius: 6px; font-size: 14px;">Pagar Fatura Online</a>
+              </div>
+            ` : ''}
+          </div>
+          
+          <div style="text-align: center; border-top: 1px solid #f1f5f9; padding-top: 16px;">
+            <p style="color: #94a3b8; font-size: 12px; margin: 0;">KitchenFlow SaaS • Financeiro e Cobrança</p>
+          </div>
+        </div>
+      `;
+
+      const result = await resend.emails.send({
+        from: "KitchenFlow SaaS <onboarding@resend.dev>",
+        to: email,
+        subject,
+        html: htmlContent
+      });
+
+      if (result.error) {
+        return res.status(400).json({ success: false, error: result.error });
+      }
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      console.error("SaaS billing email error:", err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
   });
 
   app.post("/api/auth/login", async (req, res) => {

@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { useClickOutside } from '../hooks/useClickOutside';
 import { 
   X, 
   User as UserIcon, 
@@ -282,13 +283,23 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     }
   };
 
+  const modalRef = useRef<HTMLDivElement>(null);
+  useClickOutside(modalRef, onClose, isOpen);
+
   return (
-    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/40 backdrop-blur-md p-4">
+    <div 
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/40 backdrop-blur-md p-4 cursor-pointer"
+    >
       <motion.div 
+        ref={modalRef}
+        onClick={(e) => e.stopPropagation()}
         initial={{ opacity: 0, scale: 0.95, y: 15 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 15 }}
-        className="bg-white rounded-[2.5rem] border border-slate-100 shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]"
+        className="bg-white rounded-[2.5rem] border border-slate-100 shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh] cursor-default"
       >
         {/* Header */}
         <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">

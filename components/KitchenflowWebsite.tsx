@@ -46,11 +46,11 @@ import { motion, AnimatePresence } from 'motion/react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import KaiAvatar from './KaiAvatar';
 
-// Fotografias profissionais geradas via IA
-import chefImage from '../src/assets/images/chef_modern_kitchen_1783212349047.jpg';
-import managerImage from '../src/assets/images/manager_analyzing_tablet_1783212361726.jpg';
-import waiterImage from '../src/assets/images/waiter_digital_order_1783255865002.jpg';
-import interiorImage from '../src/assets/images/modern_restaurant_interior_1783255877535.jpg';
+// Fotografias profissionais via Unsplash CDN
+const chefImage = "https://images.unsplash.com/photo-1577219491135-ce391730fb2c?auto=format&fit=crop&w=1200&q=80";
+const managerImage = "https://images.unsplash.com/photo-1556742049-0a670f4a4591?auto=format&fit=crop&w=1200&q=80";
+const waiterImage = "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1200&q=80";
+const interiorImage = "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=1200&q=80";
 
 // Máscara de Telefone para o Brasil
 const maskPhone = (value: string) => {

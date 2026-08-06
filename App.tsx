@@ -44,7 +44,7 @@ import {
   INITIAL_RAW_MATERIALS,
   ROLE_DEFAULT_PERMISSIONS as INITIAL_ROLE_PERMISSIONS
 } from './constants';
-import { Product, Table, Order, OrderStatus, Courier, FinancialRecord, User, UserRole, UserPreset, AuditLog, Permission, OrderItem, PaymentMethod, PriceHistory, DigitalMenuSettings, AdminSettings, Customer, CustomerTransaction, RawMaterial, CashClosingReport, Tenant, BankAccount } from './types';
+import { Product, Table, Order, OrderStatus, Courier, FinancialRecord, User, UserRole, UserPreset, AuditLog, Permission, OrderItem, PaymentMethod, PriceHistory, DigitalMenuSettings, AdminSettings, Customer, CustomerTransaction, RawMaterial, CashClosingReport, Tenant, BankAccount, Plan } from './types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 import { compressImage } from './lib/imageUtils';
@@ -3956,8 +3956,7 @@ const App: React.FC = () => {
             
             // Incrementar a sequência do próximo número de NFC-e
             const nextNum = currentNfceNum + 1;
-            handleUpdateAdminSettings({
-              ...adminSettings,
+            handleUpdateLogisticsSettings({
               fiscal: {
                 ...adminSettings.fiscal,
                 nextNfceNumber: nextNum

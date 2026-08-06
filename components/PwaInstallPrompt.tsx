@@ -101,8 +101,16 @@ export const PwaInstallPrompt: React.FC<{ compact?: boolean }> = ({ compact = fa
 
         {/* Modal Instruções iOS */}
         {showIosModal && (
-          <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-slate-900 border border-slate-800 text-white p-6 rounded-3xl max-w-sm w-full relative shadow-2xl">
+          <div 
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setShowIosModal(false);
+            }}
+            className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 cursor-pointer"
+          >
+            <div 
+              onClick={(e) => e.stopPropagation()}
+              className="bg-slate-900 border border-slate-800 text-white p-6 rounded-3xl max-w-sm w-full relative shadow-2xl cursor-default"
+            >
               <button 
                 onClick={() => setShowIosModal(false)}
                 className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-full bg-slate-800"
@@ -183,8 +191,16 @@ export const PwaInstallPrompt: React.FC<{ compact?: boolean }> = ({ compact = fa
 
       {/* Modal Instruções iOS */}
       {showIosModal && (
-        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 text-white p-6 rounded-3xl max-w-sm w-full relative shadow-2xl">
+        <div 
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowIosModal(false);
+          }}
+          className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 cursor-pointer"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-slate-900 border border-slate-800 text-white p-6 rounded-3xl max-w-sm w-full relative shadow-2xl cursor-default"
+          >
             <button 
               onClick={() => setShowIosModal(false)}
               className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-full bg-slate-800"
