@@ -79,7 +79,8 @@ import {
   Utensils,
   Bike,
   Fingerprint,
-  ShieldAlert
+  ShieldAlert,
+  ArrowLeft
 } from 'lucide-react';
 
 interface CashSession {
@@ -5421,10 +5422,34 @@ const App: React.FC = () => {
           logoUrl={currentProject === 'PLATFORM' ? undefined : (viewingTenantLogo || tenantData?.logoUrl || adminSettings.logoUrl)}
           onProfileClick={() => setIsProfileOpen(true)}
           userPermissions={localUserPerms}
+          isViewingTenant={Boolean(isSuperAdmin && viewingTenantId)}
+          onStopViewingTenant={handleStopViewingTenant}
         />
       )}
       
       <main className="flex-1 flex flex-col min-w-0 bg-slate-50 overflow-hidden">
+        {isSuperAdmin && viewingTenantId && (
+          <div className="bg-slate-900 border-b border-rose-500/30 text-white px-5 py-3 shadow-lg flex flex-wrap items-center justify-between gap-3 z-40 shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 bg-rose-500/20 text-rose-400 rounded-xl flex items-center justify-center shrink-0 border border-rose-500/30">
+                <Shield size={18} className="animate-pulse" />
+              </div>
+              <div>
+                <p className="text-xs font-black uppercase tracking-wider text-rose-400">Modo de Suporte SaaS Ativo</p>
+                <p className="text-[11px] font-semibold text-slate-300">
+                  Inspecionando loja: <strong className="text-white">{viewingTenantName || tenantData?.name || viewingTenantId}</strong>
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleStopViewingTenant}
+              className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-md hover:scale-105 active:scale-95 transition-all flex items-center gap-2 cursor-pointer border-b-2 border-rose-800"
+            >
+              <ArrowLeft size={16} />
+              Sair da Tela do Cliente e Voltar ao SaaS Admin
+            </button>
+          </div>
+        )}
         {currentProject === 'WEBSITE' ? (
           <KitchenflowWebsite />
         ) : currentProject === 'MARKETPLACE' || currentProject === 'COURIER' ? (
@@ -5636,11 +5661,11 @@ const App: React.FC = () => {
                   <div className="flex items-center gap-4">
                      {isSuperAdmin && viewingTenantId && (
                        <button 
-                         onClick={handleLogout}
+                         onClick={handleStopViewingTenant}
                          className="flex items-center gap-2 px-6 py-3 bg-rose-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-rose-200 hover:bg-rose-700 transition-all border-b-4 border-rose-800 active:translate-y-[2px] active:border-b-0 group"
                        >
                          <Shield size={16} className="group-hover:rotate-12 transition-transform" />
-                         Sair do Modo de Visualização (Tenant: {viewingTenantName || tenantData?.name || 'Carregando...'})
+                         Sair da Tela do Cliente (Tenant: {viewingTenantName || tenantData?.name || 'Carregando...'})
                        </button>
                      )}
                      <div 
