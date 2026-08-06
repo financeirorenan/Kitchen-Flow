@@ -12,9 +12,9 @@ interface EditOrderModalProps {
   onSave: (updates: Partial<Order>) => void;
 }
 
-const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products, onClose, onSave }) => {
-  const [items, setItems] = useState<OrderItem[]>([...order.items]);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(order.paymentMethod || 'dinheiro');
+const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], onClose, onSave }) => {
+  const [items, setItems] = useState<OrderItem[]>(order?.items ? [...order.items] : []);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(order?.paymentMethod || 'dinheiro');
   const [searchTerm, setSearchTerm] = useState('');
 
   const [showOptionsModal, setShowOptionsModal] = useState(false);
@@ -24,14 +24,14 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products, onClos
   const [optionsModalObs, setOptionsModalObs] = useState('');
 
   const total = useMemo(() => {
-    return items.reduce((acc, item) => acc + (item.price * item.quantity), 0) + (order.deliveryFee || 0);
-  }, [items, order.deliveryFee]);
+    return items.reduce((acc, item) => acc + (item.price * item.quantity), 0) + (order?.deliveryFee || 0);
+  }, [items, order?.deliveryFee]);
 
   const filteredProducts = useMemo(() => {
-    if (!searchTerm) return [];
+    if (!searchTerm || !products) return [];
     return products.filter(p => 
-      p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.category.toLowerCase().includes(searchTerm.toLowerCase())
+      p.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      p.category?.toLowerCase().includes(searchTerm.toLowerCase())
     ).slice(0, 5);
   }, [products, searchTerm]);
 
