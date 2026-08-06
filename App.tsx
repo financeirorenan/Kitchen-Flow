@@ -960,12 +960,28 @@ const App: React.FC = () => {
   // Ref para rastrear IDs de pedidos já notificados
   const notifiedOrdersRef = useRef<Set<string>>(new Set());
 
-  // Campainha de novos pedidos (Para até ser aceito)
+  // Auxiliar para determinar se o pedido veio de canal digital (Cardápio Digital ou Marketplace)
+  const isDigitalOrMarketplaceOrder = (order: Partial<Order>) => {
+    if (order.isManual) return false;
+    const source = (order.source || '').toLowerCase().trim();
+    return (
+      source === 'marketplace' ||
+      source === 'digital_menu' ||
+      source === 'digital_menu_delivery' ||
+      source === 'digital_menu_takeout' ||
+      source === 'cardapio' ||
+      source === 'cardapio_digital' ||
+      source === 'whatsapp'
+    );
+  };
+
+  // Campainha de novos pedidos (Para até ser aceito - APENAS para Cardápio Digital e Marketplace)
   const bellAudioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
-    // Toca o sino em loop enquanto houver pedidos digitais pendentes de aceitação
-    if (incomingDigitalOrders.length > 0) {
+    // Toca o sino em loop enquanto houver pedidos digitais/marketplace pendentes de aceitação
+    const pendingDigitalOrders = incomingDigitalOrders.filter(isDigitalOrMarketplaceOrder);
+    if (pendingDigitalOrders.length > 0) {
       if (!bellAudioRef.current) {
         bellAudioRef.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
         bellAudioRef.current.loop = true;
@@ -986,7 +1002,7 @@ const App: React.FC = () => {
         bellAudioRef.current = null;
       }
     };
-  }, [incomingDigitalOrders.length]);
+  }, [incomingDigitalOrders]);
 
   // Carregar dados de todas as coleções do tenant quando mudar (Suporte SaaS / Multi-tenant)
   useEffect(() => {
@@ -2148,13 +2164,30 @@ const App: React.FC = () => {
                   return;
                 }
                 
-                // Notify about new marketplace/digital order
+                // Verificar se o pedido veio de canal digital (Cardápio Digital ou Marketplace)
+                const isDigital = isDigitalOrMarketplaceOrder(cloudOrder);
+
+                if (!isDigital) {
+                  // Pedidos lançados manualmente pelo atendente (Mesa, Balcão, Retirada ou Delivery manual)
+                  // Salva normalmente no sistema sem abrir modal de aceite nem tocar campainha
+                  await localDb.orders.put(cloudOrder);
+                  setOrders(prev => {
+                    const exists = prev.some(o => o.id === cloudOrder.id || o.docId === cloudOrder.docId);
+                    if (exists) {
+                      return prev.map(o => (o.id === cloudOrder.id || o.docId === cloudOrder.docId) ? { ...o, ...cloudOrder } : o);
+                    }
+                    return [cloudOrder, ...prev];
+                  });
+                  return;
+                }
+
+                // Pedido veio de canal digital (Marketplace ou Cardápio Digital)
                 triggerWhatsAppMock("🛒 Novo Pedido!", `Olá! Você recebeu um novo pedido de ${cloudOrder.customerName} via ${cloudOrder.source === 'marketplace' ? 'Marketplace' : 'Cardápio Digital'}.`);
 
                 if (adminSettings.autoAcceptOrders) {
                    const rawAcceptedOrder: Order = { 
                      ...cloudOrder, 
-                     source: cloudOrder.source || 'whatsapp',
+                     source: cloudOrder.source || 'digital_menu',
                      status: 'preparing' as const, 
                      deliveryFee: cloudOrder.type === 'delivery' ? globalDeliveryFee : 0 
                    };
@@ -6231,10 +6264,10 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {incomingDigitalOrders.length > 0 && (
+      {incomingDigitalOrders.filter(isDigitalOrMarketplaceOrder).length > 0 && (
         <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md animate-in fade-in duration-300">
           <div className="w-full max-w-lg space-y-4">
-            {incomingDigitalOrders.slice(0, 1).map((order) => (
+            {incomingDigitalOrders.filter(isDigitalOrMarketplaceOrder).slice(0, 1).map((order) => (
               <div key={order.id} className="bg-white border-4 border-indigo-600 rounded-[2.5rem] shadow-2xl p-8 space-y-6 animate-in zoom-in-95">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">

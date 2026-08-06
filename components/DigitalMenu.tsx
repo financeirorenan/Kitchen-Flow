@@ -673,6 +673,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
       type: orderType,
       notes: notes || undefined,
       status: 'pending',
+      source: 'digital_menu',
       createdAt: new Date()
     };
 

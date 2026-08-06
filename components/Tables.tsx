@@ -4141,6 +4141,8 @@ const Tables: React.FC<TablesProps> = memo(
                           createdAt: new Date(),
                           tenantId: selectedTable.tenantId || "",
                           status: "pending",
+                          source: "pos",
+                          isManual: true,
                         } as Order,
                         adminSettings,
                         { isFiscal: false }
