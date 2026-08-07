@@ -504,9 +504,9 @@ const KDS: React.FC<KDSProps> = memo(({
             )}
 
             <button 
-              onClick={() => setEditingOrder(order)}
+              onClick={() => onEditOrderInPDV(order)}
               className="px-3 py-1 bg-brand-primary text-white rounded-sm font-bold text-[10px] uppercase hover:opacity-90 transition-all shadow-sm cursor-pointer"
-              title="Ver detalhes e atualizar pedido"
+              title="Ver lançamentos e detalhes do pedido"
             >
               VER
             </button>

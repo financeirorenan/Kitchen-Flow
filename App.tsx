@@ -960,10 +960,13 @@ const App: React.FC = () => {
   // Ref para rastrear IDs de pedidos já notificados
   const notifiedOrdersRef = useRef<Set<string>>(new Set());
 
-  // Auxiliar para determinar se o pedido veio de canal digital (Cardápio Digital ou Marketplace)
+  // Auxiliar para determinar se o pedido veio de canal digital externo (Cardápio Digital ou Marketplace)
   const isDigitalOrMarketplaceOrder = (order: Partial<Order>) => {
     if (order.isManual) return false;
     const source = (order.source || '').toLowerCase().trim();
+    if (!source || source === 'pos' || source === 'local' || source === 'panel' || source === 'lojista' || source === 'balcao' || source === 'delivery_panel' || source === 'mesa') {
+      return false;
+    }
     return (
       source === 'marketplace' ||
       source === 'digital_menu' ||
@@ -2794,6 +2797,8 @@ const App: React.FC = () => {
           updatedAt: now,
           tenantId: effectiveTenantId,
           version: 1,
+          isManual: true,
+          source: 'pos',
           lastEventId: `evt_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
           currentBatch: ((existingTableOrder as any)?.currentBatch || 1) + 1
         };
@@ -2910,7 +2915,9 @@ const App: React.FC = () => {
             total: items.reduce((acc, i) => acc + (i.price * i.quantity), 0),
             createdAt: now,
             updatedAt: now,
-            tenantId: effectiveTenantId
+            tenantId: effectiveTenantId,
+            isManual: true,
+            source: 'pos'
           };
 
           if (effectiveTenantId) {
@@ -2944,7 +2951,9 @@ const App: React.FC = () => {
       createdAt: now,
       updatedAt: now,
       tenantId: effectiveTenantId,
-      version: 1
+      version: 1,
+      isManual: true,
+      source: 'pos'
     };
     const kitchenOrder = assignDailyNumberToOrder(rawKitchenOrder);
 
@@ -3976,7 +3985,8 @@ const App: React.FC = () => {
       additionalFeeReason: additionalFeeReason || '',
       discount: discount || 0,
       tenantId: viewingTenantId || currentUserData?.tenantId || 't1',
-      source: table.currentOrderId ? (orders.find(o => o.id === table.currentOrderId)?.source || 'local') : 'local',
+      source: table.currentOrderId ? (orders.find(o => o.id === table.currentOrderId)?.source || 'pos') : 'pos',
+      isManual: true,
       isSettled: true,
       finishedAt: determinedStatus === 'finished' ? new Date() : (activeOrderObj?.finishedAt || undefined),
       completedAt: determinedStatus === 'finished' ? new Date() : (activeOrderObj?.completedAt || undefined),
