@@ -186,7 +186,7 @@ export default function KitchenflowWebsite() {
   ]);
 
   const [liveAiInsights, setLiveAiInsights] = useState<string[]>([
-    "✨ IA do Kai: Analisando as vendas em tempo real do Viva Lá Fome...",
+    "✨ IA do Kai: Analisando as vendas em tempo real do KitchenFlow...",
     "✨ CMV Crítico: Custo da Carne Bovina subiu 8.5% no distribuidor principal",
     "✨ Ajuste Sugerido: Ajustar ficha técnica da Parmegiana de carne economiza R$ 3.20/prato",
     "✨ Alerta de Estoque: Batata In Natura está operando abaixo da margem mínima de segurança",
@@ -198,7 +198,7 @@ export default function KitchenflowWebsite() {
   const [chatMessages, setChatMessages] = useState<Array<{ sender: 'user' | 'kai'; text: string; pose?: string; expression?: string }>>([
     {
       sender: 'kai',
-      text: 'Olá lojista do Viva Lá Fome! Sou o Kai, seu Copiloto de IA em tempo real. Fiz uma auditoria instantânea do faturamento e identifiquei desvios operacionais. O que gostaria de analisar agora de forma inteligente? 🤖💡',
+      text: 'Olá lojista do KitchenFlow! Sou o Kai, seu Copiloto de IA em tempo real. Fiz uma auditoria instantânea do faturamento e identifiquei desvios operacionais. O que gostaria de analisar agora de forma inteligente? 🤖💡',
       pose: 'tudo-sob-controle',
       expression: 'feliz'
     }

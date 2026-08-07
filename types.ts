@@ -221,6 +221,7 @@ export interface Plan {
 
 export interface Tenant {
   id: string;
+  clientNumber?: number; // Número sequencial do cliente (iniciando em 1)
   name: string;
   slug?: string;
   subdomain?: string;

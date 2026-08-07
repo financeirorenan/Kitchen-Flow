@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { db } from '../firebase';
 import { collection, onSnapshot, doc, setDoc, updateDoc, query, orderBy, deleteDoc, addDoc, where, getDocs, getDoc } from 'firebase/firestore';
 import { compressImage } from '../lib/imageUtils';
+import { ensureLojistaTenantWithData } from '../lib/ensureLojistaTenant';
 import { Tenant, Plan, Permission, User, MarketplaceInvoice, MarketplaceSettings } from '../types';
 import { maskPhone } from '../utils/masks';
 import { sendSaasInvoiceEmailResend } from '../services/emailService';
@@ -283,6 +284,21 @@ const INITIAL_SAAS_SUPPLIERS: Supplier[] = [
     }
   }
 ];
+
+export const getClientNumber = (tenant: Tenant, fallbackIdx: number = 0): number => {
+  if (tenant.clientNumber && typeof tenant.clientNumber === 'number' && tenant.clientNumber > 0) {
+    return tenant.clientNumber;
+  }
+  if (tenant.id && /^\d+$/.test(String(tenant.id))) {
+    const parsed = parseInt(String(tenant.id), 10);
+    if (!isNaN(parsed) && parsed < 10000000) return parsed;
+  }
+  if (tenant.ownerId && /^\d+$/.test(String(tenant.ownerId))) {
+    const parsed = parseInt(String(tenant.ownerId), 10);
+    if (!isNaN(parsed) && parsed < 10000000) return parsed;
+  }
+  return fallbackIdx + 1;
+};
 
 interface SaaSAdminProps {
   activeTab: string;
@@ -1411,6 +1427,8 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   }, [showSaaSUserModal, showTenantUserModal]);
 
   useEffect(() => {
+    ensureLojistaTenantWithData();
+
     const q = query(collection(db, 'tenants'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({
@@ -1423,6 +1441,35 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
           expiryDate: doc.data().subscription?.expiryDate?.toDate(),
         }
       })) as Tenant[];
+
+      if (!data.some(t => t.id === 'lojista' || t.slug === 'lojista' || t.name.toLowerCase() === 'kitchenflow')) {
+        data.unshift({
+          id: 'lojista',
+          clientNumber: 1,
+          name: 'KitchenFlow',
+          companyName: 'KitchenFlow',
+          slug: 'lojista',
+          category: 'Alimentação / Delivery',
+          ownerId: 'lojista@kitchenflow.app',
+          email: 'atendimento@kitchenflow.app',
+          phone: '(11) 99999-8888',
+          planId: 'ultimate',
+          status: 'active',
+          subscription: {
+            planId: 'ultimate',
+            status: 'active',
+            startDate: new Date(),
+            expiryDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+            allowedModules: [
+              'merchant-copilot', 'pos', 'tables_manage', 'delivery', 
+              'inventory', 'cmv', 'finance', 'kds', 'kds-kitchen-only', 
+              'menu_digital_config', 'digital_menu', 'marketplace', 'ai_auditor', 'users', 'logs'
+            ]
+          },
+          createdAt: new Date(),
+          updatedAt: new Date()
+        } as any);
+      }
       
       // Sort client-side by createdAt desc to allow tenants with missing createdAt to also show up
       data.sort((a, b) => {
@@ -1537,22 +1584,22 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   const handleSaveTenant = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Calcula o próximo ID de lojista de forma sequencial (iniciando em 1)
+    // Calcula o próximo ID de lojista e número de cliente de forma sequencial (iniciando em 1)
     let tenantId = editingTenant?.id;
-    if (!tenantId) {
-      let nextNumId = 1;
+    let clientNumber = editingTenant?.clientNumber;
+
+    if (!clientNumber) {
       if (tenants.length > 0) {
-        const numericIds = tenants.map(t => {
-          if (/^\d+$/.test(t.id)) {
-            const num = parseInt(t.id, 10);
-            return num < 10000000 ? num : 0;
-          }
-          return 0;
-        });
-        const maxId = Math.max(...numericIds, 0);
-        nextNumId = maxId + 1;
+        const nums = tenants.map((t, index) => getClientNumber(t, index));
+        const maxNum = Math.max(...nums, 0);
+        clientNumber = maxNum + 1;
+      } else {
+        clientNumber = 1;
       }
-      tenantId = String(nextNumId);
+    }
+
+    if (!tenantId) {
+      tenantId = String(clientNumber);
     }
     
     const selectedPlan = plans.find(p => p.id === selectedPlanId);
@@ -1564,6 +1611,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
 
     const tenantData: Partial<Tenant> = {
       id: tenantId,
+      clientNumber,
       name,
       ownerId,
       planId: selectedPlanId,
@@ -3426,7 +3474,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {filteredTenants.map((tenant) => (
+              {filteredTenants.map((tenant, idx) => (
                 <tr key={tenant.id} className="hover:bg-slate-50/50 transition-all group">
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
@@ -3438,7 +3486,12 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                         )}
                       </div>
                       <div>
-                        <p className="font-black text-slate-800 text-sm">{tenant.name}</p>
+                        <div className="flex items-center gap-1.5">
+                          <span className="px-1.5 py-0.5 bg-indigo-50 text-indigo-700 rounded font-mono text-[10px] font-black border border-indigo-200 shrink-0" title="Número do Cliente">
+                            #{getClientNumber(tenant, idx)}
+                          </span>
+                          <p className="font-black text-slate-800 text-sm">{tenant.name}</p>
+                        </div>
                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{tenant.ownerId}</p>
                       </div>
                     </div>

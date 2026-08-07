@@ -11,7 +11,8 @@ import {
   CheckCircle2, ArrowLeft, MessageCircle,
   Bike, Home, UserCircle, Phone, Store,
   Image as ImageIcon, Sparkles, ArrowUp, ArrowDown, Zap, Tag, Star,
-  Search, Filter, Loader2, Package
+  Search, Filter, Loader2, Package,
+  Printer, Download, ExternalLink
 } from 'lucide-react';
 
 import DigitalMenu from './DigitalMenu';
@@ -21,6 +22,7 @@ interface DigitalMenuConfigProps {
   settings: DigitalMenuSettings;
   onUpdateSettings: (settings: DigitalMenuSettings) => void;
   products: Product[];
+  productCategories?: string[];
   tables: Table[];
   onUpdateProduct: (product: Product) => void;
   onPlaceDigitalOrder: (order: Order) => void;
@@ -43,6 +45,7 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
   settings, 
   onUpdateSettings, 
   products, 
+  productCategories,
   tables, 
   onUpdateProduct,
   onPlaceDigitalOrder,
@@ -62,7 +65,19 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
   const [totemSearch, setTotemSearch] = useState('');
   const [totemCategoryFilter, setTotemCategoryFilter] = useState<string>('all');
   
-  const categories = useMemo(() => Array.from(new Set(products.map(p => p.category))), [products]);
+  const categories = useMemo(() => {
+    const catsFromProducts = Array.from(new Set(products.map(p => p.category).filter(Boolean)));
+    const registered = productCategories && productCategories.length > 0 ? productCategories : [];
+    
+    const combined = [...registered];
+    catsFromProducts.forEach(c => {
+      if (!combined.includes(c)) {
+        combined.push(c);
+      }
+    });
+
+    return combined.length > 0 ? combined : ['Geral'];
+  }, [products, productCategories]);
   
   const sortedProducts = useMemo(() => {
     return [...products].sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
@@ -77,6 +92,126 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
   const menuUrl = `${window.location.origin}/cardapio/${cleanMenuSlug || 'viva-la-fome'}`;
   const menuUrlById = `${window.location.origin}/cardapio/${effectiveId}`;
   const lojistaUrl = `${window.location.origin}/lojista/${cleanMenuSlug || effectiveId}`;
+
+  const downloadQrCode = async (dataUrl: string, fileName: string) => {
+    try {
+      const response = await fetch(dataUrl);
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      window.open(dataUrl, '_blank');
+    }
+  };
+
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    setIsLinkCopied(label);
+    setTimeout(() => setIsLinkCopied(false), 2000);
+  };
+
+  const handlePrintTableQr = (tableNum: number | string) => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    const tUrl = `${menuUrl}?mesa=${tableNum}`;
+    const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=350x350&data=${encodeURIComponent(tUrl)}`;
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>QR Code Mesa ${tableNum} - ${settings.restaurantName || 'Cardápio Digital'}</title>
+          <style>
+            @page { size: auto; margin: 10mm; }
+            body { font-family: system-ui, -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 90vh; background: #ffffff; margin: 0; }
+            .card { width: 320px; padding: 28px; border: 3px solid #1e293b; border-radius: 24px; text-align: center; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); }
+            .logo { max-height: 54px; margin-bottom: 12px; object-fit: contain; }
+            .title { font-size: 16px; font-weight: 900; color: #0f172a; text-transform: uppercase; letter-spacing: 1px; }
+            .subtitle { font-size: 11px; font-weight: 700; color: #64748b; margin-top: 4px; }
+            .qr-box { background: #f8fafc; padding: 16px; border-radius: 20px; margin: 20px 0; border: 1px solid #e2e8f0; }
+            .qr-img { width: 220px; height: 220px; display: block; margin: 0 auto; border-radius: 12px; }
+            .badge { display: inline-block; background: #4f46e5; color: #ffffff; padding: 8px 22px; border-radius: 999px; font-size: 18px; font-weight: 900; letter-spacing: 1px; }
+            .instruction { font-size: 12px; font-weight: 800; color: #334155; margin-top: 14px; line-height: 1.4; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            ${settings.logoUrl ? `<img src="${settings.logoUrl}" class="logo" />` : ''}
+            <div class="title">${settings.restaurantName || 'NOSSO RESTAURANTE'}</div>
+            <div class="subtitle">Peça direto da sua mesa pelo celular</div>
+            <div class="qr-box">
+              <img src="${qrSrc}" class="qr-img" />
+            </div>
+            <div class="badge">MESA ${tableNum}</div>
+            <div class="instruction">Aponte sua câmera para o QR Code para abrir o cardápio e fazer seu pedido!</div>
+          </div>
+          <script>
+            window.onload = function() { window.print(); };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  const handlePrintAllTableQrs = () => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    const cardsHtml = tables.map(t => {
+      const tUrl = `${menuUrl}?mesa=${t.number}`;
+      const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(tUrl)}`;
+      return `
+        <div style="width: 280px; padding: 24px; border: 2px solid #cbd5e1; border-radius: 20px; text-align: center; font-family: sans-serif; box-sizing: border-box; page-break-inside: avoid; background: #ffffff;">
+          ${settings.logoUrl ? `<img src="${settings.logoUrl}" style="height: 44px; object-fit: contain; margin-bottom: 8px;" />` : ''}
+          <div style="font-size: 13px; font-weight: 900; color: #0f172a; text-transform: uppercase;">${settings.restaurantName || 'NOSSO RESTAURANTE'}</div>
+          <div style="margin: 14px 0; background: #f8fafc; padding: 12px; border-radius: 16px; border: 1px solid #e2e8f0;">
+            <img src="${qrSrc}" style="width: 180px; height: 180px; display: block; margin: 0 auto; border-radius: 8px;" />
+          </div>
+          <div style="display: inline-block; background: #4f46e5; color: #ffffff; padding: 6px 18px; border-radius: 20px; font-size: 16px; font-weight: 900;">
+            MESA ${t.number}
+          </div>
+          <div style="font-size: 11px; font-weight: 700; color: #64748b; margin-top: 10px; line-height: 1.3;">
+            Escaneie o QR Code com a câmera para pedir
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Cartões de QR Code de Mesas - ${settings.restaurantName || 'KitchenFlow'}</title>
+          <style>
+            @page { size: auto; margin: 15mm; }
+            body { font-family: system-ui, -apple-system, sans-serif; background: #f8fafc; padding: 20px; margin: 0; }
+            .grid { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; }
+            @media print {
+              body { background: white; padding: 0; }
+              .no-print { display: none !important; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="no-print" style="margin-bottom: 20px; text-align: center;">
+            <button onclick="window.print()" style="padding: 12px 28px; background: #4f46e5; color: white; border: none; border-radius: 14px; font-weight: 900; cursor: pointer; font-size: 14px; font-family: sans-serif;">🖨️ Imprimir Todos os Cartões</button>
+          </div>
+          <div class="grid">
+            ${cardsHtml}
+          </div>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
 
   const bannerPresets = [
     { name: 'Pizza', url: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?q=80&w=2070&auto=format&fit=crop' },
@@ -636,28 +771,218 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
 
           {activeTab === 'qrcode' && (
             <div className="space-y-6 animate-in slide-in-from-left-4">
-              <div className="bg-indigo-50 p-6 rounded-[2rem] border border-indigo-100 flex items-center gap-6">
-                <div className="w-20 h-20 bg-white rounded-2xl flex items-center justify-center shadow-sm">
-                  <QrCode size={40} className="text-indigo-600" />
+              {/* Header Box */}
+              <div className="bg-gradient-to-br from-indigo-900 via-indigo-800 to-slate-900 p-6 md:p-8 rounded-[2.5rem] text-white shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-hidden">
+                <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
+                  <QrCode size={160} />
                 </div>
-                <div className="space-y-1">
-                  <h4 className="text-lg font-black text-indigo-900 tracking-tight">QR Codes das Mesas</h4>
-                  <p className="text-xs font-medium text-indigo-600/70">Gere códigos únicos para cada mesa para facilitar o pedido.</p>
+                <div className="space-y-2 relative z-10 max-w-xl text-center md:text-left">
+                  <span className="px-3 py-1 bg-indigo-500/30 text-indigo-200 border border-indigo-400/30 rounded-full text-[10px] font-black uppercase tracking-widest inline-flex items-center gap-1.5">
+                    <Sparkles size={12} className="text-amber-300" /> Autoatendimento Instantâneo
+                  </span>
+                  <h4 className="text-xl md:text-2xl font-black tracking-tight">QR Codes Prontos para Pedidos</h4>
+                  <p className="text-xs text-indigo-100/80 font-medium leading-relaxed">
+                    Aponte e peça! Escaneie os QR Codes de mesas, balcão ou totem para abrir o cardápio digital vinculado direto à mesa do cliente.
+                  </p>
+                </div>
+                <div className="flex flex-col sm:flex-row items-center gap-3 relative z-10 shrink-0 w-full md:w-auto">
+                  <button
+                    type="button"
+                    onClick={handlePrintAllTableQrs}
+                    disabled={tables.length === 0}
+                    className="w-full sm:w-auto px-5 py-3 bg-white text-indigo-900 hover:bg-indigo-50 active:scale-95 rounded-2xl font-black text-xs uppercase tracking-wider shadow-lg transition flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    <Printer size={16} /> Imprimir Todos os Cartões ({tables.length})
+                  </button>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                {tables.map(table => (
-                  <div key={table.id} className="p-6 bg-white border rounded-[2rem] flex flex-col items-center gap-4 hover:shadow-lg transition-all group">
-                    <div className="w-full aspect-square bg-slate-50 rounded-2xl flex items-center justify-center border-2 border-dashed border-slate-200 group-hover:border-indigo-300 transition-all">
-                      <QrCode size={64} className="text-slate-300 group-hover:text-indigo-600" />
+              {/* Section 1: Geral & Totem */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* QR Code Geral */}
+                <div className="p-6 bg-white rounded-[2rem] border border-slate-200 shadow-sm flex flex-col md:flex-row items-center gap-6 group hover:shadow-md transition">
+                  <div className="w-36 h-36 bg-slate-50 p-2 rounded-2xl border border-slate-200 flex items-center justify-center shrink-0">
+                    <img 
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(menuUrl)}`}
+                      alt="QR Code Cardápio Geral"
+                      className="w-full h-full object-contain rounded-lg"
+                    />
+                  </div>
+                  <div className="space-y-3 flex-1 text-center md:text-left">
+                    <div>
+                      <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-md">Delivery & Balcão</span>
+                      <h5 className="font-black text-slate-800 text-base mt-1">QR Code Geral do Cardápio</h5>
+                      <p className="text-[11px] text-slate-500 font-medium">Link universal para divulgar no Instagram, WhatsApp ou balcão.</p>
                     </div>
-                    <div className="text-center">
-                      <p className="font-black text-slate-800">Mesa {table.number}</p>
-                      <button className="text-[9px] font-black text-indigo-600 uppercase tracking-widest mt-1 hover:underline">Baixar QR</button>
+                    <div className="p-2 bg-slate-50 rounded-xl font-mono text-[10px] text-slate-600 truncate border border-slate-100">
+                      {menuUrl}
+                    </div>
+                    <div className="flex items-center gap-2 justify-center md:justify-start">
+                      <button
+                        type="button"
+                        onClick={() => downloadQrCode(`https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(menuUrl)}`, 'qrcode-cardapio-geral.png')}
+                        className="px-3 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 transition"
+                      >
+                        <Download size={12} /> Baixar PNG
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => copyToClipboard(menuUrl, 'geral')}
+                        className="px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-xl text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 transition"
+                      >
+                        {isLinkCopied === 'geral' ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
+                        {isLinkCopied === 'geral' ? 'Copiado!' : 'Copiar'}
+                      </button>
+                      <a
+                        href={menuUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="p-1.5 bg-slate-100 text-slate-600 hover:bg-slate-200 rounded-xl transition"
+                        title="Abrir em nova aba"
+                      >
+                        <ExternalLink size={14} />
+                      </a>
                     </div>
                   </div>
-                ))}
+                </div>
+
+                {/* QR Code Totem */}
+                <div className="p-6 bg-white rounded-[2rem] border border-slate-200 shadow-sm flex flex-col md:flex-row items-center gap-6 group hover:shadow-md transition">
+                  <div className="w-36 h-36 bg-amber-50 p-2 rounded-2xl border border-amber-200 flex items-center justify-center shrink-0">
+                    <img 
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(`${menuUrl}?modo=totem`)}`}
+                      alt="QR Code Totem"
+                      className="w-full h-full object-contain rounded-lg"
+                    />
+                  </div>
+                  <div className="space-y-3 flex-1 text-center md:text-left">
+                    <div>
+                      <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md">Modo Kiosk / Totem</span>
+                      <h5 className="font-black text-slate-800 text-base mt-1">QR Code de Autoatendimento</h5>
+                      <p className="text-[11px] text-slate-500 font-medium">Inicia automaticamente no modo Totem de Tela Cheia com fotos ampliadas.</p>
+                    </div>
+                    <div className="p-2 bg-slate-50 rounded-xl font-mono text-[10px] text-slate-600 truncate border border-slate-100">
+                      {menuUrl}?modo=totem
+                    </div>
+                    <div className="flex items-center gap-2 justify-center md:justify-start">
+                      <button
+                        type="button"
+                        onClick={() => downloadQrCode(`https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(`${menuUrl}?modo=totem`)}`, 'qrcode-totem.png')}
+                        className="px-3 py-1.5 bg-amber-50 text-amber-800 hover:bg-amber-100 rounded-xl text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 transition"
+                      >
+                        <Download size={12} /> Baixar PNG
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => copyToClipboard(`${menuUrl}?modo=totem`, 'totem')}
+                        className="px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-xl text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 transition"
+                      >
+                        {isLinkCopied === 'totem' ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
+                        {isLinkCopied === 'totem' ? 'Copiado!' : 'Copiar'}
+                      </button>
+                      <a
+                        href={`${menuUrl}?modo=totem`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="p-1.5 bg-slate-100 text-slate-600 hover:bg-slate-200 rounded-xl transition"
+                        title="Abrir Modo Totem"
+                      >
+                        <ExternalLink size={14} />
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 2: Mesas */}
+              <div className="space-y-4 pt-4 border-t border-slate-200">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-base font-black text-slate-800 uppercase tracking-tight">QR Codes das Mesas ({tables.length})</h4>
+                    <p className="text-xs text-slate-500 font-medium">Cada QR Code identifica a mesa e lança os pedidos direto no KDS e Caixa.</p>
+                  </div>
+                  {tables.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handlePrintAllTableQrs}
+                      className="px-3.5 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 transition"
+                    >
+                      <Printer size={14} /> Imprimir Todos
+                    </button>
+                  )}
+                </div>
+
+                {tables.length === 0 ? (
+                  <div className="p-12 text-center bg-slate-50 rounded-[2rem] border-2 border-dashed border-slate-200 space-y-3">
+                    <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center mx-auto text-slate-400 shadow-sm">
+                      <QrCode size={32} />
+                    </div>
+                    <h5 className="font-black text-slate-700">Nenhuma mesa cadastrada ainda</h5>
+                    <p className="text-xs text-slate-500 max-w-sm mx-auto">Cadastre suas mesas no salão para gerar os QR Codes individuais de atendimento em cada mesa.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                    {tables.map(table => {
+                      const tableUrl = `${menuUrl}?mesa=${table.number}`;
+                      const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(tableUrl)}`;
+                      return (
+                        <div key={table.id} className="p-5 bg-white border border-slate-200 rounded-[2rem] flex flex-col items-center gap-3 hover:shadow-lg transition-all group relative overflow-hidden">
+                          <div className="w-full flex items-center justify-between">
+                            <span className="px-2.5 py-1 bg-indigo-600 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-sm">
+                              Mesa {table.number}
+                            </span>
+                            <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${table.status === 'occupied' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                              {table.status === 'occupied' ? 'Em uso' : 'Livre'}
+                            </span>
+                          </div>
+
+                          <div className="w-full aspect-square bg-slate-50 rounded-2xl p-3 border border-slate-100 flex items-center justify-center group-hover:border-indigo-200 transition-all">
+                            <img 
+                              src={qrSrc} 
+                              alt={`QR Code Mesa ${table.number}`}
+                              className="w-full h-full object-contain rounded-lg shadow-sm"
+                            />
+                          </div>
+
+                          <div className="w-full text-center space-y-2">
+                            <p className="text-[10px] font-mono text-slate-500 truncate bg-slate-50 p-1.5 rounded-lg border border-slate-100">
+                              ?mesa={table.number}
+                            </p>
+                            <div className="grid grid-cols-3 gap-1">
+                              <button
+                                type="button"
+                                onClick={() => downloadQrCode(`https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(tableUrl)}`, `qrcode-mesa-${table.number}.png`)}
+                                className="p-2 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 text-slate-600 rounded-xl text-[10px] font-bold flex flex-col items-center gap-1 transition cursor-pointer"
+                                title="Baixar Imagem PNG"
+                              >
+                                <Download size={14} />
+                                <span className="text-[8px] uppercase">Baixar</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => copyToClipboard(tableUrl, `table_${table.number}`)}
+                                className="p-2 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 text-slate-600 rounded-xl text-[10px] font-bold flex flex-col items-center gap-1 transition cursor-pointer"
+                                title="Copiar Link da Mesa"
+                              >
+                                {isLinkCopied === `table_${table.number}` ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
+                                <span className="text-[8px] uppercase">{isLinkCopied === `table_${table.number}` ? 'Copiado' : 'Copiar'}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handlePrintTableQr(table.number)}
+                                className="p-2 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 text-slate-600 rounded-xl text-[10px] font-bold flex flex-col items-center gap-1 transition cursor-pointer"
+                                title="Imprimir Cartão de Mesa"
+                              >
+                                <Printer size={14} />
+                                <span className="text-[8px] uppercase">Imprimir</span>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           )}

@@ -496,12 +496,27 @@ const Login: React.FC<LoginProps> = memo(({ onLoginSuccess }) => {
           });
 
         } else if (signupRole === 'OWNER') {
-          // Lojista Parceiro: criar um novo Tenant (empresa) exclusivo para segregar dados
+          // Lojista Parceiro: calcular o número sequencial do cliente (iniciando em 1)
+          let clientNumber = 1;
+          try {
+            const tenantsSnap = await getDocs(collection(db, 'tenants'));
+            if (!tenantsSnap.empty) {
+              const nums = tenantsSnap.docs.map(d => {
+                const data = d.data();
+                return data.clientNumber || (parseInt(d.id, 10) && !isNaN(parseInt(d.id, 10)) && parseInt(d.id, 10) < 1000000 ? parseInt(d.id, 10) : 0);
+              });
+              clientNumber = Math.max(...nums, 0) + 1;
+            }
+          } catch (e) {
+            console.warn("Could not compute next clientNumber:", e);
+          }
+
           const newTenantId = `tenant_${Date.now()}`;
 
           // 1. Cadastrar Tenant
           await setDoc(doc(db, 'tenants', newTenantId), {
             id: newTenantId,
+            clientNumber,
             name: restaurantName,
             category: tradeCategory,
             ownerId: user.uid,

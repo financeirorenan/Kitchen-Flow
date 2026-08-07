@@ -464,18 +464,29 @@ const Tables: React.FC<TablesProps> = memo(
     // Effect to handle PDV Edit Order from KDS/Delivery
     useEffect(() => {
       if (pdvEditOrder) {
+        setShowPaymentModal(false);
+        setShowCancelModal(false);
+        setShowTransferModal(false);
+        setShowChangeModal(false);
         setIsCounterContext(pdvEditOrder.type !== "table");
-        // Create a mock table from the order
-        const mockTable: Table = {
-          id:
-            pdvEditOrder.tableNumber || 1000 + Math.floor(Math.random() * 9000),
+
+        const existingTable = tables.find(t => t.currentOrderId === pdvEditOrder.id || (pdvEditOrder.tableNumber && String(t.number) === String(pdvEditOrder.tableNumber)));
+
+        const mockTable: Table = existingTable ? {
+          ...existingTable,
+          items: pdvEditOrder.items || [],
+          total: (pdvEditOrder.total || 0) - (pdvEditOrder.deliveryFee || 0),
+          currentOrderId: pdvEditOrder.id,
+        } : {
+          id: pdvEditOrder.tableNumber ? `tbl_${pdvEditOrder.tableNumber}` : (pdvEditOrder.id || `ord_${Date.now()}`),
           number: Number(pdvEditOrder.tableNumber) || 0,
-          items: pdvEditOrder.items,
-          total: pdvEditOrder.total - (pdvEditOrder.deliveryFee || 0),
+          items: pdvEditOrder.items || [],
+          total: (pdvEditOrder.total || 0) - (pdvEditOrder.deliveryFee || 0),
           status: "occupied",
           tenantId: pdvEditOrder.tenantId,
           currentOrderId: pdvEditOrder.id,
         };
+
         setSelectedTable(mockTable);
         setCustomerName(pdvEditOrder.customerName || "");
         setCustomerPhone(pdvEditOrder.customerPhone || "");
@@ -939,9 +950,9 @@ const Tables: React.FC<TablesProps> = memo(
     useEffect(() => {
       if (!selectedTable) return;
 
-      // Se estivermos editando um pedido do PDV vindo de KDS/Delivery, não limpamos o selectedTable
-      // se ele não estiver nas listas ativas (pois ele já é um pedido finalizado/em andamento)
-      if (pdvEditOrder && selectedTable.currentOrderId === pdvEditOrder.id) {
+      // Se estivermos editando um pedido do PDV vindo de KDS/Delivery/Mesas,
+      // não ressetamos nem fechamos o selectedTable se ele não estiver nas listas ativas
+      if (pdvEditOrder) {
         return;
       }
 

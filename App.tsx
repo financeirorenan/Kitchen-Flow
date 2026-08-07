@@ -48,6 +48,7 @@ import { Product, Table, Order, OrderStatus, Courier, FinancialRecord, User, Use
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 import { compressImage } from './lib/imageUtils';
+import { ensureLojistaTenantWithData } from './lib/ensureLojistaTenant';
 import { 
   BarChart as BarChartIcon,
   Plus, 
@@ -863,7 +864,7 @@ const App: React.FC = () => {
     primaryColor: '#E31B23',
     accentColor: '#FACC15',
     fontFamily: 'sans',
-    restaurantName: 'Viva Lá Fome!',
+    restaurantName: 'KitchenFlow',
     welcomeMessage: 'O melhor delivery da região! Peça agora e receba em casa.',
     allowOrdering: true,
     showStock: true,
@@ -888,7 +889,7 @@ const App: React.FC = () => {
   });
 
   const [adminSettings, setAdminSettings] = useState<AdminSettings>({
-    companyName: 'Viva Lá Fome!',
+    companyName: 'KitchenFlow',
     cnpj: '12.345.678/0001-90',
     address: 'Av. Paulista, 1000 - Bela Vista, São Paulo - SP',
     phone: '(11) 4002-8922',
@@ -967,6 +968,8 @@ const App: React.FC = () => {
     if (!source || source === 'pos' || source === 'local' || source === 'panel' || source === 'lojista' || source === 'balcao' || source === 'delivery_panel' || source === 'mesa') {
       return false;
     }
+    if (order.type === 'table' || order.type === 'dine_in') return false;
+
     return (
       source === 'marketplace' ||
       source === 'digital_menu' ||
@@ -1117,12 +1120,13 @@ const App: React.FC = () => {
         active: false
       }
     });
+    ensureLojistaTenantWithData();
     notifiedOrdersRef.current.clear();
     setCashSession({ isOpen: false, openingValue: 0, openedAt: null });
 
     // PRIORIDADE: Primeiro o ID que estamos visualizando (Suporte), depois o ID do próprio usuário logado
-    // Se for Super Admin, o padrão é a loja "Viva la fome" (ID: HCL1177LRQVPEKCTYRAHU7IGBQ42) para evitar o painel vazio/placeholder "KitchenFlow AI".
-    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || (isSuperAdmin ? 'HCL1177LRQVPEKCTYRAHU7IGBQ42' : '');
+    // Se for Super Admin, o padrão é a loja KitchenFlow (ID: lojista)
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || (isSuperAdmin ? 'lojista' : '');
     if (!effectiveTenantId) {
       setTenantData(null);
       setAdminSettings(prev => ({
@@ -3228,12 +3232,17 @@ const App: React.FC = () => {
   };
 
   const handleEditOrderInPDV = (order: Order) => {
-    // Melhoria para manter o usuário na aba original após edição (como solicitado para o KDS)
-    if (activeTab !== 'tables') {
-      setReturnToTab(activeTab);
-      setActiveTab('tables');
+    // Buscar o pedido principal caso este seja um sub-ticket do KDS
+    let targetOrder = order;
+    if (order.mergedIntoOrderId) {
+      const parent = orders.find(o => o.id === order.mergedIntoOrderId || o.docId === order.mergedIntoOrderId);
+      if (parent) targetOrder = parent;
+    } else if (order.id && order.id.startsWith('KDS-')) {
+      const parent = orders.find(o => !o.id.startsWith('KDS-') && ((o.dailyNumber && o.dailyNumber === order.dailyNumber) || (o.tableNumber && o.tableNumber === order.tableNumber)));
+      if (parent) targetOrder = parent;
     }
-    setPdvEditOrder(order);
+
+    setPdvEditOrder({ ...targetOrder });
   };
 
   const handleUpdateOrder = async (id: string, updates: Partial<Order>) => {
@@ -5488,7 +5497,7 @@ const App: React.FC = () => {
           allowedModules={effectiveAllowedModules}
           isSuperAdmin={isSuperAdmin}
           isSaaSMode={currentProject === 'PLATFORM'}
-          restaurantName={currentProject === 'PLATFORM' ? 'KitchenFlow AI' : (viewingTenantName || tenantData?.name || adminSettings.companyName || 'Viva Lá Fome!')}
+          restaurantName={currentProject === 'PLATFORM' ? 'KitchenFlow AI' : (viewingTenantName || tenantData?.name || adminSettings.companyName || 'KitchenFlow')}
           logoUrl={currentProject === 'PLATFORM' ? undefined : (viewingTenantLogo || tenantData?.logoUrl || adminSettings.logoUrl)}
           onProfileClick={() => setIsProfileOpen(true)}
           userPermissions={localUserPerms}
@@ -5728,14 +5737,22 @@ const App: React.FC = () => {
                       </h1>
                     </div>
                   </div>
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-3">
+                     <button
+                       onClick={() => handleViewTenant('lojista', 'KitchenFlow')}
+                       className="flex items-center gap-2 px-3.5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black text-[10px] uppercase tracking-wider shadow-md hover:scale-105 active:scale-95 transition-all cursor-pointer shrink-0 border-b-2 border-indigo-800"
+                       title="Alternar/Acessar loja do cliente KitchenFlow para testes rápidos"
+                     >
+                       <Store size={15} />
+                       <span>Acessar como Cliente: KitchenFlow</span>
+                     </button>
                      {isSuperAdmin && viewingTenantId && (
                        <button 
                          onClick={handleStopViewingTenant}
-                         className="flex items-center gap-2 px-6 py-3 bg-rose-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-rose-200 hover:bg-rose-700 transition-all border-b-4 border-rose-800 active:translate-y-[2px] active:border-b-0 group"
+                         className="flex items-center gap-2 px-4 py-2.5 bg-rose-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-md shadow-rose-200 hover:bg-rose-700 transition-all border-b-2 border-rose-800 active:translate-y-[1px] cursor-pointer"
                        >
                          <Shield size={16} className="group-hover:rotate-12 transition-transform" />
-                         Sair da Tela do Cliente (Tenant: {viewingTenantName || tenantData?.name || 'Carregando...'})
+                         Sair da Tela do Cliente
                        </button>
                      )}
                      <div 
@@ -5746,7 +5763,7 @@ const App: React.FC = () => {
                        {currentUserData?.avatar ? (
                          <img src={currentUserData.avatar} alt={currentUserData.name} className="w-full h-full object-cover animate-fade-in" referrerPolicy="no-referrer" />
                        ) : (
-                         (viewingTenantName || tenantData?.name || adminSettings.companyName || 'Viva Lá Fome!').substring(0, 2).toUpperCase()
+                         (viewingTenantName || tenantData?.name || adminSettings.companyName || 'KitchenFlow').substring(0, 2).toUpperCase()
                        )}
                      </div>
                   </div>
@@ -6029,7 +6046,7 @@ const App: React.FC = () => {
             </div>
           </div>
         )}
-        {(activeTab === 'tables' || activeTab === 'pos') && hasPermission('tables_manage') && <Tables 
+        {((activeTab === 'tables' || activeTab === 'pos') && hasPermission('tables_manage') || pdvEditOrder !== null) && <Tables 
           tables={tables} 
           counterOrders={counterOrders} 
           products={products} 
@@ -6223,6 +6240,7 @@ const App: React.FC = () => {
             settings={digitalMenuSettings} 
             onUpdateSettings={setDigitalMenuSettings} 
             products={products} 
+            productCategories={productCategories}
             tables={tables} 
             onUpdateProduct={handleUpdateProduct} 
             onPlaceDigitalOrder={async (order) => {

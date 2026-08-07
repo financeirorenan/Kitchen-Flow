@@ -1072,12 +1072,43 @@ const Inventory: React.FC<InventoryProps> = memo(({
 
   const handleDeleteCategory = (category: string) => {
     confirmAction(
-      "Excluir Categoria",
-      `Deseja excluir a categoria "${category}"? Insumos nesta categoria não serão excluídos.`,
+      "Excluir Categoria de Insumo",
+      `Deseja excluir a categoria de insumo "${category}"? Os insumos nesta categoria não serão excluídos.`,
       () => {
-        setRawMaterialCategories(rawMaterialCategories.filter(c => c !== category));
+        setRawMaterialCategories(prev => prev.filter(c => c !== category));
+        if (selectedRawCategory === category) {
+          setSelectedRawCategory(null);
+        }
       },
       'warning'
+    );
+  };
+
+  const handleDeleteProductCategory = (category: string) => {
+    confirmAction(
+      "Excluir Categoria de Produto",
+      `Deseja excluir a categoria "${category}"? Quaisquer produtos cadastrados nesta categoria serão movidos para "Geral".`,
+      () => {
+        products.forEach(p => {
+          if (p.category === category) {
+            onUpdateProduct({ ...p, category: 'Geral' });
+          }
+        });
+
+        const currentHidden = digitalMenuSettings.hiddenCategories || [];
+        const currentOrder = digitalMenuSettings.categoryOrder || [];
+        onUpdateDigitalMenuSettings({
+          ...digitalMenuSettings,
+          hiddenCategories: currentHidden.filter(c => c !== category),
+          categoryOrder: currentOrder.filter(c => c !== category)
+        });
+
+        setProductCategories(prev => prev.filter(c => c !== category));
+        if (selectedCategory === category) {
+          setSelectedCategory(null);
+        }
+      },
+      'danger'
     );
   };
 
@@ -1320,8 +1351,8 @@ const Inventory: React.FC<InventoryProps> = memo(({
                           <span className={`text-sm font-black tracking-tight ${isHidden ? 'text-slate-400 line-through' : isSelected ? 'text-teal-700' : 'text-slate-700'}`}>{cat}</span>
                         </div>
                         
-                        <div className="flex items-center gap-3">
-                          <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1.5">
                              <div 
                                onClick={(e) => {
                                  e.stopPropagation();
@@ -1339,6 +1370,16 @@ const Inventory: React.FC<InventoryProps> = memo(({
                                 {isHidden ? 'Oculto' : 'Visível'}
                              </span>
                           </div>
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteProductCategory(cat);
+                            }}
+                            className="p-1.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                            title="Excluir Categoria"
+                          >
+                            <Trash2 size={14} />
+                          </button>
                         </div>
                       </Reorder.Item>
                     );
@@ -1578,8 +1619,8 @@ const Inventory: React.FC<InventoryProps> = memo(({
                           <span className={`text-sm font-black tracking-tight ${isHidden ? 'text-slate-400 line-through' : isSelected ? 'text-indigo-700' : 'text-slate-700'}`}>{cat}</span>
                         </div>
                         
-                        <div className="flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center gap-1.5">
                              <div 
                                onClick={() => {
                                  const currentHidden = digitalMenuSettings.hiddenRawCategories || [];
@@ -1599,6 +1640,13 @@ const Inventory: React.FC<InventoryProps> = memo(({
                           <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${isSelected ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-500'}`}>
                             {itemsInCat}
                           </span>
+                          <button 
+                            onClick={() => handleDeleteCategory(cat)}
+                            className="p-1.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                            title="Excluir Categoria de Insumo"
+                          >
+                            <Trash2 size={14} />
+                          </button>
                         </div>
                       </div>
                     );
@@ -4165,29 +4213,12 @@ const Inventory: React.FC<InventoryProps> = memo(({
                           {isHidden ? <EyeOff size={14} /> : <Eye size={14} />}
                         </button>
                         <button 
-                          onClick={() => {
-                            if (confirm(`Excluir a categoria "${cat}"? Qualquer produto nesta categoria será movido para "Geral".`)) {
-                              // Update affected products
-                              products.forEach(p => {
-                                if (p.category === cat) {
-                                  onUpdateProduct({ ...p, category: 'Geral' });
-                                }
-                              });
-                              
-                              // Clear from hidden categories and category order
-                              const currentHidden = digitalMenuSettings.hiddenCategories || [];
-                              const currentOrder = digitalMenuSettings.categoryOrder || [];
-                              onUpdateDigitalMenuSettings({
-                                ...digitalMenuSettings,
-                                hiddenCategories: currentHidden.filter(c => c !== cat),
-                                categoryOrder: currentOrder.filter(c => c !== cat)
-                              });
-
-                              // Update the registered categories array
-                              setProductCategories(productCategories.filter(c => c !== cat));
-                            }
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteProductCategory(cat);
                           }}
                           className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                          title="Excluir Categoria"
                         >
                           <Trash2 size={14} />
                         </button>

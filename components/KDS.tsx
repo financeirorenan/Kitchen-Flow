@@ -451,9 +451,9 @@ const KDS: React.FC<KDSProps> = memo(({
                 </span>
              </div>
              <button
-                onClick={() => setEditingOrder(order)}
+                onClick={() => onEditOrderInPDV(order)}
                 className="text-[9px] font-black text-indigo-600 hover:text-indigo-800 underline uppercase tracking-widest pl-2"
-                title="Alterar forma de pagamento do pedido"
+                title="Alterar forma de pagamento e lançamentos do pedido"
              >
                 Alterar
              </button>
@@ -462,9 +462,9 @@ const KDS: React.FC<KDSProps> = memo(({
           {/* Botões de Ação estilo SAIPOS */}
           <div className="flex items-center justify-end gap-1 pt-1 opacity-0 group-hover:opacity-100 transition-opacity">
             <button 
-              onClick={() => setEditingOrder(order)}
+              onClick={() => onEditOrderInPDV(order)}
               className="p-1.5 bg-cyan-50 text-cyan-600 rounded-sm hover:bg-cyan-600 hover:text-white transition-all shadow-sm"
-              title="Informações / Editar"
+              title="Informações e Lançamentos / Editar"
             >
               <Search size={14} />
             </button>
@@ -506,7 +506,7 @@ const KDS: React.FC<KDSProps> = memo(({
             <button 
               onClick={() => onEditOrderInPDV(order)}
               className="px-3 py-1 bg-brand-primary text-white rounded-sm font-bold text-[10px] uppercase hover:opacity-90 transition-all shadow-sm cursor-pointer"
-              title="Ver lançamentos e detalhes do pedido"
+              title="Ver comanda de lançamentos e atualizar pedido"
             >
               VER
             </button>

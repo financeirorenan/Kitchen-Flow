@@ -1,6 +1,6 @@
 {
-  "short_name": "Marketplace",
-  "name": "Marketplace - Pedidos & Cardápio Digital",
+  "short_name": "Nova Delivery",
+  "name": "Nova Delivery - Pedidos & Cardápio",
   "icons": [
     {
       "src": "/icon-192.png",
@@ -27,5 +27,5 @@
   "display": "standalone",
   "orientation": "portrait-primary",
   "scope": "/",
-  "description": "Aplicativo de Pedidos e Cardápio Digital do Marketplace"
+  "description": "Aplicativo Oficial de Pedidos e Delivery - Nova Delivery"
 }

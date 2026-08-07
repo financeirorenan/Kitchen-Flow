@@ -15,6 +15,7 @@ import { DigitalMenuSettings, Product, ProductOption } from '../types';
 interface DigitalMenuProps {
   settings: DigitalMenuSettings;
   products: Product[];
+  productCategories?: string[];
   onPlaceOrder?: (order: any) => void;
   isSimulation?: boolean;
   initialTable?: string;
@@ -410,15 +411,23 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
     }
   }, [isDeliveryEnabled, isPickupEnabled, orderType]);
 
+  // Map products array index to ensure sequence alignment with Stock / Inventory
+  const productIndexMap = useMemo(() => {
+    const map = new Map<string, number>();
+    products.forEach((p, index) => {
+      if (p && p.id) map.set(p.id, index);
+    });
+    return map;
+  }, [products]);
+
   const availableProducts = useMemo(() => {
     return products
       .filter(p => p && p.name) // Ensure product exists and has a name
-      // Extremely permissive: show everything that has a name
       .filter(p => {
         // Only hide if explicitly set to false or 'false'
         if (p.active === false || (p.active as any) === 'false') return false;
         
-        // Availability filters should also be permissive
+        // Availability filters
         if (orderType === 'table') {
           if (p.isAvailableDigitalMenu === false || (p.isAvailableDigitalMenu as any) === 'false') return false;
         }
@@ -427,8 +436,15 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
         }
         return true;
       })
-      .sort((a, b) => (a.displayOrder ?? 999) - (b.displayOrder ?? 999));
-  }, [products, orderType]);
+      .sort((a, b) => {
+        const orderA = a.displayOrder ?? 999;
+        const orderB = b.displayOrder ?? 999;
+        if (orderA !== orderB) return orderA - orderB;
+        const idxA = productIndexMap.get(a.id) ?? 999;
+        const idxB = productIndexMap.get(b.id) ?? 999;
+        return idxA - idxB;
+      });
+  }, [products, orderType, productIndexMap]);
 
   const availableUpsells = useMemo(() => {
     const isManual = settings.totemUpsellMode === 'manual';
@@ -477,10 +493,10 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
 
   const categories = useMemo(() => {
     const cats = Array.from(new Set(availableProducts.map(p => p.category || 'Geral')));
-    const order = settings.categoryOrder || [];
+    const order = settings.categoryOrder || productCategories || [];
     const hidden = settings.hiddenCategories || [];
     
-    // Sort categories based on categoryOrder, then add any remaining ones
+    // Sort categories based on categoryOrder or productCategories, then add any remaining ones
     const sortedCats = [...order.filter(c => cats.includes(c))];
     cats.forEach(c => {
       if (!sortedCats.includes(c)) sortedCats.push(c);
@@ -488,7 +504,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
 
     // Filter out hidden categories
     return sortedCats.filter(c => !hidden.includes(c));
-  }, [availableProducts, settings.categoryOrder, settings.hiddenCategories]);
+  }, [availableProducts, settings.categoryOrder, productCategories, settings.hiddenCategories]);
 
   // Set initial active category or reset if current becomes hidden
   React.useEffect(() => {
@@ -505,8 +521,15 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
     return availableProducts
       .filter(p => (p.category || 'Geral') === activeCategory)
       .filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()))
-      .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
-  }, [availableProducts, activeCategory, searchQuery]);
+      .sort((a, b) => {
+        const orderA = a.displayOrder ?? 999;
+        const orderB = b.displayOrder ?? 999;
+        if (orderA !== orderB) return orderA - orderB;
+        const idxA = productIndexMap.get(a.id) ?? 999;
+        const idxB = productIndexMap.get(b.id) ?? 999;
+        return idxA - idxB;
+      });
+  }, [availableProducts, activeCategory, searchQuery, productIndexMap]);
 
   const cartTotal = cart.reduce((acc, item) => {
     const itemPrice = item.product.price + (item.selectedOptions?.reduce((sum, opt) => sum + (opt.price || 0), 0) || 0);
