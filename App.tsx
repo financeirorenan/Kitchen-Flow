@@ -3233,12 +3233,22 @@ const App: React.FC = () => {
     // Obter versão anterior do pedido para calcular diferenças de valor ou método de pagamento (Fiado)
     const oldOrder = orders.find(o => o.id === id || o.docId === id);
     
+    // Se a forma de pagamento mudou ou total mudou, atualizar também o array 'payments' do pedido se ele existir,
+    // para que relatórios e o fechamento de caixa (que leem o.payments) reflitam a nova forma de pagamento
+    if (updates.paymentMethod || updates.total !== undefined) {
+      const newMethod = updates.paymentMethod || oldOrder?.paymentMethod || 'dinheiro';
+      const newTotal = updates.total !== undefined ? updates.total : (oldOrder?.total || 0);
+      if (oldOrder?.payments && oldOrder.payments.length > 0) {
+        updates.payments = [{ method: newMethod, amount: newTotal }];
+      }
+    }
+
     await localDb.orders.update(id, updates);
-    setOrders(prev => prev.map(o => o.id === id ? { ...o, ...updates } : o));
+    setOrders(prev => prev.map(o => (o.id === id || o.docId === id) ? { ...o, ...updates } : o));
     
     if (effectiveTenantId) {
       try {
-        const order = orders.find(o => o.id === id);
+        const order = oldOrder || orders.find(o => o.id === id || o.docId === id);
         const targetDocId = order?.docId || order?.id || id;
         await setDoc(doc(db, 'orders', targetDocId), cleanObject({ ...updates, updatedAt: new Date() }), { merge: true });
       } catch (e) {
@@ -3320,35 +3330,52 @@ const App: React.FC = () => {
 
     // Se forma de pagamento ou total foi alterada, sincronizar com o lançamento financeiro correspondente
     if (updates.paymentMethod || updates.total !== undefined) {
-      const order = orders.find(o => o.id === id || o.docId === id);
+      const order = oldOrder || orders.find(o => o.id === id || o.docId === id);
       const targetId = order?.id || id;
       const targetDocId = order?.docId;
-      const shortId = targetId.slice(-4);
+      const shortId = (order?.dailyNumber ? String(order.dailyNumber) : targetId.slice(-4));
 
       const matchingRecords = financialRecords.filter(r => 
         r.orderId === targetId ||
         (targetDocId && r.orderId === targetDocId) ||
-        (r.description && r.description.includes(`#${shortId}`))
+        (r.description && (r.description.includes(`#${shortId}`) || r.description.includes(`Pedido #${shortId}`)))
       );
 
-      for (const matchingRecord of matchingRecords) {
-        const newAmount = updates.total !== undefined ? updates.total : matchingRecord.amount;
-        const newPaymentMethod = updates.paymentMethod || matchingRecord.paymentMethod;
-        
-        let newDescription = matchingRecord.description;
-        if (updates.paymentMethod) {
-          if (newDescription.includes("Pagamento:")) {
-            newDescription = newDescription.replace(/(Pagamento:\s*)([^\s,]+)/i, `$1${updates.paymentMethod}`);
-          } else {
-            newDescription = `${newDescription} - Pagamento: ${updates.paymentMethod}`;
+      if (matchingRecords.length > 0) {
+        for (const matchingRecord of matchingRecords) {
+          const newAmount = updates.total !== undefined ? updates.total : matchingRecord.amount;
+          const newPaymentMethod = updates.paymentMethod || matchingRecord.paymentMethod;
+          
+          let newDescription = matchingRecord.description;
+          if (updates.paymentMethod) {
+            if (newDescription.includes("Pagamento:")) {
+              newDescription = newDescription.replace(/(Pagamento:\s*)([^\s,]+)/i, `$1${updates.paymentMethod}`);
+            } else {
+              newDescription = `${newDescription} - Pagamento: ${updates.paymentMethod}`;
+            }
           }
+          
+          await handleUpdateFinancialRecord(matchingRecord.id, { 
+            amount: newAmount,
+            paymentMethod: newPaymentMethod,
+            description: newDescription
+          });
         }
-        
-        await handleUpdateFinancialRecord(matchingRecord.id, { 
-          amount: newAmount,
-          paymentMethod: newPaymentMethod,
-          description: newDescription
-        });
+      } else {
+        const isCompleted = order && (order.status === 'delivered' || order.status === 'finished' || order.isSettled);
+        if (isCompleted) {
+          const finalTotal = updates.total !== undefined ? updates.total : (order.total || 0);
+          const finalMethod = updates.paymentMethod || order.paymentMethod || 'dinheiro';
+          await handleAddFinancialRecord({
+            type: 'income',
+            amount: finalTotal,
+            category: order.type === 'delivery' ? 'Vendas Entrega' : (order.type === 'takeout' ? 'Vendas Balcão' : 'Vendas Mesa'),
+            description: `Pedido #${shortId} - Pagamento: ${finalMethod}`,
+            date: order.createdAt ? new Date(order.createdAt) : new Date(),
+            paymentMethod: finalMethod,
+            orderId: targetId
+          });
+        }
       }
     }
 

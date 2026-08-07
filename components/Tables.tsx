@@ -683,7 +683,7 @@ const Tables: React.FC<TablesProps> = memo(
 
       const sessionOrders = deduplicateOrders(orders.filter((o) => {
         if (o.status === "cancelled" || o.isSubTicket || o.mergedIntoOrderId) return false;
-        const activityDate = parseToDate(o.paidAt || o.completedAt || o.finishedAt || o.updatedAt || o.createdAt);
+        const activityDate = parseToDate(o.paidAt || o.completedAt || o.finishedAt || o.createdAt);
         const isPaid = o.isSettled || o.paymentStatus === "paid" || (o.payments && o.payments.length > 0) || o.status === "finished" || o.status === "delivered";
         return isPaid && activityDate >= sessionOpenedAt;
       }));

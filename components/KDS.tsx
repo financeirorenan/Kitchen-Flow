@@ -174,7 +174,7 @@ const KDS: React.FC<KDSProps> = memo(({
     })();
 
     const getOrderCompletionDate = (o: Order) => {
-      const rawDate = o.completedAt || o.finishedAt || o.deliveredAt || o.updatedAt || o.createdAt;
+      const rawDate = o.completedAt || o.finishedAt || o.deliveredAt || o.createdAt;
       return safeParseDate(rawDate);
     };
 
@@ -194,8 +194,8 @@ const KDS: React.FC<KDSProps> = memo(({
 
     // Para pedidos finalizados (Turno Caixa): ordenar do MAIS RECENTE para o MAIS ANTIGO
     const sortByNewestCompleted = (a: Order, b: Order) => {
-      const dateA = safeParseDate(a.completedAt || a.finishedAt || a.deliveredAt || a.updatedAt || a.createdAt);
-      const dateB = safeParseDate(b.completedAt || b.finishedAt || b.deliveredAt || b.updatedAt || b.createdAt);
+      const dateA = safeParseDate(a.completedAt || a.finishedAt || a.deliveredAt || a.createdAt);
+      const dateB = safeParseDate(b.completedAt || b.finishedAt || b.deliveredAt || b.createdAt);
       const timeA = dateA ? dateA.getTime() : 0;
       const timeB = dateB ? dateB.getTime() : 0;
       if (timeA !== timeB) return timeB - timeA;
@@ -226,7 +226,7 @@ const KDS: React.FC<KDSProps> = memo(({
         if (!isDeliveredOrFinished) return false;
 
         const createdDate = safeParseDate(o.createdAt);
-        const completionDate = safeParseDate(o.completedAt || o.finishedAt || o.deliveredAt || o.updatedAt);
+        const completionDate = safeParseDate(o.completedAt || o.finishedAt || o.deliveredAt || o.createdAt);
 
         // Se o caixa está aberto e a data de abertura é válida
         if (openedDate) {
