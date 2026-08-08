@@ -626,13 +626,13 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
       } else {
         // If it's a single selection category (max 1), remove other options from same category
         if (category && category.max === 1) {
-          const otherOptionsInCat = category.options.map(o => o.id);
+          const otherOptionsInCat = (category.options || []).map(o => o.id);
           return [...prev.filter(o => !otherOptionsInCat.includes(o.id)), option];
         }
         
         // Check if max limit reached for this category
         if (category && category.max > 1) {
-          const currentInCat = prev.filter(o => category.options.find(co => co.id === o.id)).length;
+          const currentInCat = prev.filter(o => (category.options || []).find(co => co.id === o.id)).length;
           if (currentInCat >= category.max) {
             return prev; // Don't add if limit reached
           }
@@ -647,10 +647,10 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
     if (!selectedProductForOptions) return;
 
     // Validate min requirements
-    if (selectedProductForOptions.optionCategories) {
+    if (selectedProductForOptions?.optionCategories) {
       for (const cat of selectedProductForOptions.optionCategories) {
-        const selectedInCat = selectedOptionsInModal.filter(o => cat.options.find(co => co.id === o.id)).length;
-        if (selectedInCat < cat.min) {
+        const selectedInCat = selectedOptionsInModal.filter(o => (cat.options || []).find(co => co.id === o.id)).length;
+        if (selectedInCat < (cat.min || 0)) {
           alert(`Por favor, selecione pelo menos ${cat.min} opção(ões) em "${cat.name}"`);
           return;
         }
@@ -2242,7 +2242,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">até {category.max} {category.max === 1 ? 'item' : 'itens'}</span>
                         </div>
                       </div>
-                      {selectedOptionsInModal.filter(o => category.options.find(co => co.id === o.id)).length >= category.min && (
+                      {selectedOptionsInModal.filter(o => (category.options || []).find(co => co.id === o.id)).length >= (category.min || 0) && (
                         <div className="bg-emerald-500 text-white p-1 rounded-lg shadow-lg shadow-emerald-500/20">
                           <Check size={14} strokeWidth={4} />
                         </div>
@@ -2250,7 +2250,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                     </div>
 
                     <div className="space-y-3">
-                      {category.options.filter(option => {
+                      {(category.options || []).filter(option => {
                         if (option.active === false) return false;
                         if (orderType === 'table') return option.isAvailableDigitalMenu !== false;
                         if (orderType === 'delivery' || orderType === 'takeout') return option.isAvailableOnline !== false;
