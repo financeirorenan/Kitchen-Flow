@@ -858,6 +858,15 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     useState<MarketplaceSettings | null>(null);
   const storeListRef = React.useRef<HTMLDivElement>(null);
 
+  // Set dynamic document title for Nova Delivery
+  useEffect(() => {
+    if (selectedTenant) {
+      document.title = `${selectedTenant.name} | Nova Delivery`;
+    } else {
+      document.title = "Nova Delivery - Pedidos & Cardápio";
+    }
+  }, [selectedTenant]);
+
   // Sync profile state when prop changes
   useEffect(() => {
     if (profile) {

@@ -45,6 +45,7 @@ interface CartItem {
 const DigitalMenu: React.FC<DigitalMenuProps> = ({ 
   settings, 
   products, 
+  productCategories = [],
   onPlaceOrder,
   isSimulation = false,
   initialTable,
