@@ -556,6 +556,11 @@ const App: React.FC = () => {
   const getTabUrl = useCallback((tab: string, tenantId?: string) => {
     const currentTenant = tenantId || viewingTenantId || currentUserData?.tenantId || tenantData?.slug || 'default-tenant';
     switch (tab) {
+      case 'saas-admin':
+      case 'saas-tenants':
+      case 'saas-plans':
+      case 'saas-finance':
+        return '/saas';
       case 'pos':
         return `/lojista/${currentTenant}/pdv`;
       case 'finance':
@@ -611,8 +616,19 @@ const App: React.FC = () => {
       navigate('/marketplace');
       return;
     }
-    if (tab === 'saas-admin') {
-      navigate('/saas');
+    if (tab.startsWith('saas-')) {
+      if (viewingTenantId) {
+        setViewingTenantId(null);
+        setViewingTenantName(null);
+        setViewingTenantLogo(null);
+      }
+      setActiveTab(tab);
+      if (currentProject !== 'PLATFORM') {
+        setCurrentProject('PLATFORM');
+      }
+      if (location.pathname !== '/saas') {
+        navigate('/saas');
+      }
       return;
     }
     setActiveTab(tab);
@@ -621,7 +637,7 @@ const App: React.FC = () => {
     if (location.pathname !== targetUrl) {
       navigate(targetUrl);
     }
-  }, [navigate, viewingTenantId, currentUserData?.tenantId, tenantData?.slug, getTabUrl, location.pathname]);
+  }, [navigate, viewingTenantId, currentUserData?.tenantId, tenantData?.slug, getTabUrl, location.pathname, currentProject]);
 
   useEffect(() => {
     const path = location.pathname;
@@ -670,8 +686,13 @@ const App: React.FC = () => {
       } else if (!isSuperAdmin) {
         return;
       }
+      if (viewingTenantId) {
+        setViewingTenantId(null);
+        setViewingTenantName(null);
+        setViewingTenantLogo(null);
+      }
       if (currentProject !== 'PLATFORM') setCurrentProject('PLATFORM');
-      if (activeTab === 'merchant-copilot') setActiveTab('saas-admin');
+      if (!activeTab.startsWith('saas-')) setActiveTab('saas-admin');
     } else if (path.startsWith('/lojista') || path.startsWith('/painel') || path.startsWith('/admin') || path.startsWith('/loja') || path.startsWith('/pdv') || path.startsWith('/mesas') || path.startsWith('/financeiro') || path.startsWith('/kds') || path.startsWith('/estoque') || path.startsWith('/suporte') || path.startsWith('/relatorios') || path.startsWith('/insights') || path.startsWith('/configuracoes')) {
       if (authLoading) return; // Aguarda autenticação
       if (currentUserData) {
@@ -1819,7 +1840,7 @@ const App: React.FC = () => {
     }
 
     // Bloqueia tentativas de acessar a aba ou projeto SaaS Admin sem ser Super Admin
-    if ((activeTab === 'saas-admin' || currentProject === 'PLATFORM') && !isSuperAdmin) {
+    if ((activeTab.startsWith('saas-') || currentProject === 'PLATFORM') && !isSuperAdmin) {
       if (currentProject === 'PLATFORM') setCurrentProject('RESTAURANT');
       setActiveTab('merchant-copilot');
       navigate('/lojista', { replace: true });
@@ -5795,14 +5816,6 @@ const App: React.FC = () => {
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
-                     <button
-                       onClick={() => handleViewTenant('lojista', 'KitchenFlow')}
-                       className="flex items-center gap-2 px-3.5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black text-[10px] uppercase tracking-wider shadow-md hover:scale-105 active:scale-95 transition-all cursor-pointer shrink-0 border-b-2 border-indigo-800"
-                       title="Alternar/Acessar loja do cliente KitchenFlow para testes rápidos"
-                     >
-                       <Store size={15} />
-                       <span>Acessar como Cliente: KitchenFlow</span>
-                     </button>
                      <div 
                        onClick={() => setIsProfileOpen(true)}
                        className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center text-white font-black shadow-xl shadow-slate-200 text-sm cursor-pointer hover:bg-slate-800 transition-all hover:scale-105 active:scale-[0.98] overflow-hidden shrink-0"

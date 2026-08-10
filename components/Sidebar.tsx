@@ -210,15 +210,6 @@ const Sidebar: React.FC<SidebarProps> = memo(({
 
 
         <nav className="flex-1 min-h-0 p-3 space-y-1 overflow-y-auto custom-scrollbar">
-          {isViewingTenant && onStopViewingTenant && (
-            <button
-              onClick={onStopViewingTenant}
-              className="w-full mb-3 flex items-center justify-center gap-2 px-3 py-2.5 bg-rose-600 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-md hover:bg-rose-700 transition-all border-b-2 border-rose-800 active:scale-95 cursor-pointer"
-            >
-              <ArrowLeft size={16} />
-              Voltar ao SaaS Admin
-            </button>
-          )}
           {filteredMenuItems.map((item) => (
             <button
               key={item.id}
