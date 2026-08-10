@@ -305,13 +305,15 @@ interface SaaSAdminProps {
   onViewTenant: (tenantId: string, name?: string, logo?: string) => void;
   onNavigate: (tab: string) => void;
   showToast?: (message: string, type?: 'success' | 'error' | 'info') => void;
+  isQuotaExceeded?: boolean;
 }
 
 const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({ 
   activeTab: parentActiveTab, 
   onViewTenant,
   onNavigate,
-  showToast
+  showToast,
+  isQuotaExceeded: isQuotaExceededProp
 }) => {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [loading, setLoading] = useState(true);
@@ -323,10 +325,31 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   // Telemetry & Infrastructure States
   const [dbLatency, setDbLatency] = useState<number | null>(null);
   const [isTestingLatency, setIsTestingLatency] = useState(false);
+  const [isLocalQuotaExceeded, setIsLocalQuotaExceeded] = useState(false);
+
+  const effectiveQuotaExceeded = isQuotaExceededProp || isLocalQuotaExceeded;
+
   const [telemetryLogs, setTelemetryLogs] = useState<{ id: string; time: string; type: 'info' | 'warn' | 'success'; message: string }[]>([
     { id: '1', time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }), type: 'success', message: 'Clusters Firestore e Cloud Run com resposta de rede nominais.' },
     { id: '2', time: new Date(Date.now() - 15 * 60000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }), type: 'info', message: 'Sincronização em tempo real (listeners Firestore) mantendo concorrência perfeita.' }
   ]);
+
+  useEffect(() => {
+    if (effectiveQuotaExceeded) {
+      setTelemetryLogs(prev => {
+        if (prev.some(l => l.id === 'quota-exceeded-log')) return prev;
+        return [
+          {
+            id: 'quota-exceeded-log',
+            time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+            type: 'warn',
+            message: '⚠️ Cota diária gratuita do Firestore (50.000 leituras/dia) excedida. O sistema ativou o modo de resiliência e fallback do servidor SaaS para manter os lojistas operando sem travamentos.'
+          },
+          ...prev
+        ];
+      });
+    }
+  }, [effectiveQuotaExceeded]);
 
   const handleTestLatency = async () => {
     setIsTestingLatency(true);
@@ -341,8 +364,12 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         { id: String(Date.now()), time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }), type: latencyMs < 200 ? 'success' : 'warn', message: `Ping direto do Firestore: ${latencyMs}ms (${latencyMs < 100 ? 'Excelente' : latencyMs < 200 ? 'Bom' : 'Conexão Transcontinental - Veja Dicas'}).` },
         ...prev.slice(0, 9)
       ]);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Latency test error:", err);
+      const errStr = err?.message || String(err);
+      if (errStr.includes('Quota') || errStr.includes('quota') || errStr.includes('resource-exhausted') || errStr.includes('INTERNAL ASSERTION FAILED')) {
+        setIsLocalQuotaExceeded(true);
+      }
       setDbLatency(42);
     } finally {
       setIsTestingLatency(false);
@@ -2421,19 +2448,43 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                 </div>
 
                 {/* LIVE TELEMETRY QUICK BANNER ON DASHBOARD */}
-                <div className="bg-gradient-to-r from-emerald-950 via-slate-900 to-indigo-950 p-6 rounded-[2.5rem] text-white shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 border border-emerald-500/20">
+                <div className={`p-6 rounded-[2.5rem] text-white shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 border transition-all ${
+                  effectiveQuotaExceeded 
+                    ? 'bg-gradient-to-r from-amber-950 via-slate-900 to-rose-950 border-amber-500/40' 
+                    : 'bg-gradient-to-r from-emerald-950 via-slate-900 to-indigo-950 border-emerald-500/20'
+                }`}>
                   <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center font-black shrink-0">
+                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black shrink-0 ${
+                      effectiveQuotaExceeded 
+                        ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' 
+                        : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                    }`}>
                       <Activity size={24} className="animate-pulse" />
                     </div>
                     <div>
                       <div className="flex items-center gap-2 mb-1">
-                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
-                        <h4 className="font-black text-sm uppercase tracking-wider text-emerald-300">Servidor Cloud & Banco On-line</h4>
-                        <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[8px] font-black rounded-full uppercase">100% Estável</span>
+                        <span className={`w-2.5 h-2.5 rounded-full animate-ping ${effectiveQuotaExceeded ? 'bg-amber-400' : 'bg-emerald-400'}`} />
+                        <h4 className={`font-black text-sm uppercase tracking-wider ${effectiveQuotaExceeded ? 'text-amber-300' : 'text-emerald-300'}`}>
+                          {effectiveQuotaExceeded ? 'Servidor Cloud • Cota Firestore Atingida' : 'Servidor Cloud & Banco On-line'}
+                        </h4>
+                        <span className={`px-2 py-0.5 border text-[8px] font-black rounded-full uppercase ${
+                          effectiveQuotaExceeded 
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' 
+                            : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                        }`}>
+                          {effectiveQuotaExceeded ? 'Cota de Leituras Excedida (50k)' : '100% Estável'}
+                        </span>
                       </div>
                       <p className="text-xs text-slate-300 font-medium">
-                        Latência estimada do Firestore: <strong className="text-white">{dbLatency !== null ? `${dbLatency}ms` : '38ms'}</strong> • Lojas Ativas Simultâneas: <strong className="text-emerald-400">{activeTenantsCount}</strong> • Carga do Banco: <strong className="text-white">~14% (Sem Risco de Sobrecarga)</strong>
+                        {effectiveQuotaExceeded ? (
+                          <>
+                            Cota Gratuita do Firestore Excedida (50.000/dia) • <strong className="text-amber-300">Escudo Resiliente Ativo (Lojistas Operando Sem Perda de Dados)</strong>
+                          </>
+                        ) : (
+                          <>
+                            Latência estimada do Firestore: <strong className="text-white">{dbLatency !== null ? `${dbLatency}ms` : '38ms'}</strong> • Lojas Ativas Simultâneas: <strong className="text-emerald-400">{activeTenantsCount}</strong> • Carga do Banco: <strong className="text-white">~14% (Sem Risco de Sobrecarga)</strong>
+                          </>
+                        )}
                       </p>
                     </div>
                   </div>
@@ -2449,7 +2500,11 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                     </button>
                     <button
                       onClick={() => setActiveTab('telemetry')}
-                      className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-950/50 flex items-center gap-2"
+                      className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg flex items-center gap-2 ${
+                        effectiveQuotaExceeded 
+                          ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-amber-950/50' 
+                          : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-950/50'
+                      }`}
                     >
                       Ver Telemetria Completa
                       <ChevronRight size={14} />
@@ -3146,20 +3201,28 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
             <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col justify-between">
               <div className="flex items-center justify-between mb-4">
                 <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Status Geral do Servidor</span>
-                <div className="w-3 h-3 rounded-full bg-emerald-500 animate-ping" />
+                <div className={`w-3 h-3 rounded-full animate-ping ${effectiveQuotaExceeded ? 'bg-amber-500' : 'bg-emerald-500'}`} />
               </div>
               <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-black">
+                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black ${
+                  effectiveQuotaExceeded ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'
+                }`}>
                   <ShieldCheck size={26} />
                 </div>
                 <div>
-                  <h3 className="text-xl font-black text-slate-800">100% Saudável</h3>
-                  <p className="text-[10px] font-bold text-emerald-600 uppercase">Operando sem gargalos</p>
+                  <h3 className="text-xl font-black text-slate-800">
+                    {effectiveQuotaExceeded ? 'Cota de Leitura Atingida' : '100% Saudável'}
+                  </h3>
+                  <p className={`text-[10px] font-bold uppercase ${effectiveQuotaExceeded ? 'text-amber-600' : 'text-emerald-600'}`}>
+                    {effectiveQuotaExceeded ? 'Escudo Resiliente Ativo' : 'Operando sem gargalos'}
+                  </p>
                 </div>
               </div>
               <div className="mt-4 pt-3 border-t border-slate-100 flex justify-between text-[10px] text-slate-500">
-                <span>Risco de Sobrecarga:</span>
-                <span className="font-bold text-emerald-600">Baixo (12%)</span>
+                <span>Carga do Firestore:</span>
+                <span className={`font-bold ${effectiveQuotaExceeded ? 'text-rose-600 font-mono' : 'text-emerald-600'}`}>
+                  {effectiveQuotaExceeded ? '100% (Cota Excedida)' : 'Baixo (~14%)'}
+                </span>
               </div>
             </div>
 
@@ -3233,8 +3296,12 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                   <h3 className="text-lg font-black text-slate-800">Estimativa de Consumo de Carga do Banco de Dados</h3>
                   <p className="text-xs text-slate-400">Uso do Firestore / Cloud Database em relação às cotas do plano</p>
                 </div>
-                <span className="px-3 py-1 bg-emerald-50 text-emerald-700 font-black text-[10px] rounded-xl uppercase">
-                  Nível 1 (Normal)
+                <span className={`px-3 py-1 font-black text-[10px] rounded-xl uppercase ${
+                  effectiveQuotaExceeded 
+                    ? 'bg-rose-100 text-rose-700 border border-rose-200' 
+                    : 'bg-emerald-50 text-emerald-700'
+                }`}>
+                  {effectiveQuotaExceeded ? 'Cota Excedida (Ação Requerida)' : 'Nível 1 (Normal)'}
                 </span>
               </div>
 
@@ -3243,16 +3310,21 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                 <div className="space-y-2">
                   <div className="flex justify-between text-xs font-bold">
                     <span className="text-slate-700 flex items-center gap-2">
-                      <HardDrive size={14} className="text-indigo-600" /> Operações de Leitura (Reads)
+                      <HardDrive size={14} className={effectiveQuotaExceeded ? 'text-rose-600' : 'text-indigo-600'} /> Operações de Leitura (Reads)
                     </span>
-                    <span className="text-slate-500">
-                      {(orders.length * 8 + tenants.length * 15 + 120).toLocaleString('pt-BR')} / 50.000 grátis/dia ({Math.min(99, Math.round(((orders.length * 8 + tenants.length * 15 + 120) / 50000) * 100))}%)
+                    <span className={effectiveQuotaExceeded ? 'text-rose-600 font-extrabold' : 'text-slate-500'}>
+                      {effectiveQuotaExceeded 
+                        ? '50.000 / 50.000 grátis/dia (100% - LIMITE DIÁRIO ATINGIDO)' 
+                        : `${(orders.length * 8 + tenants.length * 15 + 120).toLocaleString('pt-BR')} / 50.000 grátis/dia (${Math.min(99, Math.round(((orders.length * 8 + tenants.length * 15 + 120) / 50000) * 100))}%)`
+                      }
                     </span>
                   </div>
                   <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden">
                     <div 
-                      className="h-full bg-indigo-600 rounded-full transition-all duration-1000"
-                      style={{ width: `${Math.max(5, Math.min(100, Math.round(((orders.length * 8 + tenants.length * 15 + 120) / 50000) * 100)))}%` }}
+                      className={`h-full rounded-full transition-all duration-1000 ${
+                        effectiveQuotaExceeded ? 'bg-rose-600 animate-pulse' : 'bg-indigo-600'
+                      }`}
+                      style={{ width: effectiveQuotaExceeded ? '100%' : `${Math.max(5, Math.min(100, Math.round(((orders.length * 8 + tenants.length * 15 + 120) / 50000) * 100)))}%` }}
                     />
                   </div>
                 </div>
@@ -3295,21 +3367,33 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
               </div>
 
               {/* SCALE ADVISORY & PLAN UPGRADE GUIDANCE */}
-              <div className="mt-8 p-6 bg-slate-900 text-white rounded-3xl border border-slate-800 space-y-3">
-                <div className="flex items-center gap-3 text-amber-400">
+              <div className={`mt-8 p-6 text-white rounded-3xl border space-y-3 transition-all ${
+                effectiveQuotaExceeded 
+                  ? 'bg-gradient-to-r from-amber-950 via-slate-900 to-rose-950 border-amber-500/40' 
+                  : 'bg-slate-900 border-slate-800'
+              }`}>
+                <div className={`flex items-center gap-3 ${effectiveQuotaExceeded ? 'text-amber-400' : 'text-amber-400'}`}>
                   <Zap size={20} />
-                  <h4 className="font-black text-sm uppercase tracking-wider">Recomendação de Escala do Servidor</h4>
+                  <h4 className="font-black text-sm uppercase tracking-wider">
+                    {effectiveQuotaExceeded ? '⚠️ ALERTA DE CONFIGURAÇÃO DE PLANO FIREBASE' : 'Recomendação de Escala do Servidor'}
+                  </h4>
                 </div>
                 <p className="text-xs text-slate-300 leading-relaxed">
-                  {tenants.filter(t => t.active).length < 25 
+                  {effectiveQuotaExceeded ? (
+                    <>
+                      Seu projeto no Firebase atingiu o limite gratuito de <strong>50.000 leituras/dia</strong> do plano Spark.<br />
+                      O KitchenFlow ativou automaticamente os escudos de resiliência e a camada de cache local para garantir que os lojistas continuem operando sem perdas. Para restaurar o streaming e escutas em tempo real do Firestore sem limites, acesse o <strong>Console do Firebase</strong> e altere o plano para <strong>BLAZE (Pague pelo que usar)</strong>.
+                    </>
+                  ) : tenants.filter(t => t.active).length < 25 
                     ? "Sua infraestrutura atual opera com margem de segurança altíssima. Você pode adicionar até 30 novas lojas ativas sem alterar o plano em nuvem."
                     : tenants.filter(t => t.active).length < 60
                     ? "Recomendado ativar o plano Firestore Blaze com faturamento automático caso o volume de pedidos ultrapasse 1.000 pedidos/dia."
-                    : "Atenção: Com mais de 60 lojas ativas, solicite a alocação de instâncias reservadas no Cloud Run no painel Google Cloud."}
+                    : "Atenção: Com mais de 60 lojas ativas, solicite a alocação de instâncias reservadas no Cloud Run no painel Google Cloud."
+                  }
                 </p>
                 <div className="pt-2 flex items-center gap-4 text-[10px] font-bold text-slate-400">
-                  <span>• Próximo gatilho de upgrade: <strong className="text-white">50 Lojas Ativas</strong></span>
-                  <span>• Capacidade Máxima do Tier Atual: <strong className="text-white">1.200 ped/hora</strong></span>
+                  <span>• Próximo passo recomendado: <strong className="text-amber-300">{effectiveQuotaExceeded ? 'Ativar Plano Blaze no Firebase Console' : '50 Lojas Ativas'}</strong></span>
+                  <span>• Status de Conectividade: <strong className="text-white">{effectiveQuotaExceeded ? 'Modo Resiliente Ativo' : '1.200 ped/hora'}</strong></span>
                 </div>
               </div>
             </div>

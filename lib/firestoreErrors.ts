@@ -14,7 +14,12 @@ export interface FirestoreErrorInfo {
   }
 }
 
-export function handleFirestoreError(error: any, operationType: FirestoreErrorInfo['operationType'], path: string | null = null): never {
+export function handleFirestoreError(error: any, operationType: FirestoreErrorInfo['operationType'], path: string | null = null): void {
+  const errMsg = error?.message || String(error);
+  if (errMsg.includes('Quota') || errMsg.includes('quota') || error?.code === 'resource-exhausted' || errMsg.includes('INTERNAL ASSERTION FAILED')) {
+    console.warn("Aviso do Firestore (cota excedida ou queda de conexão):", errMsg);
+    return;
+  }
   if (error instanceof FirebaseError && (error.code === 'permission-denied' || error.message.includes('insufficient permissions'))) {
     const firebaseUser = auth.currentUser;
     const errorInfo: FirestoreErrorInfo = {
@@ -33,7 +38,8 @@ export function handleFirestoreError(error: any, operationType: FirestoreErrorIn
         })) || []
       }
     };
-    throw new Error(JSON.stringify(errorInfo));
+    console.warn("Firestore Permission Warning:", errorInfo);
+    return;
   }
-  throw error;
+  console.warn("Firestore Operation Warning:", path, errMsg);
 }

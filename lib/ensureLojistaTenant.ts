@@ -38,7 +38,11 @@ export function restoreCategoryForProduct(p: { id?: string; name?: string; categ
   return 'Pratos Principais';
 }
 
+let isLojistaTenantEnsured = false;
+
 export async function ensureLojistaTenantWithData() {
+  if (isLojistaTenantEnsured) return;
+  isLojistaTenantEnsured = true;
   try {
     const lojistaRef = doc(db, 'tenants', 'lojista');
     const lojistaSnap = await getDoc(lojistaRef);
@@ -190,7 +194,11 @@ export async function ensureLojistaTenantWithData() {
         await batch.commit();
       }
     }
-  } catch (err) {
-    console.error("Error ensuring lojista tenant:", err);
+  } catch (err: any) {
+    if (err?.message?.includes('Quota limit exceeded') || err?.code === 'resource-exhausted') {
+      console.warn("Cota do Firestore atingida (Free Tier). Sincronização inicial de tenant/produtos pulada.");
+    } else {
+      console.error("Error ensuring lojista tenant:", err);
+    }
   }
 }

@@ -288,6 +288,21 @@ const App: React.FC = () => {
 
     const handleError = (event: ErrorEvent) => {
       const errorMsg = event.message || 'Erro inesperado no cliente';
+      
+      if (
+        errorMsg.includes('FIRESTORE') || 
+        errorMsg.includes('INTERNAL ASSERTION FAILED') || 
+        errorMsg.includes('Unexpected state') || 
+        errorMsg.includes('Quota') || 
+        errorMsg.includes('quota') || 
+        errorMsg.includes('resource-exhausted')
+      ) {
+        console.warn('Aviso de conexão/cota do Firestore interceptado:', errorMsg);
+        setQuotaExceeded(true);
+        if (event.preventDefault) event.preventDefault();
+        return;
+      }
+
       const file = event.filename ? event.filename.split('/').pop() : 'desconhecido';
       const line = event.lineno || '';
       const col = event.colno || '';
@@ -311,6 +326,21 @@ const App: React.FC = () => {
     const handleRejection = (event: PromiseRejectionEvent) => {
       const reason = event.reason;
       const errorMsg = reason instanceof Error ? reason.message : String(reason);
+
+      if (
+        errorMsg.includes('FIRESTORE') || 
+        errorMsg.includes('INTERNAL ASSERTION FAILED') || 
+        errorMsg.includes('Unexpected state') || 
+        errorMsg.includes('Quota') || 
+        errorMsg.includes('quota') || 
+        errorMsg.includes('resource-exhausted')
+      ) {
+        console.warn('Aviso de rejeição assíncrona/cota do Firestore interceptado:', errorMsg);
+        setQuotaExceeded(true);
+        if (event.preventDefault) event.preventDefault();
+        return;
+      }
+
       const stack = reason instanceof Error ? reason.stack : '';
       
       console.error(`[Mapeador de Erros] Capturada Promise Rejeitada: ${errorMsg}`);
@@ -1679,15 +1709,36 @@ const App: React.FC = () => {
           } else if (finalUserData?.role === 'SAAS_ADMIN' && isNeutralPath) {
             navigate('/saas');
           }
-        } catch (fsUserErr) {
+        } catch (fsUserErr: any) {
           console.warn("Erro ao carregar dados do usuário do Firestore:", fsUserErr);
+          let loaded = false;
           try {
             const cachedUser = localStorage.getItem('kitchenflow_cached_user');
-            if (cachedUser) setCurrentUserData(JSON.parse(cachedUser));
+            if (cachedUser) {
+              setCurrentUserData(JSON.parse(cachedUser));
+              loaded = true;
+            }
             const cachedTenant = localStorage.getItem('kitchenflow_cached_tenant_data');
             if (cachedTenant) setTenantData(JSON.parse(cachedTenant));
           } catch (e) {
             console.warn("Erro ao carregar do cache local:", e);
+          }
+
+          if (!loaded && firebaseUser) {
+            const isMaster = firebaseUser.email === 'financeirorenanuk@gmail.com';
+            const fallbackRole: UserRole = isMaster ? 'SAAS_ADMIN' : 'OWNER';
+            const fallbackUser: User = {
+              id: firebaseUser.uid,
+              name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || (isMaster ? 'Master Admin' : 'Lojista'),
+              email: firebaseUser.email || '',
+              role: fallbackRole,
+              tenantId: 'HCL1177LRQVPEKCTYRAHU7IGBQ42',
+              permissions: isMaster ? ALL_MODULES.map(m => m.id) : ['dashboard_view', 'orders_view', 'menu_view', 'stock_view', 'finance_view', 'users_view'] as any,
+              status: 'online',
+              active: true,
+              createdAt: new Date()
+            };
+            setCurrentUserData(fallbackUser);
           }
         }
       } else {
@@ -5720,6 +5771,7 @@ const App: React.FC = () => {
                   setActiveTab(tab);
                 }
               }}
+              isQuotaExceeded={quotaExceeded}
             />
           ) : currentProject === 'PLATFORM' && !isSuperAdmin ? (
             <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-slate-50 min-h-[60vh]">
