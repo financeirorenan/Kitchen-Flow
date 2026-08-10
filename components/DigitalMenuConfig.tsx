@@ -12,7 +12,7 @@ import {
   Bike, Home, UserCircle, Phone, Store,
   Image as ImageIcon, Sparkles, ArrowUp, ArrowDown, Zap, Tag, Star,
   Search, Filter, Loader2, Package,
-  Printer, Download, ExternalLink
+  Printer, Download, ExternalLink, Trash2, AlertTriangle
 } from 'lucide-react';
 
 import DigitalMenu from './DigitalMenu';
@@ -23,6 +23,7 @@ interface DigitalMenuConfigProps {
   onUpdateSettings: (settings: DigitalMenuSettings) => void;
   products: Product[];
   productCategories?: string[];
+  setProductCategories?: (categories: string[] | ((prev: string[]) => string[])) => void;
   tables: Table[];
   onUpdateProduct: (product: Product) => void;
   onPlaceDigitalOrder: (order: Order) => void;
@@ -46,6 +47,7 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
   onUpdateSettings, 
   products, 
   productCategories,
+  setProductCategories,
   tables, 
   onUpdateProduct,
   onPlaceDigitalOrder,
@@ -76,7 +78,8 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
       }
     });
 
-    return combined.length > 0 ? combined : ['Geral'];
+    const cleanCombined = combined.filter(c => c && c !== 'Geral');
+    return cleanCombined.length > 0 ? cleanCombined : ['Entradas', 'Buffet', 'Pratos Principais', 'Lanches', 'Batatas Recheadas', 'Pasteis', 'Bebidas'];
   }, [products, productCategories]);
   
   const sortedProducts = useMemo(() => {
@@ -295,6 +298,27 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
     if (newIndex >= 0 && newIndex < newOrder.length) {
       [newOrder[index], newOrder[newIndex]] = [newOrder[newIndex], newOrder[index]];
       onUpdateSettings({ ...settings, categoryOrder: newOrder });
+    }
+  };
+
+  const handleDeleteCategory = async (category: string) => {
+    if (window.confirm(`Deseja excluir a categoria "${category}"? Os produtos nesta categoria ficarão sem categoria.`)) {
+      const affected = products.filter(p => p.category === category);
+      for (const p of affected) {
+        await onUpdateProduct({ ...p, category: '' });
+      }
+
+      const currentHidden = settings.hiddenCategories || [];
+      const currentOrder = settings.categoryOrder || categories;
+      onUpdateSettings({
+        ...settings,
+        hiddenCategories: currentHidden.filter(c => c !== category),
+        categoryOrder: currentOrder.filter(c => c !== category)
+      });
+
+      if (setProductCategories) {
+        setProductCategories(prev => prev.filter(c => c !== category));
+      }
     }
   };
 
@@ -640,6 +664,13 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
                             title={settings.hiddenCategories?.includes(cat) ? "Mostrar no Cardápio" : "Ocultar no Cardápio"}
                           >
                             {settings.hiddenCategories?.includes(cat) ? <EyeOff size={14} /> : <Eye size={14} />}
+                          </button>
+                          <button 
+                            onClick={() => handleDeleteCategory(cat)}
+                            className="p-1 bg-white text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-all"
+                            title="Excluir Categoria"
+                          >
+                            <Trash2 size={14} />
                           </button>
                         </div>
                       </div>

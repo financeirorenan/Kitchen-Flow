@@ -48,7 +48,7 @@ import { Product, Table, Order, OrderStatus, Courier, FinancialRecord, User, Use
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 import { compressImage } from './lib/imageUtils';
-import { ensureLojistaTenantWithData } from './lib/ensureLojistaTenant';
+import { ensureLojistaTenantWithData, restoreCategoryForProduct } from './lib/ensureLojistaTenant';
 import { 
   BarChart as BarChartIcon,
   Plus, 
@@ -1278,6 +1278,14 @@ const App: React.FC = () => {
           col.setter(uniqueLogs);
         } else if (col.name === 'financialRecords') {
           col.setter(deduplicateFinancialRecords(items));
+        } else if (col.name === 'products') {
+          const cleanedProducts = items.map((p: any) => {
+            if (p.category === 'Geral' || !p.category) {
+              return { ...p, category: restoreCategoryForProduct(p) };
+            }
+            return p;
+          });
+          col.setter(cleanedProducts);
         } else {
           col.setter(items);
         }
@@ -1349,6 +1357,8 @@ const App: React.FC = () => {
               apis: { ...(prev.apis || {}), ...(cleanAdmin.apis || {}) },
               saasIntegration: { ...(prev.saasIntegration || {}), ...(cleanAdmin.saasIntegration || {}) }
             };
+            if (JSON.stringify(prev) === JSON.stringify(next)) return prev;
+            return next;
           });
         }
         if (s.digitalMenu) {
@@ -1356,20 +1366,30 @@ const App: React.FC = () => {
             const finalRestaurantName = activeTenantName || s.digitalMenu.restaurantName || prev.restaurantName;
             const finalLogoUrl = activeTenantLogo || s.digitalMenu.logoUrl || '';
             
-            return {
+            const next = {
               ...prev,
               ...s.digitalMenu,
               restaurantName: finalRestaurantName,
               logoUrl: finalLogoUrl,
               dailyPromo: { ...(prev.dailyPromo || { title: '', subtitle: '', price: 0, originalPrice: 0, active: false }), ...(s.digitalMenu.dailyPromo || {}) }
             };
+            if (JSON.stringify(prev) === JSON.stringify(next)) return prev;
+            return next;
           });
         }
-        if (s.productCategories) {
-          setProductCategories(s.productCategories);
+        if (s.productCategories && Array.isArray(s.productCategories)) {
+          const cleanCats = s.productCategories.filter((c: string) => c && c !== 'Geral');
+          const resolvedCats = cleanCats.length > 0 ? cleanCats : ['Entradas', 'Buffet', 'Pratos Principais', 'Lanches', 'Batatas Recheadas', 'Pasteis', 'Bebidas'];
+          setProductCategories(prev => {
+            if (JSON.stringify(prev) === JSON.stringify(resolvedCats)) return prev;
+            return resolvedCats;
+          });
         }
-        if (s.rawMaterialCategories) {
-          setRawMaterialCategories(s.rawMaterialCategories);
+        if (s.rawMaterialCategories && Array.isArray(s.rawMaterialCategories)) {
+          setRawMaterialCategories(prev => {
+            if (JSON.stringify(prev) === JSON.stringify(s.rawMaterialCategories)) return prev;
+            return s.rawMaterialCategories;
+          });
         }
         if (s.cashSession) {
           // Only update if we don't have pending writes to this specific field to avoid flipping back 
@@ -1748,8 +1768,9 @@ const App: React.FC = () => {
               if (s.cashSession) {
                 setCashSession(s.cashSession);
               }
-              if (s.productCategories) {
-                setProductCategories(s.productCategories);
+              if (s.productCategories && Array.isArray(s.productCategories)) {
+                const cleanCats = s.productCategories.filter((c: string) => c && c !== 'Geral');
+                setProductCategories(cleanCats.length > 0 ? cleanCats : ['Entradas', 'Buffet', 'Pratos Principais', 'Lanches', 'Batatas Recheadas', 'Pasteis', 'Bebidas']);
               }
               if (s.rawMaterialCategories) {
                 setRawMaterialCategories(s.rawMaterialCategories);
@@ -4674,7 +4695,7 @@ const App: React.FC = () => {
       id: product.id || `p${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
       tenantId: effectiveTenantId || 't1',
       name: product.name || '',
-      category: product.category || 'Geral',
+      category: product.category || productCategories[0] || 'Pratos Principais',
       price: product.price || 0,
       cost: product.cost || 0,
       stock: product.stock || 0,
@@ -4708,9 +4729,45 @@ const App: React.FC = () => {
     addLog('u1', 'ESTOQUE', `Novo produto cadastrado: ${newProduct.name}`);
   };
 
+  const handleUpdateDigitalMenuSettings = async (newSettings: DigitalMenuSettings | ((prev: DigitalMenuSettings) => DigitalMenuSettings)) => {
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    let resolved: DigitalMenuSettings;
+
+    setDigitalMenuSettings(prev => {
+      resolved = typeof newSettings === 'function' ? newSettings(prev) : newSettings;
+      
+      localDb.settings.get(effectiveTenantId || 'global').then(s => {
+        if (s) {
+          localDb.settings.put({
+            ...s,
+            digitalMenu: resolved
+          });
+        } else {
+          localDb.settings.put({
+            id: effectiveTenantId || 'global',
+            admin: adminSettings,
+            digitalMenu: resolved,
+            cashSession: cashSession
+          });
+        }
+      }).catch(err => console.error("Error saving digital menu settings to localDb:", err));
+
+      if (effectiveTenantId) {
+        setDoc(doc(db, 'settings', effectiveTenantId), {
+          digitalMenu: resolved,
+          updatedAt: new Date()
+        }, { merge: true }).catch(err => console.error("Error syncing digital menu settings to cloud:", err));
+      }
+
+      return resolved;
+    });
+  };
+
   const handleUpdateProductCategories = async (newCategories: string[] | ((prev: string[]) => string[])) => {
     setProductCategories(prev => {
-      const resolved = typeof newCategories === 'function' ? newCategories(prev) : newCategories;
+      const rawResolved = typeof newCategories === 'function' ? newCategories(prev) : newCategories;
+      const cleanResolved = (rawResolved || []).filter(c => c && c !== 'Geral');
+      const resolved = cleanResolved.length > 0 ? cleanResolved : ['Entradas', 'Buffet', 'Pratos Principais', 'Lanches', 'Batatas Recheadas', 'Pasteis', 'Bebidas'];
       // Persist in localDb settings
       const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
       localDb.settings.get(effectiveTenantId || 'global').then(s => {
@@ -4875,7 +4932,7 @@ const App: React.FC = () => {
       currentStock: material.currentStock || 0,
       minStock: material.minStock || 0,
       costPerUnit: material.costPerUnit || 0,
-      category: material.category || 'Geral'
+      category: material.category || rawMaterialCategories[0] || 'Outros'
     };
     if (effectiveTenantId) {
       await setDoc(doc(db, 'rawMaterials', newMaterial.id), {
@@ -5746,15 +5803,6 @@ const App: React.FC = () => {
                        <Store size={15} />
                        <span>Acessar como Cliente: KitchenFlow</span>
                      </button>
-                     {isSuperAdmin && viewingTenantId && (
-                       <button 
-                         onClick={handleStopViewingTenant}
-                         className="flex items-center gap-2 px-4 py-2.5 bg-rose-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-md shadow-rose-200 hover:bg-rose-700 transition-all border-b-2 border-rose-800 active:translate-y-[1px] cursor-pointer"
-                       >
-                         <Shield size={16} className="group-hover:rotate-12 transition-transform" />
-                         Sair da Tela do Cliente
-                       </button>
-                     )}
                      <div 
                        onClick={() => setIsProfileOpen(true)}
                        className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center text-white font-black shadow-xl shadow-slate-200 text-sm cursor-pointer hover:bg-slate-800 transition-all hover:scale-105 active:scale-[0.98] overflow-hidden shrink-0"
@@ -6138,7 +6186,7 @@ const App: React.FC = () => {
             onAddRawMaterial={handleAddRawMaterial}
             onDeleteRawMaterial={handleDeleteRawMaterial}
             digitalMenuSettings={digitalMenuSettings}
-            onUpdateDigitalMenuSettings={setDigitalMenuSettings}
+            onUpdateDigitalMenuSettings={handleUpdateDigitalMenuSettings}
             productCategories={productCategories}
             setProductCategories={handleUpdateProductCategories}
             rawMaterialCategories={rawMaterialCategories}
@@ -6238,9 +6286,10 @@ const App: React.FC = () => {
           <DigitalMenuConfig 
             tenantId={viewingTenantId || currentUserData?.tenantId || tenantData?.id}
             settings={digitalMenuSettings} 
-            onUpdateSettings={setDigitalMenuSettings} 
+            onUpdateSettings={handleUpdateDigitalMenuSettings} 
             products={products} 
             productCategories={productCategories}
+            setProductCategories={handleUpdateProductCategories}
             tables={tables} 
             onUpdateProduct={handleUpdateProduct} 
             onPlaceDigitalOrder={async (order) => {

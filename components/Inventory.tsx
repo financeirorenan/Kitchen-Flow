@@ -77,25 +77,25 @@ const Inventory: React.FC<InventoryProps> = memo(({
   orders = []
 }) => {
   const allProductCategories = useMemo(() => {
-    const fromProducts = products.map(p => p.category);
-    const uniqueFromProducts = Array.from(new Set(fromProducts.filter(c => c)));
-    
-    // Ordem base: o que já estiver salvo em categoryOrder
-    let baseOrder = [...(digitalMenuSettings.categoryOrder || [])];
-    
-    // Adiciona categorias que estão em productCategories mas não na ordem salva
-    productCategories.forEach(cat => {
+    const defaultCats = ['Entradas', 'Buffet', 'Pratos Principais', 'Lanches', 'Batatas Recheadas', 'Pasteis', 'Bebidas'];
+    const catsList = (productCategories && productCategories.length > 0)
+      ? productCategories.filter(c => c && c !== 'Geral')
+      : defaultCats;
+
+    const fromProducts = products.map(p => p.category).filter((c): c is string => Boolean(c && c !== 'Geral'));
+    const uniqueFromProducts = Array.from(new Set(fromProducts));
+
+    let baseOrder = [...(digitalMenuSettings.categoryOrder || []).filter(c => c && c !== 'Geral')];
+
+    catsList.forEach(cat => {
       if (!baseOrder.includes(cat)) baseOrder.push(cat);
     });
-    
-    // Adiciona categorias que estão nos produtos mas não na ordem salva
+
     uniqueFromProducts.forEach(cat => {
       if (!baseOrder.includes(cat)) baseOrder.push(cat);
     });
 
-    // Remove categorias que não existem mais em lugar nenhum
-    const finalSet = new Set([...productCategories, ...uniqueFromProducts]);
-    return baseOrder.filter(cat => finalSet.has(cat));
+    return baseOrder.filter(c => c && c !== 'Geral');
   }, [productCategories, products, digitalMenuSettings.categoryOrder]);
 
   const [activeSubTab, setActiveSubTab] = useState<'products' | 'raw-materials' | 'shopping-list'>('products');
@@ -1073,9 +1073,15 @@ const Inventory: React.FC<InventoryProps> = memo(({
   const handleDeleteCategory = (category: string) => {
     confirmAction(
       "Excluir Categoria de Insumo",
-      `Deseja excluir a categoria de insumo "${category}"? Os insumos nesta categoria não serão excluídos.`,
-      () => {
+      `Deseja excluir a categoria de insumo "${category}"?`,
+      async () => {
+        const affectedMaterials = rawMaterials.filter(rm => rm.category === category);
+        for (const rm of affectedMaterials) {
+          await onUpdateRawMaterial({ ...rm, category: 'Outros' });
+        }
+
         setRawMaterialCategories(prev => prev.filter(c => c !== category));
+
         if (selectedRawCategory === category) {
           setSelectedRawCategory(null);
         }
@@ -1087,23 +1093,27 @@ const Inventory: React.FC<InventoryProps> = memo(({
   const handleDeleteProductCategory = (category: string) => {
     confirmAction(
       "Excluir Categoria de Produto",
-      `Deseja excluir a categoria "${category}"? Quaisquer produtos cadastrados nesta categoria serão movidos para "Geral".`,
-      () => {
-        products.forEach(p => {
-          if (p.category === category) {
-            onUpdateProduct({ ...p, category: 'Geral' });
-          }
-        });
+      `Deseja excluir a categoria "${category}"? Os produtos cadastrados nesta categoria ficarão sem categoria.`,
+      async () => {
+        // 1. Clear category on affected products
+        const affectedProducts = products.filter(p => p.category === category);
+        for (const p of affectedProducts) {
+          await onUpdateProduct({ ...p, category: '' });
+        }
 
+        // 2. Remove category from hiddenCategories and categoryOrder
         const currentHidden = digitalMenuSettings.hiddenCategories || [];
         const currentOrder = digitalMenuSettings.categoryOrder || [];
-        onUpdateDigitalMenuSettings({
+        const updatedMenuSettings = {
           ...digitalMenuSettings,
           hiddenCategories: currentHidden.filter(c => c !== category),
           categoryOrder: currentOrder.filter(c => c !== category)
-        });
+        };
+        onUpdateDigitalMenuSettings(updatedMenuSettings);
 
+        // 3. Remove category from productCategories state & cloud
         setProductCategories(prev => prev.filter(c => c !== category));
+
         if (selectedCategory === category) {
           setSelectedCategory(null);
         }

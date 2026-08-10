@@ -493,7 +493,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
   }, [availableProducts, settings.totemUpsellMode, settings.totemUpsellProducts]);
 
   const categories = useMemo(() => {
-    const cats = Array.from(new Set(availableProducts.map(p => p.category || 'Geral')));
+    const cats = Array.from(new Set(availableProducts.map(p => p.category || 'Outros')));
     const order = settings.categoryOrder || productCategories || [];
     const hidden = settings.hiddenCategories || [];
     
@@ -507,20 +507,21 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
     return sortedCats.filter(c => !hidden.includes(c));
   }, [availableProducts, settings.categoryOrder, productCategories, settings.hiddenCategories]);
 
+  const categoriesKey = categories.join(',');
   // Set initial active category or reset if current becomes hidden
   React.useEffect(() => {
     if (categories.length > 0) {
       if (!activeCategory || !categories.includes(activeCategory)) {
         setActiveCategory(categories[0]);
       }
-    } else {
+    } else if (activeCategory !== '') {
       setActiveCategory('');
     }
-  }, [categories, activeCategory]);
+  }, [categoriesKey, activeCategory]);
 
   const filteredProducts = useMemo(() => {
     return availableProducts
-      .filter(p => (p.category || 'Geral') === activeCategory)
+      .filter(p => (p.category || 'Outros') === activeCategory)
       .filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()))
       .sort((a, b) => {
         const orderA = a.displayOrder ?? 999;

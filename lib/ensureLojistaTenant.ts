@@ -1,6 +1,42 @@
 import { db } from '../firebase';
 import { doc, getDoc, setDoc, getDocs, collection, query, where, writeBatch } from 'firebase/firestore';
-import { INITIAL_PRODUCTS, INITIAL_TABLES } from '../constants';
+import { INITIAL_PRODUCTS, INITIAL_TABLES, CATEGORIES } from '../constants';
+
+export function restoreCategoryForProduct(p: { id?: string; name?: string; category?: string }): string {
+  if (p.category && p.category !== 'Geral' && p.category.trim() !== '') {
+    return p.category;
+  }
+  const nameLower = (p.name || '').toLowerCase();
+  const idLower = (p.id || '').toLowerCase();
+
+  if (idLower.includes('e1') || idLower.includes('e2') || idLower.includes('e3') || idLower.includes('e4') || idLower.includes('e5') ||
+      nameLower.includes('bolinha') || nameLower.includes('batata frita') || nameLower.includes('batata chips') || nameLower.includes('torrada') || nameLower.includes('stick')) {
+    return 'Entradas';
+  }
+  if (idLower.includes('b1') || idLower.includes('b2') || nameLower.includes('buffet')) {
+    return 'Buffet';
+  }
+  if (idLower.includes('pp') || nameLower.includes('tradicional') || nameLower.includes('parmegiana') || nameLower.includes('grelhado') || nameLower.includes('milanesa') || nameLower.includes('strogonoff') || nameLower.includes('linguiça') || nameLower.includes('omelete') || nameLower.includes('salada')) {
+    return 'Pratos Principais';
+  }
+  if (idLower.includes('l1') || idLower.includes('l2') || idLower.includes('l3') || idLower.includes('l4') || idLower.includes('l5') || idLower.includes('l6') || nameLower.includes('x-') || nameLower.includes('misto') || nameLower.includes('burguer')) {
+    return 'Lanches';
+  }
+  if (idLower.includes('br') || nameLower.includes('batatas recheadas') || nameLower.includes('3 queijos') || (nameLower.includes('presunto') && nameLower.includes('batata'))) {
+    return 'Batatas Recheadas';
+  }
+  if (idLower.includes('p1') || idLower.includes('p2') || idLower.includes('p3') || idLower.includes('p4') || idLower.includes('p5') || idLower.includes('p6') || idLower.includes('p7') || idLower.includes('p8') || idLower.includes('p9') || nameLower.includes('pastel') || nameLower.includes('charutinho')) {
+    return 'Pasteis';
+  }
+  if (idLower.includes('d1') || idLower.includes('d2') || idLower.includes('d3') || idLower.includes('d4') || idLower.includes('d5') || idLower.includes('d6') || idLower.includes('d7') || idLower.includes('d8') || idLower.includes('d9') || nameLower.includes('refrigerante') || nameLower.includes('suco') || nameLower.includes('água') || nameLower.includes('h2o') || nameLower.includes('coca') || nameLower.includes('guaraná')) {
+    return 'Bebidas';
+  }
+
+  const init = INITIAL_PRODUCTS.find(item => item.name.toLowerCase() === nameLower);
+  if (init) return init.category;
+
+  return 'Pratos Principais';
+}
 
 export async function ensureLojistaTenantWithData() {
   try {
@@ -47,66 +83,77 @@ export async function ensureLojistaTenantWithData() {
       }, { merge: true });
     }
 
-    // 2. Copy/Ensure settings/lojista
-    const lojistaSettingsRef = doc(db, 'settings', 'lojista');
-    const lojistaSettingsSnap = await getDoc(lojistaSettingsRef);
-    if (!lojistaSettingsSnap.exists()) {
-      let vivaSettings: any = null;
-      try {
-        const vivaSetSnap = await getDoc(doc(db, 'settings', 'HCL1177LRQVPEKCTYRAHU7IGBQ42'));
-        if (vivaSetSnap.exists()) {
-          vivaSettings = vivaSetSnap.data();
+    // 2. Ensure settings/lojista and settings/HCL1177LRQVPEKCTYRAHU7IGBQ42 have correct productCategories
+    const tenantIdsToRepair = ['lojista', 'HCL1177LRQVPEKCTYRAHU7IGBQ42'];
+    for (const tid of tenantIdsToRepair) {
+      const settingsRef = doc(db, 'settings', tid);
+      const settingsSnap = await getDoc(settingsRef);
+      let sData = settingsSnap.exists() ? settingsSnap.data() : {};
+
+      const curCats = sData.productCategories;
+      const needsRestore = !curCats || !Array.isArray(curCats) || curCats.length === 0 || curCats.includes('Geral');
+
+      let updatedDigitalMenu = sData.digitalMenu || {};
+      let orderChanged = false;
+      if (updatedDigitalMenu.categoryOrder && Array.isArray(updatedDigitalMenu.categoryOrder)) {
+        if (updatedDigitalMenu.categoryOrder.includes('Geral')) {
+          updatedDigitalMenu.categoryOrder = updatedDigitalMenu.categoryOrder.filter((c: string) => c !== 'Geral');
+          orderChanged = true;
         }
-      } catch (e) {
-        console.warn("Could not fetch viva settings:", e);
+      }
+      if (updatedDigitalMenu.hiddenCategories && Array.isArray(updatedDigitalMenu.hiddenCategories)) {
+        if (updatedDigitalMenu.hiddenCategories.includes('Geral')) {
+          updatedDigitalMenu.hiddenCategories = updatedDigitalMenu.hiddenCategories.filter((c: string) => c !== 'Geral');
+          orderChanged = true;
+        }
       }
 
-      const newSettings = vivaSettings ? JSON.parse(JSON.stringify(vivaSettings)) : {};
-      if (!newSettings.admin) newSettings.admin = {};
-      if (!newSettings.digitalMenu) newSettings.digitalMenu = {};
-      
-      newSettings.admin.companyName = 'KitchenFlow';
-      newSettings.digitalMenu.restaurantName = 'KitchenFlow';
-      newSettings.updatedAt = new Date();
-
-      await setDoc(lojistaSettingsRef, newSettings, { merge: true });
+      if (needsRestore || orderChanged || !settingsSnap.exists()) {
+        const payload: any = {
+          productCategories: CATEGORIES,
+          digitalMenu: updatedDigitalMenu,
+          updatedAt: new Date()
+        };
+        if (!sData.admin) {
+          payload.admin = { companyName: tid === 'lojista' ? 'KitchenFlow' : 'Viva La Fome' };
+        }
+        await setDoc(settingsRef, payload, { merge: true });
+      }
     }
 
-    // 3. Copy Products from Viva or INITIAL_PRODUCTS if lojista has 0 products
-    const lojistaProductsQuery = query(collection(db, 'products'), where('tenantId', '==', 'lojista'));
-    const lojistaProductsSnap = await getDocs(lojistaProductsQuery);
-
-    if (lojistaProductsSnap.empty) {
-      const vivaProductsQuery = query(collection(db, 'products'), where('tenantId', '==', 'HCL1177LRQVPEKCTYRAHU7IGBQ42'));
-      const vivaProductsSnap = await getDocs(vivaProductsQuery);
-
+    // 3. Restore product categories for products in Firestore that have category === 'Geral' or empty
+    const allProductsSnap = await getDocs(collection(db, 'products'));
+    if (!allProductsSnap.empty) {
       const batch = writeBatch(db);
-      if (!vivaProductsSnap.empty) {
-        vivaProductsSnap.docs.forEach(docSnap => {
-          const pData = docSnap.data();
-          const newId = `lojista_${docSnap.id}`;
-          batch.set(doc(db, 'products', newId), {
-            ...pData,
-            id: newId,
-            tenantId: 'lojista',
+      let hasUpdates = false;
+      allProductsSnap.docs.forEach(docSnap => {
+        const pData = docSnap.data();
+        if (pData.category === 'Geral' || !pData.category) {
+          const restoredCat = restoreCategoryForProduct(pData);
+          batch.update(docSnap.ref, {
+            category: restoredCat,
             updatedAt: new Date()
           });
-        });
+          hasUpdates = true;
+        }
+      });
+      if (hasUpdates) {
         await batch.commit();
-        console.log(`Copied ${vivaProductsSnap.size} products from Viva to lojista tenant.`);
-      } else if (INITIAL_PRODUCTS && INITIAL_PRODUCTS.length > 0) {
-        INITIAL_PRODUCTS.forEach(product => {
-          const newId = `lojista_${product.id}`;
-          batch.set(doc(db, 'products', newId), {
-            ...product,
-            id: newId,
-            tenantId: 'lojista',
-            updatedAt: new Date()
-          });
-        });
-        await batch.commit();
-        console.log(`Seeded ${INITIAL_PRODUCTS.length} initial products to lojista tenant.`);
+        console.log("Restored product categories in Firestore for products with invalid/Geral category.");
       }
+    } else {
+      // Seed lojista products if empty
+      const batch = writeBatch(db);
+      INITIAL_PRODUCTS.forEach(product => {
+        const newId = `lojista_${product.id}`;
+        batch.set(doc(db, 'products', newId), {
+          ...product,
+          id: newId,
+          tenantId: 'lojista',
+          updatedAt: new Date()
+        });
+      });
+      await batch.commit();
     }
 
     // 4. Copy Dining Tables from Viva or INITIAL_TABLES if lojista has 0 tables
@@ -130,7 +177,6 @@ export async function ensureLojistaTenantWithData() {
           });
         });
         await batch.commit();
-        console.log(`Copied ${vivaTablesSnap.size} tables from Viva to lojista tenant.`);
       } else if (INITIAL_TABLES && INITIAL_TABLES.length > 0) {
         INITIAL_TABLES.forEach(table => {
           const newId = `lojista_${table.id}`;
@@ -142,7 +188,6 @@ export async function ensureLojistaTenantWithData() {
           });
         });
         await batch.commit();
-        console.log(`Seeded ${INITIAL_TABLES.length} initial tables to lojista tenant.`);
       }
     }
   } catch (err) {

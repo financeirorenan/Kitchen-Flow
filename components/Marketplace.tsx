@@ -1105,6 +1105,23 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     if (routeTenantId) {
       const targetNorm = normalizeSlug(routeTenantId);
 
+      // Early return if selectedTenant already matches routeTenantId to prevent infinite re-render loop
+      if (selectedTenant) {
+        const currentCustomSlug = storeSettings?.digitalMenu?.customSlug;
+        const currentSlug = (selectedTenant as any).slug;
+        const isCurrentMatch =
+          selectedTenant.id === routeTenantId ||
+          selectedTenant.id.toLowerCase() === routeTenantId.toLowerCase() ||
+          normalizeSlug(selectedTenant.id) === targetNorm ||
+          normalizeSlug(selectedTenant.name) === targetNorm ||
+          (currentCustomSlug && normalizeSlug(currentCustomSlug) === targetNorm) ||
+          (currentSlug && normalizeSlug(currentSlug) === targetNorm);
+
+        if (isCurrentMatch) {
+          return;
+        }
+      }
+
       // Try matching by exact ID, customSlug, t.slug, or normalized name in currently loaded tenants
       let tenant = tenants.find((t) => {
         const tSettings = tenantsSettings[t.id];
