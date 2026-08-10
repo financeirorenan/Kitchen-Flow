@@ -4,24 +4,24 @@
       <stop offset="0%" stop-color="#FF5722"/>
       <stop offset="100%" stop-color="#E03100"/>
     </linearGradient>
-    <linearGradient id="nGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+    <linearGradient id="kGrad" x1="0%" y1="0%" x2="0%" y2="100%">
       <stop offset="0%" stop-color="#FFFFFF"/>
-      <stop offset="100%" stop-color="#F1F5F9"/>
+      <stop offset="100%" stop-color="#F8FAFC"/>
     </linearGradient>
   </defs>
-  <!-- Background with smooth rounded squircle corners -->
+  <!-- Orange background with squircle corners -->
   <rect width="512" height="512" rx="120" fill="url(#bgGrad)"/>
   
-  <!-- Stylized N Letter for Nova Delivery -->
-  <g fill="none" stroke="url(#nGrad)" stroke-linecap="round" stroke-linejoin="round">
-    <!-- Left vertical bar -->
-    <path d="M 148 128 V 384" stroke-width="52"/>
-    <!-- Diagonal connection -->
-    <path d="M 148 138 L 364 374" stroke-width="56"/>
-    <!-- Right vertical bar -->
-    <path d="M 364 128 V 384" stroke-width="52"/>
+  <!-- White K Letter for KitchenFlow -->
+  <g fill="none" stroke="url(#kGrad)" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Vertical stem -->
+    <path d="M 170 128 V 384" stroke-width="58"/>
+    <!-- Upper diagonal arm -->
+    <path d="M 195 260 L 345 128" stroke-width="58"/>
+    <!-- Lower diagonal arm -->
+    <path d="M 215 235 L 350 384" stroke-width="58"/>
   </g>
   
-  <!-- Little fast-delivery spark dot accent on top-right of N -->
-  <circle cx="400" cy="116" r="22" fill="#FFD400"/>
+  <!-- Sparkle accent dot on top right -->
+  <circle cx="395" cy="116" r="20" fill="#FFD400"/>
 </svg>
