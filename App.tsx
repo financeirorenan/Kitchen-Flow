@@ -32,6 +32,8 @@ import { onAuthStateChanged, signOut, User as FirebaseUser, updateEmail, updateP
 import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, onSnapshot, query, where, orderBy, limit, addDoc, writeBatch } from 'firebase/firestore';
 import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import Login from './components/Login';
+import { setOnQuotaExceededCallback } from './lib/firestoreErrors';
+import { setLocalCache, getLocalCache } from './lib/cacheUtils';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt';
 import { UserProfileModal } from './components/UserProfileModal';
 import { PrintPreviewModal } from './components/PrintPreviewModal';
@@ -261,6 +263,12 @@ const App: React.FC = () => {
   const addLogRef = useRef<any>(null);
 
   useEffect(() => {
+    setOnQuotaExceededCallback(() => {
+      setQuotaExceeded(true);
+    });
+  }, []);
+
+  useEffect(() => {
     addLogRef.current = addLog;
   }, [addLog]);
 
@@ -407,13 +415,13 @@ const App: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [rolePermissions, setRolePermissions] = useState<Record<UserRole, Permission[]>>(INITIAL_ROLE_PERMISSIONS as Record<UserRole, Permission[]>);
-  const [plans, setPlans] = useState<Plan[]>([]);
+  const [plans, setPlans] = useState<Plan[]>(() => getLocalCache('plans') || []);
   const [saasConfig, setSaasConfig] = useState<{
     excedentOrderPrice: number;
     maxExtraOrdersLimit: number;
     enableExtraOrdersLimit: boolean;
     volumeDiscounts: { threshold: number; discountPercent: number }[];
-  }>({
+  }>(() => getLocalCache('saas_config') || {
     excedentOrderPrice: 0.20,
     maxExtraOrdersLimit: 1000,
     enableExtraOrdersLimit: false,
@@ -1355,6 +1363,7 @@ const App: React.FC = () => {
         loadedPlans.push({ id: doc.id, ...doc.data() } as Plan);
       });
       setPlans(loadedPlans);
+      setLocalCache('plans', loadedPlans);
     }, (error) => {
       console.warn("Error loading plans:", error.message);
       if (error.message?.includes("Quota") || error.message?.includes("quota") || (error as any).code === "resource-exhausted") {
@@ -1365,7 +1374,7 @@ const App: React.FC = () => {
     const saasConfigUnsub = onSnapshot(doc(db, 'settings', 'saas_config'), (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.data();
-        setSaasConfig({
+        const conf = {
           excedentOrderPrice: data.excedentOrderPrice !== undefined ? data.excedentOrderPrice : 0.20,
           maxExtraOrdersLimit: data.maxExtraOrdersLimit !== undefined ? data.maxExtraOrdersLimit : 1000,
           enableExtraOrdersLimit: data.enableExtraOrdersLimit !== undefined ? data.enableExtraOrdersLimit : false,
@@ -1373,7 +1382,9 @@ const App: React.FC = () => {
             { threshold: 500, discountPercent: 10 },
             { threshold: 1000, discountPercent: 20 }
           ]
-        });
+        };
+        setSaasConfig(conf);
+        setLocalCache('saas_config', conf);
       }
     }, (error) => {
       console.warn("Error loading saas_config:", error.message);
