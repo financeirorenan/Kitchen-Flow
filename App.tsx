@@ -243,6 +243,76 @@ const App: React.FC = () => {
   });
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   
+  const [adminSettings, setAdminSettings] = useState<AdminSettings>({
+    companyName: 'KitchenFlow',
+    cnpj: '12.345.678/0001-90',
+    address: 'Av. Paulista, 1000 - Bela Vista, São Paulo - SP',
+    phone: '(11) 4002-8922',
+    socialMedia: {
+      instagram: '',
+      facebook: '',
+      whatsapp: ''
+    },
+    businessHours: [
+      { day: 'Segunda-feira', open: '09:00', close: '22:00', isClosed: false },
+      { day: 'Terça-feira', open: '09:00', close: '22:00', isClosed: false },
+      { day: 'Quarta-feira', open: '09:00', close: '22:00', isClosed: false },
+      { day: 'Quinta-feira', open: '09:00', close: '22:00', isClosed: false },
+      { day: 'Sexta-feira', open: '09:00', close: '23:00', isClosed: false },
+      { day: 'Sábado', open: '10:00', close: '23:00', isClosed: false },
+      { day: 'Domingo', open: '10:00', close: '21:00', isClosed: false },
+    ],
+    fiscal: { 
+      environment: 'homologacao', 
+      certificateStatus: 'missing', 
+      certificateExpiry: '', 
+      cscId: '', 
+      cscToken: '', 
+      nextNfceNumber: 1, 
+      series: 1, 
+      taxRegime: 'simples_nacional',
+      cnpj: '12.345.678/0001-90',
+      razaoSocial: 'KitchenFlow AI',
+      inscricaoEstadual: '123.456.789.110',
+      address: {
+        logradouro: 'Av. Paulista',
+        numero: '1000',
+        bairro: 'Bela Vista',
+        municipio: 'São Paulo',
+        uf: 'SP',
+        cep: '01310-100',
+        codigoMunicipio: '3550308'
+      }
+    } as any,
+    printing: { paperWidth: '80mm', autoPrintOrder: false, headerText: 'BEM VINDO AO KITCHENFLOW AI!', footerText: 'Obrigado!', showLogo: true },
+    apis: { googleMapsKey: '', whatsappToken: '', ifoodWebhook: '', integrationActive: false },
+    deliveryFee: 7.00,
+    isDeliveryEnabled: true,
+    isPickupEnabled: true,
+    minOrderValue: 20.00,
+    estimatedDeliveryTime: '30-45 min',
+    estimatedPickupTime: '15-20 min',
+    autoAcceptOrders: false,
+    paymentMethods: [
+      { id: '1', name: 'Dinheiro', type: 'cash', feePercentage: 0, active: true },
+      { id: '2', name: 'Cartão de Crédito', type: 'credit', feePercentage: 3.2, active: true, operatorId: 'op-1' },
+      { id: '3', name: 'Cartão de Débito', type: 'debit', feePercentage: 1.9, active: true, operatorId: 'op-1' },
+      { id: '4', name: 'PIX', type: 'pix', feePercentage: 0, active: true },
+      { id: '5', name: 'Vale Refeição', type: 'voucher', feePercentage: 5.0, active: true },
+      { id: '6', name: 'Fiado (Conta Cliente)', type: 'account', feePercentage: 0, active: true },
+    ],
+    operators: [
+      { id: 'op-1', name: 'Stone', active: true },
+      { id: 'op-2', name: 'Rede', active: true },
+      { id: 'op-3', name: 'Getnet', active: true },
+    ],
+    saasIntegration: {
+      isCustomerAppEnabled: false,
+      appFeePerOrder: 1.50,
+      billingAccumulated: 0
+    }
+  });
+  
   const [quotaExceeded, setQuotaExceeded] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
@@ -924,6 +994,21 @@ const App: React.FC = () => {
   }, [location.pathname, isSuperAdmin, currentProject, activeTab, navigate, user, currentUserData, tenantData?.slug, viewingTenantId, authLoading]);
 
   useEffect(() => {
+    if (currentProject === 'PLATFORM') {
+      document.title = 'KitchenFlow - Painel SaaS Admin';
+    } else if (currentProject === 'RESTAURANT') {
+      const storeName = viewingTenantName || tenantData?.name || adminSettings.companyName || 'Lojista';
+      document.title = `${storeName} | KitchenFlow - Sistema de Gestão para Restaurantes`;
+    } else if (currentProject === 'COURIER') {
+      document.title = 'KitchenFlow - Portal do Entregador';
+    } else if (currentProject === 'MARKETPLACE') {
+      // Dynamic title handled inside Marketplace component
+    } else {
+      document.title = 'KitchenFlow - Sistema de Gestão para Restaurantes';
+    }
+  }, [currentProject, viewingTenantName, tenantData?.name, adminSettings.companyName]);
+
+  useEffect(() => {
     (window as any).setActiveTab = (tab: string) => {
       handleSelectTab(tab);
     };
@@ -987,76 +1072,6 @@ const App: React.FC = () => {
     },
     totemUpsellMode: 'auto',
     totemUpsellProducts: []
-  });
-
-  const [adminSettings, setAdminSettings] = useState<AdminSettings>({
-    companyName: 'KitchenFlow',
-    cnpj: '12.345.678/0001-90',
-    address: 'Av. Paulista, 1000 - Bela Vista, São Paulo - SP',
-    phone: '(11) 4002-8922',
-    socialMedia: {
-      instagram: '',
-      facebook: '',
-      whatsapp: ''
-    },
-    businessHours: [
-      { day: 'Segunda-feira', open: '09:00', close: '22:00', isClosed: false },
-      { day: 'Terça-feira', open: '09:00', close: '22:00', isClosed: false },
-      { day: 'Quarta-feira', open: '09:00', close: '22:00', isClosed: false },
-      { day: 'Quinta-feira', open: '09:00', close: '22:00', isClosed: false },
-      { day: 'Sexta-feira', open: '09:00', close: '23:00', isClosed: false },
-      { day: 'Sábado', open: '10:00', close: '23:00', isClosed: false },
-      { day: 'Domingo', open: '10:00', close: '21:00', isClosed: false },
-    ],
-    fiscal: { 
-      environment: 'homologacao', 
-      certificateStatus: 'missing', 
-      certificateExpiry: '', 
-      cscId: '', 
-      cscToken: '', 
-      nextNfceNumber: 1, 
-      series: 1, 
-      taxRegime: 'simples_nacional',
-      cnpj: '12.345.678/0001-90',
-      razaoSocial: 'KitchenFlow AI',
-      inscricaoEstadual: '123.456.789.110',
-      address: {
-        logradouro: 'Av. Paulista',
-        numero: '1000',
-        bairro: 'Bela Vista',
-        municipio: 'São Paulo',
-        uf: 'SP',
-        cep: '01310-100',
-        codigoMunicipio: '3550308'
-      }
-    } as any,
-    printing: { paperWidth: '80mm', autoPrintOrder: false, headerText: 'BEM VINDO AO KITCHENFLOW AI!', footerText: 'Obrigado!', showLogo: true },
-    apis: { googleMapsKey: '', whatsappToken: '', ifoodWebhook: '', integrationActive: false },
-    deliveryFee: 7.00,
-    isDeliveryEnabled: true,
-    isPickupEnabled: true,
-    minOrderValue: 20.00,
-    estimatedDeliveryTime: '30-45 min',
-    estimatedPickupTime: '15-20 min',
-    autoAcceptOrders: false,
-    paymentMethods: [
-      { id: '1', name: 'Dinheiro', type: 'cash', feePercentage: 0, active: true },
-      { id: '2', name: 'Cartão de Crédito', type: 'credit', feePercentage: 3.2, active: true, operatorId: 'op-1' },
-      { id: '3', name: 'Cartão de Débito', type: 'debit', feePercentage: 1.9, active: true, operatorId: 'op-1' },
-      { id: '4', name: 'PIX', type: 'pix', feePercentage: 0, active: true },
-      { id: '5', name: 'Vale Refeição', type: 'voucher', feePercentage: 5.0, active: true },
-      { id: '6', name: 'Fiado (Conta Cliente)', type: 'account', feePercentage: 0, active: true },
-    ],
-    operators: [
-      { id: 'op-1', name: 'Stone', active: true },
-      { id: 'op-2', name: 'Rede', active: true },
-      { id: 'op-3', name: 'Getnet', active: true },
-    ],
-    saasIntegration: {
-      isCustomerAppEnabled: false,
-      appFeePerOrder: 1.50,
-      billingAccumulated: 0
-    }
   });
 
   // Ref para rastrear IDs de pedidos já notificados

@@ -885,12 +885,12 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     useState<MarketplaceSettings | null>(null);
   const storeListRef = React.useRef<HTMLDivElement>(null);
 
-  // Set dynamic document title for Nova Delivery
+  // Set dynamic document title for KitchenFlow
   useEffect(() => {
     if (selectedTenant) {
-      document.title = `${selectedTenant.name} | Nova Delivery`;
+      document.title = `${selectedTenant.name} | KitchenFlow`;
     } else {
-      document.title = "Nova Delivery - Pedidos & Cardápio";
+      document.title = "KitchenFlow - Sistema de Gestão para Restaurantes";
     }
   }, [selectedTenant]);
 

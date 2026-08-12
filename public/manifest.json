@@ -1,6 +1,6 @@
 {
-  "short_name": "Nova Delivery",
-  "name": "Nova Delivery - Pedidos & Cardápio",
+  "short_name": "KitchenFlow",
+  "name": "KitchenFlow - Sistema de Gestão para Restaurantes",
   "icons": [
     {
       "src": "/icon-192.png",
@@ -27,5 +27,5 @@
   "display": "standalone",
   "orientation": "portrait-primary",
   "scope": "/",
-  "description": "Aplicativo Oficial de Pedidos e Delivery - Nova Delivery"
+  "description": "KitchenFlow - Sistema de Gestão e Copiloto Operacional para Restaurantes"
 }

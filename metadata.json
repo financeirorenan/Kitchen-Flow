@@ -1,6 +1,6 @@
 {
-  "name": "Nova Delivery",
-  "description": "Plataforma de Delivery, Cardápio Digital e Marketplace B2C Nova Delivery com IA integrada.",
+  "name": "KitchenFlow",
+  "description": "KitchenFlow - Sistema de Gestão para Restaurantes com IA integrada.",
   "requestFramePermissions": ["geolocation", "usb"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
