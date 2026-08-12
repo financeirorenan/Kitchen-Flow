@@ -5494,10 +5494,19 @@ const App: React.FC = () => {
 
   if (authLoading && !isPublicRoute) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-slate-400 font-black text-[10px] uppercase tracking-widest animate-pulse">Carregando KitchenFlow AI...</p>
+      <div className="min-h-screen bg-[#FF4F18] flex flex-col items-center justify-center p-6 text-white relative overflow-hidden select-none">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.18),transparent_55%)] pointer-events-none" />
+        <div className="flex flex-col items-center gap-6 z-10 text-center">
+          <div className="w-20 h-20 bg-white/10 backdrop-blur-md border border-white/25 rounded-3xl flex items-center justify-center shadow-2xl shadow-black/10">
+            <span className="text-4xl font-black tracking-tighter text-white drop-shadow-md">K</span>
+          </div>
+          <div className="space-y-1.5">
+            <h1 className="text-2xl font-black tracking-tighter text-white">KitchenFlow AI</h1>
+            <p className="text-white/85 font-black text-[10px] uppercase tracking-[0.25em] animate-pulse">
+              Carregando KitchenFlow AI...
+            </p>
+          </div>
+          <div className="w-8 h-8 border-3 border-white/30 border-t-white rounded-full animate-spin mt-2" />
         </div>
       </div>
     );
@@ -5545,10 +5554,19 @@ const App: React.FC = () => {
   // Mostramos tela de carregamento para garantir consistência e evitar mostrar plataforma nula ou vazia.
   if (user && !currentUserData && authLoading && !isPublicRoute) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-slate-400 font-black text-[10px] uppercase tracking-widest animate-pulse">Carregando KitchenFlow AI...</p>
+      <div className="min-h-screen bg-[#FF4F18] flex flex-col items-center justify-center p-6 text-white relative overflow-hidden select-none">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.18),transparent_55%)] pointer-events-none" />
+        <div className="flex flex-col items-center gap-6 z-10 text-center">
+          <div className="w-20 h-20 bg-white/10 backdrop-blur-md border border-white/25 rounded-3xl flex items-center justify-center shadow-2xl shadow-black/10">
+            <span className="text-4xl font-black tracking-tighter text-white drop-shadow-md">K</span>
+          </div>
+          <div className="space-y-1.5">
+            <h1 className="text-2xl font-black tracking-tighter text-white">KitchenFlow AI</h1>
+            <p className="text-white/85 font-black text-[10px] uppercase tracking-[0.25em] animate-pulse">
+              Carregando seu painel...
+            </p>
+          </div>
+          <div className="w-8 h-8 border-3 border-white/30 border-t-white rounded-full animate-spin mt-2" />
         </div>
       </div>
     );
@@ -5558,10 +5576,19 @@ const App: React.FC = () => {
   // Carrega em segundo plano ou aguarda a conclusão da sincronização do auto-cadastro.
   if (user && !currentUserData && !authLoading && !isPublicRoute && location.pathname !== '/') {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-slate-400 font-black text-[10px] uppercase tracking-widest animate-pulse">Sincronizando KitchenFlow AI...</p>
+      <div className="min-h-screen bg-[#FF4F18] flex flex-col items-center justify-center p-6 text-white relative overflow-hidden select-none">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.18),transparent_55%)] pointer-events-none" />
+        <div className="flex flex-col items-center gap-6 z-10 text-center">
+          <div className="w-20 h-20 bg-white/10 backdrop-blur-md border border-white/25 rounded-3xl flex items-center justify-center shadow-2xl shadow-black/10">
+            <span className="text-4xl font-black tracking-tighter text-white drop-shadow-md">K</span>
+          </div>
+          <div className="space-y-1.5">
+            <h1 className="text-2xl font-black tracking-tighter text-white">KitchenFlow AI</h1>
+            <p className="text-white/85 font-black text-[10px] uppercase tracking-[0.25em] animate-pulse">
+              Sincronizando KitchenFlow AI...
+            </p>
+          </div>
+          <div className="w-8 h-8 border-3 border-white/30 border-t-white rounded-full animate-spin mt-2" />
         </div>
       </div>
     );
@@ -5712,7 +5739,7 @@ const App: React.FC = () => {
           </div>
         )}
         {currentProject === 'WEBSITE' ? (
-          <KitchenflowWebsite />
+          <KitchenflowWebsite onNavigateLogin={() => navigate('/login')} />
         ) : currentProject === 'MARKETPLACE' || currentProject === 'COURIER' ? (
           <Routes>
             <Route path="/entregador" element={
