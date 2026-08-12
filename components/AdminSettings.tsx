@@ -206,6 +206,77 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
     }
   };
 
+  const FIXED_WEEKDAYS = [
+    'Segunda-feira',
+    'Terça-feira',
+    'Quarta-feira',
+    'Quinta-feira',
+    'Sexta-feira',
+    'Sábado',
+    'Domingo'
+  ];
+
+  const isSameDayName = (dayA: string, dayB: string) => {
+    if (!dayA || !dayB) return false;
+    const cleanA = dayA.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    const cleanB = dayB.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    return cleanA === cleanB || cleanA.replace("-feira", "") === cleanB.replace("-feira", "");
+  };
+
+  const getDayShifts = (dayName: string) => {
+    const shifts = (settings.businessHours || []).filter(h => isSameDayName(h.day, dayName));
+    if (shifts.length === 0) {
+      return [{ day: dayName, open: '09:00', close: '22:00', isClosed: false }];
+    }
+    return shifts;
+  };
+
+  const handleAddShiftToDay = (dayName: string) => {
+    const newShift: BusinessHours = {
+      day: dayName,
+      open: '18:00',
+      close: '23:30',
+      isClosed: false
+    };
+    onUpdateSettings({
+      ...settings,
+      businessHours: [...(settings.businessHours || []), newShift]
+    });
+  };
+
+  const handleToggleDayClosed = (dayName: string, isClosed: boolean) => {
+    let currentHours = [...(settings.businessHours || [])];
+    const hasExistingShifts = currentHours.some(h => isSameDayName(h.day, dayName));
+
+    if (!hasExistingShifts) {
+      currentHours.push({ day: dayName, open: '09:00', close: '22:00', isClosed });
+    } else {
+      currentHours = currentHours.map(h => {
+        if (isSameDayName(h.day, dayName)) {
+          return { ...h, isClosed };
+        }
+        return h;
+      });
+    }
+    onUpdateSettings({ ...settings, businessHours: currentHours });
+  };
+
+  const handleUpdateShiftTime = (shiftItem: BusinessHours, field: 'open' | 'close', value: string) => {
+    let currentHours = [...(settings.businessHours || [])];
+    const idx = currentHours.indexOf(shiftItem);
+    if (idx !== -1) {
+      currentHours[idx] = { ...currentHours[idx], [field]: value };
+    } else {
+      currentHours.push({ ...shiftItem, [field]: value });
+    }
+    onUpdateSettings({ ...settings, businessHours: currentHours });
+  };
+
+  const handleRemoveShift = (shiftItem: BusinessHours) => {
+    const currentHours = (settings.businessHours || []).filter(h => h !== shiftItem);
+    onUpdateSettings({ ...settings, businessHours: currentHours });
+  };
+
   const updateHours = (index: number, field: keyof BusinessHours, value: any) => {
     const newHours = [...settings.businessHours];
     newHours[index] = { ...newHours[index], [field]: value };
@@ -585,83 +656,218 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
           )}
 
           {activeSubTab === 'hours' && (
-            <div className="space-y-3 animate-in slide-in-from-right-4 duration-300">
-              <div className="flex items-center justify-between border-b pb-2">
-                 <div className="flex items-center gap-2">
-                    <div className="bg-amber-50 p-2 rounded-lg text-amber-600">
-                       <Clock size={16} />
+            <div className="space-y-4 animate-in slide-in-from-right-4 duration-300">
+              {/* Header com Ação Rápida */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3">
+                 <div className="flex items-center gap-2.5">
+                    <div className="bg-amber-500/10 p-2.5 rounded-2xl text-amber-600 border border-amber-200/50">
+                       <Clock size={20} />
                     </div>
                     <div>
-                       <h2 className="text-sm font-black text-slate-800">Horários de Funcionamento</h2>
-                       <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Defina quando seu restaurante está aberto</p>
+                       <h2 className="text-sm font-black text-slate-800 uppercase tracking-tight">Horários de Funcionamento</h2>
+                       <p className="text-[10px] font-bold text-slate-400">Gerencie o horário de abertura automática e o status da loja no Cardápio e Marketplace</p>
                     </div>
                  </div>
-                 <button 
-                   onClick={() => {
-                     const newHour = { day: 'Novo Horário', open: '08:00', close: '18:00', isClosed: false };
-                     onUpdateSettings({ ...settings, businessHours: [...settings.businessHours, newHour] });
-                   }}
-                   className="flex items-center gap-1 px-2 py-1 bg-indigo-600 text-white rounded-md text-[10px] font-bold hover:bg-indigo-700 transition-colors"
-                 >
-                   <Plus size={12} />
-                   Adicionar
-                 </button>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
-                {settings.businessHours.map((h, idx) => (
-                  <div key={idx} className={`flex flex-col p-2 rounded-xl border transition-all ${h.isClosed ? 'bg-slate-50 border-slate-100 opacity-60' : 'bg-white border-slate-200 shadow-sm'}`}>
-                    <div className="flex items-center justify-between mb-2">
-                      <input 
-                        type="text"
-                        className="bg-transparent border-none outline-none font-black text-slate-800 uppercase text-[8px] tracking-widest w-full"
-                        value={h.day}
-                        onChange={(e) => updateHours(idx, 'day', e.target.value)}
-                      />
-                      <button 
-                        onClick={() => {
-                          const newHours = settings.businessHours.filter((_, i) => i !== idx);
-                          onUpdateSettings({ ...settings, businessHours: newHours });
-                        }}
-                        className="p-1 text-rose-500 hover:bg-rose-50 rounded-md transition-colors"
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                    
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className="flex-1 space-y-0.5">
-                        <label className="text-[6px] font-black text-slate-400 uppercase tracking-widest">Abertura</label>
-                        <input 
-                          type="time" 
-                          disabled={h.isClosed}
-                          className="w-full px-1.5 py-1 bg-slate-50 border rounded-md outline-none font-bold text-[10px] disabled:opacity-50 focus:border-indigo-500"
-                          value={h.open}
-                          onChange={(e) => updateHours(idx, 'open', e.target.value)}
-                        />
-                      </div>
-                      <div className="flex-1 space-y-0.5">
-                        <label className="text-[6px] font-black text-slate-400 uppercase tracking-widest">Fechamento</label>
-                        <input 
-                          type="time" 
-                          disabled={h.isClosed}
-                          className="w-full px-1.5 py-1 bg-slate-50 border rounded-md outline-none font-bold text-[10px] disabled:opacity-50 focus:border-indigo-500"
-                          value={h.close}
-                          onChange={(e) => updateHours(idx, 'close', e.target.value)}
-                        />
-                      </div>
-                    </div>
 
-                    <label className="flex items-center gap-2 cursor-pointer p-1.5 bg-slate-50 rounded-lg border border-transparent hover:border-slate-200 transition-all">
-                      <input 
-                        type="checkbox" 
-                        checked={h.isClosed}
-                        onChange={(e) => updateHours(idx, 'isClosed', e.target.checked)}
-                        className="w-3 h-3 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <span className="text-[7px] font-black text-slate-600 uppercase tracking-wider">Marcar como Fechado</span>
-                    </label>
+                 <div className="flex items-center gap-2">
+                    <button 
+                      type="button"
+                      onClick={handleSave}
+                      disabled={saveStatus !== 'idle'}
+                      className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md cursor-pointer disabled:opacity-50"
+                    >
+                      <Save size={13} />
+                      {saveStatus === 'saving' ? 'Salvando...' : saveStatus === 'success' ? 'Salvo com Sucesso!' : 'Salvar Alterações'}
+                    </button>
+                 </div>
+              </div>
+
+              {/* Status Manual da Loja (Override) */}
+              <div className="p-4 bg-slate-900 rounded-2xl text-white space-y-3 shadow-md">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-3 h-3 rounded-full animate-pulse ${
+                      settings.isStoreForceClosed ? 'bg-rose-500' : settings.isStoreForceOpen ? 'bg-emerald-400' : 'bg-sky-400'
+                    }`} />
+                    <span className="text-xs font-black uppercase tracking-wider">
+                      Status da Loja no Sistema: {' '}
+                      <strong className={settings.isStoreForceClosed ? 'text-rose-400' : settings.isStoreForceOpen ? 'text-emerald-300' : 'text-sky-300'}>
+                        {settings.isStoreForceClosed ? 'FECHADO MANUALMENTE' : settings.isStoreForceOpen ? 'ABERTO (FORÇADO)' : 'AUTOMÁTICO (POR HORÁRIO)'}
+                      </strong>
+                    </span>
                   </div>
-                ))}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onUpdateSettings({ ...settings, isStoreForceClosed: false, isStoreForceOpen: false });
+                    }}
+                    className={`p-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all border cursor-pointer ${
+                      !settings.isStoreForceClosed && !settings.isStoreForceOpen 
+                        ? 'bg-[#00B7FF] text-white border-[#00B7FF] shadow-sm' 
+                        : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                    }`}
+                  >
+                    ⏰ Automático (Por Horário)
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onUpdateSettings({ ...settings, isStoreForceClosed: false, isStoreForceOpen: true });
+                    }}
+                    className={`p-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all border cursor-pointer ${
+                      settings.isStoreForceOpen 
+                        ? 'bg-emerald-600 text-white border-emerald-500 shadow-sm' 
+                        : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                    }`}
+                  >
+                    🟢 Forçar Aberto Agora
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onUpdateSettings({ ...settings, isStoreForceClosed: true, isStoreForceOpen: false });
+                    }}
+                    className={`p-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all border cursor-pointer ${
+                      settings.isStoreForceClosed 
+                        ? 'bg-rose-600 text-white border-rose-500 shadow-sm' 
+                        : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                    }`}
+                  >
+                    🔴 Forçar Fechado (Pausa)
+                  </button>
+                </div>
+              </div>
+
+              {/* Escala Semanal por Dia da Semana (Segunda a Domingo) */}
+              <div className="flex items-center justify-between px-1">
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-800">
+                    Escala Semanal de Funcionamento
+                  </h3>
+                  <p className="text-[10px] font-bold text-slate-400">
+                    Defina os horários ou adicione múltiplos turnos para cada dia da semana.
+                  </p>
+                </div>
+              </div>
+
+              {/* Grid dos 7 Dias Fixos (Segunda-feira a Domingo) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                {FIXED_WEEKDAYS.map((dayName) => {
+                  const dayShifts = getDayShifts(dayName);
+                  const isClosed = dayShifts.every((s) => s.isClosed);
+
+                  return (
+                    <div 
+                      key={dayName} 
+                      className={`flex flex-col p-3.5 rounded-2xl border transition-all ${
+                        isClosed 
+                          ? 'bg-slate-50/80 border-slate-200/70' 
+                          : 'bg-white border-slate-200 shadow-2xs hover:shadow-sm'
+                      }`}
+                    >
+                      {/* Cabeçalho do Card do Dia */}
+                      <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-slate-100">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-black text-slate-800 uppercase text-xs tracking-wider">
+                            {dayName}
+                          </span>
+                          <span className={`text-[8.5px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md border ${
+                            isClosed 
+                              ? 'bg-rose-50 text-rose-600 border-rose-200/60' 
+                              : 'bg-emerald-50 text-emerald-700 border-emerald-200/60'
+                          }`}>
+                            {isClosed ? 'Fechado' : `${dayShifts.length} ${dayShifts.length > 1 ? 'Turnos' : 'Turno'}`}
+                          </span>
+                        </div>
+
+                        {/* Botão + para Adicionar mais um Horário / Turno no dia */}
+                        <button
+                          type="button"
+                          disabled={isClosed}
+                          onClick={() => handleAddShiftToDay(dayName)}
+                          className="flex items-center gap-1 px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 disabled:opacity-40 disabled:hover:bg-indigo-50 rounded-lg text-[9.5px] font-black uppercase tracking-wider transition-all cursor-pointer hover:scale-105 active:scale-95"
+                          title={`Adicionar mais um horário para ${dayName}`}
+                        >
+                          <Plus size={12} />
+                          <span>Horário</span>
+                        </button>
+                      </div>
+
+                      {/* Opção Marcar como Fechado */}
+                      <div className="mb-2.5">
+                        <label className="flex items-center justify-between cursor-pointer p-2 bg-slate-50 hover:bg-slate-100/80 rounded-xl border border-slate-200/80 transition-all">
+                          <span className={`text-[9px] font-black uppercase tracking-wider ${isClosed ? 'text-rose-600' : 'text-slate-600'}`}>
+                            {isClosed ? '🔴 Loja Fechada neste dia' : '🟢 Loja Aberta'}
+                          </span>
+                          <input 
+                            type="checkbox" 
+                            checked={isClosed}
+                            onChange={(e) => handleToggleDayClosed(dayName, e.target.checked)}
+                            className="toggle toggle-xs toggle-primary cursor-pointer"
+                          />
+                        </label>
+                      </div>
+
+                      {/* Lista de Turnos/Horários do Dia */}
+                      <div className="space-y-2">
+                        {dayShifts.map((shift, shiftIdx) => (
+                          <div 
+                            key={shiftIdx}
+                            className={`p-2 rounded-xl border transition-all ${
+                              isClosed 
+                                ? 'bg-slate-100/60 border-slate-200/60 opacity-50' 
+                                : 'bg-slate-50/80 border-slate-200/80'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">
+                                {dayShifts.length > 1 ? `Turno ${shiftIdx + 1}` : 'Horário de Funcionamento'}
+                              </span>
+                              {dayShifts.length > 1 && !isClosed && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveShift(shift)}
+                                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                  title="Remover este turno de horário"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 space-y-0.5">
+                                <label className="text-[7.5px] font-black text-slate-400 uppercase tracking-wider ml-0.5">Abertura</label>
+                                <input 
+                                  type="time" 
+                                  disabled={isClosed}
+                                  className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg outline-none font-black text-xs text-slate-800 disabled:opacity-50 focus:border-[#00B7FF]"
+                                  value={shift.open || '09:00'}
+                                  onChange={(e) => handleUpdateShiftTime(shift, 'open', e.target.value)}
+                                />
+                              </div>
+                              <div className="flex-1 space-y-0.5">
+                                <label className="text-[7.5px] font-black text-slate-400 uppercase tracking-wider ml-0.5">Fechamento</label>
+                                <input 
+                                  type="time" 
+                                  disabled={isClosed}
+                                  className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg outline-none font-black text-xs text-slate-800 disabled:opacity-50 focus:border-[#00B7FF]"
+                                  value={shift.close || '22:00'}
+                                  onChange={(e) => handleUpdateShiftTime(shift, 'close', e.target.value)}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

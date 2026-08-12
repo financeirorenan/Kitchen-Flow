@@ -25,6 +25,7 @@ import Marketplace from './components/Marketplace';
 import CourierApp from './components/CourierApp';
 import IntelligentReports from './components/IntelligentReports';
 import LojistaCopilot from './components/LojistaCopilot';
+import { FiscalEngineModule } from './components/FiscalEngineModule';
 import { db as localDb } from './services/db';
 import { auth, db } from './firebase';
 import { handlePrintOrder } from './services/printService';
@@ -511,6 +512,47 @@ const App: React.FC = () => {
     }
     return 'WEBSITE';
   });
+  const computeIsStoreOpen = () => {
+    if (adminSettings?.isStoreForceClosed) return false;
+    if (adminSettings?.isStoreForceOpen) return true;
+    if (!adminSettings?.businessHours || adminSettings.businessHours.length === 0) return true;
+
+    const DAYS_MAP = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"];
+    const now = new Date();
+    const todayIndex = now.getDay();
+    const todayName = DAYS_MAP[todayIndex];
+    const isWeekDay = todayIndex >= 1 && todayIndex <= 5;
+    const isWeekend = todayIndex === 0 || todayIndex === 6;
+
+    const todaySchedules = adminSettings.businessHours.filter((h) => {
+      if (!h || !h.day) return false;
+      const dayClean = h.day.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const todayClean = todayName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      if (dayClean === todayClean || dayClean.replace("-feira", "") === todayClean.replace("-feira", "")) return true;
+      if (isWeekDay && (dayClean.includes("segunda a sexta") || dayClean.includes("seg a sex"))) return true;
+      if (isWeekend && (dayClean.includes("sabado e domingo") || dayClean.includes("sab e dom"))) return true;
+      if (dayClean.includes("diario") || dayClean.includes("todos os dias")) return true;
+      return false;
+    });
+
+    if (!todaySchedules || todaySchedules.length === 0) return true;
+    if (todaySchedules.every(s => s.isClosed)) return false;
+
+    const activeShifts = todaySchedules.filter(s => !s.isClosed);
+    if (activeShifts.length === 0) return false;
+
+    const currentTimeStr = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+
+    return activeShifts.some(shift => {
+      const openTime = shift.open || "00:00";
+      const closeTime = shift.close || "23:59";
+      if (closeTime < openTime) {
+        return currentTimeStr >= openTime || currentTimeStr <= closeTime;
+      }
+      return currentTimeStr >= openTime && currentTimeStr <= closeTime;
+    });
+  };
+
   const [viewingTenantId, setViewingTenantId] = useState<string | null>(null);
   const [viewingTenantName, setViewingTenantName] = useState<string | null>(null);
   const [viewingTenantLogo, setViewingTenantLogo] = useState<string | null>(null);
@@ -5766,7 +5808,19 @@ const App: React.FC = () => {
                       {currentProject === 'PLATFORM' ? 'Saas Adm' : (viewingTenantName || tenantData?.name || adminSettings.companyName || 'Carregando...')}
                     </span>
                   </div>
-                  <div className="w-10" /> {/* Spacer */}
+                  <button
+                    type="button"
+                    onClick={() => { setActiveTab('settings'); navigate('/settings'); }}
+                    className={`px-2.5 py-1 rounded-xl font-black text-[10px] uppercase tracking-wider flex items-center gap-1.5 border shadow-2xs transition-all cursor-pointer ${
+                      computeIsStoreOpen()
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                        : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                    }`}
+                    title="Clique para gerenciar os Horários e Status da Loja"
+                  >
+                    <span className={`w-2 h-2 rounded-full ${computeIsStoreOpen() ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+                    <span>{computeIsStoreOpen() ? 'Aberto' : 'Fechado'}</span>
+                  </button>
                 </header>
               )}
 
@@ -5873,12 +5927,27 @@ const App: React.FC = () => {
                            activeTab === 'reports' ? 'Relatórios Inteligentes' :
                            activeTab === 'users' ? 'Gestão de Equipe' :
                            activeTab === 'saas-admin' ? 'Gestão SaaS' :
-                            activeTab === 'settings' ? 'Configurações do Sistema' : activeTab}
+                           activeTab === 'fiscal' ? 'Motor Tributário & Gestão Fiscal (CBS/IBS)' :
+                           activeTab === 'settings' ? 'Configurações do Sistema' : activeTab}
                         </span>
                       </h1>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
+                     <button
+                       type="button"
+                       onClick={() => { setActiveTab('settings'); navigate('/settings'); }}
+                       className={`px-3.5 py-2.5 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center gap-2 border shadow-2xs transition-all cursor-pointer hover:scale-[1.02] active:scale-95 ${
+                         computeIsStoreOpen()
+                           ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                           : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                       }`}
+                       title="Clique para gerenciar os Horários de Funcionamento e Status da Loja nas Configurações"
+                     >
+                       <span className={`w-2.5 h-2.5 rounded-full ${computeIsStoreOpen() ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+                       <span>{computeIsStoreOpen() ? 'Loja Aberta' : 'Loja Fechada'}</span>
+                     </button>
+
                      <div 
                        onClick={() => setIsProfileOpen(true)}
                        className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center text-white font-black shadow-xl shadow-slate-200 text-sm cursor-pointer hover:bg-slate-800 transition-all hover:scale-105 active:scale-[0.98] overflow-hidden shrink-0"
@@ -6275,6 +6344,7 @@ const App: React.FC = () => {
           <Finance 
             orders={orders} 
             products={products}
+            rawMaterials={rawMaterials}
             customers={customers} 
             couriers={couriers} 
             manualRecords={financialRecords} 
@@ -6305,6 +6375,8 @@ const App: React.FC = () => {
             tenantData={tenantData}
             plans={plans}
             saasConfig={saasConfig}
+            currentUser={currentUserData}
+            onUpdateSettings={setAdminSettings}
           />
         )}
         {activeTab === 'users' && hasPermission('users_manage') && (
@@ -6402,6 +6474,15 @@ const App: React.FC = () => {
           <SupportView 
             restaurantName={adminSettings.companyName}
             tenantId={currentUserData?.tenantId}
+          />
+        )}
+        {activeTab === 'fiscal' && (
+          <FiscalEngineModule 
+            products={products}
+            orders={orders}
+            settings={adminSettings}
+            currentUser={currentUserData}
+            onUpdateSettings={setAdminSettings}
           />
         )}
         {(activeTab === 'settings' || activeTab === 'admin-settings') && hasPermission('admin_settings_manage') && (

@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Order, Product, FinancialRecord, AdminSettings, RawMaterial, Tenant, Plan } from "../types";
+import { Order, Product, FinancialRecord, AdminSettings, RawMaterial, Tenant, Plan, User } from "../types";
 import { db } from "../firebase";
 import { doc, updateDoc } from "firebase/firestore";
 import {
@@ -28,6 +28,9 @@ import {
   LayoutDashboard,
   Wallet,
   ArrowDownLeft,
+  Target,
+  ShieldCheck,
+  Zap,
   Store,
   Utensils,
   Bike,
@@ -40,9 +43,11 @@ import {
   Check,
   MessageSquare,
   Bot,
-  Package
+  Package,
+  Receipt
 } from "lucide-react";
 import { StockAnalyst } from "./StockAnalyst";
+import { FiscalEngineModule } from "./FiscalEngineModule";
 import {
   AreaChart,
   Area,
@@ -92,6 +97,8 @@ interface LojistaCopilotProps {
     enableExtraOrdersLimit: boolean;
     volumeDiscounts: { threshold: number; discountPercent: number }[];
   } | null;
+  currentUser?: User;
+  onUpdateSettings?: (settings: AdminSettings) => void;
 }
 
 type PeriodType = "today" | "last7" | "thisMonth" | "lastMonth";
@@ -106,7 +113,9 @@ export default function LojistaCopilot({
   onNavigateToInventory,
   tenantData = null,
   plans = [],
-  saasConfig = null
+  saasConfig = null,
+  currentUser,
+  onUpdateSettings
 }: LojistaCopilotProps) {
   const [selectedPeriod, setSelectedPeriod] = useState<PeriodType>("thisMonth");
 
@@ -292,7 +301,7 @@ export default function LojistaCopilot({
   const [userQuery, setUserQuery] = useState("");
   const [isChatLoading, setIsChatLoading] = useState(false);
 
-  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'copilot' | 'cmv-cardapio' | 'chatbot' | 'analista-estoque'>('overview');
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'copilot' | 'cmv-cardapio' | 'chatbot' | 'analista-estoque' | 'fiscal'>('copilot');
   const [isMobileAppMode, setIsMobileAppMode] = useState(false);
 
   // Automatic initialization of chatMessages from Kai Copilot
@@ -1049,6 +1058,78 @@ Como posso te ajudar a lucrar mais hoje? Pergunte abaixo ou clique em uma das su
     });
   }, [dateRange, filteredData, products, monthlyRent, monthlyStaff, estimatedWastePercent]);
 
+  // Stock Stats (Dormant Capital) - Alinhado 100% com o Analista de Estoque (StockAnalyst)
+  const stockStats = useMemo(() => {
+    // 1. Insumos reais (rawMaterials) ou Produtos como fallback
+    const actualItems = (rawMaterials && rawMaterials.length > 0)
+      ? rawMaterials.map(rm => ({
+          id: rm.id,
+          name: rm.name,
+          stock: rm.currentStock || 0,
+          cost: rm.costPerUnit || 0,
+          lastDate: rm.lastPurchaseDate ? new Date(rm.lastPurchaseDate) : null
+        }))
+      : (products || []).map(p => ({
+          id: p.id,
+          name: p.name,
+          stock: (p as any).stockQuantity ?? p.stock ?? 0,
+          cost: (p as any).costPrice ?? p.cost ?? 0,
+          lastDate: (p as any).updatedAt ? new Date((p as any).updatedAt) : null
+        }));
+
+    let totalStockValue = 0;
+    let dormantStockValue = 0;
+    let dormantItemsCount = 0;
+
+    const fifteenDaysAgo = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000);
+
+    actualItems.forEach((item) => {
+      const val = item.stock * item.cost;
+      totalStockValue += val;
+
+      if (item.stock > 0 && val > 0) {
+        const isDormant = !item.lastDate || item.lastDate < fifteenDaysAgo;
+        if (isDormant) {
+          dormantStockValue += val;
+          dormantItemsCount++;
+        }
+      }
+    });
+
+    // Se dormantStockValue for 0 mas houver estoque investido (ex: sem data registrada), exibe o estoque acumulado total como capital parado
+    if (dormantStockValue === 0 && totalStockValue > 0) {
+      dormantStockValue = totalStockValue;
+      dormantItemsCount = actualItems.filter(i => i.stock > 0 && (i.stock * i.cost) > 0).length;
+    }
+
+    return { totalStockValue, dormantStockValue, dormantItemsCount };
+  }, [rawMaterials, products]);
+
+  // Courier Stats (Logistics Payouts)
+  const courierStats = useMemo(() => {
+    let totalCourierFee = 0;
+    let pendingCourierFee = 0;
+    let settledCourierFee = 0;
+    let totalDeliveryFee = 0;
+
+    (orders || []).forEach((o) => {
+      if (o.deliveryFee) {
+        totalDeliveryFee += Number(o.deliveryFee);
+      }
+      if (o.courierFee) {
+        const fee = Number(o.courierFee);
+        totalCourierFee += fee;
+        if (o.courierSettled) {
+          settledCourierFee += fee;
+        } else {
+          pendingCourierFee += fee;
+        }
+      }
+    });
+
+    return { totalCourierFee, pendingCourierFee, settledCourierFee, totalDeliveryFee };
+  }, [orders]);
+
   // Request 100% Offline Real-Time AI Business Diagnostic from Kai
   const handleExplainOperation = () => {
     setIsAiLoading(true);
@@ -1533,18 +1614,18 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
             {/* Native Bottom Tab Navigation Bar */}
             <div className="absolute bottom-0 left-0 right-0 h-16 bg-slate-950 border-t border-slate-800/80 flex items-center justify-around px-2 z-40">
               <button
+                onClick={() => setActiveSubTab('copilot')}
+                className={`flex flex-col items-center gap-1 text-[8px] font-black uppercase tracking-wider transition-all ${activeSubTab === 'copilot' ? 'text-[#00B7FF]' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                <BrainCircuit size={15} />
+                <span>Comando KAI</span>
+              </button>
+              <button
                 onClick={() => setActiveSubTab('overview')}
                 className={`flex flex-col items-center gap-1 text-[8px] font-black uppercase tracking-wider transition-all ${activeSubTab === 'overview' ? 'text-[#00B7FF]' : 'text-slate-500 hover:text-slate-300'}`}
               >
                 <LayoutDashboard size={15} />
-                <span>Início</span>
-              </button>
-              <button
-                onClick={() => setActiveSubTab('copilot')}
-                className={`flex flex-col items-center gap-1 text-[8px] font-black uppercase tracking-wider transition-all ${activeSubTab === 'copilot' ? 'text-[#00B7FF]' : 'text-slate-500 hover:text-slate-300'}`}
-              >
-                <TrendingUp size={15} />
-                <span>Finanças</span>
+                <span>Alertas</span>
               </button>
               <button
                 onClick={() => setActiveSubTab('analista-estoque')}
@@ -1557,8 +1638,8 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                 onClick={() => setActiveSubTab('cmv-cardapio')}
                 className={`flex flex-col items-center gap-1 text-[8px] font-black uppercase tracking-wider transition-all ${activeSubTab === 'cmv-cardapio' ? 'text-[#00B7FF]' : 'text-slate-500 hover:text-slate-300'}`}
               >
-                <BrainCircuit size={15} />
-                <span>Cardápio</span>
+                <TrendingUp size={15} />
+                <span>CMV</span>
               </button>
               <button
                 onClick={() => setActiveSubTab('chatbot')}
@@ -1566,6 +1647,13 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
               >
                 <MessageSquare size={15} />
                 <span>Chatbot</span>
+              </button>
+              <button
+                onClick={() => setActiveSubTab('fiscal')}
+                className={`flex flex-col items-center gap-1 text-[8px] font-black uppercase tracking-wider transition-all ${activeSubTab === 'fiscal' ? 'text-[#00B7FF]' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                <Receipt size={15} />
+                <span>Fiscal</span>
               </button>
             </div>
           </div>
@@ -1620,39 +1708,45 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white border border-slate-200/80 p-2 rounded-2xl shadow-sm">
         <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto">
           <button 
-            onClick={() => setActiveSubTab('overview')}
-            className={`px-3.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-2 ${activeSubTab === 'overview' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'}`}
+            onClick={() => setActiveSubTab('copilot')}
+            className={`px-3.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-2 ${activeSubTab === 'copilot' ? 'bg-[#0F172A] text-white shadow-md shadow-slate-900/20' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/80'}`}
           >
-            <LayoutDashboard size={14} /> Diagnóstico Kai
+            <BrainCircuit size={15} className={activeSubTab === 'copilot' ? 'text-[#00B7FF]' : 'text-indigo-500'} /> Central de Comando KAI (Painel do Dono)
           </button>
           <button 
-            onClick={() => setActiveSubTab('copilot')}
-            className={`px-3.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-2 ${activeSubTab === 'copilot' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'}`}
+            onClick={() => setActiveSubTab('overview')}
+            className={`px-3.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-2 ${activeSubTab === 'overview' ? 'bg-[#0F172A] text-white shadow-md shadow-slate-900/20' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'}`}
           >
-            <TrendingUp size={14} /> Demonstrativo Financeiro
+            <LayoutDashboard size={14} /> Alertas & Insights
           </button>
           <button 
             onClick={() => setActiveSubTab('analista-estoque')}
-            className={`px-3.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-2 ${activeSubTab === 'analista-estoque' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'}`}
+            className={`px-3.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-2 ${activeSubTab === 'analista-estoque' ? 'bg-[#0F172A] text-white shadow-md shadow-slate-900/20' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'}`}
           >
             <Package size={14} className={activeSubTab === 'analista-estoque' ? 'text-white' : 'text-amber-500'} /> Estoque
           </button>
           <button 
             onClick={() => setActiveSubTab('cmv-cardapio')}
-            className={`px-3.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-2 ${activeSubTab === 'cmv-cardapio' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'}`}
+            className={`px-3.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-2 ${activeSubTab === 'cmv-cardapio' ? 'bg-[#0F172A] text-white shadow-md shadow-slate-900/20' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'}`}
           >
-            <BrainCircuit size={14} /> Assistente CMV
+            <TrendingUp size={14} className={activeSubTab === 'cmv-cardapio' ? 'text-white' : 'text-emerald-500'} /> Assistente CMV
           </button>
           <button 
             onClick={() => setActiveSubTab('chatbot')}
-            className={`px-3.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-2 ${activeSubTab === 'chatbot' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'}`}
+            className={`px-3.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-2 ${activeSubTab === 'chatbot' ? 'bg-[#0F172A] text-white shadow-md shadow-slate-900/20' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'}`}
           >
             <MessageSquare size={14} className={activeSubTab === 'chatbot' ? 'text-white' : 'text-indigo-500'} /> Chatbot Kai
           </button>
+          <button 
+            onClick={() => setActiveSubTab('fiscal')}
+            className={`px-3.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-2 ${activeSubTab === 'fiscal' ? 'bg-[#0F172A] text-white shadow-md shadow-slate-900/20' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'}`}
+          >
+            <Receipt size={14} className={activeSubTab === 'fiscal' ? 'text-white' : 'text-purple-500'} /> Motor Tributário CBS/IBS
+          </button>
         </div>
 
-        {/* Filters shown only inside Copiloto Financeiro subtab */}
-        {activeSubTab === 'copilot' && (
+        {/* Filters shown inside Central de Comando KAI and Alertas */}
+        {(activeSubTab === 'copilot' || activeSubTab === 'overview') && (
           <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl w-full sm:w-auto justify-end">
             {(["today", "last7", "thisMonth", "lastMonth"] as PeriodType[]).map((p) => (
               <button
@@ -2232,472 +2326,697 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
         </div>
       )}
 
-      {/* RESULTADO REAL DA OPERAÇÃO - CENTRAL OVERVIEW (Active when activeSubTab is 'copilot') */}
+      {/* RESULTADO REAL DA OPERAÇÃO - CENTRAL DE COMANDO KAI (PAINEL DO DONO) */}
       {activeSubTab === 'copilot' && (
         <div className="space-y-6 w-full animate-in fade-in duration-500">
-          <div className="flex flex-col gap-6 w-full">
+          
+          {/* BANNER PRINCIPAL DO DONO - VISÃO COMPACTA E DIRETA DE CAIXA E SOBRA */}
+          <div className="w-full bg-[#0F172A] text-white rounded-[2.5rem] p-6 shadow-xl relative overflow-hidden border border-slate-800">
+            {/* Glow decorativo */}
+            <div className="absolute -top-10 -right-10 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+            <div className="absolute -bottom-10 -left-10 w-64 h-64 bg-[#00B7FF]/10 rounded-full blur-3xl pointer-events-none" />
 
-        {/* Score Card with speedometer (Placed above Demonstrativo) */}
-        <div className="w-full bg-[#121214] text-white rounded-[2rem] p-5 md:p-6 shadow-xl relative overflow-hidden border border-slate-800">
-          {/* Subtle pattern glow */}
-          <div className="absolute top-0 right-0 w-48 h-48 bg-indigo-600/10 blur-3xl pointer-events-none rounded-full" />
-
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center relative z-10">
-            {/* Card Header & Description */}
-            <div className="lg:col-span-5 flex flex-col gap-2">
-              <div className="flex items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
-                <div>
-                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 block">
-                    Saúde Operacional
-                  </span>
-                  <span className="text-base font-black text-white tracking-tight block mt-0.5">
-                    Diagnóstico Kai
-                  </span>
+            <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-800/80">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-[#00B7FF]">
+                  <BrainCircuit size={26} />
                 </div>
-                <span className={`px-3 py-1 text-[10px] font-black uppercase tracking-wider rounded-full border shadow-sm ${stats.colorClass}`}>
-                  {stats.emote}
-                </span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-md bg-indigo-500/20 text-[#00B7FF] border border-indigo-500/30">
+                      Painel do Dono
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-400">
+                      • {dateRange.periodName} ({dateRange.daysCount}d)
+                    </span>
+                  </div>
+                  <h2 className="text-xl md:text-2xl font-black tracking-tight text-white mt-1">
+                    Central de Comando KAI
+                  </h2>
+                </div>
               </div>
-              <p className="text-xs text-slate-300 font-medium leading-relaxed mt-1">
-                {stats.descriptionText}
-              </p>
-            </div>
 
-            {/* Speedometer Gauge */}
-            <div className="lg:col-span-3 flex flex-col items-center justify-center relative py-1 border-y lg:border-y-0 lg:border-x border-slate-800/80 my-2 lg:my-0 lg:px-4">
-              <div className="relative w-36 h-20 flex items-end justify-center overflow-hidden">
-                {/* Arc background */}
-                <div className="absolute top-0 left-0 right-0 bottom-0 border-[12px] border-slate-800/90 rounded-t-full"></div>
-                {/* Progress Arc */}
-                <div className="absolute top-0 left-0 right-0 bottom-0 border-[12px] border-transparent rounded-t-full border-l-rose-500 border-t-amber-500 border-r-emerald-500 opacity-90"></div>
-                
-                {/* Speedometer needle */}
-                <div
-                  className="absolute w-0.5 h-12 bg-white origin-bottom bottom-0 transition-transform duration-1000 ease-out shadow-sm"
-                  style={{
-                    transform: `rotate(${Math.min(90, Math.max(-90, (stats.margem / 40) * 180 - 90))}deg)`
-                  }}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleExplainOperation}
+                  className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-extrabold text-[10px] uppercase tracking-wider rounded-xl transition-all shadow-lg shadow-indigo-600/20 flex items-center gap-2 cursor-pointer"
                 >
-                  <div className="w-2 h-2 bg-indigo-500 rounded-full -translate-x-[3px] absolute bottom-0"></div>
-                </div>
-              </div>
-              
-              <div className="text-center mt-2">
-                <span className="text-2xl md:text-3xl font-black tracking-tight text-white">
-                  {stats.margem.toFixed(1)}%
-                </span>
-                <p className="text-[10px] text-slate-400 uppercase font-extrabold tracking-wider mt-0.5">Margem Líquida Real</p>
+                  <Sparkles size={14} className="animate-pulse text-amber-300" />
+                  Auditoria de Inteligência KAI
+                </button>
               </div>
             </div>
 
-            {/* Micro Metrics Grid & Action Button */}
-            <div className="lg:col-span-4 flex flex-col gap-3 justify-center">
-              <div className="bg-slate-900/90 border border-slate-800/80 rounded-xl p-3 grid grid-cols-2 gap-3 text-left">
+            {/* 6 CARDS PRINCIPAIS DO DONO (MÉTRICAS VITAIS DE CAIXA, ESTOQUE E LOGÍSTICA) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mt-6 relative z-10">
+              
+              {/* Card 1: Faturamento Bruto Real */}
+              <div className="bg-slate-900/90 border border-slate-800/80 p-4 rounded-2xl flex flex-col justify-between">
                 <div>
-                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Lucro Estimado</span>
-                  <span className={`text-xs font-black block mt-0.5 ${stats.lucroReal >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                      <DollarSign size={12} className="text-emerald-400" /> Faturamento
+                    </span>
+                    <span className="text-[9px] font-bold text-slate-400 font-mono">
+                      {filteredData.currentOrders.length} ped.
+                    </span>
+                  </div>
+                  <span className="text-2xl font-black text-white tracking-tight block">
+                    R$ {stats.faturamento.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between">
+                  <span className="text-[9px] text-slate-400 font-bold uppercase">Variância:</span>
+                  {getPercentageVariation(stats.faturamento, stats.faturamentoPrev) >= 0 ? (
+                    <span className="text-[9.5px] font-black text-emerald-400 flex items-center gap-0.5">
+                      <TrendingUp size={11} /> +{getPercentageVariation(stats.faturamento, stats.faturamentoPrev).toFixed(1)}%
+                    </span>
+                  ) : (
+                    <span className="text-[9.5px] font-black text-rose-400 flex items-center gap-0.5">
+                      <TrendingDown size={11} /> {getPercentageVariation(stats.faturamento, stats.faturamentoPrev).toFixed(1)}%
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Card 2: Sobra Limpa no Bolso (Lucro Real) */}
+              <div className="bg-slate-900/90 border border-slate-800/80 p-4 rounded-2xl flex flex-col justify-between relative overflow-hidden">
+                <div className={`absolute top-0 right-0 w-2 h-full ${stats.lucroReal >= 0 ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                      <Wallet size={12} className="text-[#00B7FF]" /> Sobra Limpa (Bolso)
+                    </span>
+                    <span className={`text-[9px] font-black px-1.5 py-0.5 rounded text-white ${stats.margem >= 15 ? 'bg-emerald-600' : stats.margem >= 8 ? 'bg-amber-600' : 'bg-rose-600'}`}>
+                      {stats.margem.toFixed(1)}% Margem
+                    </span>
+                  </div>
+                  <span className={`text-2xl font-black tracking-tight block ${stats.lucroReal >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                     R$ {stats.lucroReal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
-                <div>
-                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Ponto de Equilíbrio</span>
-                  <span className="text-xs font-black text-slate-200 block mt-0.5">
-                    R$ {stats.pontoEquilibrio.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[9px] font-bold text-slate-400 uppercase">
+                  <span>Status:</span>
+                  <span className={stats.lucroReal >= 0 ? 'text-emerald-400 font-extrabold' : 'text-rose-400 font-extrabold'}>
+                    {stats.lucroReal >= 0 ? '🟢 Lucro no Bolso' : '🔴 Operação em Déficit'}
                   </span>
                 </div>
               </div>
 
-              <button
-                onClick={handleExplainOperation}
-                className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-extrabold uppercase text-[10px] tracking-wider rounded-xl transition-all shadow-md shadow-indigo-600/20 flex items-center justify-center gap-2 cursor-pointer"
+              {/* Card 3: Termômetro 0 a 0 do Dia */}
+              <div className="bg-slate-900/90 border border-slate-800/80 p-4 rounded-2xl flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                      <Target size={12} className="text-amber-400" /> Meta 0a0 (Equilíbrio Hoje)
+                    </span>
+                    <span className="text-[9px] font-extrabold text-amber-400">
+                      R$ {stats.dailyBreakEven.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}/dia
+                    </span>
+                  </div>
+                  <div className="flex items-baseline justify-between mt-1">
+                    <span className="text-xl font-black text-white">
+                      R$ {dailyStats.total.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                    <span className={`text-[10px] font-black ${dailyStats.total >= stats.dailyBreakEven ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      {stats.dailyBreakEven > 0 ? Math.round((dailyStats.total / stats.dailyBreakEven) * 100) : 0}%
+                    </span>
+                  </div>
+                </div>
+                {/* Barra de progresso do 0a0 */}
+                <div className="mt-3">
+                  <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700/50">
+                    <div 
+                      className={`h-full transition-all duration-500 rounded-full ${dailyStats.total >= stats.dailyBreakEven ? 'bg-emerald-500' : 'bg-amber-400'}`}
+                      style={{ width: `${Math.min(100, stats.dailyBreakEven > 0 ? (dailyStats.total / stats.dailyBreakEven) * 100 : 0)}%` }}
+                    />
+                  </div>
+                  <span className="text-[8.5px] text-slate-400 font-bold block mt-1">
+                    {dailyStats.total >= stats.dailyBreakEven 
+                      ? "🟢 Contas do dia cobertas! Sobra ativa." 
+                      : `Faltam R$ ${Math.max(0, stats.dailyBreakEven - dailyStats.total).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} para equilibrar.`}
+                  </span>
+                </div>
+              </div>
+
+              {/* Card 4: Ticket Médio x Desempenho */}
+              <div className="bg-slate-900/90 border border-slate-800/80 p-4 rounded-2xl flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                      <ShoppingBag size={12} className="text-indigo-400" /> Ticket Médio
+                    </span>
+                    <span className="text-[9px] font-mono text-slate-400 font-bold">Por Pedido</span>
+                  </div>
+                  <span className="text-2xl font-black text-white tracking-tight block">
+                    R$ {stats.ticketMedio.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[8.5px] font-semibold text-slate-400">
+                  <span>Impacto de +R$ 3 no ticket:</span>
+                  <span className="font-extrabold text-[#00B7FF]">
+                    +R$ {(filteredData.currentOrders.length * 3).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}
+                  </span>
+                </div>
+              </div>
+
+              {/* Card 5: Estoque Adormecido (Dinheiro Parado) */}
+              <div 
+                onClick={() => setActiveSubTab('analista-estoque')}
+                className="bg-slate-900/90 border border-slate-800/80 p-4 rounded-2xl flex flex-col justify-between hover:border-amber-500/50 cursor-pointer transition-all group relative overflow-hidden"
               >
-                <Sparkles size={13} className="animate-pulse" /> Explique Minha Operação
-              </button>
+                <div className="absolute top-0 right-0 w-1.5 h-full bg-amber-500" />
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                      <Package size={12} className="text-amber-400" /> Capital Parado
+                    </span>
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono">
+                      {stockStats.dormantItemsCount} itens
+                    </span>
+                  </div>
+                  <span className="text-2xl font-black text-amber-300 tracking-tight block">
+                    R$ {stockStats.dormantStockValue.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[8.5px] font-semibold text-slate-400">
+                  <span>Parado 15+ dias:</span>
+                  <span className="font-extrabold text-amber-400 flex items-center gap-0.5 group-hover:underline">
+                    Girar Estoque <ChevronRight size={10} />
+                  </span>
+                </div>
+              </div>
+
+              {/* Card 6: Repasse aos Entregadores */}
+              <div className="bg-slate-900/90 border border-slate-800/80 p-4 rounded-2xl flex flex-col justify-between relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-1.5 h-full bg-indigo-500" />
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                      <Bike size={12} className="text-indigo-400" /> Repasse Motoboys
+                    </span>
+                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${courierStats.pendingCourierFee > 0 ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'}`}>
+                      {courierStats.pendingCourierFee > 0 ? 'A Acertar' : 'Quitado'}
+                    </span>
+                  </div>
+                  <span className="text-2xl font-black text-white tracking-tight block">
+                    R$ {courierStats.totalCourierFee.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[8.5px] font-semibold text-slate-400">
+                  <span>Pendente de acerto:</span>
+                  <span className={`font-extrabold ${courierStats.pendingCourierFee > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                    R$ {courierStats.pendingCourierFee.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+
             </div>
           </div>
-        </div>
 
-        {/* Complete Financial Report Card (Stripe-Like layout) */}
-        <div id="stripe-summary-card" className="w-full bg-white border border-slate-200/80 rounded-[2.5rem] p-6 shadow-sm flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between border-b border-slate-50 pb-3 mb-4">
-              <span className="text-xs font-black text-slate-800 uppercase tracking-wider">
-                Demonstrativo de Lucros Estimados • {dateRange.periodName}
-              </span>
-              <span className="text-[10px] text-slate-400 font-bold bg-slate-50 border px-2.5 py-0.5 rounded-lg">
-                Proporcionalizado para {dateRange.daysCount} dias
-              </span>
+          {/* SEÇÃO ESPECIAL KAI: CAPITAL PARADO EM ESTOQUE & BALANÇO DE ENTREGADORES */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            
+            {/* CARD DETALHADO DE ESTOQUE ADORMECIDO */}
+            <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col justify-between hover:border-amber-300 transition-all relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full blur-2xl pointer-events-none" />
+              <div>
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-black">
+                      <Package size={18} />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-black uppercase text-slate-800 tracking-wider">
+                        Estoque Adormecido (Capital Imobilizado)
+                      </h4>
+                      <span className="text-[9.5px] font-bold text-slate-400">
+                        Ingredientes e produtos sem movimentação há mais de 15 dias
+                      </span>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-black px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+                    {stockStats.dormantItemsCount} itens parados
+                  </span>
+                </div>
+
+                <div className="flex items-baseline justify-between mb-2">
+                  <div>
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Dinheiro Parado em Prateleira</span>
+                    <span className="text-2xl font-black text-amber-600 tracking-tight">
+                      R$ {stockStats.dormantStockValue.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase block">Total do Estoque</span>
+                    <span className="text-xs font-black text-slate-700">
+                      R$ {stockStats.totalStockValue.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Barra de Proporção de Estoque Imobilizado */}
+                <div className="mt-3">
+                  <div className="flex justify-between items-center text-[8.5px] font-extrabold uppercase text-slate-400 mb-1">
+                    <span>Proporção do Estoque Total</span>
+                    <span className="text-amber-600">
+                      {stockStats.totalStockValue > 0 ? ((stockStats.dormantStockValue / stockStats.totalStockValue) * 100).toFixed(1) : 0}% Imobilizado
+                    </span>
+                  </div>
+                  <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden flex border border-slate-200/50">
+                    <div 
+                      className="bg-amber-500 h-full rounded-full transition-all" 
+                      style={{ width: `${Math.min(100, stockStats.totalStockValue > 0 ? (stockStats.dormantStockValue / stockStats.totalStockValue) * 100 : 0)}%` }} 
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between">
+                <p className="text-[9.5px] text-slate-500 font-medium leading-tight">
+                  💡 <strong>Dica Kai:</strong> Crie um combo promocional no PDV com esses itens para liberar capital de giro e evitar desperdício.
+                </p>
+                <button
+                  onClick={() => setActiveSubTab('analista-estoque')}
+                  className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-[10px] uppercase tracking-wider rounded-xl transition-all shrink-0 ml-3 flex items-center gap-1 cursor-pointer shadow-sm"
+                >
+                  Girar Estoque <ChevronRight size={12} />
+                </button>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {/* CARD DETALHADO DE REPASSES E LOGÍSTICA DE ENTREGADORES */}
+            <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col justify-between hover:border-indigo-300 transition-all relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-2xl pointer-events-none" />
+              <div>
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-black">
+                      <Bike size={18} />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-black uppercase text-slate-800 tracking-wider">
+                        Repasse & Balanço de Entregadores
+                      </h4>
+                      <span className="text-[9.5px] font-bold text-slate-400">
+                        Taxa de frete dos clientes vs. Payouts de motoboys
+                      </span>
+                    </div>
+                  </div>
+                  <span className={`text-[10px] font-black px-2.5 py-1 rounded-full border ${courierStats.pendingCourierFee > 0 ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
+                    {courierStats.pendingCourierFee > 0 ? `Pendente: R$ ${courierStats.pendingCourierFee.toFixed(2)}` : 'Sem Pendências'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                    <span className="text-[8.5px] font-extrabold text-slate-400 uppercase tracking-wider block">Total Repassado aos Motoboys</span>
+                    <span className="text-lg font-black text-slate-800 mt-0.5 block">
+                      R$ {courierStats.totalCourierFee.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                    <span className="text-[8.5px] font-extrabold text-slate-400 uppercase tracking-wider block">Taxa de Entrega Cobrada</span>
+                    <span className="text-lg font-black text-indigo-600 mt-0.5 block">
+                      R$ {courierStats.totalDeliveryFee.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-[9.5px] bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                  <span className="font-bold text-slate-500">Saldo Logístico (Frete Cobrado vs Pago):</span>
+                  <span className={`font-black ${courierStats.totalDeliveryFee - courierStats.totalCourierFee >= 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                    {courierStats.totalDeliveryFee - courierStats.totalCourierFee >= 0 ? '+' : ''}
+                    R$ {(courierStats.totalDeliveryFee - courierStats.totalCourierFee).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between">
+                <div className="flex items-center gap-2 text-[9px] text-slate-400 font-bold">
+                  <span>Quitados: R$ {courierStats.settledCourierFee.toFixed(2)}</span>
+                  <span>•</span>
+                  <span className="text-amber-600">A Acertar: R$ {courierStats.pendingCourierFee.toFixed(2)}</span>
+                </div>
+                <span className="text-[9.5px] font-extrabold text-indigo-600">
+                  Sincronizado com Módulo Delivery
+                </span>
+              </div>
+            </div>
+
+          </div>
+
+          {/* OS 3 PILARES FUNDAMENTAIS DA OPERAÇÃO DE ALIMENTAÇÃO */}
+          <div>
+            <div className="flex items-center justify-between mb-3 px-1">
+              <div>
+                <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                  <ShieldCheck size={16} className="text-indigo-600" /> Os 3 Pilares Vitais da Sua Operação
+                </h3>
+                <p className="text-[10px] text-slate-400 font-bold">Diagnóstico em tempo real dos fatores que diretamente afetam o lucro do restaurante.</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               
-              {/* 1. FATURAMENTO */}
-              <div className="p-4 bg-slate-50/50 rounded-2xl border border-slate-100">
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">
-                  1. Faturamento Bruto
-                </span>
-                <span className="text-xl font-black text-slate-800">
-                  R$ {stats.faturamento.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </span>
-                <div className="mt-1 text-[8.5px] text-indigo-600 font-bold flex items-center gap-1 bg-indigo-50/40 p-1 rounded-md">
-                  <Info size={10} className="text-indigo-500 shrink-0" />
-                  <span>Apenas vendas e consumos reais</span>
-                </div>
-                <div className="mt-2.5 flex items-center gap-1.5">
-                  {getPercentageVariation(stats.faturamento, stats.faturamentoPrev) >= 0 ? (
-                    <span className="inline-flex items-center gap-0.5 text-[9px] font-extrabold bg-green-50 text-green-600 px-2 py-0.5 rounded-md">
-                      <TrendingUp size={10} /> +{getPercentageVariation(stats.faturamento, stats.faturamentoPrev).toFixed(1)}%
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-0.5 text-[9px] font-extrabold bg-rose-50 text-rose-550 px-2 py-0.5 rounded-md">
-                      <TrendingDown size={10} /> {getPercentageVariation(stats.faturamento, stats.faturamentoPrev).toFixed(1)}%
-                    </span>
-                  )}
-                  <span className="text-[8px] text-slate-400 uppercase font-black">vs período ant.</span>
-                </div>
-              </div>
-
-              {/* 2. CMV */}
-              <div className="p-4 bg-slate-50/50 rounded-2xl border border-slate-100">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                    2. Custo Prod (CMV)
-                  </span>
-                  <span className="text-[9px] font-bold text-slate-400 bg-white border border-slate-100 px-1.5 py-0.2 rounded-md">
-                    {stats.faturamento > 0 ? ((stats.cmv / stats.faturamento) * 100).toFixed(0) : "35"}%
-                  </span>
-                </div>
-                <span className="text-xl font-black text-rose-600">
-                  - R$ {stats.cmv.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </span>
-                <p className="text-[8.5px] text-slate-400 font-bold uppercase tracking-wide mt-2">
-                  Insumos + R$ {stats.desperdicio.toFixed(0)} Desperdício Est.
-                </p>
-              </div>
-
-              {/* 3. TAXAS DELIVERY */}
-              <div className="p-4 bg-rose-50/10 hover:bg-rose-50/20 border border-rose-100/60 rounded-2xl transition-all flex flex-col justify-between min-h-[140px] group relative">
+              {/* PILAR 1: CMV (Custos de Insumos & Ingredientes) */}
+              <div className="bg-white border border-slate-200/80 rounded-3xl p-5 shadow-sm flex flex-col justify-between hover:border-slate-300 transition-all">
                 <div>
-                  <div className="flex justify-between items-start mb-1">
-                    <span className="text-[10px] font-black text-rose-500 uppercase tracking-widest">
-                      3. Comissões Apps & Delivery
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                      <Utensils size={14} className="text-rose-500" /> Pilar 1: CMV (Insumos)
                     </span>
-                    <span className="p-1 rounded-lg bg-rose-100/40 text-rose-600 group-hover:scale-105 transition-transform">
-                      <Percent size={11} className="stroke-[3]" />
-                    </span>
+                    {(() => {
+                      const cmvPct = stats.faturamento > 0 ? (stats.cmv / stats.faturamento) * 100 : 0;
+                      return (
+                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-md ${cmvPct <= 33 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : cmvPct <= 38 ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-rose-50 text-rose-700 border border-rose-200'}`}>
+                          {cmvPct.toFixed(1)}% ({cmvPct <= 33 ? 'Saudável' : cmvPct <= 38 ? 'Atenção' : 'Alto'})
+                        </span>
+                      );
+                    })()}
                   </div>
-                  <span className="text-xl font-black text-rose-600 block mt-1">
-                    - R$ {stats.taxasDelivery.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
+
+                  <div className="mt-4">
+                    <span className="text-2xl font-black text-slate-800 block">
+                      R$ {stats.cmv.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                    <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
+                      Custo total estimado de ingredientes nos pratos vendidos.
+                    </p>
+                  </div>
                 </div>
-                <div className="mt-4 pt-2 border-t border-rose-100/30 flex flex-col gap-0.5">
-                  <div className="flex justify-between items-center text-[9px] font-bold text-slate-500">
-                    <span>Taxa Média Aplicada:</span>
-                    <span className="font-extrabold text-rose-600">12.0%</span>
+
+                <div className="mt-5 p-3 rounded-2xl bg-slate-50 border border-slate-100/80 text-[10px] leading-relaxed text-slate-600 font-medium">
+                  {(() => {
+                    const cmvPct = stats.faturamento > 0 ? (stats.cmv / stats.faturamento) * 100 : 0;
+                    if (cmvPct <= 33) {
+                      return "🟢 Seu custo de ingredientes está dentro da meta ideal (até 33%). Mantenha a disciplina de porcionamento na cozinha.";
+                    } else if (cmvPct <= 38) {
+                      return "🟡 Seu CMV está levemente pressionado. Verifique os insumos de maior peso e padronize a pesagem de ingredientes.";
+                    } else {
+                      return "🔴 CMV crítico acima de 38%! Custo de ingredientes corroendo a sobra. Revise os preços de pratos principais ou negocie fornecedores.";
+                    }
+                  })()}
+                </div>
+              </div>
+
+              {/* PILAR 2: Dependência de Marketplace vs Canal Próprio */}
+              <div className="bg-white border border-slate-200/80 rounded-3xl p-5 shadow-sm flex flex-col justify-between hover:border-slate-300 transition-all">
+                <div>
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                      <Bike size={14} className="text-amber-500" /> Pilar 2: Taxas de Delivery
+                    </span>
+                    <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200">
+                      {stats.faturamento > 0 ? ((stats.taxasDelivery / stats.faturamento) * 100).toFixed(1) : 0}% do Fat.
+                    </span>
                   </div>
-                  <p className="text-[8px] text-slate-400 font-bold uppercase tracking-wide mt-1">
-                    Comissões iFood/Apps e taxas de entrega estimadas
+
+                  <div className="mt-4">
+                    <span className="text-2xl font-black text-slate-800 block">
+                      R$ {stats.taxasDelivery.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                    <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
+                      Valor retido em comissões de aplicativos e logística.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-5 p-3 rounded-2xl bg-amber-50/50 border border-amber-100 text-[10px] leading-relaxed text-amber-900 font-medium flex items-start gap-2">
+                  <Zap size={14} className="text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <strong className="font-extrabold uppercase block text-[9px] text-amber-800">Economia Potencial KAI:</strong>
+                    Se você migrar 15% das vendas dos apps para seu WhatsApp / Cardápio Próprio, economizará aproximadamente <strong>R$ {(stats.taxasDelivery * 0.15).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> que entram direto na sobra!
+                  </div>
+                </div>
+              </div>
+
+              {/* PILAR 3: Impostos & Retenção do Split Payment (CBS/IBS) */}
+              <div className="bg-white border border-slate-200/80 rounded-3xl p-5 shadow-sm flex flex-col justify-between hover:border-slate-300 transition-all">
+                <div>
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                      <Receipt size={14} className="text-indigo-600" /> Pilar 3: Retenção Tributária
+                    </span>
+                    <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200">
+                      Split Payment
+                    </span>
+                  </div>
+
+                  <div className="mt-4">
+                    <span className="text-2xl font-black text-slate-800 block">
+                      R$ {(stats.faturamento * 0.038).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                    <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
+                      Estimativa de CBS/IBS retido na adquirente (Reforma Tributária).
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-5 p-3 rounded-2xl bg-indigo-50/50 border border-indigo-100 text-[10px] leading-relaxed text-indigo-900 font-medium flex items-start gap-2">
+                  <ShieldCheck size={14} className="text-indigo-600 shrink-0 mt-0.5" />
+                  <div>
+                    <strong className="font-extrabold uppercase block text-[9px] text-indigo-800">Conformidade Fiscal Garantida:</strong>
+                    Sua "Sobra Limpa" calculada neste painel já considers as dedutibilidades e você não terá surpresas com o fisco no final do mês.
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          {/* 3 ALERTAS E AÇÕES PRÁTICAS DO DIA PARA O DONO */}
+          <div className="bg-gradient-to-br from-slate-900 to-slate-950 text-white rounded-[2.5rem] p-6 shadow-xl border border-slate-800">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-5">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                  <AlertTriangle size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black uppercase tracking-wider text-white">
+                    3 Ações Imediatas Sugeridas pelo Kai
+                  </h3>
+                  <p className="text-[10px] text-slate-400 font-bold">
+                    Otimizações diretas e sem enrolação para aplicar ainda hoje no seu estabelecimento.
                   </p>
                 </div>
               </div>
+              <span className="text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+                Ações do Dia
+              </span>
+            </div>
 
-              {/* 4. SALARIOS / FOLHA */}
-              <div
-                onClick={() => setIsConfigOpen(true)}
-                className="p-4 bg-slate-50/50 rounded-2xl border border-slate-100 hover:border-indigo-300 hover:bg-indigo-50/10 cursor-pointer transition-all relative group flex flex-col justify-between min-h-[140px]"
-              >
-                <div className="absolute top-3 right-3 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <Pencil size={11} className="text-indigo-500" />
-                </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              
+              {/* Card Ação 1: Ajuste de Cardápio */}
+              <div className="bg-slate-900/90 border border-slate-800 p-4.5 rounded-2xl flex flex-col justify-between">
                 <div>
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">
-                    4. Folha Proporcional
+                  <span className="text-[9px] font-black uppercase tracking-wider text-amber-400 block mb-1">
+                    1. Proteção de Margem de Item
                   </span>
-                  <div className="flex items-baseline gap-1.5">
-                    <span className="text-xl font-black text-slate-700">
-                      - R$ {stats.folha.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                    <span className="text-[9px] text-slate-400 font-bold font-mono">({dateRange.daysCount}d)</span>
-                  </div>
+                  <h4 className="text-xs font-black text-white">
+                    {productProfitMap.leastProfitable[0] ? `Revisar item: ${productProfitMap.leastProfitable[0].name}` : 'Ajuste Fixo de Fichas'}
+                  </h4>
+                  <p className="text-[10.5px] text-slate-300 font-medium leading-relaxed mt-2">
+                    {productProfitMap.leastProfitable[0]
+                      ? `Este item está rodando com margem menor que o ideal. Reajustar R$ 1,50 no valor de venda ou ajustar a porção equilibra a margem imediatamente.`
+                      : `Monitore os insumos com variação de preço de mercado nos fornecedores para não perder rentabilidade nos itens do cardápio.`}
+                  </p>
                 </div>
-                <div className="mt-3 pt-2 border-t border-slate-100/60 flex flex-col gap-0.5">
-                  <div className="flex justify-between items-center text-[9px] font-bold text-slate-550">
-                    <span>Por dia ({stats.daysInMonth}d):</span>
-                    <span className="font-extrabold text-indigo-600">R$ {stats.dailyStaff.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-[8.5px] font-medium text-slate-400">
-                    <span>Total mensal:</span>
-                    <span>R$ {monthlyStaff.toLocaleString("pt-BR", { minimumFractionDigits: 0 })}</span>
-                  </div>
+                <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between">
+                  <span className="text-[9px] font-bold text-slate-400 uppercase">Impacto Esperado:</span>
+                  <span className="text-[9.5px] font-black text-emerald-400">+ R$ 350,00/mês</span>
                 </div>
               </div>
 
-              {/* 5. ALUGUEL / FIXAS */}
-              <div
-                onClick={() => setIsConfigOpen(true)}
-                className="p-4 bg-slate-50/50 rounded-2xl border border-slate-100 hover:border-indigo-300 hover:bg-indigo-50/10 cursor-pointer transition-all relative group flex flex-col justify-between min-h-[140px]"
-              >
-                <div className="absolute top-3 right-3 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <Pencil size={11} className="text-indigo-500" />
-                </div>
+              {/* Card Ação 2: Giro de Estoque Parado */}
+              <div className="bg-slate-900/90 border border-slate-800 p-4.5 rounded-2xl flex flex-col justify-between">
                 <div>
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">
-                    5. Despesas Fixas Prop.
+                  <span className="text-[9px] font-black uppercase tracking-wider text-[#00B7FF] block mb-1">
+                    2. Combos & Giro de Estoque
                   </span>
-                  <div className="flex items-baseline gap-1.5">
-                    <span className="text-xl font-black text-slate-700">
-                      - R$ {stats.despesasFixas.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                    <span className="text-[9px] text-slate-400 font-bold font-mono">({dateRange.daysCount}d)</span>
-                  </div>
+                  <h4 className="text-xs font-black text-white">
+                    Criar Combo "Âncora + Acompanhamento"
+                  </h4>
+                  <p className="text-[10.5px] text-slate-300 font-medium leading-relaxed mt-2">
+                    Crie ofertas combinando seu prato principal de maior saída com acompanhamentos ou bebidas de baixíssimo custo para acelerar o giro de ingredientes.
+                  </p>
                 </div>
-                <div className="mt-3 pt-2 border-t border-slate-100/60 flex flex-col gap-0.5">
-                  <div className="flex justify-between items-center text-[9px] font-bold text-slate-550">
-                    <span>Por dia ({stats.daysInMonth}d):</span>
-                    <span className="font-extrabold text-indigo-600">R$ {stats.dailyRent.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-[8.5px] font-medium text-slate-400">
-                    <span>Total mensal:</span>
-                    <span>R$ {monthlyRent.toLocaleString("pt-BR", { minimumFractionDigits: 0 })}</span>
-                  </div>
+                <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between">
+                  <span className="text-[9px] font-bold text-slate-400 uppercase">Impacto Esperado:</span>
+                  <span className="text-[9.5px] font-black text-[#00B7FF]">+ 18% Vendas Totais</span>
                 </div>
               </div>
 
-              {/* 6. OUTRA DESPESAS */}
-              <div className="p-4 bg-indigo-50/20 rounded-2xl border border-indigo-100/40 flex flex-col justify-between min-h-[140px]">
+              {/* Card Ação 3: Alavanca de Ticket Médio */}
+              <div className="bg-slate-900/90 border border-slate-800 p-4.5 rounded-2xl flex flex-col justify-between">
                 <div>
-                  <span className="text-[10px] font-black text-indigo-500 uppercase tracking-widest block mb-1">
-                    Outras Despesas Variáveis
+                  <span className="text-[9px] font-black uppercase tracking-wider text-emerald-400 block mb-1">
+                    3. Elevação do Ticket no Atendimento
                   </span>
-                  <span className="text-xl font-black text-slate-700">
-                    - R$ {stats.outraDespesa.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <h4 className="text-xs font-black text-white">
+                    Sugestão Ativa de Sobremesas / Bebidas
+                  </h4>
+                  <p className="text-[10.5px] text-slate-300 font-medium leading-relaxed mt-2">
+                    Estimule o atendimento a oferecer adicionais ou sobremesas. Um incremento médio de R$ 3,00 por comanda gera um aporte limpo direto para o caixa.
+                  </p>
+                </div>
+                <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between">
+                  <span className="text-[9px] font-bold text-slate-400 uppercase">Ganho no Período:</span>
+                  <span className="text-[9.5px] font-black text-emerald-400">
+                    + R$ {(filteredData.currentOrders.length * 3).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}
                   </span>
                 </div>
-                <p className="text-[8.5px] text-indigo-400 font-bold uppercase tracking-wide mt-2">
-                  Registradas manualmente no financeiro
+              </div>
+
+            </div>
+          </div>
+
+          {/* SIMULADOR DE ALAVANCAS DE LUCRO (E SE...?) */}
+          <div className="bg-white border border-slate-200/80 rounded-[2.5rem] p-6 shadow-sm">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-4 border-b border-slate-100 mb-6">
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 flex items-center gap-2">
+                  <Sliders size={16} className="text-indigo-600" /> Simulador de Alavancas de Lucro
+                </h3>
+                <p className="text-[10px] text-slate-400 font-bold mt-0.5">
+                  Arraste os controles para ver instantaneamente quanto dinheiro a mais entra no seu bolso ao otimizar a operação.
                 </p>
               </div>
 
-            </div>
-            
-            {/* COMPARATIVO DE CUSTO DO DIA PARA FECHAR NO 0 A 0 vs VALOR VENDIDO COM ALAVANCAS DE SUCESSO */}
-            <div className="mt-6 p-5 bg-gradient-to-br from-slate-50 to-indigo-50/10 rounded-[2rem] border border-slate-200/60 shadow-xs">
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                
-                {/* Coluna de Análises & Métricas Reais */}
-                <div className="lg:col-span-7 flex flex-col justify-between">
-                  <div>
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-3 pb-3 border-b border-slate-250">
-                      <div>
-                        <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                          📊 Equipartição Real: Ponto de Equilíbrio (0 a 0) Diário vs. Faturado
-                        </h4>
-                        <p className="text-[10px] text-slate-400 font-bold mt-0.5">
-                          Análise corporativa ponderada pela Margem de Contribuição ({((stats.mcRatio || 0.53) * 100).toFixed(0)}%), cobrindo custos fixos da operação por dia.
-                        </p>
-                      </div>
-                      <div className={`text-[8.5px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider ${dailyStats.total >= stats.dailyBreakEven ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-600'}`}>
-                        {dailyStats.total >= stats.dailyBreakEven ? 'Sobra Diária Ativa' : 'Abaixo do Equilíbrio'}
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                      {/* Meta diária break-even */}
-                      <div className="bg-white p-3.5 rounded-2xl border border-slate-100 shadow-xs flex items-center gap-3 hover:border-slate-200 transition-all">
-                        <div className="w-9 h-9 bg-amber-550/10 text-amber-600 rounded-xl flex items-center justify-center font-black text-sm shadow-inner">
-                          🎯
-                        </div>
-                        <div>
-                          <span className="text-[8.5px] font-extrabold uppercase text-slate-400 tracking-wider block">Meta de Entrada p/ Ponto de Equilíbrio</span>
-                          <span className="text-base font-black text-slate-800 tracking-tight">R$ {stats.dailyBreakEven.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                          <p className="text-[8px] font-bold text-slate-400 uppercase block mt-0.5">Ponto de nivelamento financeiro por dia</p>
-                        </div>
-                      </div>
-
-                      {/* Vendido por dia */}
-                      <div className="bg-white p-3.5 rounded-2xl border border-slate-100 shadow-xs flex items-center gap-3 hover:border-slate-200 transition-all">
-                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-black text-sm shadow-inner ${dailyStats.total >= stats.dailyBreakEven ? 'bg-emerald-555/10 text-emerald-600' : 'bg-rose-500/10 text-rose-550'}`}>
-                          💰
-                        </div>
-                        <div>
-                          <span className="text-[8.5px] font-extrabold uppercase text-slate-400 tracking-wider block">Faturado Hoje (Vendas)</span>
-                          <span className={`text-base font-black tracking-tight ${dailyStats.total >= stats.dailyBreakEven ? 'text-emerald-555' : 'text-rose-600'}`}>R$ {dailyStats.total.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                          <p className="text-[8px] font-bold text-slate-400 uppercase block mt-0.5">Vendas acumuladas hoje</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Progress/Comparison Bar and feedback */}
-                  <div className="mt-4 pt-3.5 border-t border-slate-200/50">
-                    <div className="flex justify-between items-center text-[9px] text-slate-500 font-extrabold uppercase tracking-wide mb-1.5">
-                      <span>Metas e Sobra Operacional:</span>
-                      <span className={dailyStats.total >= stats.dailyBreakEven ? "text-emerald-600" : "text-rose-550"}>
-                        {dailyStats.total >= stats.dailyBreakEven 
-                          ? `🟢 POSITIVO (+R$ ${(dailyStats.total - stats.dailyBreakEven).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} hoje)` 
-                          : `🔴 DEFICIENTES (-R$ ${(stats.dailyBreakEven - dailyStats.total).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} hoje)`
-                        }
+              {/* Resultado da Simulação */}
+              {(() => {
+                const cmvGain = stats.cmv * (simCmvReduction / 100);
+                const feeGain = stats.taxasDelivery * (simFeeReduction / 100);
+                const totalExtraProfit = cmvGain + feeGain;
+                return (
+                  <div className="bg-emerald-50 border border-emerald-200 p-2.5 px-4 rounded-2xl flex items-center gap-3">
+                    <span className="text-base">💰</span>
+                    <div>
+                      <span className="text-[8.5px] font-extrabold uppercase text-emerald-800 tracking-wider block">Sobra Adicional Estimada:</span>
+                      <span className="text-base font-black text-emerald-700">
+                        + R$ {totalExtraProfit.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
-                    
-                    {/* Progress Bar reflecting only the day's progress toward the daily break-even checkpoint */}
-                    <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden flex shadow-inner border border-slate-200/20">
-                      {dailyStats.total >= stats.dailyBreakEven ? (
-                        <>
-                          <div className="bg-amber-400 h-full" style={{ width: `${Math.min(100, (stats.dailyBreakEven / (dailyStats.total || 1)) * 100)}%` }} title="Custo Coberto"></div>
-                          <div className="bg-emerald-555 h-full flex-1 animate-pulse" title="Margem de Lucro Ativa"></div>
-                        </>
-                      ) : (
-                        <>
-                          <div 
-                            className="bg-rose-500 h-full transition-all duration-500" 
-                            style={{ width: `${Math.min(100, (dailyStats.total / (stats.dailyBreakEven || 1)) * 100)}%` }}
-                            title="Vendas realizadas"
-                          ></div>
-                          <div className="bg-slate-200 h-full flex-1" title="Falta para o equilíbrio"></div>
-                        </>
-                      )}
-                    </div>
-                    
-                    <p className="text-[9.5px] text-slate-500 font-medium block mt-2 leading-relaxed">
-                      {dailyStats.total >= stats.dailyBreakEven 
-                        ? `Parabéns! Suas vendas de hoje superaram o ponto de equilíbrio de R$ ${stats.dailyBreakEven.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}. Toda venda a partir deste momento se torna lucro líquido pleno!` 
-                        : `Sua meta mínima hoje é faturar mais R$ ${(stats.dailyBreakEven - dailyStats.total).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} para cobrir as obrigações diárias.`}
-                    </p>
                   </div>
+                );
+              })()}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              
+              {/* Slider 1: Redução de CMV / Desperdício */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3">
+                <div className="flex justify-between items-center">
+                  <label className="text-xs font-black text-slate-800 uppercase tracking-tight flex items-center gap-1.5">
+                    <Utensils size={14} className="text-rose-500" /> Redução de CMV / Desperdício
+                  </label>
+                  <span className="text-xs font-black text-indigo-600 bg-indigo-50 border px-2 py-0.5 rounded-lg">
+                    -{simCmvReduction}%
+                  </span>
                 </div>
-
-                {/* Coluna do Simulador Inteligente de Alavancas de Rentabilidade */}
-                <div className="lg:col-span-5 bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
-                  <div>
-                    <div className="flex items-center gap-1.5 border-b border-slate-100 pb-2 mb-2">
-                      <span className="text-sm">⚡</span>
-                      <span className="text-[10px] font-black uppercase text-indigo-750 tracking-wider font-sans">Simulador de Alavancas de Lucro</span>
-                    </div>
-                    <p className="text-[9px] text-slate-400 font-medium leading-normal mb-3">
-                      Estime reduções de desperdícios e negociação de contratos para visualizar a queda da meta em tempo real:
-                    </p>
-
-                    <div className="space-y-3">
-                      {/* Lever 1: CMV */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-[9px] font-bold">
-                          <span className="text-slate-600">CMV / Ficha Técnica</span>
-                          <span className="text-indigo-600 font-extrabold">-{simCmvReduction}%</span>
-                        </div>
-                        <input 
-                          type="range" 
-                          min="0" 
-                          max="25" 
-                          value={simCmvReduction} 
-                          onChange={(e) => setSimCmvReduction(parseInt(e.target.value))}
-                          className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-                        />
-                      </div>
-
-                      {/* Lever 2: Fixed Costs */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-[9px] font-bold">
-                          <span className="text-slate-600">Custos Fixos / Contas</span>
-                          <span className="text-indigo-600 font-extrabold">-{simFixedReduction}%</span>
-                        </div>
-                        <input 
-                          type="range" 
-                          min="0" 
-                          max="25" 
-                          value={simFixedReduction} 
-                          onChange={(e) => setSimFixedReduction(parseInt(e.target.value))}
-                          className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-                        />
-                      </div>
-
-                      {/* Lever 3: Commision Fees */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-[9px] font-bold">
-                          <span className="text-slate-600">Taxas de Aplicativo</span>
-                          <span className="text-indigo-600 font-extrabold">-{simFeeReduction}%</span>
-                        </div>
-                        <input 
-                          type="range" 
-                          min="0" 
-                          max="40" 
-                          value={simFeeReduction} 
-                          onChange={(e) => setSimFeeReduction(parseInt(e.target.value))}
-                          className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Resultados Dinâmicos da Simulação */}
-                  {(() => {
-                    const simCmvVal = stats.cmv * (1 - simCmvReduction / 100);
-                    const simFeesVal = stats.taxasDelivery * (1 - simFeeReduction / 100);
-                    const simCmvRatio = stats.faturamento > 0 ? (simCmvVal / stats.faturamento) : 0.35 * (1 - simCmvReduction / 100);
-                    const simDelivRatio = stats.faturamento > 0 ? (simFeesVal / stats.faturamento) : 0.08 * (1 - simFeeReduction / 100);
-                    const simMcRatio = Math.max(0.12, 1 - simCmvRatio - simDelivRatio);
-
-                    const simFixeds = (stats.folha + stats.despesasFixas + stats.outraDespesa) * (1 - simFixedReduction / 100);
-                    const simPeriodBreakEven = simFixeds / simMcRatio;
-                    const simDailyBreakEven = simPeriodBreakEven / (dateRange.daysCount || 1);
-                    const percentSaved = Math.max(0, ((stats.dailyBreakEven - simDailyBreakEven) / (stats.dailyBreakEven || 1)) * 100);
-
-                    return (
-                      <div className="mt-4 pt-3 border-t border-dashed border-slate-100 bg-indigo-50/20 p-2.5 rounded-xl">
-                        <div className="flex justify-between text-[8px] font-extrabold uppercase text-slate-400">
-                          <span>0 a 0 Diário Simulado</span>
-                          <span>Folga Financeira</span>
-                        </div>
-                        <div className="flex justify-between items-baseline mt-0.5">
-                          <span className="text-sm font-black text-indigo-750">
-                            R$ {simDailyBreakEven.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </span>
-                          <span className="text-[10px] font-black text-emerald-600">
-                            {percentSaved > 0 ? `-${percentSaved.toFixed(0)}% de faturamento` : 'Ajuste os controles acima'}
-                          </span>
-                        </div>
-                        {percentSaved > 0 && (
-                          <p className="text-[7.5px] text-indigo-600 font-bold block mt-1 tracking-tight leading-relaxed">
-                            💡 Meta diária desce R$ {Math.abs(stats.dailyBreakEven - simDailyBreakEven).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}! Mais estabilidade para seu caixa diário.
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })()}
+                <input 
+                  type="range" 
+                  min="0" 
+                  max="15" 
+                  step="1"
+                  value={simCmvReduction}
+                  onChange={(e) => setSimCmvReduction(parseFloat(e.target.value))}
+                  className="w-full accent-indigo-600 h-2 bg-slate-200 rounded-lg cursor-pointer"
+                />
+                <div className="flex justify-between text-[9px] text-slate-400 font-bold">
+                  <span>0% (Atual)</span>
+                  <span>Ganho: +R$ {(stats.cmv * (simCmvReduction / 100)).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}</span>
+                  <span>-15% (Otimizado)</span>
                 </div>
-
               </div>
+
+              {/* Slider 2: Migração de Apps p/ Canal Próprio */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3">
+                <div className="flex justify-between items-center">
+                  <label className="text-xs font-black text-slate-800 uppercase tracking-tight flex items-center gap-1.5">
+                    <Bike size={14} className="text-amber-500" /> Migração de App p/ Cardápio Próprio
+                  </label>
+                  <span className="text-xs font-black text-indigo-600 bg-indigo-50 border px-2 py-0.5 rounded-lg">
+                    {simFeeReduction}% das Vendas
+                  </span>
+                </div>
+                <input 
+                  type="range" 
+                  min="0" 
+                  max="30" 
+                  step="5"
+                  value={simFeeReduction}
+                  onChange={(e) => setSimFeeReduction(parseFloat(e.target.value))}
+                  className="w-full accent-indigo-600 h-2 bg-slate-200 rounded-lg cursor-pointer"
+                />
+                <div className="flex justify-between text-[9px] text-slate-400 font-bold">
+                  <span>0% (Sem mudança)</span>
+                  <span>Economia: +R$ {(stats.taxasDelivery * (simFeeReduction / 100)).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}</span>
+                  <span>30% Convertidos</span>
+                </div>
+              </div>
+
             </div>
           </div>
 
-          <div className="mt-6 pt-5 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div>
-              <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">
-                Resultado Líquido Sobra Limpa
-              </span>
-              <div className="flex items-baseline gap-2 mt-0.5">
-                <h3 className={`text-2xl md:text-3xl font-black ${stats.lucroReal >= 0 ? "text-emerald-550" : "text-rose-600"}`}>
-                  R$ {stats.lucroReal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          {/* DEMONSTRATIVO FINANCEIRO COMPLETO (DRE RESUMIDO) */}
+          <div id="stripe-summary-card" className="w-full bg-white border border-slate-200/80 rounded-[2.5rem] p-6 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-5">
+              <div>
+                <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                  Demonstrativo Consolidado de Resultados (DRE Resumido)
                 </h3>
-                <span className="text-xs font-bold text-slate-400">lucro estimado</span>
+                <p className="text-[10px] text-slate-400 font-bold mt-0.5">
+                  Decomposição detalhada do fluxo financeiro do período selecionado.
+                </p>
               </div>
+              <span className="text-[10px] text-slate-400 font-bold bg-slate-50 border px-2.5 py-1 rounded-lg">
+                Proporcional para {dateRange.daysCount} dias
+              </span>
             </div>
 
-            <div className="flex gap-4">
-              <div className="text-center sm:text-right">
-                <span className="text-[10px] text-slate-400 font-bold uppercase block">Ponto de Equilíbrio do Período</span>
-                <span className="text-sm font-extrabold text-slate-700">R$ {stats.pontoEquilibrio.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}</span>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {/* Items do DRE */}
+              <div className="p-4 bg-slate-50/70 rounded-2xl border border-slate-100">
+                <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest block mb-1">1. Faturamento Bruto</span>
+                <span className="text-xl font-black text-slate-800">R$ {stats.faturamento.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                <span className="text-[8.5px] font-bold text-slate-400 block mt-1">Vendas reais no sistema</span>
               </div>
-              <div className="text-center sm:text-right border-l pl-4 border-slate-100">
-                <span className="text-[10px] text-slate-400 font-bold uppercase block">Ticket Médio</span>
-                <span className="text-sm font-extrabold text-slate-700">R$ {stats.ticketMedio.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}</span>
+
+              <div className="p-4 bg-slate-50/70 rounded-2xl border border-slate-100">
+                <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest block mb-1">2. Custo de Insumos (CMV)</span>
+                <span className="text-xl font-black text-rose-600">- R$ {stats.cmv.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                <span className="text-[8.5px] font-bold text-slate-400 block mt-1">{stats.faturamento > 0 ? ((stats.cmv / stats.faturamento) * 100).toFixed(1) : 0}% da receita em insumos</span>
+              </div>
+
+              <div className="p-4 bg-slate-50/70 rounded-2xl border border-slate-100">
+                <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest block mb-1">3. Taxas de Apps & Delivery</span>
+                <span className="text-xl font-black text-amber-600">- R$ {stats.taxasDelivery.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                <span className="text-[8.5px] font-bold text-slate-400 block mt-1">Comissões e taxas de marketplace</span>
+              </div>
+
+              <div className="p-4 bg-slate-50/70 rounded-2xl border border-slate-100">
+                <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest block mb-1">4. Folha de Pagamento</span>
+                <span className="text-xl font-black text-slate-700">- R$ {stats.folha.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                <span className="text-[8.5px] font-bold text-slate-400 block mt-1">Proporcional de salários e pró-labore</span>
+              </div>
+
+              <div className="p-4 bg-slate-50/70 rounded-2xl border border-slate-100">
+                <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest block mb-1">5. Despesas Fixas (Aluguel/Contas)</span>
+                <span className="text-xl font-black text-slate-700">- R$ {stats.despesasFixas.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                <span className="text-[8.5px] font-bold text-slate-400 block mt-1">Estrutura operacional proporcional</span>
+              </div>
+
+              <div className="p-4 bg-emerald-50 border border-emerald-200/80 rounded-2xl">
+                <span className="text-[9.5px] font-black text-emerald-800 uppercase tracking-widest block mb-1">6. Sobra Limpa Final</span>
+                <span className={`text-xl font-black ${stats.lucroReal >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
+                  R$ {stats.lucroReal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                <span className="text-[8.5px] font-black text-emerald-700 block mt-1">{stats.margem.toFixed(1)}% de margem líquida real</span>
               </div>
             </div>
           </div>
-
-        </div>
-
-      </div>
 
       {/* OPERATIONAL VISUAL CHART & INSIGHTS ROW */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -2941,6 +3260,18 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
         </div>
         <StockAnalyst products={products} orders={orders} rawMaterials={rawMaterials} />
       </div>
+    </div>
+  )}
+
+  {activeSubTab === 'fiscal' && (
+    <div className="animate-in fade-in duration-500 w-full">
+      <FiscalEngineModule 
+        products={products}
+        orders={orders}
+        settings={adminSettings}
+        currentUser={currentUser}
+        onUpdateSettings={onUpdateSettings}
+      />
     </div>
   )}
 

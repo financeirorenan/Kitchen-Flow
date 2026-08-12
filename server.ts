@@ -1213,6 +1213,116 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
       res.status(400).json({ success: false, error: "Invalid certificate or password" });
     }
   });
+
+  // Motor Tributário CBS/IBS - Cálculo de Pedidos
+  app.post("/api/fiscal/cbs-ibs-calculate", async (req, res) => {
+    try {
+      const { order } = req.body;
+      if (!order) {
+        return res.status(400).json({ success: false, error: "Objeto de pedido não fornecido." });
+      }
+
+      const cbsRate = 8.8;
+      const ibsStateRate = 17.7;
+      const ibsCityRate = 1.2;
+      const reductionPct = 60.0; // 60% para Bares e Restaurantes
+
+      const items = (order.items || []).map((item: any) => {
+        const qty = item.quantity || 1;
+        const price = item.price || item.unitPrice || 0;
+        const gross = qty * price;
+        const isExempt = item.taxCategory === 'exempt' || item.taxCategory === 'basic_food_basket';
+        const reduction = isExempt ? 100 : (item.baseReductionPct !== undefined ? item.baseReductionPct : reductionPct);
+        const taxableBase = gross * (1 - reduction / 100);
+
+        const cbsVal = isExempt ? 0 : taxableBase * (cbsRate / 100);
+        const ibsStateVal = isExempt ? 0 : taxableBase * (ibsStateRate / 100);
+        const ibsCityVal = isExempt ? 0 : taxableBase * (ibsCityRate / 100);
+        const ibsTotalVal = ibsStateVal + ibsCityVal;
+        const totalTax = cbsVal + ibsTotalVal;
+
+        return {
+          productId: item.id || item.productId || 'p1',
+          productName: item.name || item.productName || 'Item',
+          ncm: item.ncm || '2106.90.90',
+          quantity: qty,
+          unitPrice: price,
+          grossTotal: gross,
+          taxCategory: item.taxCategory || 'differentiated',
+          baseReductionPct: reduction,
+          taxableBase,
+          cbsRate,
+          cbsValue: cbsVal,
+          ibsStateRate,
+          ibsStateValue: ibsStateVal,
+          ibsCityRate,
+          ibsCityValue: ibsCityVal,
+          totalIbsValue: ibsTotalVal,
+          totalTaxes: totalTax,
+          netItemAmount: gross - totalTax
+        };
+      });
+
+      const grossAmount = items.reduce((a: number, b: any) => a + b.grossTotal, 0) || order.total || 0;
+      const totalCbs = items.reduce((a: number, b: any) => a + b.cbsValue, 0);
+      const totalIbsState = items.reduce((a: number, b: any) => a + b.ibsStateValue, 0);
+      const totalIbsCity = items.reduce((a: number, b: any) => a + b.ibsCityValue, 0);
+      const totalIbs = totalIbsState + totalIbsCity;
+      const totalTaxes = totalCbs + totalIbs;
+      const netEstablishmentAmount = grossAmount - totalTaxes;
+
+      res.json({
+        success: true,
+        calculation: {
+          grossAmount,
+          totalCbs,
+          totalIbsState,
+          totalIbsCity,
+          totalIbs,
+          totalTaxes,
+          taxPercentage: grossAmount > 0 ? (totalTaxes / grossAmount) * 100 : 0,
+          netEstablishmentAmount,
+          items,
+          ruleVersion: 1,
+          calculatedAt: new Date().toISOString()
+        }
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // Motor Tributário - Split Payment status e simulação
+  app.post("/api/fiscal/split-payment", async (req, res) => {
+    try {
+      const { grossAmount, cbsValue, ibsValue, acquirerFee, marketplaceFee } = req.body;
+      const gross = Number(grossAmount) || 0;
+      const cbs = Number(cbsValue) || (gross * 0.088 * 0.4);
+      const ibs = Number(ibsValue) || (gross * 0.189 * 0.4);
+      const totalGov = cbs + ibs;
+      const acqFee = Number(acquirerFee) || (gross * 0.025);
+      const mktFee = Number(marketplaceFee) || 0;
+      const netRestaurant = Math.max(0, gross - totalGov - acqFee - mktFee);
+
+      res.json({
+        success: true,
+        splitDetail: {
+          grossAmount: gross,
+          retainedCbs: cbs,
+          retainedIbs: ibs,
+          totalRetainedByGov: totalGov,
+          acquirerFee: acqFee,
+          marketplaceFee: mktFee,
+          netCreditedToRestaurant: netRestaurant,
+          status: 'processed_retained',
+          liquidationDate: new Date(Date.now() + 86400000).toISOString().split('T')[0],
+          transactionCode: `SPLIT-${Date.now().toString(36).toUpperCase()}`
+        }
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
   
   if (!isProduction) {
     const { createServer: createViteServer } = await import("vite");

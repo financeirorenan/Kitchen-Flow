@@ -45,7 +45,7 @@ import {
   Flame,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { db } from "../firebase";
+import { db, auth } from "../firebase";
 import {
   collection,
   onSnapshot,
@@ -705,6 +705,13 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       return { isOpen: true, message: "Aberto agora", showTime: "Aberto" };
     }
 
+    if (settingSnapshot.isStoreForceClosed) {
+      return { isOpen: false, showTime: "Fechado Manualmente", message: "Fechado agora" };
+    }
+    if (settingSnapshot.isStoreForceOpen) {
+      return { isOpen: true, showTime: "Aberto (Forçado)", message: "Aberto agora" };
+    }
+
     const hours = settingSnapshot.businessHours;
     if (!hours || !Array.isArray(hours) || hours.length === 0) {
       return { isOpen: true, message: "Aberto agora", showTime: "Aberto" };
@@ -723,39 +730,59 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     const now = new Date();
     const todayIndex = now.getDay();
     const todayName = DAYS_MAP[todayIndex];
+    const isWeekDay = todayIndex >= 1 && todayIndex <= 5;
+    const isWeekend = todayIndex === 0 || todayIndex === 6;
 
-    const todaySchedule = hours.find((h) => {
+    const todaySchedules = hours.filter((h) => {
       if (!h || !h.day) return false;
       const dayClean = h.day.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
       const todayClean = todayName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-      return dayClean === todayClean || dayClean.replace("-feira", "") === todayClean.replace("-feira", "");
+      if (dayClean === todayClean || dayClean.replace("-feira", "") === todayClean.replace("-feira", "")) {
+        return true;
+      }
+      if (isWeekDay && (dayClean.includes("segunda a sexta") || dayClean.includes("seg a sex"))) {
+        return true;
+      }
+      if (isWeekend && (dayClean.includes("sabado e domingo") || dayClean.includes("sab e dom"))) {
+        return true;
+      }
+      if (dayClean.includes("diario") || dayClean.includes("todos os dias")) {
+        return true;
+      }
+      return false;
     });
 
-    if (!todaySchedule) {
+    if (!todaySchedules || todaySchedules.length === 0) {
       return { isOpen: true, message: "Aberto agora", showTime: "Aberto" };
     }
 
-    if (todaySchedule.isClosed) {
-      return { isOpen: false, showTime: `Fechado (${todaySchedule.day})`, message: "Fechado agora" };
+    if (todaySchedules.every((s) => s.isClosed)) {
+      return { isOpen: false, showTime: `Fechado (${todayName})`, message: "Fechado agora" };
     }
 
-    const openTime = todaySchedule.open || "00:00";
-    const closeTime = todaySchedule.close || "23:59";
+    const activeShifts = todaySchedules.filter((s) => !s.isClosed);
+    if (activeShifts.length === 0) {
+      return { isOpen: false, showTime: `Fechado (${todayName})`, message: "Fechado agora" };
+    }
+
     const currentHours = now.getHours();
     const currentMinutes = now.getMinutes();
     const currentTimeStr = `${String(currentHours).padStart(2, "0")}:${String(currentMinutes).padStart(2, "0")}`;
 
-    let isOpen = false;
-    if (closeTime < openTime) {
-      isOpen = currentTimeStr >= openTime || currentTimeStr <= closeTime;
-    } else {
-      isOpen = currentTimeStr >= openTime && currentTimeStr <= closeTime;
-    }
+    const matchingShift = activeShifts.find((shift) => {
+      const openTime = shift.open || "00:00";
+      const closeTime = shift.close || "23:59";
+      if (closeTime < openTime) {
+        return currentTimeStr >= openTime || currentTimeStr <= closeTime;
+      }
+      return currentTimeStr >= openTime && currentTimeStr <= closeTime;
+    });
 
-    if (isOpen) {
-      return { isOpen: true, message: "Aberto agora", showTime: `Aberto até ${closeTime}` };
+    if (matchingShift) {
+      return { isOpen: true, message: "Aberto agora", showTime: `Aberto até ${matchingShift.close}` };
     } else {
-      return { isOpen: false, message: "Fechado agora", showTime: `Aberto hoje das ${openTime} às ${closeTime}` };
+      const firstShift = activeShifts[0];
+      return { isOpen: false, message: "Fechado agora", showTime: `Horário: das ${firstShift.open} às ${firstShift.close}` };
     }
   };
 
@@ -2468,7 +2495,6 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                     onClick={async () => {
                       const { signInWithPopup, GoogleAuthProvider } =
                         await import("firebase/auth");
-                      const { auth } = await import("../firebase");
                       const provider = new GoogleAuthProvider();
                       try {
                         const result = await signInWithPopup(auth, provider);

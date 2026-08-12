@@ -131,6 +131,8 @@ export interface AdminSettings {
   longitude?: number;
   primaryColor?: string;
   accentColor?: string;
+  isStoreForceClosed?: boolean;
+  isStoreForceOpen?: boolean;
   businessHours: BusinessHours[];
   fiscal: FiscalSettings;
   printing: {

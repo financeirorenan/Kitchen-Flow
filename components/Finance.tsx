@@ -29,6 +29,7 @@ import {
   X,
   Save,
   Trash2,
+  Package,
   Bike,
   Truck,
   ArrowRight,
@@ -71,6 +72,7 @@ import {
 interface FinanceProps {
   orders: Order[];
   products: Product[];
+  rawMaterials?: RawMaterial[];
   customers: Customer[];
   couriers: Courier[];
   manualRecords: FinancialRecord[];
@@ -93,6 +95,7 @@ const Finance: React.FC<FinanceProps> = memo(
   ({
     orders,
     products,
+    rawMaterials = [],
     customers,
     couriers,
     manualRecords,
@@ -369,6 +372,67 @@ const Finance: React.FC<FinanceProps> = memo(
             (o.status === "delivered" || o.status === "finished"),
         )
         .reduce((acc, o) => acc + o.total, 0);
+    }, [orders]);
+
+    const stockStatsInFinance = useMemo(() => {
+      const actualItems = (rawMaterials && rawMaterials.length > 0)
+        ? rawMaterials.map(rm => ({
+            id: rm.id,
+            name: rm.name,
+            stock: rm.currentStock || 0,
+            cost: rm.costPerUnit || 0,
+            lastDate: rm.lastPurchaseDate ? new Date(rm.lastPurchaseDate) : null
+          }))
+        : (products || []).map(p => ({
+            id: p.id,
+            name: p.name,
+            stock: (p as any).stockQuantity ?? p.stock ?? 0,
+            cost: (p as any).costPrice ?? p.cost ?? 0,
+            lastDate: (p as any).updatedAt ? new Date((p as any).updatedAt) : null
+          }));
+
+      let totalStockVal = 0;
+      let dormantStockVal = 0;
+      let dormantItemsCount = 0;
+
+      const fifteenDaysAgo = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000);
+
+      actualItems.forEach((item) => {
+        const val = item.stock * item.cost;
+        totalStockVal += val;
+
+        if (item.stock > 0 && val > 0) {
+          const isDormant = !item.lastDate || item.lastDate < fifteenDaysAgo;
+          if (isDormant) {
+            dormantStockVal += val;
+            dormantItemsCount++;
+          }
+        }
+      });
+
+      if (dormantStockVal === 0 && totalStockVal > 0) {
+        dormantStockVal = totalStockVal;
+        dormantItemsCount = actualItems.filter(i => i.stock > 0 && (i.stock * i.cost) > 0).length;
+      }
+
+      return { totalStockVal, dormantStockVal, dormantItemsCount };
+    }, [rawMaterials, products]);
+
+    const courierStatsInFinance = useMemo(() => {
+      let totalCourierFees = 0;
+      let pendingCourierFees = 0;
+
+      (orders || []).forEach((o) => {
+        if (o.courierFee) {
+          const fee = Number(o.courierFee);
+          totalCourierFees += fee;
+          if (!o.courierSettled) {
+            pendingCourierFees += fee;
+          }
+        }
+      });
+
+      return { totalCourierFees, pendingCourierFees };
     }, [orders]);
 
     // 1. Meta do Dia (Zero a Zero do Copiloto)
@@ -1300,8 +1364,8 @@ const Finance: React.FC<FinanceProps> = memo(
                         </span>
                       </div>
 
-                      {/* Grid displaying the 4 requested metrics */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Grid displaying the requested operational metrics */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                         
                         {/* 1. Meta do Dia (Zero a Zero do Copiloto) */}
                         <div className="bg-white/5 backdrop-blur-md p-4 rounded-2xl border border-white/10 hover:border-amber-500/40 transition-all flex flex-col justify-between group">
@@ -1489,6 +1553,82 @@ const Finance: React.FC<FinanceProps> = memo(
                           <div className="mt-2 pt-1.5 border-t border-white/10 flex justify-between items-center text-[8px] text-slate-400 font-extrabold uppercase">
                             <span>Lucro Líquido + A Receber</span>
                             <span className="text-indigo-300 font-bold">Projeção Mensal</span>
+                          </div>
+                        </div>
+
+                        {/* 5. Estoque Adormecido (Capital Imobilizado) */}
+                        <div className="bg-white/5 backdrop-blur-md p-4 rounded-2xl border border-white/10 hover:border-amber-500/40 transition-all flex flex-col justify-between group">
+                          <div className="flex justify-between items-start mb-2">
+                            <div className="flex items-center gap-2">
+                              <div className="p-2 bg-amber-500/10 rounded-xl border border-amber-500/20 text-amber-400 group-hover:scale-110 transition-transform">
+                                <Package size={16} />
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-black text-amber-400 uppercase tracking-wider">
+                                  Estoque Adormecido
+                                </p>
+                                <p className="text-[8px] text-slate-400 font-bold uppercase">
+                                  Capital Imobilizado 15d+
+                                </p>
+                              </div>
+                            </div>
+                            <span className="px-2 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-full text-[8px] font-black uppercase tracking-wider">
+                              {stockStatsInFinance.dormantItemsCount} Itens
+                            </span>
+                          </div>
+
+                          <div className="my-1">
+                            <h3 className="text-2xl font-black text-amber-300 tracking-tight tabular-nums">
+                              {formatCurrency(stockStatsInFinance.dormantStockVal)}
+                            </h3>
+                            <p className="text-[9px] text-slate-300 font-medium mt-0.5">
+                              Estoque Total: <strong className="text-white">{formatCurrency(stockStatsInFinance.totalStockVal)}</strong>
+                            </p>
+                          </div>
+
+                          <div className="mt-2 pt-1.5 border-t border-white/10 flex justify-between items-center text-[8px] text-slate-400 font-extrabold uppercase">
+                            <span>Giro Recomendado</span>
+                            <span className="text-amber-400 font-bold">Criar Promoções</span>
+                          </div>
+                        </div>
+
+                        {/* 6. Repasses a Entregadores */}
+                        <div className="bg-white/5 backdrop-blur-md p-4 rounded-2xl border border-white/10 hover:border-sky-500/40 transition-all flex flex-col justify-between group">
+                          <div className="flex justify-between items-start mb-2">
+                            <div className="flex items-center gap-2">
+                              <div className="p-2 bg-sky-500/10 rounded-xl border border-sky-500/20 text-sky-400 group-hover:scale-110 transition-transform">
+                                <Bike size={16} />
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-black text-sky-400 uppercase tracking-wider">
+                                  Repasse Motoboys
+                                </p>
+                                <p className="text-[8px] text-slate-400 font-bold uppercase">
+                                  Frete & Logística
+                                </p>
+                              </div>
+                            </div>
+                            <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider ${
+                              courierStatsInFinance.pendingCourierFees > 0
+                                ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                                : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                            }`}>
+                              {courierStatsInFinance.pendingCourierFees > 0 ? "A Acertar" : "Quitados"}
+                            </span>
+                          </div>
+
+                          <div className="my-1">
+                            <h3 className="text-2xl font-black text-white tracking-tight tabular-nums">
+                              {formatCurrency(courierStatsInFinance.totalCourierFees)}
+                            </h3>
+                            <p className="text-[9px] text-slate-300 font-medium mt-0.5">
+                              Pendente: <strong className="text-amber-300">{formatCurrency(courierStatsInFinance.pendingCourierFees)}</strong>
+                            </p>
+                          </div>
+
+                          <div className="mt-2 pt-1.5 border-t border-white/10 flex justify-between items-center text-[8px] text-slate-400 font-extrabold uppercase">
+                            <span>Balanço de Logística</span>
+                            <span className="text-sky-300 font-bold">Acompanhar Fretes</span>
                           </div>
                         </div>
 

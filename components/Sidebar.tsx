@@ -26,6 +26,7 @@ import {
   Sparkles,
   Monitor,
   ChefHat,
+  Receipt,
   ArrowLeft
 } from 'lucide-react';
 import { User, Permission } from '../types';
