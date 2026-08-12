@@ -1159,9 +1159,29 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
     try {
       const { order, certificate, config, nfceNumber, series, settings } = req.body;
       
-      // Se não há certificado configurado nas credenciais (ou veio undefined), fornecer uma emissão fiscal simulada
-      if (!certificate || !certificate.pfxBase64 || certificate.pfxBase64.trim() === '') {
-        const simulatedAccessKey = "3526" + Math.floor(10 + Math.random() * 89).toString() + (settings?.cnpj || "00000000000000").replace(/\D/g, '').padStart(14, '0') + "65001" + Math.floor(100000 + Math.random() * 900000).toString() + "1" + Math.floor(10000000 + Math.random() * 89999999).toString() + "1";
+      const pfxBase64 = certificate?.pfxBase64 || settings?.certificate?.pfxBase64;
+      const pfxPassword = certificate?.password || settings?.certificate?.password;
+
+      const fiscalConfig = {
+        cnpj: config?.cnpj || settings?.cnpj || "00000000000000",
+        razaoSocial: config?.razaoSocial || settings?.razaoSocial || "KITCHENFLOW AI",
+        inscricaoEstadual: config?.inscricaoEstadual || settings?.inscricaoEstadual || "123456789110",
+        endereco: config?.endereco || settings?.address || {
+          logradouro: 'Av Paulista',
+          numero: '1000',
+          bairro: 'Bela Vista',
+          municipio: 'São Paulo',
+          uf: 'SP',
+          cep: '01310100',
+          codigoMunicipio: '3550308'
+        },
+        cscId: config?.cscId || settings?.cscId || "000001",
+        cscToken: config?.cscToken || settings?.cscToken || "0123456789",
+        ambiente: (config?.environment === 'production' || settings?.environment === 'production' || config?.ambiente === '1') ? '1' : '2'
+      };
+
+      if (!pfxBase64 || pfxBase64.trim() === '') {
+        const simulatedAccessKey = "3526" + Math.floor(10 + Math.random() * 89).toString() + fiscalConfig.cnpj.replace(/\D/g, '').padStart(14, '0') + "65001" + Math.floor(100000 + Math.random() * 900000).toString() + "1" + Math.floor(10000000 + Math.random() * 89999999).toString() + "1";
         
         return res.json({
           success: true,
@@ -1169,35 +1189,42 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
           status: 'authorized',
           protocol: '135260000000001',
           accessKey: simulatedAccessKey,
-          nfeKey: simulatedAccessKey
+          nfeKey: simulatedAccessKey,
+          warning: 'Certificado A1 (.pfx) não enviado. Cadastre o arquivo .pfx e senha para emissão real via SOAP na SEFAZ-SP.'
         });
       }
 
-      const fiscalService = new FiscalService(certificate.pfxBase64, certificate.password, config || {});
+      const fiscalService = new FiscalService(pfxBase64, pfxPassword, fiscalConfig as any);
       
       const signedXml = fiscalService.generateNfceXml(order, nfceNumber || 1, series || 1);
       const response = await fiscalService.transmitToSefaz(signedXml);
       
-      res.json({
-        success: true,
-        xml: signedXml,
-        status: response.status,
-        protocol: response.protocol,
-        accessKey: response.accessKey,
-        nfeKey: response.accessKey
-      });
+      if (response.status === 'authorized') {
+        res.json({
+          success: true,
+          xml: signedXml,
+          status: response.status,
+          protocol: response.protocol,
+          accessKey: response.accessKey,
+          nfeKey: response.accessKey,
+          xMotivo: response.xMotivo
+        });
+      } else {
+        res.json({
+          success: false,
+          error: response.error || response.xMotivo || 'Rejeição da SEFAZ SP',
+          cStat: response.cStat,
+          xml: signedXml,
+          accessKey: response.accessKey,
+          nfeKey: response.accessKey,
+          details: response.details
+        });
+      }
     } catch (error: any) {
       console.error("Fiscal emission error:", error);
-      // Fallback em caso de erro no certificado para garantir que o POS não quebre no fluxo de teste
-      const simulatedAccessKey = "3526" + Math.floor(10 + Math.random() * 89).toString() + "0000000000000065001" + Math.floor(100000 + Math.random() * 900000).toString() + "1" + Math.floor(10000000 + Math.random() * 89999999).toString() + "1";
-      res.json({
-        success: true,
-        xml: `<?xml version="1.0" encoding="UTF-8"?><NFe xmlns="http://www.portalfiscal.inf.br/nfe"><infNFe Id="NFe${simulatedAccessKey}" versao="4.00"></infNFe></NFe>`,
-        status: 'authorized',
-        protocol: '135260000003333',
-        accessKey: simulatedAccessKey,
-        nfeKey: simulatedAccessKey,
-        warning: "Emissão em modo de contingência/simulada devido a: " + error.message
+      res.status(500).json({
+        success: false,
+        error: error.message || "Erro na emissão fiscal SOAP SEFAZ SP."
       });
     }
   });
@@ -1205,12 +1232,55 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
   app.post("/api/fiscal/validate-certificate", async (req, res) => {
     try {
       const { pfxBase64, password } = req.body;
-      // Simple validation by trying to instantiate the service
-      new FiscalService(pfxBase64, password, {} as any);
+      if (!pfxBase64 || !password) {
+        return res.status(400).json({ success: false, error: "Arquivo PFX e senha são obrigatórios." });
+      }
+      const service = new FiscalService(pfxBase64, password, {} as any);
+      const info = service.getCertificateInfo();
       
-      res.json({ success: true });
-    } catch {
-      res.status(400).json({ success: false, error: "Invalid certificate or password" });
+      res.json({
+        success: true,
+        validTo: info.validTo,
+        subject: info.subject,
+        isExpired: info.isExpired
+      });
+    } catch (err: any) {
+      res.status(400).json({ success: false, error: err.message || "Certificado PFX ou senha inválidos." });
+    }
+  });
+
+  app.post("/api/fiscal/sefaz-status", async (req, res) => {
+    try {
+      const { certificate, config, settings } = req.body;
+      const pfxBase64 = certificate?.pfxBase64 || settings?.certificate?.pfxBase64;
+      const pfxPassword = certificate?.password || settings?.certificate?.password;
+
+      if (!pfxBase64) {
+        return res.status(400).json({ success: false, error: "Certificado A1 (.pfx) é necessário para testar a comunicação com a SEFAZ." });
+      }
+
+      const fiscalConfig = {
+        cnpj: config?.cnpj || settings?.cnpj || "00000000000000",
+        razaoSocial: config?.razaoSocial || settings?.razaoSocial || "",
+        inscricaoEstadual: config?.inscricaoEstadual || settings?.inscricaoEstadual || "",
+        endereco: config?.endereco || settings?.address || {},
+        cscId: config?.cscId || settings?.cscId || "000001",
+        cscToken: config?.cscToken || settings?.cscToken || "0123456789",
+        ambiente: (config?.environment === 'production' || settings?.environment === 'production' || config?.ambiente === '1') ? '1' : '2'
+      };
+
+      const fiscalService = new FiscalService(pfxBase64, pfxPassword, fiscalConfig as any);
+      const statusResult = await fiscalService.checkSefazStatus();
+
+      res.json({
+        success: true,
+        ...statusResult
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message || "Erro ao consultar status do webservice SEFAZ SP."
+      });
     }
   });
 

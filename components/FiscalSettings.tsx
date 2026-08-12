@@ -28,6 +28,44 @@ const FiscalSettings: React.FC<FiscalSettingsProps> = ({ settings, onUpdate }) =
   const [pfxPassword, setPfxPassword] = useState('');
   const [isValidating, setIsValidating] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [isTestingSoap, setIsTestingSoap] = useState(false);
+  const [soapStatusResult, setSoapStatusResult] = useState<{ online: boolean; message: string } | null>(null);
+
+  const testSefazSoapConnection = async () => {
+    setIsTestingSoap(true);
+    setSoapStatusResult(null);
+
+    try {
+      const response = await fetch('/api/fiscal/sefaz-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          settings: settings.fiscal,
+          certificate: settings.fiscal?.certificate
+        })
+      });
+
+      const result = await response.json();
+      if (result.success && result.online) {
+        setSoapStatusResult({
+          online: true,
+          message: `[cStat ${result.cStat}] SEFAZ-SP Online e Operacional: ${result.xMotivo}`
+        });
+      } else {
+        setSoapStatusResult({
+          online: false,
+          message: result.error || result.xMotivo || `[cStat ${result.cStat || 'Erro'}] Resposta da SEFAZ SP.`
+        });
+      }
+    } catch {
+      setSoapStatusResult({
+        online: false,
+        message: 'Erro ao comunicar com o servidor de fiscal.'
+      });
+    } finally {
+      setIsTestingSoap(false);
+    }
+  };
 
   const [isSearchingCep, setIsSearchingCep] = useState(false);
 
@@ -186,10 +224,13 @@ const FiscalSettings: React.FC<FiscalSettingsProps> = ({ settings, onUpdate }) =
         if (result.success) {
           handleUpdateFiscal({
             certificateStatus: 'valid',
-            certificateExpiry: '31/12/2026' // This should come from the backend in a real app
+            certificateExpiry: result.validTo || '31/12/2026',
+            certificate: {
+              pfxBase64: base64,
+              password: pfxPassword
+            }
           });
-          // In a real app, we would save the base64 and password to Firestore (encrypted)
-          alert('Certificado validado com sucesso!');
+          alert(`Certificado do titular "${result.subject?.slice(0, 40) || 'Lojista'}" validado e salvo com sucesso! Expira em: ${result.validTo || '31/12/2026'}`);
         } else {
           setValidationError(result.error || 'Erro ao validar certificado');
         }
@@ -576,13 +617,46 @@ const FiscalSettings: React.FC<FiscalSettingsProps> = ({ settings, onUpdate }) =
           </div>
 
           {settings.fiscal?.certificateStatus === 'valid' && (
-            <div className="pt-4 border-t flex items-center justify-between">
-              <div className="flex items-center gap-2 text-green-600 font-medium text-sm">
-                <CheckCircle size={18} />
-                Certificado Ativo
+            <div className="pt-4 border-t space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-emerald-600 font-medium text-sm">
+                  <CheckCircle size={18} />
+                  Certificado A1 Carregado e Válido
+                </div>
+                <div className="text-xs text-gray-500">
+                  Expira em: <span className="font-bold">{settings.fiscal?.certificateExpiry}</span>
+                </div>
               </div>
-              <div className="text-xs text-gray-500">
-                Expira em: <span className="font-bold">{settings.fiscal?.certificateExpiry}</span>
+
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={testSefazSoapConnection}
+                  disabled={isTestingSoap}
+                  className="w-full py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"
+                >
+                  {isTestingSoap ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                      Testando Webservice SOAP SEFAZ-SP...
+                    </>
+                  ) : (
+                    <>
+                      <Globe size={16} />
+                      Testar Comunicação Direta SOAP com SEFAZ-SP
+                    </>
+                  )}
+                </button>
+
+                {soapStatusResult && (
+                  <div className={`mt-2 p-3 rounded-lg text-xs font-medium border ${
+                    soapStatusResult.online
+                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                      : 'bg-amber-50 text-amber-800 border-amber-200'
+                  }`}>
+                    {soapStatusResult.message}
+                  </div>
+                )}
               </div>
             </div>
           )}

@@ -70,6 +70,7 @@ import {
 } from "recharts";
 
 interface FinanceProps {
+  tenantId?: string;
   orders: Order[];
   products: Product[];
   rawMaterials?: RawMaterial[];
@@ -93,6 +94,7 @@ interface FinanceProps {
 
 const Finance: React.FC<FinanceProps> = memo(
   ({
+    tenantId,
     orders,
     products,
     rawMaterials = [],
@@ -437,11 +439,12 @@ const Finance: React.FC<FinanceProps> = memo(
 
     // 1. Meta do Dia (Zero a Zero do Copiloto)
     const copilotDailyBreakEven = useMemo(() => {
+      const activeTenantId = tenantId || orders[0]?.tenantId || manualRecords[0]?.tenantId || 't1';
       const monthlyRent = parseFloat(
-        localStorage.getItem("copilot_monthly_rent") || "2500"
+        localStorage.getItem(`copilot_monthly_rent_${activeTenantId}`) || "2500"
       );
       const monthlyStaff = parseFloat(
-        localStorage.getItem("copilot_monthly_staff") || "6000"
+        localStorage.getItem(`copilot_monthly_staff_${activeTenantId}`) || "6000"
       );
       const monthlyFixedsTotal = monthlyRent + monthlyStaff;
 

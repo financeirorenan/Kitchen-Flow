@@ -82,6 +82,7 @@ const safeFormatISO = (val: any) => {
 };
 
 interface LojistaCopilotProps {
+  tenantId?: string;
   orders: Order[];
   products: Product[];
   manualRecords: FinancialRecord[];
@@ -104,6 +105,7 @@ interface LojistaCopilotProps {
 type PeriodType = "today" | "last7" | "thisMonth" | "lastMonth";
 
 export default function LojistaCopilot({
+  tenantId,
   orders = [],
   products = [],
   manualRecords = [],
@@ -213,9 +215,11 @@ export default function LojistaCopilot({
     amount: number;
   }
 
+  const activeTenantId = tenantId || tenantData?.id || currentUser?.tenantId || 't1';
+
   const [fixedCostsList, setFixedCostsList] = useState<FixedCostItem[]>(() => {
     if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("copilot_fixed_costs_list");
+      const saved = localStorage.getItem(`copilot_fixed_costs_list_${activeTenantId}`);
       if (saved) {
         try {
           return JSON.parse(saved);
@@ -225,10 +229,10 @@ export default function LojistaCopilot({
       }
     }
     return [
-      { id: "fc-1", name: "Aluguel da Loja", type: "rent", amount: 1800 },
-      { id: "fc-2", name: "Contas de Consumo (Água, Luz, Net)", type: "rent", amount: 700 },
-      { id: "fc-3", name: "Folha de Salários - Equipe", type: "staff", amount: 3500 },
-      { id: "fc-4", name: "Pró-labore de Sócios", type: "staff", amount: 1300 },
+      { id: `fc-1-${activeTenantId}`, name: "Aluguel da Loja", type: "rent", amount: 1800 },
+      { id: `fc-2-${activeTenantId}`, name: "Contas de Consumo (Água, Luz, Net)", type: "rent", amount: 700 },
+      { id: `fc-3-${activeTenantId}`, name: "Folha de Salários - Equipe", type: "staff", amount: 3500 },
+      { id: `fc-4-${activeTenantId}`, name: "Pró-labore de Sócios", type: "staff", amount: 1300 },
     ];
   });
 
@@ -256,32 +260,62 @@ export default function LojistaCopilot({
   // Custom fixed monthly costs configured by the lojista for smart day-proportional scaling
   const [monthlyRent, setMonthlyRent] = useState(() => {
     if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("copilot_monthly_rent");
+      const saved = localStorage.getItem(`copilot_monthly_rent_${activeTenantId}`);
       return saved ? parseFloat(saved) : 2500;
     }
     return 2500;
   });
   const [monthlyStaff, setMonthlyStaff] = useState(() => {
     if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("copilot_monthly_staff");
+      const saved = localStorage.getItem(`copilot_monthly_staff_${activeTenantId}`);
       return saved ? parseFloat(saved) : 4800;
     }
     return 4800;
   });
+
+  const [estimatedWastePercent, setEstimatedWastePercent] = useState(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem(`copilot_estimated_waste_${activeTenantId}`);
+      return saved ? parseFloat(saved) : 3.5;
+    }
+    return 3.5;
+  });
+
+  // Re-sync when activeTenantId changes so switching lojistas loads each lojista's isolated costs
+  React.useEffect(() => {
+    if (typeof window !== "undefined") {
+      const savedList = localStorage.getItem(`copilot_fixed_costs_list_${activeTenantId}`);
+      if (savedList) {
+        try {
+          setFixedCostsList(JSON.parse(savedList));
+        } catch (e) {
+          console.error(e);
+        }
+      } else {
+        setFixedCostsList([
+          { id: `fc-1-${activeTenantId}`, name: "Aluguel da Loja", type: "rent", amount: 1800 },
+          { id: `fc-2-${activeTenantId}`, name: "Contas de Consumo (Água, Luz, Net)", type: "rent", amount: 700 },
+          { id: `fc-3-${activeTenantId}`, name: "Folha de Salários - Equipe", type: "staff", amount: 3500 },
+          { id: `fc-4-${activeTenantId}`, name: "Pró-labore de Sócios", type: "staff", amount: 1300 },
+        ]);
+      }
+
+      const savedRent = localStorage.getItem(`copilot_monthly_rent_${activeTenantId}`);
+      setMonthlyRent(savedRent ? parseFloat(savedRent) : 2500);
+
+      const savedStaff = localStorage.getItem(`copilot_monthly_staff_${activeTenantId}`);
+      setMonthlyStaff(savedStaff ? parseFloat(savedStaff) : 4800);
+
+      const savedWaste = localStorage.getItem(`copilot_estimated_waste_${activeTenantId}`);
+      setEstimatedWastePercent(savedWaste ? parseFloat(savedWaste) : 3.5);
+    }
+  }, [activeTenantId]);
 
   // Synchronize monthly totals when the list changes
   React.useEffect(() => {
     setMonthlyRent(computedRentTotal);
     setMonthlyStaff(computedStaffTotal);
   }, [fixedCostsList, computedRentTotal, computedStaffTotal]);
-
-  const [estimatedWastePercent, setEstimatedWastePercent] = useState(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("copilot_estimated_waste");
-      return saved ? parseFloat(saved) : 3.5;
-    }
-    return 3.5;
-  });
   const [isConfigOpen, setIsConfigOpen] = useState(false);
 
   // Estados de Simulação Financeira Interativa ("Alavancas de Lucro")
@@ -3524,18 +3558,18 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                   type="button"
                   onClick={() => {
                     const defaultList = [
-                      { id: "fc-1", name: "Aluguel da Loja", type: "rent" as const, amount: 1800 },
-                      { id: "fc-2", name: "Contas de Consumo (Água, Luz, Net)", type: "rent" as const, amount: 700 },
-                      { id: "fc-3", name: "Folha de Salários - Equipe", type: "staff" as const, amount: 3500 },
-                      { id: "fc-4", name: "Pró-labore de Sócios", type: "staff" as const, amount: 1300 },
+                      { id: `fc-1-${activeTenantId}`, name: "Aluguel da Loja", type: "rent" as const, amount: 1800 },
+                      { id: `fc-2-${activeTenantId}`, name: "Contas de Consumo (Água, Luz, Net)", type: "rent" as const, amount: 700 },
+                      { id: `fc-3-${activeTenantId}`, name: "Folha de Salários - Equipe", type: "staff" as const, amount: 3500 },
+                      { id: `fc-4-${activeTenantId}`, name: "Pró-labore de Sócios", type: "staff" as const, amount: 1300 },
                     ];
                     setFixedCostsList(defaultList);
                     setEstimatedWastePercent(3.5);
                     if (typeof window !== "undefined") {
-                      localStorage.setItem("copilot_fixed_costs_list", JSON.stringify(defaultList));
-                      localStorage.setItem("copilot_monthly_rent", "2500");
-                      localStorage.setItem("copilot_monthly_staff", "4800");
-                      localStorage.setItem("copilot_estimated_waste", "3.5");
+                      localStorage.setItem(`copilot_fixed_costs_list_${activeTenantId}`, JSON.stringify(defaultList));
+                      localStorage.setItem(`copilot_monthly_rent_${activeTenantId}`, "2500");
+                      localStorage.setItem(`copilot_monthly_staff_${activeTenantId}`, "4800");
+                      localStorage.setItem(`copilot_estimated_waste_${activeTenantId}`, "3.5");
                     }
                   }}
                   className="py-2 bg-slate-100 hover:bg-slate-200 rounded-xl font-extrabold text-[10px] uppercase tracking-wider text-slate-600 transition-all"
@@ -3546,10 +3580,10 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                   type="button"
                   onClick={() => {
                     if (typeof window !== "undefined") {
-                      localStorage.setItem("copilot_fixed_costs_list", JSON.stringify(fixedCostsList));
-                      localStorage.setItem("copilot_monthly_rent", computedRentTotal.toString());
-                      localStorage.setItem("copilot_monthly_staff", computedStaffTotal.toString());
-                      localStorage.setItem("copilot_estimated_waste", estimatedWastePercent.toString());
+                      localStorage.setItem(`copilot_fixed_costs_list_${activeTenantId}`, JSON.stringify(fixedCostsList));
+                      localStorage.setItem(`copilot_monthly_rent_${activeTenantId}`, computedRentTotal.toString());
+                      localStorage.setItem(`copilot_monthly_staff_${activeTenantId}`, computedStaffTotal.toString());
+                      localStorage.setItem(`copilot_estimated_waste_${activeTenantId}`, estimatedWastePercent.toString());
                     }
                     setMonthlyRent(computedRentTotal);
                     setMonthlyStaff(computedStaffTotal);

@@ -1239,6 +1239,19 @@ const App: React.FC = () => {
     ensureLojistaTenantWithData();
     notifiedOrdersRef.current.clear();
     setCashSession({ isOpen: false, openingValue: 0, openedAt: null });
+    
+    // Clear all state collections when switching tenants to avoid stale cross-tenant data
+    setProducts([]);
+    setTables([]);
+    setCustomers([]);
+    setOrders([]);
+    setFinancialRecords([]);
+    setRawMaterials([]);
+    setBankAccounts([]);
+    setCouriers([]);
+    setAuditLogs([]);
+    setUsers([]);
+    setCashClosings([]);
 
     // PRIORIDADE: Primeiro o ID que estamos visualizando (Suporte), depois o ID do próprio usuário logado
     // Se for Super Admin, o padrão é a loja KitchenFlow (ID: lojista)
@@ -6384,6 +6397,7 @@ const App: React.FC = () => {
         )}
         {activeTab === 'finance' && hasPermission('finance_view') && (
           <Finance 
+            tenantId={effectiveTenantId}
             orders={orders} 
             products={products}
             rawMaterials={rawMaterials}
@@ -6407,6 +6421,7 @@ const App: React.FC = () => {
         )}
         {activeTab === 'merchant-copilot' && hasPermission('finance_view') && (
           <LojistaCopilot 
+            tenantId={effectiveTenantId}
             orders={orders}
             products={products}
             manualRecords={financialRecords}
@@ -6483,7 +6498,7 @@ const App: React.FC = () => {
             tables={tables} 
             onUpdateProduct={handleUpdateProduct} 
             onPlaceDigitalOrder={async (order) => {
-              const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || 'HCL1177LRQVPEKCTYRAHU7IGBQ42';
+              const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || tenantData?.id || (isSuperAdmin ? 'lojista' : 't1');
               const orderWithTenant = {
                 ...order,
                 tenantId: effectiveTenantId,
