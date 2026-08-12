@@ -5698,6 +5698,8 @@ const App: React.FC = () => {
     !localUserPerms.includes('pos_access') &&
     !localUserPerms.includes('tables_manage');
 
+  const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || tenantData?.id || (isSuperAdmin ? 'lojista' : 't1');
+
   return (
     <div className="flex h-screen max-h-screen w-screen bg-slate-50 relative overflow-hidden">
       {/* Sistema Online / Toast Global */}
