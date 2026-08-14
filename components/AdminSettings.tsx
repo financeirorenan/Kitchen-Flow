@@ -154,6 +154,60 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
   const [pairingError, setPairingError] = useState<string | null>(null);
   const [pairingSuccess, setPairingSuccess] = useState<boolean>(false);
 
+  // Saipos / Open API Marketplace Integration State
+  const [sendingSaiposTest, setSendingSaiposTest] = useState(false);
+  const [saiposTestResult, setSaiposTestResult] = useState<string | null>(null);
+  const [saiposLogs, setSaiposLogs] = useState<any[]>([]);
+  const [loadingSaiposLogs, setLoadingSaiposLogs] = useState(false);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  const activeMerchantId = tenantData?.id || 'HCL1177LRQVPEKCTYRAHU7IGBQ42';
+  const activeMerchantToken = `kf_sec_live_${activeMerchantId.slice(0, 8)}_${(tenantData?.name || 'store').toLowerCase().replace(/\s+/g, '_')}`;
+
+  const handleCopyText = (text: string, fieldName: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedField(fieldName);
+    setTimeout(() => setCopiedField(null), 2500);
+  };
+
+  const handleSendSaiposTestEvent = async () => {
+    setSendingSaiposTest(true);
+    setSaiposTestResult(null);
+    try {
+      const res = await fetch('/api/v1/marketplace/test-event', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ merchantId: activeMerchantId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSaiposTestResult(`🚀 Pedido de teste enviado para a fila! ID Evento: ${data.eventId}`);
+        fetchSaiposLogs();
+      } else {
+        setSaiposTestResult(`❌ Erro: ${data.error || 'Falha no servidor'}`);
+      }
+    } catch (err: any) {
+      setSaiposTestResult(`❌ Erro de conexão: ${err.message}`);
+    } finally {
+      setSendingSaiposTest(false);
+    }
+  };
+
+  const fetchSaiposLogs = async () => {
+    setLoadingSaiposLogs(true);
+    try {
+      const res = await fetch(`/api/v1/marketplace/events/history?merchantId=${activeMerchantId}`);
+      const data = await res.json();
+      if (data.success) {
+        setSaiposLogs(data.events || []);
+      }
+    } catch (err) {
+      console.warn("Erro ao buscar logs Saipos:", err);
+    } finally {
+      setLoadingSaiposLogs(false);
+    }
+  };
+
   const handleAdminCEPChange = async (cepValue: string) => {
     const masked = maskCEP(cepValue);
     
@@ -1188,21 +1242,178 @@ wss.on('connection', ws => {
           )}
 
           {activeSubTab === 'api' && (
-            <div className="space-y-3 animate-in slide-in-from-right-4 duration-300">
+            <div className="space-y-4 animate-in slide-in-from-right-4 duration-300">
               <div className="flex items-center gap-2 border-b pb-2">
                  <div className="bg-indigo-50 p-2 rounded-lg text-indigo-600">
                     <Globe size={16} />
                  </div>
                  <div>
-                    <h2 className="text-sm font-black text-slate-800">Integrações e APIs</h2>
-                     <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Conecte o KitchenFlow AI com serviços externos</p>
+                    <h2 className="text-sm font-black text-slate-800">Integrações e APIs de Terceiros</h2>
+                     <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Conecte o Marketplace do KitchenFlow ao Saipos, Takeat, Anota AI e ERPs</p>
                  </div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+
+              {/* CARD PRINCIPAL: SAIPOS & OPEN API MARKETPLACE */}
+              <div className="p-4 bg-slate-900 text-white rounded-2xl shadow-xl space-y-4 border border-slate-800">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 bg-amber-500/10 text-amber-400 rounded-xl border border-amber-500/20">
+                      <ZapIcon size={18} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-xs font-black uppercase tracking-wider text-amber-400">
+                          Open API Marketplace (iFood-Style)
+                        </h3>
+                        <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full text-[9px] font-bold uppercase tracking-wider">
+                          Ativo & Pronto
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 font-medium">
+                        Forneça os dados abaixo para o suporte do <strong>Saipos ERP</strong>, <strong>Takeat</strong> ou <strong>Anota AI</strong> integrar seu catálogo e pedidos.
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleSendSaiposTestEvent}
+                    disabled={sendingSaiposTest}
+                    className="px-3.5 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-slate-950 font-black rounded-xl text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all shadow-md cursor-pointer disabled:opacity-50"
+                  >
+                    {sendingSaiposTest ? (
+                      <Loader2 size={13} className="animate-spin" />
+                    ) : (
+                      <Sparkles size={13} />
+                    )}
+                    🧪 Disparar Pedido de Teste (Saipos)
+                  </button>
+                </div>
+
+                {saiposTestResult && (
+                  <div className={`p-3 rounded-xl text-xs font-bold ${
+                    saiposTestResult.includes('🚀') ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30' : 'bg-rose-500/10 text-rose-300 border border-rose-500/30'
+                  }`}>
+                    {saiposTestResult}
+                  </div>
+                )}
+
+                {/* Credenciais para o Saipos / ERP */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/60 space-y-1">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">
+                      ID do Lojista (Merchant ID)
+                    </span>
+                    <div className="flex items-center justify-between gap-2 bg-slate-950 px-2.5 py-1.5 rounded-lg border border-slate-800">
+                      <code className="text-amber-300 font-mono text-xs font-bold truncate">
+                        {activeMerchantId}
+                      </code>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyText(activeMerchantId, 'merchantId')}
+                        className="text-slate-400 hover:text-white text-[10px] font-bold uppercase tracking-wider transition-colors"
+                      >
+                        {copiedField === 'merchantId' ? 'Copiado!' : 'Copiar'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/60 space-y-1">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">
+                      Chave de API do Marketplace (Merchant Token)
+                    </span>
+                    <div className="flex items-center justify-between gap-2 bg-slate-950 px-2.5 py-1.5 rounded-lg border border-slate-800">
+                      <code className="text-emerald-300 font-mono text-xs font-bold truncate">
+                        {activeMerchantToken}
+                      </code>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyText(activeMerchantToken, 'merchantToken')}
+                        className="text-slate-400 hover:text-white text-[10px] font-bold uppercase tracking-wider transition-colors"
+                      >
+                        {copiedField === 'merchantToken' ? 'Copiado!' : 'Copiar'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Endpoints HTTP de Integração */}
+                <div className="p-3 bg-slate-800/50 rounded-xl border border-slate-700/50 space-y-2">
+                  <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest block">
+                    Endpoints da Open API do Marketplace (iFood Standard REST):
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px] font-mono">
+                    <div className="p-2 bg-slate-900 rounded-lg border border-slate-800">
+                      <span className="text-sky-400 font-bold block mb-0.5">GET (Polling)</span>
+                      <code className="text-slate-300 break-all">{window.location.origin}/api/v1/marketplace/events:poll</code>
+                    </div>
+                    <div className="p-2 bg-slate-900 rounded-lg border border-slate-800">
+                      <span className="text-emerald-400 font-bold block mb-0.5">POST (ACK Confirmação)</span>
+                      <code className="text-slate-300 break-all">{window.location.origin}/api/v1/marketplace/events/ack</code>
+                    </div>
+                    <div className="p-2 bg-slate-900 rounded-lg border border-slate-800">
+                      <span className="text-amber-400 font-bold block mb-0.5">POST (Confirmar Pedido)</span>
+                      <code className="text-slate-300 break-all">{window.location.origin}/api/v1/marketplace/orders/:id/confirm</code>
+                    </div>
+                    <div className="p-2 bg-slate-900 rounded-lg border border-slate-800">
+                      <span className="text-purple-400 font-bold block mb-0.5">GET (Cardápio / SKUs)</span>
+                      <code className="text-slate-300 break-all">{window.location.origin}/api/v1/marketplace/catalog</code>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Monitor / Log de Eventos de Integração */}
+                <div className="pt-1">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                      <Database size={13} className="text-amber-400" />
+                      Fila de Eventos de Integração (Live Log)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={fetchSaiposLogs}
+                      className="text-[10px] font-bold text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <RefreshCw size={11} className={loadingSaiposLogs ? 'animate-spin' : ''} />
+                      Atualizar Logs
+                    </button>
+                  </div>
+
+                  {saiposLogs.length === 0 ? (
+                    <p className="text-[10px] text-slate-500 italic bg-slate-950 p-3 rounded-xl text-center border border-slate-800">
+                      Nenhum evento pendente no momento. Clique em &quot;Disparar Pedido de Teste&quot; acima para gerar um evento de validação para o Saipos.
+                    </p>
+                  ) : (
+                    <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
+                      {saiposLogs.map((log: any) => (
+                        <div key={log.id} className="p-2 bg-slate-950 rounded-lg border border-slate-800 flex items-center justify-between text-[10px]">
+                          <div>
+                            <span className="font-bold text-amber-300 mr-2">{log.eventType || 'ORDER_CREATED'}</span>
+                            <span className="text-slate-400">ID: {log.id}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${
+                              log.status === 'PENDING' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-emerald-500/20 text-emerald-300'
+                            }`}>
+                              {log.status}
+                            </span>
+                            <span className="text-slate-500 text-[9px]">
+                              {new Date(log.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Outros Canais de Integração */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-2">
                 <div className="p-2 bg-slate-50 rounded-xl border space-y-1.5">
                   <div className="flex items-center gap-1.5">
                     <Smartphone className="text-emerald-500" size={14} />
-                    <h4 className="font-black text-slate-800 text-[8px] uppercase">WhatsApp Business</h4>
+                    <h4 className="font-black text-slate-800 text-[8px] uppercase">WhatsApp Business API</h4>
                   </div>
                   <input 
                     type="text" 
@@ -1215,7 +1426,7 @@ wss.on('connection', ws => {
                 <div className="p-2 bg-slate-50 rounded-xl border space-y-1.5">
                   <div className="flex items-center gap-1.5">
                     <Webhook className="text-rose-500" size={14} />
-                    <h4 className="font-black text-slate-800 text-[8px] uppercase">iFood Webhook</h4>
+                    <h4 className="font-black text-slate-800 text-[8px] uppercase">iFood Direct Webhook</h4>
                   </div>
                   <input 
                     type="text" 

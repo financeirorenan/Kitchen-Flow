@@ -60,6 +60,7 @@ import {
 } from "firebase/firestore";
 
 import { FiscalService } from "./server/fiscalService";
+import { marketplaceApiRouter } from "./server/marketplaceApi";
 
 // Admin Firebase
 if (!getApps().length) {
@@ -98,6 +99,9 @@ async function startServer() {
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
   });
+
+  // Open API do Marketplace (Integradores Saipos / Takeat / Anota AI)
+  app.use("/api/v1/marketplace", marketplaceApiRouter);
 
   // Resend Email Integration Endpoints
   app.post("/api/email/test", async (req, res) => {

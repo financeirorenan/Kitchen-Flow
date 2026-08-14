@@ -3406,17 +3406,10 @@ const App: React.FC = () => {
   };
 
   const handleEditOrderInPDV = (order: Order) => {
-    // Buscar o pedido principal caso este seja um sub-ticket do KDS
-    let targetOrder = order;
-    if (order.mergedIntoOrderId) {
-      const parent = orders.find(o => o.id === order.mergedIntoOrderId || o.docId === order.mergedIntoOrderId);
-      if (parent) targetOrder = parent;
-    } else if (order.id && order.id.startsWith('KDS-')) {
-      const parent = orders.find(o => !o.id.startsWith('KDS-') && ((o.dailyNumber && o.dailyNumber === order.dailyNumber) || (o.tableNumber && o.tableNumber === order.tableNumber)));
-      if (parent) targetOrder = parent;
-    }
-
-    setPdvEditOrder({ ...targetOrder });
+    // Abrir estritamente o pedido em que foi clicado através de seu ID exato
+    const exactOrder = orders.find(o => o.id === order.id || o.docId === order.id) || order;
+    setReturnToTab(activeTab);
+    setPdvEditOrder({ ...exactOrder });
   };
 
   const handleUpdateOrder = async (id: string, updates: Partial<Order>) => {

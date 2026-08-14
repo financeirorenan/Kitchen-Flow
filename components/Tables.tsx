@@ -470,7 +470,9 @@ const Tables: React.FC<TablesProps> = memo(
         setShowChangeModal(false);
         setIsCounterContext(pdvEditOrder.type !== "table");
 
-        const existingTable = tables.find(t => t.currentOrderId === pdvEditOrder.id || (pdvEditOrder.tableNumber && String(t.number) === String(pdvEditOrder.tableNumber)));
+        const existingTable = pdvEditOrder.type === "table"
+          ? tables.find(t => t.currentOrderId === pdvEditOrder.id || (pdvEditOrder.tableNumber && String(t.number) === String(pdvEditOrder.tableNumber)))
+          : null;
 
         const mockTable: Table = existingTable ? {
           ...existingTable,

@@ -1451,6 +1451,58 @@ const Marketplace: React.FC<MarketplaceProps> = ({
               );
               console.log("Pedido salvo com sucesso! ID:", order.id);
 
+              // Registrar evento na fila de integração para Saipos e ERPs de terceiros
+              try {
+                const eventId = `evt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+                const customerPhone = order.customerPhone || profile?.phone || "";
+                await setDoc(doc(db, "integration_events", eventId), {
+                  id: eventId,
+                  tenantId: selectedTenant.id,
+                  eventType: "ORDER_CREATED",
+                  status: "PENDING",
+                  createdAt: new Date().toISOString(),
+                  order: {
+                    id: order.id,
+                    displayId: order.id.slice(-4),
+                    createdAt: new Date().toISOString(),
+                    type: "DELIVERY",
+                    merchant: {
+                      id: selectedTenant.id,
+                      name: selectedTenant.name || "Restaurante"
+                    },
+                    customer: {
+                      id: customerPhone || "cust_anon",
+                      name: order.customerName || profile?.name || "Cliente Marketplace",
+                      phone: customerPhone
+                    },
+                    deliveryAddress: {
+                      formattedAddress: order.customerAddress || ""
+                    },
+                    items: (order.items || []).map((it: any) => ({
+                      id: it.productId || it.id || "",
+                      externalCode: it.externalCode || it.productId || "",
+                      name: it.name,
+                      quantity: it.quantity,
+                      unitPrice: it.price,
+                      totalPrice: (it.price || 0) * (it.quantity || 1),
+                      observation: it.observation || ""
+                    })),
+                    payments: {
+                      prepaid: true,
+                      methods: [{ method: order.paymentMethod || "PIX", value: order.total }]
+                    },
+                    total: {
+                      subTotal: (order.total || 0) - (order.deliveryFee || 0),
+                      deliveryFee: order.deliveryFee || 0,
+                      orderAmount: order.total
+                    }
+                  }
+                });
+                console.log("Evento de integração registrado para Saipos/ERP:", eventId);
+              } catch (evtErr) {
+                console.warn("Aviso ao registrar evento de integração:", evtErr);
+              }
+
               // Persistir cliente na coleção 'customers' do tenant para CRM
               const customerPhone = order.customerPhone || profile?.phone;
               if (customerPhone) {
