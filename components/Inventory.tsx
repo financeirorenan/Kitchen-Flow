@@ -77,26 +77,24 @@ const Inventory: React.FC<InventoryProps> = memo(({
   orders = []
 }) => {
   const allProductCategories = useMemo(() => {
-    const defaultCats = ['Entradas', 'Buffet', 'Pratos Principais', 'Lanches', 'Batatas Recheadas', 'Pasteis', 'Bebidas'];
-    const catsList = (productCategories && productCategories.length > 0)
+    const baseCats = (productCategories && productCategories.length > 0)
       ? productCategories.filter(c => c && c !== 'Geral')
-      : defaultCats;
+      : ['Entradas', 'Buffet', 'Pratos Principais', 'Lanches', 'Batatas Recheadas', 'Pasteis', 'Bebidas'];
 
-    const fromProducts = products.map(p => p.category).filter((c): c is string => Boolean(c && c !== 'Geral'));
-    const uniqueFromProducts = Array.from(new Set(fromProducts));
-
-    let baseOrder = [...(digitalMenuSettings.categoryOrder || []).filter(c => c && c !== 'Geral')];
-
-    catsList.forEach(cat => {
-      if (!baseOrder.includes(cat)) baseOrder.push(cat);
+    const currentOrder = digitalMenuSettings.categoryOrder || [];
+    
+    // Ordena as categorias registradas respeitando categoryOrder se existir
+    const ordered = [...baseCats].sort((a, b) => {
+      const idxA = currentOrder.indexOf(a);
+      const idxB = currentOrder.indexOf(b);
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+      if (idxA !== -1) return -1;
+      if (idxB !== -1) return 1;
+      return 0;
     });
 
-    uniqueFromProducts.forEach(cat => {
-      if (!baseOrder.includes(cat)) baseOrder.push(cat);
-    });
-
-    return baseOrder.filter(c => c && c !== 'Geral');
-  }, [productCategories, products, digitalMenuSettings.categoryOrder]);
+    return ordered;
+  }, [productCategories, digitalMenuSettings.categoryOrder]);
 
   const [activeSubTab, setActiveSubTab] = useState<'products' | 'raw-materials' | 'shopping-list'>('products');
   const [shoppingPeriod, setShoppingPeriod] = useState<'day' | 'week' | 'month'>('week');
@@ -1090,6 +1088,59 @@ const Inventory: React.FC<InventoryProps> = memo(({
     );
   };
 
+  const handleAddProductCategory = (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed || trimmed === 'Geral') return;
+    const current = (productCategories && productCategories.length > 0) ? productCategories : allProductCategories;
+    if (!current.includes(trimmed)) {
+      const nextCats = [...current, trimmed];
+      setProductCategories(nextCats);
+      const currentOrder = digitalMenuSettings.categoryOrder || [];
+      onUpdateDigitalMenuSettings({
+        ...digitalMenuSettings,
+        categoryOrder: [...currentOrder.filter(c => c !== trimmed), trimmed]
+      });
+    }
+  };
+
+  const handleRenameProductCategory = async (oldName: string, newName: string) => {
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === oldName || trimmed === 'Geral') return;
+
+    // 1. Update affected products
+    const affectedProducts = products.filter(p => p.category === oldName);
+    for (const p of affectedProducts) {
+      await onUpdateProduct({ ...p, category: trimmed });
+    }
+
+    // 2. Update productCategories state & cloud
+    const current = (productCategories && productCategories.length > 0) ? productCategories : allProductCategories;
+    const nextCats = current.map(c => c === oldName ? trimmed : c);
+    setProductCategories(nextCats);
+
+    // 3. Update digitalMenuSettings (categoryOrder, hiddenCategories, categoryImages)
+    const currentOrder = digitalMenuSettings.categoryOrder || [];
+    const currentHidden = digitalMenuSettings.hiddenCategories || [];
+    const currentImages = digitalMenuSettings.categoryImages || {};
+
+    const updatedImages = { ...currentImages };
+    if (updatedImages[oldName]) {
+      updatedImages[trimmed] = updatedImages[oldName];
+      delete updatedImages[oldName];
+    }
+
+    onUpdateDigitalMenuSettings({
+      ...digitalMenuSettings,
+      categoryOrder: currentOrder.map(c => c === oldName ? trimmed : c),
+      hiddenCategories: currentHidden.map(c => c === oldName ? trimmed : c),
+      categoryImages: updatedImages
+    });
+
+    if (selectedCategory === oldName) {
+      setSelectedCategory(trimmed);
+    }
+  };
+
   const handleDeleteProductCategory = (category: string) => {
     confirmAction(
       "Excluir Categoria de Produto",
@@ -1101,18 +1152,26 @@ const Inventory: React.FC<InventoryProps> = memo(({
           await onUpdateProduct({ ...p, category: '' });
         }
 
-        // 2. Remove category from hiddenCategories and categoryOrder
+        // 2. Remove category from hiddenCategories, categoryOrder and categoryImages
         const currentHidden = digitalMenuSettings.hiddenCategories || [];
         const currentOrder = digitalMenuSettings.categoryOrder || [];
+        const currentImages = digitalMenuSettings.categoryImages || {};
+        const updatedImages = { ...currentImages };
+        delete updatedImages[category];
+
         const updatedMenuSettings = {
           ...digitalMenuSettings,
           hiddenCategories: currentHidden.filter(c => c !== category),
-          categoryOrder: currentOrder.filter(c => c !== category)
+          categoryOrder: currentOrder.filter(c => c !== category),
+          categoryImages: updatedImages
         };
         onUpdateDigitalMenuSettings(updatedMenuSettings);
 
         // 3. Remove category from productCategories state & cloud
-        setProductCategories(prev => prev.filter(c => c !== category));
+        setProductCategories(prev => {
+          const current = (prev && prev.length > 0) ? prev : allProductCategories;
+          return current.filter(c => c !== category);
+        });
 
         if (selectedCategory === category) {
           setSelectedCategory(null);
@@ -1123,6 +1182,7 @@ const Inventory: React.FC<InventoryProps> = memo(({
   };
 
   const handleCategoryReorder = (newOrder: string[]) => {
+    setProductCategories(newOrder);
     onUpdateDigitalMenuSettings({
       ...digitalMenuSettings,
       categoryOrder: newOrder
@@ -4133,7 +4193,7 @@ const Inventory: React.FC<InventoryProps> = memo(({
                   onChange={(e) => setNewCategoryName(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && newCategoryName.trim()) {
-                      setProductCategories([...productCategories, newCategoryName.trim()]);
+                      handleAddProductCategory(newCategoryName.trim());
                       setNewCategoryName('');
                     }
                   }}
@@ -4141,7 +4201,7 @@ const Inventory: React.FC<InventoryProps> = memo(({
                 <button 
                   onClick={() => {
                     if (newCategoryName.trim()) {
-                      setProductCategories([...productCategories, newCategoryName.trim()]);
+                      handleAddProductCategory(newCategoryName.trim());
                       setNewCategoryName('');
                     }
                   }}
@@ -4161,16 +4221,16 @@ const Inventory: React.FC<InventoryProps> = memo(({
               <Reorder.Group 
                 axis="y" 
                 values={allProductCategories} 
-                onReorder={(newOrder) => setProductCategories(newOrder)}
+                onReorder={handleCategoryReorder}
                 className="space-y-2"
               >
                 {allProductCategories.map((cat, index) => {
                   const isHidden = digitalMenuSettings.hiddenCategories?.includes(cat);
                   return (
                     <Reorder.Item 
-                      key={cat} 
-                      value={cat}
-                      className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-grab active:cursor-grabbing ${isHidden ? 'bg-slate-50 border-slate-100 opacity-60' : 'bg-white border-slate-200 shadow-sm hover:border-indigo-300'}`}
+                       key={cat} 
+                       value={cat}
+                       className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-grab active:cursor-grabbing ${isHidden ? 'bg-slate-50 border-slate-100 opacity-60' : 'bg-white border-slate-200 shadow-sm hover:border-indigo-300'}`}
                     >
                       <div className="flex items-center gap-3 flex-1">
                         <GripVertical size={14} className="text-slate-300" />
@@ -4181,16 +4241,18 @@ const Inventory: React.FC<InventoryProps> = memo(({
                             className="flex-1 px-2 py-1 bg-white border border-indigo-300 rounded-lg outline-none text-xs font-bold"
                             defaultValue={cat}
                             onBlur={(e) => {
-                              const newCats = [...allProductCategories];
-                              newCats[index] = e.target.value;
-                              setProductCategories(newCats);
+                              const val = e.target.value.trim();
+                              if (val && val !== cat) {
+                                handleRenameProductCategory(cat, val);
+                              }
                               setEditingCategoryIndex(null);
                             }}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') {
-                                const newCats = [...allProductCategories];
-                                newCats[index] = e.currentTarget.value;
-                                setProductCategories(newCats);
+                                const val = e.currentTarget.value.trim();
+                                if (val && val !== cat) {
+                                  handleRenameProductCategory(cat, val);
+                                }
                                 setEditingCategoryIndex(null);
                               }
                               if (e.key === 'Escape') setEditingCategoryIndex(null);

@@ -4913,7 +4913,7 @@ const App: React.FC = () => {
     setProductCategories(prev => {
       const rawResolved = typeof newCategories === 'function' ? newCategories(prev) : newCategories;
       const cleanResolved = (rawResolved || []).filter(c => c && c !== 'Geral');
-      const resolved = cleanResolved.length > 0 ? cleanResolved : ['Entradas', 'Buffet', 'Pratos Principais', 'Lanches', 'Batatas Recheadas', 'Pasteis', 'Bebidas'];
+      const resolved = cleanResolved;
       // Persist in localDb settings
       const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
       localDb.settings.get(effectiveTenantId || 'global').then(s => {
@@ -4947,7 +4947,9 @@ const App: React.FC = () => {
 
   const handleUpdateRawMaterialCategories = async (newCategories: string[] | ((prev: string[]) => string[])) => {
     setRawMaterialCategories(prev => {
-      const resolved = typeof newCategories === 'function' ? newCategories(prev) : newCategories;
+      const rawResolved = typeof newCategories === 'function' ? newCategories(prev) : newCategories;
+      const cleanResolved = (rawResolved || []).filter(Boolean);
+      const resolved = cleanResolved;
       // Persist in localDb settings
       const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
       localDb.settings.get(effectiveTenantId || 'global').then(s => {
@@ -4993,8 +4995,12 @@ const App: React.FC = () => {
       }
     }
 
-    const { id, ...updates } = finalProduct;
+    const { id } = finalProduct;
     
+    // Atualização otimista imediata no estado de produtos e no banco local Dexie
+    setProducts(prev => prev.map(p => p.id === id ? finalProduct : p));
+    await localDb.products.put(finalProduct).catch(e => console.warn("Local DB product put error:", e));
+
     if (effectiveTenantId) {
       try {
         await setDoc(doc(db, 'products', id), cleanObject({
@@ -5015,9 +5021,6 @@ const App: React.FC = () => {
           }
         }
       }
-    } else {
-      await localDb.products.update(id, updates);
-      setProducts(prev => prev.map(p => p.id === id ? finalProduct : p));
     }
 
     addLog('u1', 'ESTOQUE', `Produto atualizado: ${finalProduct.name}`);
@@ -5027,31 +5030,30 @@ const App: React.FC = () => {
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
     const product = products.find(p => p.id === id);
     
+    setProducts(prev => prev.filter(p => p.id !== id));
+    await localDb.products.delete(id).catch(e => console.warn("Local DB product delete error:", e));
+
     if (effectiveTenantId) {
       try {
         await deleteDoc(doc(db, 'products', id));
       } catch (err) {
         console.error("Erro ao excluir produto da nuvem:", err);
       }
-    } else {
-      await localDb.products.delete(id);
-      setProducts(prev => prev.filter(p => p.id !== id));
     }
 
     if (product) addLog('u1', 'ESTOQUE', `Produto excluído: ${product.name}`);
   };
 
-
   const handleUpdateRawMaterial = async (material: RawMaterial) => {
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    setRawMaterials(prev => prev.map(m => m.id === material.id ? material : m));
+    await localDb.rawMaterials.put(material).catch(e => console.warn("Local DB raw material put error:", e));
+
     if (effectiveTenantId) {
       await setDoc(doc(db, 'rawMaterials', material.id), {
         ...material,
         updatedAt: new Date()
-      }, { merge: true });
-    } else {
-      await localDb.rawMaterials.put(material);
-      setRawMaterials(prev => prev.map(m => m.id === material.id ? material : m));
+      }, { merge: true }).catch(err => console.error("Cloud rawMaterial update error:", err));
     }
     addLog('u1', 'INSUMOS', `Insumo atualizado: ${material.name}`);
   };
@@ -5059,11 +5061,12 @@ const App: React.FC = () => {
   const handleDeleteRawMaterial = async (id: string) => {
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
     const material = rawMaterials.find(m => m.id === id);
+    
+    setRawMaterials(prev => prev.filter(m => m.id !== id));
+    await localDb.rawMaterials.delete(id).catch(e => console.warn("Local DB raw material delete error:", e));
+
     if (effectiveTenantId) {
-      await deleteDoc(doc(db, 'rawMaterials', id));
-    } else {
-      await localDb.rawMaterials.delete(id);
-      setRawMaterials(prev => prev.filter(m => m.id !== id));
+      await deleteDoc(doc(db, 'rawMaterials', id)).catch(err => console.error("Cloud rawMaterial delete error:", err));
     }
     if (material) addLog('u1', 'INSUMOS', `Insumo excluído: ${material.name}`);
   };

@@ -68,19 +68,22 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
   const [totemCategoryFilter, setTotemCategoryFilter] = useState<string>('all');
   
   const categories = useMemo(() => {
-    const catsFromProducts = Array.from(new Set(products.map(p => p.category).filter(Boolean)));
-    const registered = productCategories && productCategories.length > 0 ? productCategories : [];
+    const baseCats = (productCategories && productCategories.length > 0)
+      ? productCategories.filter(c => c && c !== 'Geral')
+      : ['Entradas', 'Buffet', 'Pratos Principais', 'Lanches', 'Batatas Recheadas', 'Pasteis', 'Bebidas'];
     
-    const combined = [...registered];
-    catsFromProducts.forEach(c => {
-      if (!combined.includes(c)) {
-        combined.push(c);
-      }
+    const currentOrder = settings.categoryOrder || [];
+    const ordered = [...baseCats].sort((a, b) => {
+      const idxA = currentOrder.indexOf(a);
+      const idxB = currentOrder.indexOf(b);
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+      if (idxA !== -1) return -1;
+      if (idxB !== -1) return 1;
+      return 0;
     });
 
-    const cleanCombined = combined.filter(c => c && c !== 'Geral');
-    return cleanCombined.length > 0 ? cleanCombined : ['Entradas', 'Buffet', 'Pratos Principais', 'Lanches', 'Batatas Recheadas', 'Pasteis', 'Bebidas'];
-  }, [products, productCategories]);
+    return ordered;
+  }, [productCategories, settings.categoryOrder]);
   
   const sortedProducts = useMemo(() => {
     return [...products].sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
@@ -310,14 +313,22 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
 
       const currentHidden = settings.hiddenCategories || [];
       const currentOrder = settings.categoryOrder || categories;
+      const currentImages = settings.categoryImages || {};
+      const updatedImages = { ...currentImages };
+      delete updatedImages[category];
+
       onUpdateSettings({
         ...settings,
         hiddenCategories: currentHidden.filter(c => c !== category),
-        categoryOrder: currentOrder.filter(c => c !== category)
+        categoryOrder: currentOrder.filter(c => c !== category),
+        categoryImages: updatedImages
       });
 
       if (setProductCategories) {
-        setProductCategories(prev => prev.filter(c => c !== category));
+        setProductCategories(prev => {
+          const current = (prev && prev.length > 0) ? prev : categories;
+          return current.filter(c => c !== category);
+        });
       }
     }
   };
@@ -629,7 +640,7 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
                   <p className="text-[10px] font-bold text-slate-400 uppercase">Defina a ordem de exibição</p>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {(settings.categoryOrder || categories).map((cat, index) => (
+                  {categories.map((cat, index) => (
                     <div key={cat} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-3 group hover:bg-white hover:shadow-md transition-all">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
@@ -646,7 +657,7 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
                           </button>
                           <button 
                             onClick={() => moveCategory(cat, 'down')}
-                            disabled={index === (settings.categoryOrder || categories).length - 1}
+                            disabled={index === categories.length - 1}
                             className="p-1 bg-white text-slate-400 rounded hover:text-indigo-600 disabled:opacity-30"
                           >
                             <ArrowDown size={14} />
