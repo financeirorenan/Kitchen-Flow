@@ -2380,6 +2380,10 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                     <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-md bg-indigo-500/20 text-[#00B7FF] border border-indigo-500/30">
                       Painel do Dono
                     </span>
+                    <span className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      Tempo Real
+                    </span>
                     <span className="text-[10px] font-bold text-slate-400">
                       • {dateRange.periodName} ({dateRange.daysCount}d)
                     </span>

@@ -626,42 +626,18 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                     </div>
 
                     {/* Actions Panel */}
-                    <div className={`p-3 border-t grid grid-cols-2 gap-2 shrink-0 ${
+                    <div className={`p-2.5 border-t shrink-0 ${
                       isLight ? 'bg-slate-50/80 border-slate-200' : 'bg-slate-900/30 border-slate-800/80'
                     }`}>
-                      {/* Preparando Toggle */}
-                      {!isPreparing ? (
-                        <button
-                          onClick={() => onUpdateStatus(order.id, 'preparing')}
-                          className={`col-span-2 py-2.5 border rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 ${
-                            isLight
-                              ? 'bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-700'
-                              : 'bg-indigo-600/20 hover:bg-indigo-600/30 border-indigo-500/30 text-indigo-400'
-                          }`}
-                        >
-                          <Play size={12} className="animate-pulse fill-current" />
-                          Iniciar Preparo
-                        </button>
-                      ) : (
-                        <div className={`col-span-2 flex items-center justify-center gap-1.5 py-1 text-[9px] font-black uppercase tracking-widest border rounded-xl ${
-                          isLight
-                            ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
-                            : 'bg-indigo-950/20 border-indigo-900/30 text-indigo-400'
-                        }`}>
-                          <Coffee size={12} className="animate-spin" />
-                          EM PREPARAÇÃO
-                        </div>
-                      )}
-
                       {/* Finish Production Action */}
                       <button
                         onClick={() => {
                           // Complete cooking order - promote to ready
                           onUpdateStatus(order.id, 'ready');
                         }}
-                        className={`col-span-2 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 shadow-lg ${
+                        className={`w-full py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 shadow-lg ${
                           allItemsChecked
-                            ? 'bg-emerald-600 text-white hover:bg-emerald-700 hover:scale-[1.02] active:scale-[0.98]'
+                            ? 'bg-emerald-600 text-white hover:bg-emerald-700 hover:scale-[1.01] active:scale-[0.99]'
                             : isLight
                               ? 'bg-slate-200 text-slate-600 border border-slate-300 hover:bg-slate-300'
                               : 'bg-slate-800 text-slate-400 border border-slate-700/50 hover:bg-slate-750'

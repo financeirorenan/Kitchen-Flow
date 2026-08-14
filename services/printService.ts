@@ -152,7 +152,7 @@ export const generateRawTextReceipt = (order: Partial<Order>, settings: AdminSet
   out += doubleDivider + '\n';
 
   if (order.paymentMethod) {
-    out += `PAGO VIA: ${paymentMethodLabel(order.paymentMethod).toUpperCase()} - R$ ${grandTotal}\n`;
+    out += `FORMA DE PAGAMENTO: ${paymentMethodLabel(order.paymentMethod).toUpperCase()} - R$ ${grandTotal}\n`;
     out += divider + '\n';
   }
 
@@ -526,7 +526,7 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
 
       ${order.paymentMethod ? `
         <div class="divider"></div>
-        <div class="bold" style="font-size: ${fontSizeSmall}; margin-bottom: 2px;">PAGO VIA:</div>
+        <div class="bold" style="font-size: ${fontSizeSmall}; margin-bottom: 2px; text-transform: uppercase;">FORMA DE PAGAMENTO:</div>
         <div style="display: flex; justify-content: space-between; font-size: ${fontSizeBase}; font-weight: 900; color: #000000 !important;">
           <span style="text-transform: uppercase;">${paymentMethodLabel(order.paymentMethod)}</span>
           <span class="bold">R$ ${(order.total || 0).toFixed(2).replace('.', ',')}</span>
