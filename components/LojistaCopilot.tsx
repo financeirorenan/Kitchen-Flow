@@ -65,20 +65,75 @@ import DashboardAlerts from "./DashboardAlerts";
 import CMVAnalysis from "./CMVAnalysis";
 import KaiAvatar, { KaiExpression, KaiPose } from "./KaiAvatar";
 
+const getSafeDate = (val: any): Date | null => {
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  if (typeof val === 'object') {
+    if (typeof val.toDate === 'function') {
+      try {
+        const d = val.toDate();
+        return isNaN(d.getTime()) ? null : d;
+      } catch {
+        // ignore
+      }
+    }
+    if (typeof val.seconds === 'number') {
+      const d = new Date(val.seconds * 1000 + (val.nanoseconds || 0) / 1000000);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    if (typeof val._seconds === 'number') {
+      const d = new Date(val._seconds * 1000);
+      return isNaN(d.getTime()) ? null : d;
+    }
+  }
+  const d = new Date(val);
+  return isNaN(d.getTime()) ? null : d;
+};
+
+const getOrderSafeDate = (o: Order): Date | null => {
+  return getSafeDate(o.paidAt || o.finishedAt || o.deliveredAt || o.createdAt);
+};
+
+const isCompletedOrder = (o: Order): boolean => {
+  if (o.status === "cancelled" || o.isSubTicket || o.mergedIntoOrderId) return false;
+  return o.status === "finished" || o.status === "delivered" || o.paymentStatus === "paid";
+};
+
+const isOrderOrSaleRecord = (r: FinancialRecord): boolean => {
+  if (r.orderId) return true;
+  const cat = (r.category || "").toLowerCase();
+  const desc = (r.description || "").toLowerCase();
+  return (
+    cat.startsWith("venda") ||
+    cat.startsWith("pedido") ||
+    cat.includes("vendas pdv") ||
+    cat.includes("venda balcão") ||
+    cat.includes("venda delivery") ||
+    cat.includes("vendas balcão / mesas") ||
+    desc.startsWith("pedido #") ||
+    desc.startsWith("venda #")
+  );
+};
+
+const isAberturaOrSuprimentoRecord = (r: FinancialRecord): boolean => {
+  const cat = (r.category || "").toLowerCase();
+  const desc = (r.description || "").toLowerCase();
+  return (
+    cat.includes("abertura") || cat.includes("suprimento") || cat.includes("troco") || cat.includes("reforço") ||
+    desc.includes("abertura") || desc.includes("suprimento") || desc.includes("troco") || desc.includes("reforço")
+  );
+};
+
+const formatLocalDateKey = (d: Date) => {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 const safeFormatISO = (val: any) => {
-  if (!val) return new Date().toISOString().split("T")[0];
-  let d: Date;
-  if (val instanceof Date) {
-    d = val;
-  } else if (typeof val === 'object' && (val as any).seconds) {
-    d = new Date((val as any).seconds * 1000);
-  } else {
-    d = new Date(val);
-  }
-  if (isNaN(d.getTime())) {
-    d = new Date();
-  }
-  return d.toISOString().split("T")[0];
+  const d = getSafeDate(val) || new Date();
+  return formatLocalDateKey(d);
 };
 
 interface LojistaCopilotProps {
@@ -119,7 +174,7 @@ export default function LojistaCopilot({
   currentUser,
   onUpdateSettings
 }: LojistaCopilotProps) {
-  const [selectedPeriod, setSelectedPeriod] = useState<PeriodType>("thisMonth");
+  const [selectedPeriod, setSelectedPeriod] = useState<PeriodType>("today");
 
   // Subscription / usage details calculation
   const subscriptionStats = useMemo(() => {
@@ -379,14 +434,17 @@ Como posso te ajudar a lucrar mais hoje? Pergunte abaixo ou clique em uma das su
     });
 
     orders.forEach(order => {
-      if (order.status === 'finished' || order.status === 'delivered') {
-        const orderDate = order.createdAt instanceof Date ? order.createdAt : new Date(order.createdAt);
-        const dayMatch = last7Days.find(d => 
-          d.date.getDate() === orderDate.getDate() && 
-          d.date.getMonth() === orderDate.getMonth()
-        );
-        if (dayMatch) {
-          dayMatch.sales += order.total || 0;
+      if (isCompletedOrder(order)) {
+        const orderDate = getOrderSafeDate(order);
+        if (orderDate) {
+          const dayMatch = last7Days.find(d => 
+            d.date.getDate() === orderDate.getDate() && 
+            d.date.getMonth() === orderDate.getMonth() &&
+            d.date.getFullYear() === orderDate.getFullYear()
+          );
+          if (dayMatch) {
+            dayMatch.sales += order.total || 0;
+          }
         }
       }
     });
@@ -400,9 +458,9 @@ Como posso te ajudar a lucrar mais hoje? Pergunte abaixo ou clique em uma das su
     today.setHours(0, 0, 0, 0);
     
     const todayOrders = orders.filter(o => {
-      if (o.isSubTicket || o.mergedIntoOrderId) return false;
-      const d = o.createdAt instanceof Date ? o.createdAt : new Date(o.createdAt);
-      return d >= today && (o.status === 'finished' || o.status === 'delivered');
+      if (!isCompletedOrder(o)) return false;
+      const d = getOrderSafeDate(o);
+      return d && d >= today;
     });
 
     return {
@@ -486,61 +544,64 @@ Como posso te ajudar a lucrar mais hoje? Pergunte abaixo ou clique em uma das su
   // Parse Date ranges based on Period
   const dateRange = useMemo(() => {
     const now = new Date();
-    let startDate = new Date();
-    let endDate = new Date();
+    let startDate: Date;
+    let endDate: Date;
     let periodName = "";
-    let previousStartDate = new Date();
-    let previousEndDate = new Date();
+    let previousStartDate: Date;
+    let previousEndDate: Date;
     let daysCount = 30;
 
     switch (selectedPeriod) {
       case "today":
-        startDate.setHours(0, 0, 0, 0);
-        endDate.setHours(23, 59, 59, 999);
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+        endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
         periodName = "Hoje";
         daysCount = 1;
         
         // Previous period = Yesterday
-        previousStartDate.setDate(now.getDate() - 1);
-        previousStartDate.setHours(0, 0, 0, 0);
-        previousEndDate.setDate(now.getDate() - 1);
-        previousEndDate.setHours(23, 59, 59, 999);
+        previousStartDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 0, 0, 0, 0);
+        previousEndDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59, 999);
         break;
       case "last7":
-        startDate.setDate(now.getDate() - 6);
-        startDate.setHours(0, 0, 0, 0);
-        endDate.setHours(23, 59, 59, 999);
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6, 0, 0, 0, 0);
+        endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
         periodName = "Últimos 7 dias";
         daysCount = 7;
 
         // Previous period = 7 days before
-        previousStartDate.setDate(now.getDate() - 13);
-        previousStartDate.setHours(0, 0, 0, 0);
-        previousEndDate.setDate(now.getDate() - 7);
-        previousEndDate.setHours(23, 59, 59, 999);
+        previousStartDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 13, 0, 0, 0, 0);
+        previousEndDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7, 23, 59, 59, 999);
         break;
       case "thisMonth":
-        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
         endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
         periodName = "Este Mês";
         
         // Days difference until today or full month
-        const endDay = now.getMonth() === startDate.getMonth() ? now.getDate() : endDate.getDate();
+        const endDay = now.getDate();
         daysCount = endDay;
 
         // Previous period = previous month same wide
-        previousStartDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        previousStartDate = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
         previousEndDate = new Date(now.getFullYear(), now.getMonth() - 1, endDay, 23, 59, 59, 999);
         break;
       case "lastMonth":
-        startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
         endDate = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
         periodName = "Mês Passado";
         daysCount = endDate.getDate();
 
         // Previous period = 2 months ago
-        previousStartDate = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+        previousStartDate = new Date(now.getFullYear(), now.getMonth() - 2, 1, 0, 0, 0, 0);
         previousEndDate = new Date(now.getFullYear(), now.getMonth() - 1, 0, 23, 59, 59, 999);
+        break;
+      default:
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+        endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+        periodName = "Este Mês";
+        daysCount = now.getDate();
+        previousStartDate = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
+        previousEndDate = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate(), 23, 59, 59, 999);
         break;
     }
 
@@ -551,27 +612,31 @@ Como posso te ajudar a lucrar mais hoje? Pergunte abaixo ou clique em uma das su
   const filteredData = useMemo(() => {
     const { startDate, endDate, previousStartDate, previousEndDate, daysCount } = dateRange;
 
-    // Filter active orders (excluding cancelled) in current and previous window
+    // Filter completed/delivered/paid orders (excluding cancelled, sub-tickets, or merged) in current and previous window
     const currentOrders = orders.filter(o => {
-      if (o.status === "cancelled") return false;
-      const d = new Date(o.createdAt);
+      if (!isCompletedOrder(o)) return false;
+      const d = getOrderSafeDate(o);
+      if (!d) return false;
       return d >= startDate && d <= endDate;
     });
 
     const previousOrders = orders.filter(o => {
-      if (o.status === "cancelled") return false;
-      const d = new Date(o.createdAt);
+      if (!isCompletedOrder(o)) return false;
+      const d = getOrderSafeDate(o);
+      if (!d) return false;
       return d >= previousStartDate && d <= previousEndDate;
     });
 
     // Filter financial manual records
     const currentManual = manualRecords.filter(r => {
-      const d = new Date(r.date);
+      const d = getSafeDate(r.date);
+      if (!d) return false;
       return d >= startDate && d <= endDate;
     });
 
     const previousManual = manualRecords.filter(r => {
-      const d = new Date(r.date);
+      const d = getSafeDate(r.date);
+      if (!d) return false;
       return d >= previousStartDate && d <= previousEndDate;
     });
 
@@ -585,29 +650,13 @@ Como posso te ajudar a lucrar mais hoje? Pergunte abaixo ou clique em uma das su
     // 1. FATURAMENTO BRUTO (Gross Revenue)
     const salesTotal = currentOrders.reduce((sum, o) => sum + (o.total || 0), 0);
     const manualIncome = currentManual
-      .filter(r => r.type === "income")
-      .filter(r => {
-        const cat = (r.category || "").toLowerCase();
-        const desc = (r.description || "").toLowerCase();
-        const isAberturaOrSuprimento = 
-          cat.includes("abertura") || cat.includes("suprimento") || cat.includes("troco") || cat.includes("reforço") ||
-          desc.includes("abertura") || desc.includes("suprimento") || desc.includes("troco") || desc.includes("reforço");
-        return !isAberturaOrSuprimento;
-      })
+      .filter(r => r.type === "income" && !isOrderOrSaleRecord(r) && !isAberturaOrSuprimentoRecord(r))
       .reduce((sum, r) => sum + (r.amount || 0), 0);
     const faturamentoCurrent = salesTotal + manualIncome;
 
     const prevSalesTotal = previousOrders.reduce((sum, o) => sum + (o.total || 0), 0);
     const prevManualIncome = previousManual
-      .filter(r => r.type === "income")
-      .filter(r => {
-        const cat = (r.category || "").toLowerCase();
-        const desc = (r.description || "").toLowerCase();
-        const isAberturaOrSuprimento = 
-          cat.includes("abertura") || cat.includes("suprimento") || cat.includes("troco") || cat.includes("reforço") ||
-          desc.includes("abertura") || desc.includes("suprimento") || desc.includes("troco") || desc.includes("reforço");
-        return !isAberturaOrSuprimento;
-      })
+      .filter(r => r.type === "income" && !isOrderOrSaleRecord(r) && !isAberturaOrSuprimentoRecord(r))
       .reduce((sum, r) => sum + (r.amount || 0), 0);
     const faturamentoPrev = prevSalesTotal + prevManualIncome;
 
@@ -908,13 +957,15 @@ Como posso te ajudar a lucrar mais hoje? Pergunte abaixo ou clique em uma das su
 
     const calculateStatsForRange = (startDate: Date, endDate: Date) => {
       const currentOrders = orders.filter(o => {
-        if (o.status === "cancelled") return false;
-        const d = new Date(o.createdAt);
+        if (!isCompletedOrder(o)) return false;
+        const d = getOrderSafeDate(o);
+        if (!d) return false;
         return d >= startDate && d <= endDate;
       });
 
       const currentManual = manualRecords.filter(r => {
-        const d = new Date(r.date);
+        const d = getSafeDate(r.date);
+        if (!d) return false;
         return d >= startDate && d <= endDate;
       });
 
@@ -924,15 +975,7 @@ Como posso te ajudar a lucrar mais hoje? Pergunte abaixo ou clique em uma das su
       // Gross faturamento
       const salesTotal = currentOrders.reduce((sum, o) => sum + (o.total || 0), 0);
       const manualIncome = currentManual
-        .filter(r => r.type === "income")
-        .filter(r => {
-          const cat = (r.category || "").toLowerCase();
-          const desc = (r.description || "").toLowerCase();
-          const isAberturaOrSuprimento = 
-            cat.includes("abertura") || cat.includes("suprimento") || cat.includes("troco") || cat.includes("reforço") ||
-            desc.includes("abertura") || desc.includes("suprimento") || desc.includes("troco") || desc.includes("reforço");
-          return !isAberturaOrSuprimento;
-        })
+        .filter(r => r.type === "income" && !isOrderOrSaleRecord(r) && !isAberturaOrSuprimentoRecord(r))
         .reduce((sum, r) => sum + (r.amount || 0), 0);
       const faturamento = salesTotal + manualIncome;
 
@@ -1014,7 +1057,7 @@ Como posso te ajudar a lucrar mais hoje? Pergunte abaixo ou clique em uma das su
     // Populate every day in the interval
     const temp = new Date(startDate);
     while (temp <= endDate) {
-      const key = temp.toISOString().split("T")[0];
+      const key = formatLocalDateKey(temp);
       const dayLabel = temp.toLocaleDateString("pt-BR", { day: "numeric", month: "short" });
       daysMap[key] = {
         label: dayLabel,
@@ -1030,7 +1073,8 @@ Como posso te ajudar a lucrar mais hoje? Pergunte abaixo ou clique em uma das su
 
     // Distribute orders
     currentOrders.forEach(o => {
-      const key = safeFormatISO(o.createdAt);
+      const orderDate = getOrderSafeDate(o);
+      const key = safeFormatISO(orderDate);
       if (daysMap[key]) {
         daysMap[key].faturamento += o.total || 0;
         
@@ -1054,13 +1098,8 @@ Como posso te ajudar a lucrar mais hoje? Pergunte abaixo ou clique em uma das su
       const key = safeFormatISO(r.date);
       if (daysMap[key]) {
         if (r.type === "income") {
-          const cat = (r.category || "").toLowerCase();
-          const desc = (r.description || "").toLowerCase();
-          const isAberturaOrSuprimento = 
-            cat.includes("abertura") || cat.includes("suprimento") || cat.includes("troco") || cat.includes("reforço") ||
-            desc.includes("abertura") || desc.includes("suprimento") || desc.includes("troco") || desc.includes("reforço");
-          if (!isAberturaOrSuprimento) {
-            daysMap[key].faturamento += r.amount;
+          if (!isOrderOrSaleRecord(r) && !isAberturaOrSuprimentoRecord(r)) {
+            daysMap[key].faturamento += r.amount || 0;
           }
         } else {
           // It's a direct expense
@@ -1139,14 +1178,14 @@ Como posso te ajudar a lucrar mais hoje? Pergunte abaixo ou clique em uma das su
     return { totalStockValue, dormantStockValue, dormantItemsCount };
   }, [rawMaterials, products]);
 
-  // Courier Stats (Logistics Payouts)
+  // Courier Stats (Logistics Payouts) filtered by selected date range
   const courierStats = useMemo(() => {
     let totalCourierFee = 0;
     let pendingCourierFee = 0;
     let settledCourierFee = 0;
     let totalDeliveryFee = 0;
 
-    (orders || []).forEach((o) => {
+    (filteredData.currentOrders || []).forEach((o) => {
       if (o.deliveryFee) {
         totalDeliveryFee += Number(o.deliveryFee);
       }
@@ -1162,7 +1201,7 @@ Como posso te ajudar a lucrar mais hoje? Pergunte abaixo ou clique em uma das su
     });
 
     return { totalCourierFee, pendingCourierFee, settledCourierFee, totalDeliveryFee };
-  }, [orders]);
+  }, [filteredData.currentOrders]);
 
   // Request 100% Offline Real-Time AI Business Diagnostic from Kai
   const handleExplainOperation = () => {
@@ -1802,7 +1841,7 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
       {/* RENDER ACTIVE TAB SEPARATORS */}
       {activeSubTab === 'overview' && (
         <div className="space-y-6 animate-in fade-in duration-500 w-full">
-          <AIInsights sales={orders} inventory={products} />
+          <AIInsights sales={filteredData.currentOrders} inventory={products} />
           
           <DashboardAlerts 
             products={products} 
@@ -2394,13 +2433,29 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1 bg-slate-900/90 border border-slate-800 p-1 rounded-xl">
+                  {(["today", "last7", "thisMonth", "lastMonth"] as PeriodType[]).map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => setSelectedPeriod(p)}
+                      className={`px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition-all cursor-pointer ${
+                        selectedPeriod === p
+                          ? "bg-indigo-600 text-white shadow-md font-black"
+                          : "text-slate-400 hover:text-white hover:bg-slate-800/60"
+                      }`}
+                    >
+                      {p === "today" ? "Hoje" : p === "last7" ? "7 Dias" : p === "thisMonth" ? "Este Mês" : "Mês Ant."}
+                    </button>
+                  ))}
+                </div>
+
                 <button
                   onClick={handleExplainOperation}
-                  className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-extrabold text-[10px] uppercase tracking-wider rounded-xl transition-all shadow-lg shadow-indigo-600/20 flex items-center gap-2 cursor-pointer"
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-extrabold text-[10px] uppercase tracking-wider rounded-xl transition-all shadow-lg shadow-indigo-600/20 flex items-center gap-2 cursor-pointer"
                 >
                   <Sparkles size={14} className="animate-pulse text-amber-300" />
-                  Auditoria de Inteligência KAI
+                  Auditoria KAI
                 </button>
               </div>
             </div>
@@ -2461,23 +2516,23 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                 </div>
               </div>
 
-              {/* Card 3: Termômetro 0 a 0 do Dia */}
+              {/* Card 3: Termômetro 0 a 0 do Período */}
               <div className="bg-slate-900/90 border border-slate-800/80 p-4 rounded-2xl flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                      <Target size={12} className="text-amber-400" /> Meta 0a0 (Equilíbrio Hoje)
+                      <Target size={12} className="text-amber-400" /> Meta 0a0 ({selectedPeriod === 'today' ? 'Equilíbrio Hoje' : selectedPeriod === 'last7' ? 'Equilíbrio 7D' : selectedPeriod === 'thisMonth' ? 'Equilíbrio Mês' : 'Equilíbrio Mês Ant.'})
                     </span>
                     <span className="text-[9px] font-extrabold text-amber-400">
-                      R$ {stats.dailyBreakEven.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}/dia
+                      R$ {stats.pontoEquilibrio.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}{selectedPeriod === 'today' ? '/dia' : ''}
                     </span>
                   </div>
                   <div className="flex items-baseline justify-between mt-1">
                     <span className="text-xl font-black text-white">
-                      R$ {dailyStats.total.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      R$ {stats.faturamento.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
-                    <span className={`text-[10px] font-black ${dailyStats.total >= stats.dailyBreakEven ? 'text-emerald-400' : 'text-amber-400'}`}>
-                      {stats.dailyBreakEven > 0 ? Math.round((dailyStats.total / stats.dailyBreakEven) * 100) : 0}%
+                    <span className={`text-[10px] font-black ${stats.faturamento >= stats.pontoEquilibrio ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      {stats.pontoEquilibrio > 0 ? Math.round((stats.faturamento / stats.pontoEquilibrio) * 100) : 0}%
                     </span>
                   </div>
                 </div>
@@ -2485,14 +2540,14 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                 <div className="mt-3">
                   <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700/50">
                     <div 
-                      className={`h-full transition-all duration-500 rounded-full ${dailyStats.total >= stats.dailyBreakEven ? 'bg-emerald-500' : 'bg-amber-400'}`}
-                      style={{ width: `${Math.min(100, stats.dailyBreakEven > 0 ? (dailyStats.total / stats.dailyBreakEven) * 100 : 0)}%` }}
+                      className={`h-full transition-all duration-500 rounded-full ${stats.faturamento >= stats.pontoEquilibrio ? 'bg-emerald-500' : 'bg-amber-400'}`}
+                      style={{ width: `${Math.min(100, stats.pontoEquilibrio > 0 ? (stats.faturamento / stats.pontoEquilibrio) * 100 : 0)}%` }}
                     />
                   </div>
                   <span className="text-[8.5px] text-slate-400 font-bold block mt-1">
-                    {dailyStats.total >= stats.dailyBreakEven 
-                      ? "🟢 Contas do dia cobertas! Sobra ativa." 
-                      : `Faltam R$ ${Math.max(0, stats.dailyBreakEven - dailyStats.total).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} para equilibrar.`}
+                    {stats.faturamento >= stats.pontoEquilibrio 
+                      ? "🟢 Contas do período cobertas! Sobra ativa." 
+                      : `Faltam R$ ${Math.max(0, stats.pontoEquilibrio - stats.faturamento).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} para equilibrar.`}
                   </span>
                 </div>
               </div>
