@@ -1041,7 +1041,14 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
           >
             <div className="w-32 h-32 sm:w-40 sm:h-40 rounded-[2rem] overflow-hidden shrink-0 border border-slate-100/50 relative flex items-center justify-center bg-slate-50">
               {product.image ? (
-                <img src={product.image} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" referrerPolicy="no-referrer" />
+                <img 
+                  src={product.image} 
+                  alt={product.name}
+                  loading="lazy"
+                  decoding="async"
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" 
+                  referrerPolicy="no-referrer" 
+                />
               ) : (
                 <div className="flex flex-col items-center gap-1 opacity-20">
                    <Package size={32} className="text-slate-500" />
@@ -1306,7 +1313,14 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                         >
                           <div className="w-20 h-20 rounded-3xl overflow-hidden shrink-0 bg-slate-100 flex items-center justify-center border border-slate-100 relative">
                              {item.product.image ? (
-                               <img src={item.product.image} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                               <img 
+                                 src={item.product.image} 
+                                 alt={item.product.name}
+                                 loading="lazy"
+                                 decoding="async"
+                                 referrerPolicy="no-referrer"
+                                 className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" 
+                               />
                              ) : (
                                <Package size={24} className="text-slate-300" />
                              )}
@@ -2025,7 +2039,14 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                         {/* Image / Icon container */}
                         <div className="w-20 h-20 bg-slate-50 rounded-3xl overflow-hidden shrink-0 flex items-center justify-center border border-slate-100 relative shadow-inner">
                           {p.image ? (
-                            <img src={p.image} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" referrerPolicy="no-referrer" />
+                            <img 
+                              src={p.image} 
+                              alt={p.name}
+                              loading="lazy"
+                              decoding="async"
+                              className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" 
+                              referrerPolicy="no-referrer" 
+                            />
                           ) : (
                             <UtensilsCrossed size={28} className="text-slate-300" />
                           )}
@@ -2152,7 +2173,13 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                   <X size={24} strokeWidth={3} />
                 </button>
                 {selectedProductForModal.image ? (
-                  <img src={selectedProductForModal.image} className="w-full h-full object-cover" />
+                  <img 
+                    src={selectedProductForModal.image} 
+                    alt={selectedProductForModal.name}
+                    decoding="async"
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover" 
+                  />
                 ) : (
                   <div className="flex flex-col items-center gap-3 opacity-20">
                     <Package size={64} className="text-slate-400" />

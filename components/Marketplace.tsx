@@ -988,16 +988,108 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   }, showPaymentModal);
   useClickOutside(helpModalRef, () => setShowHelpModal(false), showHelpModal);
 
+  // Global memory cache for instant store and product switching (0ms latency)
+  const globalStoreCache = useRef<Map<string, {
+    products: Product[];
+    settings: DigitalMenuSettings;
+    adminSettings: any;
+    timestamp: number;
+  }>>(new Map());
+
   // Store Detail State
   const [selectedTenant, setSelectedTenant] = useState<Tenant | null>(null);
-  const [storeSettings, setStoreSettings] =
-    useState<DigitalMenuSettings | null>(null);
-  const [storeAdminSettings, setStoreAdminSettings] = useState<any | null>(
-    null,
-  );
+  const [storeSettings, setStoreSettings] = useState<DigitalMenuSettings | null>(null);
+  const [storeAdminSettings, setStoreAdminSettings] = useState<any | null>(null);
   const [storeProducts, setStoreProducts] = useState<Product[]>([]);
   const [isStoreLoading, setIsStoreLoading] = useState(false);
-  const [initialLoading, setInitialLoading] = useState(true);
+  
+  // Instant Initial State using local cache (SWR pattern)
+  const [initialLoading, setInitialLoading] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem("mp_tenants_cache");
+      return !cached || JSON.parse(cached).length === 0;
+    } catch {
+      return true;
+    }
+  });
+
+  // Prefetch store data silently in background on hover/touch
+  const prefetchStoreData = useCallback(async (tenant: Tenant) => {
+    if (!tenant?.id) return;
+    if (globalStoreCache.current.has(tenant.id)) {
+      const existing = globalStoreCache.current.get(tenant.id)!;
+      if (Date.now() - existing.timestamp < 1000 * 60 * 5) {
+        return; // Cache still warm (5 min)
+      }
+    }
+
+    try {
+      const settingsRef = doc(db, "settings", tenant.id);
+      const productsQ = query(
+        collection(db, "products"),
+        where("tenantId", "==", tenant.id),
+        limit(300),
+      );
+
+      const [settingsSnap, productsSnap] = await Promise.all([
+        getDoc(settingsRef),
+        getDocs(productsQ)
+      ]);
+
+      const loadedProducts = productsSnap.docs.map(
+        (doc) => ({ ...doc.data(), id: doc.id }) as Product
+      );
+
+      let builtSettings: DigitalMenuSettings;
+      let adminSet: any = null;
+
+      if (settingsSnap.exists()) {
+        const data = settingsSnap.data();
+        builtSettings = {
+          restaurantName: tenant.name,
+          primaryColor: "#008080",
+          welcomeMessage: "Bem-vindo ao nosso cardápio!",
+          bannerUrl: "",
+          logoUrl: tenant.logoUrl || "",
+          allowOrdering: true,
+          showStock: false,
+          ...(data.digitalMenu || {}),
+        };
+        if (data.admin) adminSet = data.admin;
+      } else {
+        builtSettings = {
+          restaurantName: tenant.name,
+          primaryColor: "#008080",
+          welcomeMessage: "Bem-vindo ao nosso cardápio!",
+          bannerUrl: "",
+          logoUrl: tenant.logoUrl || "",
+          allowOrdering: true,
+          showStock: false,
+        };
+      }
+
+      globalStoreCache.current.set(tenant.id, {
+        products: loadedProducts,
+        settings: builtSettings,
+        adminSettings: adminSet,
+        timestamp: Date.now()
+      });
+
+      // Also persist small snapshot in sessionStorage
+      try {
+        sessionStorage.setItem(`mp_store_${tenant.id}`, JSON.stringify({
+          products: loadedProducts,
+          settings: builtSettings,
+          adminSettings: adminSet,
+          timestamp: Date.now()
+        }));
+      } catch {
+        // Ignore quota limits in sessionStorage
+      }
+    } catch (e) {
+      console.warn("Background prefetch error:", e);
+    }
+  }, []);
 
   // Use ref for Firestore product listener to prevent leaks and isolation issues
   const productListenerRef = React.useRef<(() => void) | null>(null);
@@ -1027,6 +1119,28 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   }, [profile]);
 
   useEffect(() => {
+    // 1. Try restoring tenants and settings from sessionStorage immediately
+    try {
+      const cachedTenants = sessionStorage.getItem("mp_tenants_cache");
+      if (cachedTenants) {
+        const parsed = JSON.parse(cachedTenants);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setTenants(parsed);
+          setInitialLoading(false);
+        }
+      }
+      const cachedSettings = sessionStorage.getItem("mp_settings_cache");
+      if (cachedSettings) {
+        setTenantsSettings(JSON.parse(cachedSettings));
+      }
+      const cachedCats = sessionStorage.getItem("mp_cats_cache");
+      if (cachedCats) {
+        setCommerceCategories(JSON.parse(cachedCats));
+      }
+    } catch {
+      // Ignore cache parsing errors
+    }
+
     const q = query(
       collection(db, "tenants"),
       where("active", "==", true),
@@ -1035,10 +1149,12 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        setTenants(
-          snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }) as Tenant),
-        );
+        const tenantList = snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }) as Tenant);
+        setTenants(tenantList);
         setInitialLoading(false);
+        try {
+          sessionStorage.setItem("mp_tenants_cache", JSON.stringify(tenantList));
+        } catch {}
       },
       (error) => {
         console.error("Erro ao carregar restaurantes:", error);
@@ -1066,6 +1182,9 @@ const Marketplace: React.FC<MarketplaceProps> = ({
           settingsMap[doc.id] = doc.data();
         });
         setTenantsSettings(settingsMap);
+        try {
+          sessionStorage.setItem("mp_settings_cache", JSON.stringify(settingsMap));
+        } catch {}
       },
       (error) => {
         console.error("Erro ao carregar configurações de inquilinos:", error);
@@ -1080,6 +1199,9 @@ const Marketplace: React.FC<MarketplaceProps> = ({
           id: doc.id,
         })).sort((a: any, b: any) => (a.name || "").localeCompare(b.name || ""));
         setCommerceCategories(cats);
+        try {
+          sessionStorage.setItem("mp_cats_cache", JSON.stringify(cats));
+        } catch {}
       },
       (error) => {
         console.error("Erro ao carregar categorias de comércio:", error);
@@ -1174,47 +1296,86 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   }, [activeOrders]);
 
   useEffect(() => {
-    // Function to load store data
+    // Optimized High-Speed Store Loader with Instant Cache & Background SWR
     const loadStoreData = async (tenant: Tenant) => {
-      setIsStoreLoading(true);
-      // Clear current state immediately to avoid showing wrong products
-      setStoreProducts([]);
-
       if (productListenerRef.current) {
         productListenerRef.current();
         productListenerRef.current = null;
       }
 
+      // Check In-Memory Cache first (0ms instantaneous transition)
+      const memCached = globalStoreCache.current.get(tenant.id);
+      if (memCached && memCached.products.length > 0) {
+        setStoreSettings(memCached.settings);
+        setStoreAdminSettings(memCached.adminSettings);
+        setStoreProducts(memCached.products);
+        setSelectedTenant(tenant);
+        setIsStoreLoading(false);
+      } else {
+        // Check SessionStorage Cache
+        try {
+          const sessionSaved = sessionStorage.getItem(`mp_store_${tenant.id}`);
+          if (sessionSaved) {
+            const parsed = JSON.parse(sessionSaved);
+            if (parsed && parsed.products) {
+              setStoreSettings(parsed.settings);
+              setStoreAdminSettings(parsed.adminSettings);
+              setStoreProducts(parsed.products);
+              setSelectedTenant(tenant);
+              setIsStoreLoading(false);
+            }
+          }
+        } catch {
+          // fallback to live fetch
+        }
+
+        // If no cache at all, populate basic settings immediately from tenantsSettings to prevent full screen block
+        const existingSnapshot = tenantsSettings[tenant.id];
+        if (existingSnapshot) {
+          const quickDigitalMenu = existingSnapshot.digitalMenu || {};
+          setStoreSettings({
+            restaurantName: tenant.name,
+            primaryColor: "#008080",
+            welcomeMessage: "Bem-vindo ao nosso cardápio!",
+            bannerUrl: "",
+            logoUrl: tenant.logoUrl || "",
+            allowOrdering: true,
+            showStock: false,
+            ...quickDigitalMenu,
+          });
+          if (existingSnapshot.admin) {
+            setStoreAdminSettings(existingSnapshot.admin);
+          }
+          setSelectedTenant(tenant);
+        } else {
+          setIsStoreLoading(true);
+        }
+      }
+
       try {
         const settingsRef = doc(db, "settings", tenant.id);
-        const settingsSnap = await getDoc(settingsRef);
-
         const productsQ = query(
           collection(db, "products"),
           where("tenantId", "==", tenant.id),
           limit(300),
         );
 
-        // Save the listener ref
-        productListenerRef.current = onSnapshot(
-          productsQ,
-          (snapshot) => {
-            const loadedProducts = snapshot.docs.map(
-              (doc) => ({ ...doc.data(), id: doc.id }) as Product,
-            );
-            console.log(
-              `Loaded ${loadedProducts.length} products for tenant ${tenant.id}`,
-            );
-            setStoreProducts(loadedProducts);
-          },
-          (error) => {
-            console.error("Erro ao carregar produtos da loja:", error);
-          },
+        // Fetch settings & initial products in parallel for maximum speed
+        const [settingsSnap, productsSnap] = await Promise.all([
+          getDoc(settingsRef),
+          getDocs(productsQ)
+        ]);
+
+        const loadedProducts = productsSnap.docs.map(
+          (doc) => ({ ...doc.data(), id: doc.id }) as Product,
         );
+
+        let finalSettings: DigitalMenuSettings;
+        let finalAdmin: any = null;
 
         if (settingsSnap.exists()) {
           const data = settingsSnap.data();
-          setStoreSettings({
+          finalSettings = {
             restaurantName: tenant.name,
             primaryColor: "#008080",
             welcomeMessage: "Bem-vindo ao nosso cardápio!",
@@ -1223,10 +1384,10 @@ const Marketplace: React.FC<MarketplaceProps> = ({
             allowOrdering: true,
             showStock: false,
             ...(data.digitalMenu || {}),
-          });
-          if (data.admin) setStoreAdminSettings(data.admin);
+          };
+          if (data.admin) finalAdmin = data.admin;
         } else {
-          setStoreSettings({
+          finalSettings = {
             restaurantName: tenant.name,
             primaryColor: "#008080",
             welcomeMessage: "Bem-vindo ao nosso cardápio!",
@@ -1234,9 +1395,51 @@ const Marketplace: React.FC<MarketplaceProps> = ({
             logoUrl: tenant.logoUrl || "",
             allowOrdering: true,
             showStock: false,
-          });
+          };
         }
+
+        // Apply immediately
+        setStoreSettings(finalSettings);
+        if (finalAdmin) setStoreAdminSettings(finalAdmin);
+        setStoreProducts(loadedProducts);
         setSelectedTenant(tenant);
+
+        // Cache result for next instant load
+        globalStoreCache.current.set(tenant.id, {
+          products: loadedProducts,
+          settings: finalSettings,
+          adminSettings: finalAdmin,
+          timestamp: Date.now()
+        });
+
+        try {
+          sessionStorage.setItem(`mp_store_${tenant.id}`, JSON.stringify({
+            products: loadedProducts,
+            settings: finalSettings,
+            adminSettings: finalAdmin,
+            timestamp: Date.now()
+          }));
+        } catch {}
+
+        // Listen for live updates in real time
+        productListenerRef.current = onSnapshot(
+          productsQ,
+          (snapshot) => {
+            const updated = snapshot.docs.map(
+              (doc) => ({ ...doc.data(), id: doc.id }) as Product,
+            );
+            setStoreProducts(updated);
+            // update cache
+            const cached = globalStoreCache.current.get(tenant.id);
+            if (cached) {
+              cached.products = updated;
+              cached.timestamp = Date.now();
+            }
+          },
+          (error) => {
+            console.error("Erro ao escutar produtos da loja:", error);
+          },
+        );
       } catch (err) {
         console.error("Error loading store data:", err);
       } finally {
@@ -1979,6 +2182,8 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                       initial={{ opacity: 0, y: 25 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: index * 0.05 }}
+                      onMouseEnter={() => prefetchStoreData(tenant)}
+                      onTouchStart={() => prefetchStoreData(tenant)}
                       onClick={() => handleStoreClick(tenant)}
                       className={`bg-white rounded-[2.25rem] border border-slate-105 p-5 flex items-center gap-4.5 shadow-[0_8px_30px_rgb(0,0,0,0.015)] hover:shadow-[0_20px_50px_rgba(255,79,24,0.08)] hover:border-brand-primary/10 transition-all duration-300 cursor-pointer group hover:-translate-y-1 text-left relative overflow-hidden ${
                         !isOpen ? "opacity-90" : ""
@@ -1996,6 +2201,9 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                             tenant.logoUrl ||
                             `https://picsum.photos/seed/${tenant.id}/200/200`
                           }
+                          alt={tenant.name}
+                          loading="lazy"
+                          decoding="async"
                           referrerPolicy="no-referrer"
                           className={`w-full h-full object-cover rounded-[1.25rem] group-hover:scale-105 transition-transform duration-500 ${
                             !isOpen ? "grayscale opacity-75 contrast-75 brightness-95" : ""
@@ -2124,6 +2332,8 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                         key={tenant.id}
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
+                        onMouseEnter={() => prefetchStoreData(tenant)}
+                        onTouchStart={() => prefetchStoreData(tenant)}
                         onClick={() => handleStoreClick(tenant)}
                         className={`bg-white rounded-[2rem] p-4 flex items-center gap-4 border border-slate-100 shadow-sm group cursor-pointer active:scale-95 transition-all ${
                           !isOpen ? "opacity-90" : ""
@@ -2137,6 +2347,9 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                               tenant.logoUrl ||
                               `https://picsum.photos/seed/${tenant.id}/200/200`
                             }
+                            alt={tenant.name}
+                            loading="lazy"
+                            decoding="async"
                             referrerPolicy="no-referrer"
                             className={`w-full h-full object-cover transition-all duration-350 ${
                               !isOpen ? "grayscale opacity-75 contrast-75 brightness-95" : ""
