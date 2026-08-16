@@ -1143,13 +1143,13 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
     const q = query(
       collection(db, "tenants"),
-      where("active", "==", true),
-      limit(50),
+      limit(100),
     );
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        const tenantList = snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }) as Tenant);
+        const rawList = snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }) as Tenant);
+        const tenantList = rawList.filter((t) => t.active !== false);
         setTenants(tenantList);
         setInitialLoading(false);
         try {

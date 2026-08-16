@@ -816,6 +816,10 @@ const App: React.FC = () => {
       if (currentProject !== 'WEBSITE') setCurrentProject('WEBSITE');
     } else if (path.startsWith('/saas')) {
       if (authLoading) return; // Aguarda o fim do carregamento da autenticação antes de redirecionar
+      if (!user) {
+        navigate('/login', { replace: true });
+        return;
+      }
       if (currentUserData) {
         if (currentUserData.role === 'COURIER') {
           navigate('/entregador', { replace: true });
@@ -834,6 +838,7 @@ const App: React.FC = () => {
           return;
         }
       } else if (!isSuperAdmin) {
+        navigate('/marketplace', { replace: true });
         return;
       }
       if (viewingTenantId) {
@@ -845,6 +850,13 @@ const App: React.FC = () => {
       if (!activeTab.startsWith('saas-')) setActiveTab('saas-admin');
     } else if (path.startsWith('/lojista') || path.startsWith('/painel') || path.startsWith('/admin') || path.startsWith('/loja') || path.startsWith('/pdv') || path.startsWith('/mesas') || path.startsWith('/financeiro') || path.startsWith('/kds') || path.startsWith('/estoque') || path.startsWith('/suporte') || path.startsWith('/relatorios') || path.startsWith('/insights') || path.startsWith('/configuracoes')) {
       if (authLoading) return; // Aguarda autenticação
+      
+      // Se não há usuário logado, nunca acessa o painel do lojista ou KDS
+      if (!user) {
+        navigate('/marketplace', { replace: true });
+        return;
+      }
+
       if (currentUserData) {
         if (currentUserData.role === 'COURIER') {
           navigate('/entregador', { replace: true });
@@ -966,6 +978,47 @@ const App: React.FC = () => {
           }
         } else {
           targetTab = 'merchant-copilot';
+        }
+      }
+
+      // Validação estrita de RBAC por cargo/permissão cadastrada
+      if (currentUserData && !isSuperAdmin && currentUserData.role !== 'OWNER' && currentUserData.role !== 'ADMIN') {
+        const userPerms = getUserPermissions(currentUserData);
+        const TAB_REQUIRED_PERMISSIONS: Record<string, Permission> = {
+          'pos': 'pos_access',
+          'tables': 'tables_manage',
+          'finance': 'finance_view',
+          'kds': 'kds_view',
+          'kds-kitchen-only': 'kds_kitchen_only_view',
+          'delivery': 'delivery_manage',
+          'inventory': 'inventory_edit',
+          'digital-menu': 'digital_menu_manage',
+          'customers': 'customers_manage',
+          'cmv': 'cmv_analysis',
+          'users': 'users_manage',
+          'fiscal': 'fiscal_manage',
+          'settings': 'admin_settings_manage',
+          'merchant-copilot': 'finance_view',
+          'intelligent-reports': 'cmv_analysis',
+          'ai-insights': 'dashboard_view',
+        };
+
+        const requiredPerm = TAB_REQUIRED_PERMISSIONS[targetTab];
+        if (requiredPerm && !userPerms.includes(requiredPerm)) {
+          // Usuário não tem permissão para a aba requisitada; redirecionar para a primeira aba permitida
+          let fallbackTab = 'support';
+          if (userPerms.includes('pos_access')) fallbackTab = 'pos';
+          else if (userPerms.includes('tables_manage')) fallbackTab = 'tables';
+          else if (userPerms.includes('kds_kitchen_only_view')) fallbackTab = 'kds-kitchen-only';
+          else if (userPerms.includes('kds_view')) fallbackTab = 'kds';
+          else if (userPerms.includes('delivery_manage')) fallbackTab = 'delivery';
+          else if (userPerms.includes('inventory_edit')) fallbackTab = 'inventory';
+          else if (userPerms.includes('digital_menu_manage')) fallbackTab = 'digital-menu';
+          else if (userPerms.includes('customers_manage')) fallbackTab = 'customers';
+          else if (userPerms.includes('finance_view')) fallbackTab = 'finance';
+          else if (userPerms.includes('admin_settings_manage')) fallbackTab = 'settings';
+
+          targetTab = fallbackTab;
         }
       }
 
