@@ -34,6 +34,8 @@ interface DigitalMenuProps {
   onToggleFavorite?: (e: React.MouseEvent) => void;
   restaurantAddress?: string;
   restaurantCity?: string;
+  isOpen?: boolean;
+  openStatusMessage?: string;
 }
 
 interface CartItem {
@@ -64,6 +66,8 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
   onToggleFavorite,
   restaurantAddress,
   restaurantCity,
+  isOpen = true,
+  openStatusMessage,
 }) => {
   const [activeCategory, setActiveCategory] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -917,14 +921,34 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
              <div className="absolute -top-10 right-8 w-20 h-20 bg-white p-1.5 rounded-[2rem] shadow-2xl border border-slate-50">
                <img 
                  src={settings.logoUrl || `https://picsum.photos/seed/${settings.restaurantName}/200/200`} 
-                 className="w-full h-full object-cover rounded-[1.5rem]" 
+                 className={`w-full h-full object-cover rounded-[1.5rem] ${!isOpen && !isSimulation ? 'grayscale contrast-75 brightness-95' : ''}`} 
                  alt={settings.restaurantName}
                />
              </div>
              
-             <h2 className="text-2xl font-black text-slate-900 tracking-tighter uppercase mb-2">{settings.restaurantName}</h2>
+             <div className="flex items-center gap-2 flex-wrap mb-1">
+               <h2 className="text-2xl font-black text-slate-900 tracking-tighter uppercase">{settings.restaurantName}</h2>
+             </div>
+
+             <div className="flex items-center gap-2 mb-3 flex-wrap">
+               <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 border ${
+                 isOpen || isSimulation
+                   ? "bg-emerald-50 text-emerald-700 border-emerald-200/60"
+                   : "bg-rose-50 text-rose-700 border-rose-200/60"
+               }`}>
+                 <span className={`w-1.5 h-1.5 rounded-full ${isOpen || isSimulation ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`} />
+                 {isOpen || isSimulation ? (openStatusMessage || "Aberto agora") : (openStatusMessage || "Fechado agora")}
+               </span>
+
+               {restaurantCity && (
+                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-slate-100 text-slate-600 border border-slate-200/60 flex items-center gap-1">
+                   <MapPin size={10} className="text-brand-primary" />
+                   {restaurantCity}
+                 </span>
+               )}
+             </div>
              
-             <div className="flex items-center gap-4 text-xs font-bold text-slate-400">
+             <div className="flex items-center gap-4 text-xs font-bold text-slate-400 flex-wrap">
                <div className="flex items-center gap-1.5">
                  <Star size={14} className="text-amber-500" fill="currentColor" />
                  <span className="text-slate-700">4.9</span>
@@ -944,6 +968,23 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Closed Banner Warning */}
+      {!isOpen && !isSimulation && (
+        <div className="px-6 mt-4">
+          <div className="bg-rose-50/90 border border-rose-200/80 rounded-2xl p-4 flex items-start gap-3 text-rose-900 shadow-sm">
+            <AlertTriangle size={20} className="text-rose-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-black uppercase tracking-wide text-rose-800">
+                Estabelecimento Fechado no Momento
+              </p>
+              <p className="text-[11px] font-medium text-rose-700 mt-0.5 leading-relaxed">
+                {openStatusMessage ? `${openStatusMessage}.` : "Este estabelecimento não está recebendo novos pedidos no momento."} Você pode consultar os itens do cardápio normalmente.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* SEARCH AND CATEGORIES (Screen 6) */}
       <div className="px-6 mt-8 space-y-6">
@@ -1831,6 +1872,14 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
 
               {checkoutStep !== 'success' && (
                 <div className="p-6 bg-white border-t space-y-4">
+                  {!isOpen && !isSimulation && (
+                    <div className="bg-rose-50 p-3.5 rounded-xl border border-rose-200 flex items-center gap-2.5 text-rose-800">
+                      <AlertTriangle size={16} className="shrink-0 text-rose-500" />
+                      <p className="text-[10px] font-bold">
+                        Estabelecimento fechado no momento ({openStatusMessage || "Fechado"}). Não é possível enviar pedidos.
+                      </p>
+                    </div>
+                  )}
                   {checkoutStep === 'cart' && cartTotal < minOrderValue && (
                     <div className="bg-amber-50 p-3 rounded-xl border border-amber-100 flex items-center gap-3 text-amber-700">
                       <AlertTriangle size={18} className="shrink-0" />
@@ -1841,11 +1890,13 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                   )}
                   <button 
                     disabled={
+                      (!isOpen && !isSimulation) ||
                       (checkoutStep === 'cart' && cartTotal < minOrderValue) ||
                       (checkoutStep === 'details' && (!customerName || !customerPhone || !paymentMethod || !orderType)) ||
                       (checkoutStep === 'details' && orderType === 'delivery' && (!customerAddress || !!cityMatchError || isValidatingCity))
                     }
                     onClick={() => {
+                      if (!isOpen && !isSimulation) return;
                       if (checkoutStep === 'cart') {
                         const hasSides = availableUpsells.sides.length > 0;
                         const hasDrinks = availableUpsells.drinks.length > 0;
@@ -1866,7 +1917,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                     className="w-full py-5 text-slate-900 rounded-2xl font-black text-xs uppercase tracking-[0.2em] shadow-xl active:scale-95 transition-all disabled:opacity-50"
                     style={{ backgroundColor: accentColor, boxShadow: `0 20px 25px -5px ${accentColor}33` }}
                   >
-                    {checkoutStep === 'cart' ? 'Finalizar Pedido' : 'Confirmar Pedido'}
+                    {!isOpen && !isSimulation ? 'Restaurante Fechado' : checkoutStep === 'cart' ? 'Finalizar Pedido' : 'Confirmar Pedido'}
                   </button>
                 </div>
               )}

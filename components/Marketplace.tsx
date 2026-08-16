@@ -673,48 +673,125 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       .trim();
   };
 
-  const getRestaurantCity = (tenant: Tenant, adminSettings: any) => {
+  // Helper para extrair cidade a partir de qualquer formato de endereço brasileiro
+  const extractCityFromAddress = (address?: string | null): string => {
+    if (!address || typeof address !== 'string') return '';
+    const cleanAddr = address.trim();
+    if (!cleanAddr) return '';
+
+    // Se já for apenas o nome de uma cidade (ou Cidade - UF / Cidade/UF)
+    // Ex: "Pradópolis - SP", "Ribeirão Preto / SP", "São Paulo, SP", "Pradópolis"
+    const directMatch = cleanAddr.match(/^([A-Za-zÀ-ÿ\s.'-]+?)(?:\s*[-/,]\s*[A-Z]{2})?$/);
+    if (directMatch && !/\d/.test(cleanAddr) && !/rua|avenida|av\.|alameda|travessa|rodovia|estrada|bairro|centro|praça/i.test(cleanAddr)) {
+      return directMatch[1].trim();
+    }
+
+    // Remove CEP (ex: "CEP 14850-000", "14850-000", "14850000")
+    const addrWithoutCep = cleanAddr.replace(/(?:cep:?\s*)?\b\d{5}-?\d{3}\b/gi, '').trim();
+
+    // Padrão brasileiro mais comum com estado: "... - Cidade - UF" ou "..., Cidade - UF" ou "..., Cidade/UF"
+    // Ex: "Rua 7 de Setembro, 120, Centro, Pradópolis - SP" -> "Pradópolis"
+    // Ex: "Av. Brasil, 1500 - Sala 2 - Ribeirão Preto - SP" -> "Ribeirão Preto"
+    const statePatternMatch = addrWithoutCep.match(/[,–—-]\s*([^,–—-]{2,40}?)\s*[-/–—]\s*([A-Z]{2})(?:\s*[,–—-]|$)/i);
+    if (statePatternMatch && statePatternMatch[1]) {
+      const candidate = statePatternMatch[1].trim();
+      if (candidate && !/^\d+$/.test(candidate)) {
+        return candidate;
+      }
+    }
+
+    // Padrão com barra: "Cidade/UF"
+    const slashMatch = addrWithoutCep.match(/[,–—-]\s*([^,–—-]{2,40}?)\s*\/\s*([A-Z]{2})/i);
+    if (slashMatch && slashMatch[1]) {
+      return slashMatch[1].trim();
+    }
+
+    // Dividir por hífens ou vírgulas
+    const parts = addrWithoutCep.split(/[,–—-]/).map(p => p.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      const lastPart = parts[parts.length - 1];
+      if (/^[A-Z]{2}$/i.test(lastPart) && parts.length >= 2) {
+        return parts[parts.length - 2];
+      }
+      const lastSlash = lastPart.split('/');
+      if (lastSlash.length === 2 && /^[A-Z]{2}$/i.test(lastSlash[1].trim())) {
+        return lastSlash[0].trim();
+      }
+      for (let i = parts.length - 1; i >= 0; i--) {
+        const p = parts[i];
+        if (!/\d/.test(p) && !/rua|avenida|av\.|alameda|travessa|estrada|rodovia|apto|bloco|casa|km/i.test(p) && p.length > 2) {
+          return p;
+        }
+      }
+    }
+
+    return parts[0] || '';
+  };
+
+  const getRestaurantCity = (tenant: Tenant, adminSettings?: any): string => {
+    // 1. Verificar se existe campo explícito de município / cidade no adminSettings
     if (adminSettings?.fiscal?.address?.municipio) {
       return adminSettings.fiscal.address.municipio;
     }
-    const rAddr = adminSettings?.address || tenant?.address || "";
-    if (rAddr) {
-      const parts = rAddr.split("-");
-      if (parts.length > 1) {
-        const lastPart = parts[parts.length - 1].trim(); 
-        const subParts = lastPart.split(","); 
-        if (subParts.length > 0) {
-          return subParts[0].trim();
-        }
-      }
-      const words = rAddr.split(",");
-      if (words.length > 1) {
-        const lastWord = words[words.length - 1].trim();
-        const slashParts = lastWord.split(/[\/-]/);
-        if (slashParts.length > 0) {
-          return slashParts[0].trim();
-        }
-      }
+    if (adminSettings?.city) {
+      return adminSettings.city;
     }
-    return tenant?.name?.toLowerCase()?.includes("pizza") ? "São Paulo" : "São Paulo"; // Fallback default
+    if (adminSettings?.municipio) {
+      return adminSettings.municipio;
+    }
+
+    // 2. Verificar se existe no objeto do tenant
+    if ((tenant as any)?.city) {
+      return (tenant as any).city;
+    }
+    if ((tenant as any)?.municipio) {
+      return (tenant as any).municipio;
+    }
+
+    // 3. Extrair do endereço completo
+    const address = adminSettings?.address || tenant?.address || "";
+    if (address) {
+      const extracted = extractCityFromAddress(address);
+      if (extracted) return extracted;
+    }
+
+    return "";
   };
 
   const getTenantOpenStatus = (tenantId: string) => {
     const settingSnapshot = tenantsSettings[tenantId];
-    if (!settingSnapshot) {
-      return { isOpen: true, message: "Aberto agora", showTime: "Aberto" };
+    const adminData = settingSnapshot?.admin || settingSnapshot || {};
+    const tenantData = tenants.find((t) => t.id === tenantId);
+
+    // 1. Prioridade máxima: Forçamento manual de fechamento ou abertura
+    const isForceClosed = adminData.isStoreForceClosed ?? settingSnapshot?.isStoreForceClosed ?? (tenantData as any)?.isStoreForceClosed ?? false;
+    const isForceOpen = adminData.isStoreForceOpen ?? settingSnapshot?.isStoreForceOpen ?? (tenantData as any)?.isStoreForceOpen ?? false;
+
+    if (isForceClosed) {
+      return { 
+        isOpen: false, 
+        showTime: "Fechado Manualmente", 
+        message: "Fechado agora", 
+        badge: "Fechado",
+        reason: "force_closed" 
+      };
+    }
+    if (isForceOpen) {
+      return { 
+        isOpen: true, 
+        showTime: "Aberto agora", 
+        message: "Aberto agora", 
+        badge: "Aberto",
+        reason: "force_open" 
+      };
     }
 
-    if (settingSnapshot.isStoreForceClosed) {
-      return { isOpen: false, showTime: "Fechado Manualmente", message: "Fechado agora" };
-    }
-    if (settingSnapshot.isStoreForceOpen) {
-      return { isOpen: true, showTime: "Aberto (Forçado)", message: "Aberto agora" };
-    }
-
-    const hours = settingSnapshot.businessHours;
+    // 2. Obter grade de horários (businessHours)
+    const hours: any[] = adminData.businessHours || settingSnapshot?.businessHours || (tenantData as any)?.businessHours || [];
+    
+    // Se não tiver horários cadastrados, padrão: Aberto
     if (!hours || !Array.isArray(hours) || hours.length === 0) {
-      return { isOpen: true, message: "Aberto agora", showTime: "Aberto" };
+      return { isOpen: true, message: "Aberto agora", showTime: "Aberto", badge: "Aberto", reason: "no_schedule" };
     }
 
     const DAYS_MAP = [
@@ -730,78 +807,125 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     const now = new Date();
     const todayIndex = now.getDay();
     const todayName = DAYS_MAP[todayIndex];
-    const isWeekDay = todayIndex >= 1 && todayIndex <= 5;
-    const isWeekend = todayIndex === 0 || todayIndex === 6;
 
-    const todaySchedules = hours.filter((h) => {
-      if (!h || !h.day) return false;
-      const dayClean = h.day.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-      const todayClean = todayName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-      if (dayClean === todayClean || dayClean.replace("-feira", "") === todayClean.replace("-feira", "")) {
+    // Função de match de dia robusta
+    const matchDay = (hDay: string, targetDayIndex: number) => {
+      if (!hDay) return false;
+      const targetName = DAYS_MAP[targetDayIndex];
+      const dayClean = hDay.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const targetClean = targetName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+      if (dayClean === targetClean || dayClean.replace("-feira", "") === targetClean.replace("-feira", "")) {
         return true;
       }
-      if (isWeekDay && (dayClean.includes("segunda a sexta") || dayClean.includes("seg a sex"))) {
+      if (targetDayIndex >= 1 && targetDayIndex <= 5 && (dayClean.includes("segunda a sexta") || dayClean.includes("seg a sex") || dayClean.includes("seg-sex") || dayClean.includes("dias uteis"))) {
         return true;
       }
-      if (isWeekend && (dayClean.includes("sabado e domingo") || dayClean.includes("sab e dom"))) {
+      if ((targetDayIndex === 0 || targetDayIndex === 6) && (dayClean.includes("sabado e domingo") || dayClean.includes("sab e dom") || dayClean.includes("fim de semana"))) {
         return true;
       }
       if (dayClean.includes("diario") || dayClean.includes("todos os dias")) {
         return true;
       }
       return false;
-    });
+    };
 
-    if (!todaySchedules || todaySchedules.length === 0) {
-      return { isOpen: true, message: "Aberto agora", showTime: "Aberto" };
-    }
-
-    if (todaySchedules.every((s) => s.isClosed)) {
-      return { isOpen: false, showTime: `Fechado (${todayName})`, message: "Fechado agora" };
-    }
-
-    const activeShifts = todaySchedules.filter((s) => !s.isClosed);
-    if (activeShifts.length === 0) {
-      return { isOpen: false, showTime: `Fechado (${todayName})`, message: "Fechado agora" };
-    }
-
+    // Horário atual formatado "HH:mm"
     const currentHours = now.getHours();
     const currentMinutes = now.getMinutes();
     const currentTimeStr = `${String(currentHours).padStart(2, "0")}:${String(currentMinutes).padStart(2, "0")}`;
 
-    const matchingShift = activeShifts.find((shift) => {
+    // A) Verificar turnos que viraram a madrugada de ontem
+    const yesterdayIndex = (todayIndex + 6) % 7;
+    const yesterdaySchedules = hours.filter(h => matchDay(h.day, yesterdayIndex));
+    const yesterdayActiveOvernightShift = yesterdaySchedules.find(shift => {
+      if (shift.isClosed) return false;
+      const open = shift.open || "00:00";
+      const close = shift.close || "23:59";
+      if (close < open) {
+        // Virou a noite de ontem para hoje (ex: 18:00 às 02:00)
+        return currentTimeStr <= close;
+      }
+      return false;
+    });
+
+    if (yesterdayActiveOvernightShift) {
+      return {
+        isOpen: true,
+        message: "Aberto agora",
+        showTime: `Aberto até ${yesterdayActiveOvernightShift.close}`,
+        badge: "Aberto",
+        reason: "overnight_shift"
+      };
+    }
+
+    // B) Turnos programados para hoje
+    const todaySchedules = hours.filter(h => matchDay(h.day, todayIndex));
+
+    if (!todaySchedules || todaySchedules.length === 0) {
+      return { isOpen: false, showTime: `Fechado (${todayName})`, message: "Fechado hoje", badge: "Fechado", reason: "no_today_shift" };
+    }
+
+    // Se todos os turnos de hoje estão marcados explicitamente como isClosed
+    if (todaySchedules.every(s => s.isClosed)) {
+      return { isOpen: false, showTime: `Fechado (${todayName})`, message: "Fechado hoje", badge: "Fechado", reason: "day_closed" };
+    }
+
+    const activeShifts = todaySchedules.filter(s => !s.isClosed);
+    if (activeShifts.length === 0) {
+      return { isOpen: false, showTime: `Fechado (${todayName})`, message: "Fechado hoje", badge: "Fechado", reason: "day_closed" };
+    }
+
+    // Ordenar turnos ativos por horário de abertura
+    activeShifts.sort((a, b) => (a.open || "").localeCompare(b.open || ""));
+
+    // Verificar se algum turno de hoje está aberto agora
+    const matchingShift = activeShifts.find(shift => {
       const openTime = shift.open || "00:00";
       const closeTime = shift.close || "23:59";
       if (closeTime < openTime) {
+        // Vira a noite (ex: 18:00 às 02:00)
         return currentTimeStr >= openTime || currentTimeStr <= closeTime;
       }
       return currentTimeStr >= openTime && currentTimeStr <= closeTime;
     });
 
     if (matchingShift) {
-      return { isOpen: true, message: "Aberto agora", showTime: `Aberto até ${matchingShift.close}` };
-    } else {
-      const firstShift = activeShifts[0];
-      return { isOpen: false, message: "Fechado agora", showTime: `Horário: das ${firstShift.open} às ${firstShift.close}` };
+      return {
+        isOpen: true,
+        message: "Aberto agora",
+        showTime: `Aberto até ${matchingShift.close}`,
+        badge: "Aberto",
+        reason: "active_shift"
+      };
     }
+
+    // Se não está em nenhum turno aberto agora:
+    const upcomingShift = activeShifts.find(s => (s.open || "00:00") > currentTimeStr);
+    if (upcomingShift) {
+      return {
+        isOpen: false,
+        message: "Fechado agora",
+        showTime: `Abre hoje às ${upcomingShift.open}`,
+        badge: "Fechado",
+        reason: "upcoming_shift"
+      };
+    }
+
+    // Já encerraram todos os turnos de hoje
+    const firstShift = activeShifts[0];
+    return {
+      isOpen: false,
+      message: "Fechado agora",
+      showTime: `Horário: das ${firstShift.open} às ${firstShift.close}`,
+      badge: "Fechado",
+      reason: "closed_for_day"
+    };
   };
 
   const customerCity = useMemo(() => {
-    if (!currentAddress) return "São Paulo";
-    const parts = currentAddress.split("-");
-    if (parts.length > 1) {
-      const secondLast = parts[parts.length - 2]?.trim();
-      const last = parts[parts.length - 1]?.trim();
-      if (last && last.toUpperCase() === last && last.length === 2 && secondLast) {
-        return secondLast.split(",").pop()?.trim() || "São Paulo";
-      }
-    }
-    const commaParts = currentAddress.split(",");
-    if (commaParts.length > 1) {
-      const last = commaParts[commaParts.length - 1]?.trim().split(/[\/-]/)[0]?.trim();
-      if (last) return last;
-    }
-    return "São Paulo";
+    if (!currentAddress) return "";
+    return extractCityFromAddress(currentAddress);
   }, [currentAddress]);
 
   const [isLocating, setIsLocating] = useState(false);
@@ -1373,6 +1497,8 @@ const Marketplace: React.FC<MarketplaceProps> = ({
           }}
           products={storeProducts}
           autoStart={true}
+          isOpen={getTenantOpenStatus(selectedTenant.id).isOpen}
+          openStatusMessage={getTenantOpenStatus(selectedTenant.id).showTime}
           whatsappNumber={
             storeAdminSettings?.socialMedia?.whatsapp ||
             storeAdminSettings?.phone
@@ -1904,18 +2030,15 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                             {status.showTime}
                           </span>
                           {(() => {
-                            const tenantCity = getRestaurantCity(tenant, null);
-                            const isSameCity = customerCity ? (
-                              normalizeString(tenantCity) === normalizeString(customerCity) ||
-                              normalizeString(customerCity).includes(normalizeString(tenantCity)) ||
-                              normalizeString(tenantCity).includes(normalizeString(customerCity))
-                            ) : true;
-                            return !isSameCity ? (
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-100 rounded-md animate-pulse">
-                                <MapPin size={9} strokeWidth={2.5} />
-                                {tenantCity}
+                            const tSettings = tenantsSettings[tenant.id]?.admin || tenantsSettings[tenant.id] || {};
+                            const tenantCity = getRestaurantCity(tenant, tSettings);
+                            if (!tenantCity) return null;
+                            return (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider bg-slate-100/80 text-slate-600 border border-slate-200/60 rounded-md">
+                                <MapPin size={9} className="text-brand-primary shrink-0" strokeWidth={2.5} />
+                                <span className="truncate max-w-[120px]">{tenantCity}</span>
                               </span>
-                            ) : null;
+                            );
                           })()}
                         </div>
 
@@ -2041,6 +2164,16 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                             }`}>
                               • {status.showTime}
                             </span>
+                            {(() => {
+                              const tSettings = tenantsSettings[tenant.id]?.admin || tenantsSettings[tenant.id] || {};
+                              const tenantCity = getRestaurantCity(tenant, tSettings);
+                              if (!tenantCity) return null;
+                              return (
+                                <span className="text-[9px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded flex items-center gap-1">
+                                  <MapPin size={9} className="text-brand-primary shrink-0" /> {tenantCity}
+                                </span>
+                              );
+                            })()}
                           </p>
                           
                           <div className="flex items-center gap-3 mt-2">
