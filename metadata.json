@@ -1,6 +1,6 @@
 {
   "name": "KitchenFlow",
-  "description": "KitchenFlow - Sistema de Gestão para Restaurantes com IA integrada.",
+  "description": "KitchenFlow - Ecossistema Gastronômico 360° com IA, PDV, KDS, Marketplace Aberto, App do Entregador, Motor Fiscal e DRE.",
   "requestFramePermissions": ["geolocation", "usb"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

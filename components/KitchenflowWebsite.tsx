@@ -40,7 +40,14 @@ import {
   RefreshCw,
   Search,
   Eye,
-  Settings
+  Settings,
+  Store,
+  MapPin,
+  Navigation,
+  Receipt,
+  QrCode,
+  Compass,
+  Star
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
@@ -176,20 +183,26 @@ export default function KitchenflowWebsite() {
   // -----------------------------------------------------------------
   // STAGE 1: STATES DO DASHBOARD VIVO (REAL-TIME MULTI-TAB SIMULATOR)
   // -----------------------------------------------------------------
-  const [activeTab, setActiveTab] = useState<'dre' | 'kds' | 'menu' | 'ai'>('dre');
+  const [activeTab, setActiveTab] = useState<'dre' | 'marketplace' | 'kds' | 'logistics' | 'ai'>('dre');
   const [liveFaturamento, setLiveFaturamento] = useState(4820);
   const [liveCmv, setLiveCmv] = useState(24.5);
   const [liveOrders, setLiveOrders] = useState([
     { id: '#1542', items: '1x Parmegiana de carne + 1x Refrigerante Lata', source: 'Mesa 08', status: 'preparando', time: 275 },
-    { id: '#1543', items: '2x X-tudo + 1x Batata frita', source: 'Delivery', status: 'pendente', time: 75 },
+    { id: '#1543', items: '2x X-tudo + 1x Batata frita', source: 'Marketplace', status: 'pendente', time: 75 },
     { id: '#1541', items: '1x Parmegiana de frango + 1x Suco Natural copo', source: 'Mesa 03', status: 'pronto', time: 660 },
+  ]);
+
+  // Logistics state
+  const [liveDeliveries, setLiveDeliveries] = useState([
+    { id: '#ENT-842', client: 'Carlos Silva', address: 'Av. Paulista, 1200 - Apto 82', dist: '2.4 km', fee: 'R$ 8,50', courier: 'Lucas Motoboy (Online)', status: 'em_rota' },
+    { id: '#ENT-843', client: 'Mariana Costa', address: 'Rua Augusta, 450', dist: '1.1 km', fee: 'R$ 6,00', courier: 'Pendente Despacho', status: 'aguardando' }
   ]);
 
   const [liveAiInsights, setLiveAiInsights] = useState<string[]>([
     "✨ IA do Kai: Analisando as vendas em tempo real do KitchenFlow...",
+    "✨ Marketplace em Alta: 3 novos pedidos recebidos nos últimos 15 minutos!",
     "✨ CMV Crítico: Custo da Carne Bovina subiu 8.5% no distribuidor principal",
     "✨ Ajuste Sugerido: Ajustar ficha técnica da Parmegiana de carne economiza R$ 3.20/prato",
-    "✨ Alerta de Estoque: Batata In Natura está operando abaixo da margem mínima de segurança",
     "✨ Sucesso Operacional: Sobra Limpa real de hoje atingiu a meta de 24.5% às 19:30"
   ]);
   const [aiInsightIndex, setAiInsightIndex] = useState(0);
@@ -237,13 +250,13 @@ export default function KitchenflowWebsite() {
     });
   };
 
-  // Simulates a menu item click and sending order to KDS
-  const handleSimulateMenuOrder = (itemName: string) => {
+  // Simulates a marketplace / menu item click and sending order to KDS
+  const handleSimulateMenuOrder = (itemName: string, source: string = 'Mesa 08') => {
     const nextId = `#15${Math.floor(Math.random() * 80) + 44}`;
     const newOrder = {
       id: nextId,
       items: `1x ${itemName}`,
-      source: `Mesa ${Math.floor(Math.random() * 11) + 1}`,
+      source,
       status: 'pendente',
       time: 0
     };
@@ -253,6 +266,11 @@ export default function KitchenflowWebsite() {
     
     // Switch to KDS tab automatically to show the user the live flow!
     setActiveTab('kds');
+  };
+
+  // Simulates accepting delivery
+  const handleAcceptDelivery = (delivId: string) => {
+    setLiveDeliveries(prev => prev.map(d => d.id === delivId ? { ...d, courier: 'Você (Entregador Conectado)', status: 'em_rota' } : d));
   };
 
   // AI Chat options click
@@ -307,8 +325,8 @@ export default function KitchenflowWebsite() {
 
   const videoStepsData = [
     {
-      title: "1. Pedido do Viva Lá Fome",
-      desc: "O cliente faz o pedido no cardápio digital (Mesa 08 ou Delivery). O pedido cai instantaneamente no PDV consolidado.",
+      title: "1. Pedido no Marketplace ou Salão",
+      desc: "O cliente faz o pedido no Marketplace Gastronômico, Cardápio QR Code de Mesa ou Delivery. O pedido entra instantaneamente no PDV consolidado.",
       badge: "Entrada Sincronizada",
       color: "from-orange-500/20 to-orange-500/5 border-orange-500/30",
       textColor: "text-orange-400"
@@ -479,7 +497,7 @@ export default function KitchenflowWebsite() {
       <div className="absolute top-[120vh] left-10 w-[500px] h-[500px] bg-orange-500/[0.03] rounded-full blur-[150px] pointer-events-none -z-20" />
 
       {/* Header / Navbar */}
-      <nav className="fixed top-0 left-0 right-0 z-50 bg-[#06080e]/85 backdrop-blur-md border-b border-white/5 transition-all">
+      <nav className="fixed top-0 left-0 right-0 z-50 bg-[#06080e]/90 backdrop-blur-md border-b border-white/5 transition-all">
         <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
           
           <div className="flex items-center gap-3">
@@ -493,7 +511,10 @@ export default function KitchenflowWebsite() {
           </div>
 
           {/* Links Desktop */}
-          <div className="hidden md:flex items-center gap-8">
+          <div className="hidden md:flex items-center gap-6">
+            <Link to="/marketplace" className="text-xs font-bold text-amber-400 hover:text-amber-300 transition-colors uppercase tracking-wider flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/20 px-3 py-1 rounded-full">
+              <Store size={12} className="text-amber-400" /> Marketplace
+            </Link>
             <a href="#operacao-conectada" className="text-xs font-semibold text-slate-400 hover:text-white transition-colors uppercase tracking-wider">Módulos</a>
             <a href="#video-acao" className="text-xs font-semibold text-slate-400 hover:text-white transition-colors uppercase tracking-wider">Como Funciona</a>
             <a href="#beneficios" className="text-xs font-semibold text-slate-400 hover:text-[#FF4F18] transition-colors uppercase tracking-wider flex items-center gap-1">Resultados <Sparkles size={11} className="text-[#FF4F18]" /></a>
@@ -536,6 +557,9 @@ export default function KitchenflowWebsite() {
               className="md:hidden border-t border-white/5 bg-[#06080e]/95 backdrop-blur-lg overflow-hidden py-6 px-6 space-y-4"
             >
               <div className="flex flex-col gap-4">
+                <Link to="/marketplace" onClick={() => setIsMobileMenuOpen(false)} className="text-sm font-bold text-amber-400 flex items-center gap-2">
+                  <Store size={15} /> Explorar Marketplace Gastronômico
+                </Link>
                 <a href="#operacao-conectada" onClick={() => setIsMobileMenuOpen(false)} className="text-sm font-semibold text-slate-300 hover:text-white transition-colors">Módulos</a>
                 <a href="#video-acao" onClick={() => setIsMobileMenuOpen(false)} className="text-sm font-semibold text-slate-300 hover:text-white transition-colors">Como Funciona</a>
                 <a href="#beneficios" onClick={() => setIsMobileMenuOpen(false)} className="text-sm font-semibold text-slate-300 hover:text-[#FF4F18] transition-colors">Resultados</a>
@@ -569,7 +593,7 @@ export default function KitchenflowWebsite() {
         {/* Left Column: Copy & CTAs */}
         <div className="lg:col-span-5 space-y-8 text-left">
           <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-orange-500/10 border border-orange-500/20 rounded-full text-[10px] font-mono text-orange-450 uppercase tracking-widest">
-            <Sparkles size={11} className="text-[#FF4F18] animate-pulse" /> Copiloto Operacional Ativo
+            <Sparkles size={11} className="text-[#FF4F18] animate-pulse" /> Ecossistema Gastronômico 360° com IA
           </div>
           
           <h1 className="text-4xl sm:text-5xl lg:text-[3.25rem] font-sans font-black text-white tracking-tight leading-[1.08]">
@@ -581,7 +605,7 @@ export default function KitchenflowWebsite() {
           </h1>
           
           <p className="text-sm sm:text-base text-slate-400 font-medium leading-relaxed max-w-lg">
-            O primeiro Copiloto Operacional inteligente que administra o seu restaurante com você. Integre PDV, KDS, estoque, delivery e financeiro com auditoria contínua de IA em tempo real.
+            O primeiro ecossistema gastronômico com Copiloto de IA em tempo real. Integre PDV, KDS multi-praça, Marketplace próprio, App de Entregadores com GPS, Motor Fiscal NFC-e e DRE automático.
           </p>
 
           <div className="flex flex-col sm:flex-row gap-4 pt-2">
@@ -591,19 +615,19 @@ export default function KitchenflowWebsite() {
             >
               Criar Conta Grátis <ArrowRight size={13} />
             </a>
-            <a 
-              href="#video-acao" 
-              className="px-7 py-4 bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white rounded-xl font-bold text-xs uppercase tracking-widest border border-white/5 shadow-md transition-all duration-300 flex items-center justify-center gap-2"
+            <Link 
+              to="/marketplace" 
+              className="px-7 py-4 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 hover:text-white rounded-xl font-bold text-xs uppercase tracking-widest border border-amber-500/20 shadow-md transition-all duration-300 flex items-center justify-center gap-2"
             >
-              Ver Como Funciona <Play size={12} className="fill-current text-slate-400" />
-            </a>
+              Ver Marketplace <Store size={14} className="text-amber-400" />
+            </Link>
           </div>
 
           {/* Quick benefits */}
           <div className="flex flex-wrap gap-x-6 gap-y-2 text-[11px] font-mono uppercase tracking-wider text-slate-500">
             <span className="flex items-center gap-1.5"><CheckCircle size={12} className="text-emerald-500" /> Sem Fidelidade</span>
             <span className="flex items-center gap-1.5"><CheckCircle size={12} className="text-emerald-500" /> Teste Grátis de 14 dias</span>
-            <span className="flex items-center gap-1.5"><CheckCircle size={12} className="text-emerald-500" /> Fisco & LGPD Homologados</span>
+            <span className="flex items-center gap-1.5"><CheckCircle size={12} className="text-emerald-500" /> Fisco & NFC-e Homologados</span>
           </div>
 
           {/* Social Claims */}
@@ -613,12 +637,12 @@ export default function KitchenflowWebsite() {
               <p className="text-[9px] text-slate-500 font-bold uppercase tracking-wider mt-1">Redução Média de CMV</p>
             </div>
             <div>
-              <p className="text-2xl font-black text-white tracking-tight">+14h</p>
-              <p className="text-[9px] text-slate-500 font-bold uppercase tracking-wider mt-1">Economizadas p/ Semana</p>
+              <p className="text-2xl font-black text-white tracking-tight">0%</p>
+              <p className="text-[9px] text-slate-500 font-bold uppercase tracking-wider mt-1">Taxas Abusivas p/ Pedido</p>
             </div>
             <div>
-              <p className="text-2xl font-black text-white tracking-tight">24h</p>
-              <p className="text-[9px] text-slate-500 font-bold uppercase tracking-wider mt-1">Monitoramento de IA</p>
+              <p className="text-2xl font-black text-white tracking-tight">3.2x</p>
+              <p className="text-[9px] text-slate-500 font-bold uppercase tracking-wider mt-1">Giro de Mesas Acelerado</p>
             </div>
           </div>
         </div>
@@ -659,7 +683,18 @@ export default function KitchenflowWebsite() {
                 }`}
                 id="tab-dre-selector"
               >
-                <BarChart2 size={13} /> Painel DRE
+                <BarChart2 size={13} /> DRE & CMV
+              </button>
+              <button
+                onClick={() => setActiveTab('marketplace')}
+                className={`px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all ${
+                  activeTab === 'marketplace'
+                    ? 'bg-[#FF4F18] text-white shadow-lg shadow-[#FF4F18]/25'
+                    : 'bg-slate-950/40 text-slate-400 hover:text-white hover:bg-slate-900 border border-white/5'
+                }`}
+                id="tab-marketplace-selector"
+              >
+                <Store size={13} /> Marketplace
               </button>
               <button
                 onClick={() => setActiveTab('kds')}
@@ -673,15 +708,15 @@ export default function KitchenflowWebsite() {
                 <Trello size={13} /> Cozinha KDS
               </button>
               <button
-                onClick={() => setActiveTab('menu')}
+                onClick={() => setActiveTab('logistics')}
                 className={`px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all ${
-                  activeTab === 'menu'
+                  activeTab === 'logistics'
                     ? 'bg-[#FF4F18] text-white shadow-lg shadow-[#FF4F18]/25'
                     : 'bg-slate-950/40 text-slate-400 hover:text-white hover:bg-slate-900 border border-white/5'
                 }`}
-                id="tab-menu-selector"
+                id="tab-logistics-selector"
               >
-                <Smartphone size={13} /> Cardápio QR
+                <Bike size={13} /> App Entregador
               </button>
               <button
                 onClick={() => setActiveTab('ai')}
@@ -889,65 +924,174 @@ export default function KitchenflowWebsite() {
                   </motion.div>
                 )}
 
-                {activeTab === 'menu' && (
+                {activeTab === 'marketplace' && (
                   <motion.div
-                    key="menu-panel"
+                    key="marketplace-panel"
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
                     transition={{ duration: 0.25 }}
-                    className="flex flex-col md:flex-row items-center gap-6"
-                    id="panel-menu-content"
+                    className="flex flex-col md:flex-row items-stretch gap-4"
+                    id="panel-marketplace-content"
                   >
-                    {/* Left QR Code prompt mockup */}
-                    <div className="md:w-1/3 flex flex-col items-center justify-center p-4 bg-slate-950/60 rounded-2xl border border-white/5 text-center space-y-2">
-                      <div className="w-24 h-24 bg-white p-2 rounded-xl flex items-center justify-center shadow-lg">
-                        <svg viewBox="0 0 100 100" className="w-20 h-20 text-slate-900">
-                          <rect x="0" y="0" width="30" height="30" fill="currentColor" />
-                          <rect x="10" y="10" width="10" height="10" fill="white" />
-                          <rect x="70" y="0" width="30" height="30" fill="currentColor" />
-                          <rect x="80" y="10" width="10" height="10" fill="white" />
-                          <rect x="0" y="70" width="30" height="30" fill="currentColor" />
-                          <rect x="10" y="80" width="10" height="10" fill="white" />
-                          <rect x="40" y="40" width="20" height="20" fill="currentColor" />
-                          <rect x="45" y="45" width="10" height="10" fill="white" />
-                          <rect x="40" y="10" width="10" height="15" fill="currentColor" />
-                          <rect x="10" y="40" width="15" height="10" fill="currentColor" />
-                          <rect x="75" y="45" width="15" height="15" fill="currentColor" />
-                          <rect x="45" y="75" width="15" height="15" fill="currentColor" />
-                        </svg>
+                    {/* Left: Store Card & Marketplace Promo */}
+                    <div className="md:w-5/12 flex flex-col justify-between p-4 bg-slate-950/80 rounded-2xl border border-white/5 space-y-3 text-left">
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[9px] font-mono uppercase bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded font-black tracking-widest flex items-center gap-1">
+                            <Store size={10} /> Marketplace Aberto
+                          </span>
+                          <span className="text-[10px] text-amber-400 font-bold flex items-center gap-0.5">
+                            <Star size={11} className="fill-amber-400 text-amber-400" /> 4.9 (128)
+                          </span>
+                        </div>
+                        <h4 className="font-extrabold text-sm text-white">Viva Lá Fome • Gastronomia</h4>
+                        <p className="text-[10px] text-slate-400 mt-1 leading-snug">
+                          Entregas em até 35 min • Raio de 5.0 km • Pedido sem taxas abusivas
+                        </p>
                       </div>
-                      <span className="text-[9px] font-mono uppercase text-slate-450 font-bold">QR Code Mesa 08</span>
-                      <p className="text-[10px] text-slate-500 leading-snug">Aponte o celular e simule o autoatendimento: o pedido entra na cozinha na hora!</p>
+
+                      <div className="p-2.5 bg-[#0e1423] rounded-xl border border-amber-500/20 space-y-1">
+                        <p className="text-[8px] font-mono text-amber-400 uppercase font-black">Multi-Lojas & Franquias</p>
+                        <p className="text-[9px] text-slate-300">
+                          Sua loja ganha presença própria no portal e recebe pedidos direto no PDV.
+                        </p>
+                      </div>
+
+                      <Link
+                        to="/marketplace"
+                        className="w-full py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black rounded-xl text-[10px] font-mono uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/20 transition-all"
+                      >
+                        Abrir Marketplace Real <ArrowUpRight size={13} />
+                      </Link>
                     </div>
 
-                    {/* Right products menu list mockup */}
-                    <div className="md:w-2/3 bg-slate-950/80 p-4 rounded-2xl border border-white/5 w-full">
-                      <p className="text-[8px] font-mono uppercase tracking-wider text-slate-500 mb-3 text-left">Cardápio Digital • Viva Lá Fome</p>
-                      <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
-                        {[
-                          { name: 'Parmegiana de carne', price: '30,00', desc: 'Bife bovino empanado, molho pomodoro rústico e muçarela gratinada. Acompanha arroz e fritas.' },
-                          { name: 'X-tudo Gourmet', price: '31,00', desc: 'Hambúrguer de fraldinha 180g, bacon, ovo frito, muçarela, alface e tomate.' },
-                          { name: 'Bolinha de queijo', price: '20,00', desc: 'Porção crocante com 8 unidades de pura muçarela com cream cheese.' },
-                          { name: 'Refrigerante Lata', price: '6,00', desc: 'Lata 350ml trincando de gelada.' },
-                        ].map((item, idx) => (
-                          <div key={idx} className="p-2.5 bg-[#0e1423] rounded-xl border border-white/5 flex items-start justify-between text-left gap-3 group hover:border-[#FF4F18]/20 transition-all">
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-2">
-                                <h5 className="font-extrabold text-[11px] text-white leading-none uppercase tracking-wide">{item.name}</h5>
-                                <span className="text-[10px] font-bold text-orange-450 font-mono">R$ {item.price}</span>
+                    {/* Right: Marketplace Catalog items with 1-click test order */}
+                    <div className="md:w-7/12 bg-slate-950/80 p-4 rounded-2xl border border-white/5 w-full flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-[8px] font-mono uppercase tracking-wider text-slate-500 text-left">Itens em Destaque no Marketplace</p>
+                          <span className="text-[8px] font-mono text-emerald-450 uppercase font-bold">Simule um Pedido:</span>
+                        </div>
+                        <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                          {[
+                            { name: 'Parmegiana de carne artesanal', price: '30,00', desc: 'Bife bovino empanado, molho pomodoro rústico e muçarela gratinada.' },
+                            { name: 'Burger Duplo Smash com Bacon', price: '32,00', desc: '2x carnes 90g ultra prensadas, cheddar inglês e maionese defumada.' },
+                            { name: 'Porção Bolinha de Queijo Crocante', price: '20,00', desc: '8 unidades artesanais recheadas com muçarela e catupiry original.' },
+                          ].map((item, idx) => (
+                            <div key={idx} className="p-2.5 bg-[#0e1423] rounded-xl border border-white/5 flex items-start justify-between text-left gap-3 group hover:border-amber-500/30 transition-all">
+                              <div className="space-y-0.5">
+                                <div className="flex items-center gap-2">
+                                  <h5 className="font-extrabold text-[11px] text-white leading-none uppercase tracking-wide">{item.name}</h5>
+                                  <span className="text-[10px] font-bold text-amber-400 font-mono">R$ {item.price}</span>
+                                </div>
+                                <p className="text-[9px] text-slate-450 leading-tight font-medium">{item.desc}</p>
                               </div>
-                              <p className="text-[9px] text-slate-450 leading-tight font-medium line-clamp-2">{item.desc}</p>
+                              <button
+                                onClick={() => handleSimulateMenuOrder(item.name, 'Marketplace')}
+                                className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-[9px] font-mono uppercase font-black shrink-0 tracking-widest hover:scale-105 active:scale-95 transition-all shadow-md shadow-amber-500/20"
+                              >
+                                Pedir
+                              </button>
                             </div>
-                            <button
-                              onClick={() => handleSimulateMenuOrder(item.name)}
-                              className="px-2 py-1.5 bg-[#FF4F18] hover:bg-[#ff3b00] text-white rounded-lg text-[9px] font-mono uppercase font-black shrink-0 tracking-widest hover:scale-105 active:scale-95 transition-all"
-                            >
-                              Pedir
-                            </button>
-                          </div>
-                        ))}
+                          ))}
+                        </div>
                       </div>
+                      <p className="text-[8px] font-mono text-slate-500 text-left pt-2 border-t border-white/5 mt-2">
+                        * Ao clicar em pedir, o pedido entra instantaneamente no KDS e baixa os insumos!
+                      </p>
+                    </div>
+                  </motion.div>
+                )}
+
+                {activeTab === 'logistics' && (
+                  <motion.div
+                    key="logistics-panel"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.25 }}
+                    className="flex flex-col md:flex-row items-stretch gap-4"
+                    id="panel-logistics-content"
+                  >
+                    {/* Left: Live Courier Status */}
+                    <div className="md:w-5/12 p-4 bg-slate-950/80 rounded-2xl border border-white/5 space-y-3 text-left flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[9px] font-mono uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded font-black tracking-widest flex items-center gap-1">
+                            <Bike size={10} /> App do Entregador
+                          </span>
+                          <span className="text-[9px] font-mono text-emerald-450 font-bold flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" /> GPS Ao Vivo
+                          </span>
+                        </div>
+                        <h4 className="font-extrabold text-sm text-white">Despacho & Rastreamento</h4>
+                        <p className="text-[10px] text-slate-400 mt-1 leading-snug">
+                          Entregadores próprios ou parceiros recebem as corridas com cálculo de rota via Waze/Google Maps.
+                        </p>
+                      </div>
+
+                      <div className="p-3 bg-[#0e1423] rounded-xl border border-emerald-500/20 space-y-1.5">
+                        <div className="flex justify-between items-center text-[9px] font-mono">
+                          <span className="text-slate-400">Tempo Médio Entrega:</span>
+                          <span className="text-emerald-400 font-bold">18 min</span>
+                        </div>
+                        <div className="flex justify-between items-center text-[9px] font-mono">
+                          <span className="text-slate-400">Entregadores Ativos:</span>
+                          <span className="text-white font-bold">4 na frota</span>
+                        </div>
+                        <div className="flex justify-between items-center text-[9px] font-mono">
+                          <span className="text-slate-400">Economia em Apps 3rd:</span>
+                          <span className="text-orange-400 font-bold">100% repasse</span>
+                        </div>
+                      </div>
+
+                      <Link
+                        to="/entregador"
+                        className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-xl text-[10px] font-mono uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-600/20 transition-all"
+                      >
+                        Abrir Painel do Entregador <Navigation size={12} />
+                      </Link>
+                    </div>
+
+                    {/* Right: Live Deliveries Feed */}
+                    <div className="md:w-7/12 bg-slate-950/80 p-4 rounded-2xl border border-white/5 w-full flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-[8px] font-mono uppercase tracking-wider text-slate-500 text-left">Fila de Despacho ao Vivo</p>
+                          <span className="text-[8px] font-mono text-slate-400">Total: {liveDeliveries.length} entregas</span>
+                        </div>
+                        <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                          {liveDeliveries.map((deliv, idx) => (
+                            <div key={idx} className="p-2.5 bg-[#0e1423] rounded-xl border border-white/5 flex items-center justify-between text-left gap-3 hover:border-emerald-500/30 transition-all">
+                              <div className="space-y-0.5">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[9px] font-mono font-bold text-white uppercase">{deliv.id}</span>
+                                  <span className="text-[9px] font-bold text-emerald-450 font-mono">{deliv.fee}</span>
+                                  <span className="text-[8px] font-mono bg-white/5 px-1.5 py-0.2 rounded text-slate-400">{deliv.dist}</span>
+                                </div>
+                                <p className="text-[9px] text-slate-300 font-medium truncate max-w-[200px]">{deliv.client} • {deliv.address}</p>
+                                <p className="text-[8px] font-mono text-slate-500">Condutor: {deliv.courier}</p>
+                              </div>
+                              {deliv.status === 'aguardando' ? (
+                                <button
+                                  onClick={() => handleAcceptDelivery(deliv.id)}
+                                  className="px-2.5 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-lg text-[8px] font-mono uppercase font-black shrink-0 tracking-widest hover:scale-105 active:scale-95 transition-all shadow-md shadow-emerald-500/20"
+                                >
+                                  Aceitar
+                                </button>
+                              ) : (
+                                <span className="px-2 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[8px] font-mono uppercase font-bold shrink-0">
+                                  Em Rota
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <p className="text-[8px] font-mono text-slate-500 text-left pt-2 border-t border-white/5 mt-2">
+                        * Rotas sincronizadas em tempo real com mapa e comanda do PDV
+                      </p>
                     </div>
                   </motion.div>
                 )}
@@ -1334,14 +1478,14 @@ export default function KitchenflowWebsite() {
             <div className="hidden md:block absolute inset-x-10 top-1/2 h-[1px] bg-gradient-to-r from-transparent via-[#FF4F18]/25 to-transparent -translate-y-1/2 -z-10 animate-pulse" />
 
             {[
-              { id: 'pedidos', title: 'Pedidos', desc: 'QR Code Mesa, Balcão e Delivery', icon: Smartphone, bg: 'from-orange-500/15 to-orange-500/5 text-orange-400 border-orange-500/10' },
-              { id: 'cozinha', title: 'Cozinha', desc: 'Fila KDS em monitores eletrônicos', icon: Trello, bg: 'from-amber-500/15 to-amber-500/5 text-amber-400 border-amber-500/10' },
-              { id: 'estoque', title: 'Estoque', desc: 'Baixa de insumos por ficha técnica', icon: Package, bg: 'from-rose-500/15 to-rose-500/5 text-rose-400 border-rose-500/10' },
-              { id: 'compras', title: 'Compras', desc: 'Análise de compras e fornecedores', icon: CheckCircle2, bg: 'from-yellow-500/15 to-yellow-500/5 text-yellow-400 border-yellow-500/10' },
-              { id: 'financeiro', title: 'Financeiro', desc: 'DRE consolidado e fluxo de caixa', icon: DollarSign, bg: 'from-emerald-500/15 to-emerald-500/5 text-emerald-450 border-emerald-500/10' },
-              { id: 'delivery', title: 'Delivery', desc: 'Logística de entregadores própria', icon: Bike, bg: 'from-rose-500/15 to-rose-500/5 text-rose-450 border-rose-500/10' },
-              { id: 'relatorios', title: 'Relatórios', desc: 'Inteligência de faturamento real', icon: BarChart2, bg: 'from-sky-500/15 to-sky-500/5 text-sky-400 border-sky-500/10' },
-              { id: 'ia', title: 'Inteligência Artificial', desc: 'Auditor de CMV e assistente virtual', icon: Sparkles, bg: 'from-teal-500/15 to-teal-500/5 text-teal-400 border-teal-500/20' }
+              { id: 'marketplace', title: 'Marketplace Gastronômico', desc: 'Vitrine aberta e portal multi-lojas sem taxas abusivas', icon: Store, bg: 'from-amber-500/15 to-amber-500/5 text-amber-400 border-amber-500/10' },
+              { id: 'pedidos', title: 'PDV & Comanda Digital', desc: 'Autoatendimento QR Code de Mesa, Balcão e Delivery', icon: Smartphone, bg: 'from-orange-500/15 to-orange-500/5 text-orange-400 border-orange-500/10' },
+              { id: 'cozinha', title: 'KDS Multi-Praça', desc: 'Monitores de preparo sincronizados por praça de cozinha', icon: Trello, bg: 'from-rose-500/15 to-rose-500/5 text-rose-400 border-rose-500/10' },
+              { id: 'delivery', title: 'App Entregadores & GPS', desc: 'Despacho automático de frota e rastreio de rota', icon: Bike, bg: 'from-emerald-500/15 to-emerald-500/5 text-emerald-450 border-emerald-500/10' },
+              { id: 'estoque', title: 'Estoque & Ficha Técnica', desc: 'Baixa imediata por gramatura e custo médio de pratos', icon: Package, bg: 'from-yellow-500/15 to-yellow-500/5 text-yellow-400 border-yellow-500/10' },
+              { id: 'fiscal', title: 'Motor Fiscal NFC-e', desc: 'Emissão homologada de cupom fiscal e conformidade SEFAZ', icon: Receipt, bg: 'from-sky-500/15 to-sky-500/5 text-sky-400 border-sky-500/10' },
+              { id: 'financeiro', title: 'Financeiro DRE & Caixa', desc: 'Sobra limpa, CMV auditado e conciliação de pagamentos', icon: DollarSign, bg: 'from-emerald-500/15 to-emerald-500/5 text-emerald-450 border-emerald-500/10' },
+              { id: 'ia', title: 'Copiloto IA (Kai)', desc: 'Auditor de CMV 24h e sugestões de lucratividade', icon: Sparkles, bg: 'from-teal-500/15 to-teal-500/5 text-teal-400 border-teal-500/20' }
             ].map((node, index) => (
               <div 
                 key={node.id} 
@@ -1907,10 +2051,12 @@ export default function KitchenflowWebsite() {
           <div>
             <h5 className="text-[10px] font-mono uppercase tracking-widest text-slate-300 mb-3">Módulos</h5>
             <ul className="space-y-2 text-[10px] font-bold">
+              <li><Link to="/marketplace" className="hover:text-amber-400 transition-colors flex items-center gap-1"><Store size={11} className="text-amber-400" /> Marketplace Gastronômico</Link></li>
               <li><a href="#operacao-conectada" className="hover:text-[#FF4F18] transition-colors">Monitor de Cozinha KDS</a></li>
-              <li><a href="#operacao-conectada" className="hover:text-[#FF4F18] transition-colors">Cardápio por QR Code</a></li>
-              <li><a href="#operacao-conectada" className="hover:text-[#FF4F18] transition-colors">PDV & Balcão de Vendas</a></li>
-              <li><a href="#operacao-conectada" className="hover:text-[#FF4F18] transition-colors">Controle Financeiro CMV</a></li>
+              <li><a href="#operacao-conectada" className="hover:text-[#FF4F18] transition-colors">PDV, Comanda & Autoatendimento QR</a></li>
+              <li><a href="#operacao-conectada" className="hover:text-[#FF4F18] transition-colors">App do Entregador & Frota GPS</a></li>
+              <li><a href="#operacao-conectada" className="hover:text-[#FF4F18] transition-colors">Controle Financeiro DRE & CMV</a></li>
+              <li><a href="#operacao-conectada" className="hover:text-[#FF4F18] transition-colors">Motor Fiscal NFC-e Homologado</a></li>
             </ul>
           </div>
 
