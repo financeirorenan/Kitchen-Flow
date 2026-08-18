@@ -27,6 +27,9 @@ export interface FiscalConfig {
 export class FiscalService {
   private privateKey: any;
   private certificate: any;
+  private pemKey: string = '';
+  private pemCert: string = '';
+  private caPems: string[] = [];
   private pfxBase64: string;
   private password: string;
   private config: FiscalConfig;
@@ -53,22 +56,63 @@ export class FiscalService {
     this.config = config;
 
     if (pfxBase64) {
-      const pfxDer = forge.util.decode64(pfxBase64);
-      const p12Asn1 = forge.asn1.fromDer(pfxDer);
-      const p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, password);
-      
-      const keyBags = p12.getBags({ bagType: forge.pki.oids.keyBag });
-      const pkcs8Bags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
-      
-      const keyBag = keyBags[forge.pki.oids.keyBag]?.[0] || pkcs8Bags[forge.pki.oids.pkcs8ShroudedKeyBag]?.[0];
-      if (!keyBag) throw new Error('Private key not found in certificate');
-      this.privateKey = keyBag.key as forge.pki.PrivateKey;
+      try {
+        const pfxDer = forge.util.decode64(pfxBase64);
+        const p12Asn1 = forge.asn1.fromDer(pfxDer);
+        const p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, password);
+        
+        const keyBags = p12.getBags({ bagType: forge.pki.oids.keyBag });
+        const pkcs8Bags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
+        
+        const keyBag = keyBags[forge.pki.oids.keyBag]?.[0] || pkcs8Bags[forge.pki.oids.pkcs8ShroudedKeyBag]?.[0];
+        if (!keyBag) throw new Error('Chave privada não encontrada no certificado A1 (.pfx)');
+        this.privateKey = keyBag.key as forge.pki.PrivateKey;
+        this.pemKey = forge.pki.privateKeyToPem(this.privateKey);
 
-      const certBags = p12.getBags({ bagType: forge.pki.oids.certBag });
-      const certBag = certBags[forge.pki.oids.certBag]?.[0];
-      if (!certBag) throw new Error('Certificate not found in PFX');
-      this.certificate = certBag.cert as forge.pki.Certificate;
+        const certBagsObj = p12.getBags({ bagType: forge.pki.oids.certBag });
+        const certBags = certBagsObj[forge.pki.oids.certBag] || [];
+        if (certBags.length === 0) throw new Error('Certificado não encontrado no arquivo PFX');
+        
+        this.certificate = certBags[0].cert as forge.pki.Certificate;
+        this.pemCert = forge.pki.certificateToPem(this.certificate);
+
+        this.caPems = certBags.slice(1).map((b: any) => {
+          try {
+            return forge.pki.certificateToPem(b.cert);
+          } catch {
+            return '';
+          }
+        }).filter(Boolean);
+      } catch (err: any) {
+        console.error('[FiscalService] Erro ao decodificar PFX:', err.message);
+        throw new Error(err.message || 'Falha ao processar arquivo de certificado PFX.');
+      }
     }
+  }
+
+  /**
+   * Constrói o Agent HTTPS com o Certificado e Chave PEM extraídos
+   * Evita o erro "Unsupported PKCS12 PFX data" do OpenSSL 3 no Node.js
+   */
+  private getHttpsAgent(): https.Agent {
+    if (this.pemCert && this.pemKey) {
+      return new https.Agent({
+        cert: this.caPems.length > 0 ? [this.pemCert, ...this.caPems].join('\n') : this.pemCert,
+        key: this.pemKey,
+        ca: this.caPems.length > 0 ? this.caPems : undefined,
+        rejectUnauthorized: false,
+        minVersion: 'TLSv1.2',
+        ciphers: 'DEFAULT:@SECLEVEL=0:ALL:!EXPORT:!LOW:!aNULL:!eNULL:!SSLv2'
+      });
+    }
+
+    const pfxBuffer = Buffer.from(this.pfxBase64, 'base64');
+    return new https.Agent({
+      pfx: pfxBuffer,
+      passphrase: this.password,
+      rejectUnauthorized: false,
+      minVersion: 'TLSv1.2'
+    });
   }
 
   public getCertificateInfo(): { validTo: string; subject: string; isExpired: boolean } {
@@ -310,13 +354,8 @@ export class FiscalService {
 </soap12:Envelope>`;
 
     try {
-      // Configurar Agent HTTPS com Certificado A1 do Lojista (mTLS)
-      const pfxBuffer = Buffer.from(this.pfxBase64, 'base64');
-      const httpsAgent = new https.Agent({
-        pfx: pfxBuffer,
-        passphrase: this.password,
-        rejectUnauthorized: false // Permite certs de homologação/cadeias ICP-Brasil intermediárias
-      });
+      // Configurar Agent HTTPS com Certificado A1 do Lojista (mTLS extraído em PEM)
+      const httpsAgent = this.getHttpsAgent();
 
       console.log(`[SEFAZ-SP SOAP] Enviando lote ${idLote} para ${urlConfig.autorizacao}...`);
 
@@ -401,12 +440,7 @@ export class FiscalService {
 </soap12:Envelope>`;
 
     try {
-      const pfxBuffer = Buffer.from(this.pfxBase64, 'base64');
-      const httpsAgent = new https.Agent({
-        pfx: pfxBuffer,
-        passphrase: this.password,
-        rejectUnauthorized: false
-      });
+      const httpsAgent = this.getHttpsAgent();
 
       const response = await axios.post(urlConfig.statusServico, soapBody, {
         headers: {

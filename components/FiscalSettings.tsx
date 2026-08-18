@@ -41,7 +41,10 @@ const FiscalSettings: React.FC<FiscalSettingsProps> = ({ settings, onUpdate }) =
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           settings: settings.fiscal,
-          certificate: settings.fiscal?.certificate
+          certificate: {
+            pfxBase64: settings.fiscal?.certificate?.pfxBase64,
+            password: pfxPassword || settings.fiscal?.certificate?.password
+          }
         })
       });
 
