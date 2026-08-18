@@ -108,6 +108,120 @@ export interface FiscalSettings {
   };
 }
 
+export type FiscalDocumentStatus = 
+  | 'AUTORIZADA'
+  | 'CANCELADA'
+  | 'REJEITADA'
+  | 'PROCESSANDO'
+  | 'PENDENTE'
+  | 'CONTINGENCIA'
+  | 'ERRO';
+
+export interface FiscalDocumentAuditLog {
+  id?: string;
+  action: 'EMISSAO' | 'REIMPRESSAO' | 'CANCELAMENTO' | 'CONSULTA' | 'INUTILIZACAO';
+  timestamp: Date | string;
+  userId: string;
+  userName: string;
+  details: string;
+  cStat?: string;
+  protocol?: string;
+}
+
+export interface FiscalDocumentItem {
+  productId?: string;
+  name: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+  ncm?: string;
+  cfop?: string;
+  observation?: string;
+}
+
+export interface FiscalDocument {
+  id: string;
+  docId?: string;
+  tenantId: string;
+  orderId: string;
+  orderDisplayId?: string;
+  tableNumber?: number | string;
+  orderType?: 'table' | 'delivery' | 'takeout' | string;
+  nfceNumber: number;
+  series: number;
+  fiscalKey: string;
+  protocol?: string;
+  status: FiscalDocumentStatus;
+  issuedAt: Date | string;
+  authorizedAt?: Date | string;
+  environment: 'production' | 'homologation';
+  model: '65' | string; // 65 = NFC-e
+  cStat?: string;
+  xMotivo?: string;
+  xml?: string;
+  qrCodeUrl?: string;
+  
+  // Totais e Itens
+  items: FiscalDocumentItem[];
+  subtotal: number;
+  discount: number;
+  additionalFee: number;
+  deliveryFee: number;
+  total: number;
+  paymentMethod: string;
+  payments?: Array<{
+    method: string;
+    amount: number;
+    customerDocument?: string;
+  }>;
+  
+  // Consumidor
+  customerName?: string;
+  customerDocument?: string; // CPF ou CNPJ
+  customerAddress?: string;
+  
+  // Emitente
+  emitterCnpj: string;
+  emitterRazaoSocial: string;
+  emitterInscricaoEstadual?: string;
+  emitterAddress?: {
+    logradouro?: string;
+    numero?: string;
+    bairro?: string;
+    municipio?: string;
+    uf?: string;
+    cep?: string;
+    codigoMunicipio?: string;
+  };
+  
+  // Cancelamento
+  isCanceled?: boolean;
+  canceledAt?: Date | string;
+  cancelProtocol?: string;
+  cancelReason?: string;
+  canceledBy?: {
+    id: string;
+    name: string;
+    email: string;
+  };
+  cancelCStat?: string;
+  cancelXMotivo?: string;
+  cancelXml?: string;
+  
+  // Auditoria
+  issuedBy?: {
+    id: string;
+    name: string;
+    email: string;
+  };
+  reprintCount: number;
+  lastReprintAt?: Date | string;
+  auditHistory?: FiscalDocumentAuditLog[];
+  
+  createdAt: Date | string;
+  updatedAt?: Date | string;
+}
+
 export interface AdminSettings {
   companyName: string;
   cnpj: string;

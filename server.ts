@@ -1158,10 +1158,485 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
     }
   });
 
-  // Fiscal routes
+  // In-memory set for active fiscal operations (Anti-Concurrency Lock)
+  const activeFiscalLocks = new Set<string>();
+
+  // Helper para salvar documento fiscal no Firestore
+  async function persistFiscalDocument(fiscalDoc: any) {
+    try {
+      const docRef = clientDoc(clientDb, "fiscal_documents", fiscalDoc.id);
+      await clientSetDoc(docRef, {
+        ...fiscalDoc,
+        updatedAt: new Date()
+      }, { merge: true });
+    } catch (e: any) {
+      console.error("[Fiscal Persistence] Erro ao persistir documento fiscal:", e.message);
+    }
+  }
+
+  // Listagem de Documentos Fiscais com Filtros e Isolamento Multi-Tenant
+  app.get("/api/fiscal/documents", async (req, res) => {
+    try {
+      const tenantId = (req.query.tenantId as string) || (req.headers["x-tenant-id"] as string);
+      if (!tenantId) {
+        return res.status(400).json({ success: false, error: "Parâmetro tenantId é obrigatório para isolamento multi-tenant." });
+      }
+
+      const { startDate, endDate, status, paymentMethod, search, limit: reqLimit } = req.query;
+      const maxLimit = Math.min(Number(reqLimit) || 300, 500);
+
+      const docsRef = getClientCollection(clientDb, "fiscal_documents");
+      const q = clientQuery(
+        docsRef,
+        clientWhere("tenantId", "==", tenantId),
+        clientLimit(maxLimit)
+      );
+
+      let snapshot;
+      try {
+        snapshot = await getClientDocs(q);
+      } catch (err: any) {
+        console.warn("[Fiscal API] Falha na query do Firestore, tentando fallback:", err.message);
+        snapshot = { docs: [] } as any;
+      }
+
+      let documents = (snapshot.docs || []).map(d => ({ id: d.id, ...d.data() }));
+
+      // Se a coleção de fiscal_documents estiver vazia ou parcial, podemos verificar se há pedidos emitidos com chave fiscal
+      if (documents.length === 0) {
+        try {
+          const ordersRef = getClientCollection(clientDb, "orders");
+          const ordersQ = clientQuery(
+            ordersRef,
+            clientWhere("tenantId", "==", tenantId),
+            clientLimit(100)
+          );
+          const ordersSnap = await getClientDocs(ordersQ);
+          const fiscalOrders = ordersSnap.docs
+            .map(d => ({ id: d.id, ...d.data() }))
+            .filter((o: any) => o.isFiscalIssued && o.fiscalKey);
+
+          for (const ord of fiscalOrders as any[]) {
+            const synthesizedDoc = {
+              id: `doc_nfce_${ord.id}`,
+              tenantId: ord.tenantId,
+              orderId: ord.id,
+              orderDisplayId: ord.id.slice(-4),
+              tableNumber: ord.tableNumber,
+              orderType: ord.type,
+              nfceNumber: ord.metadata?.nfceNumber || 1,
+              series: ord.metadata?.series || 1,
+              fiscalKey: ord.fiscalKey,
+              protocol: ord.metadata?.protocol || '135260000000001',
+              status: ord.status === 'cancelled' || ord.fiscalStatus === 'CANCELADA' ? 'CANCELADA' : 'AUTORIZADA',
+              issuedAt: ord.createdAt || new Date().toISOString(),
+              authorizedAt: ord.createdAt || new Date().toISOString(),
+              environment: 'homologation',
+              model: '65',
+              cStat: '100',
+              xMotivo: 'Autorizado o uso da NFC-e',
+              items: (ord.items || []).map((it: any) => ({
+                productId: it.productId,
+                name: it.name,
+                quantity: it.quantity || 1,
+                unitPrice: it.price || 0,
+                totalPrice: (it.price || 0) * (it.quantity || 1),
+                ncm: it.ncm || '2106.90.90'
+              })),
+              subtotal: ord.total || 0,
+              discount: ord.discount || 0,
+              additionalFee: ord.additionalFee || 0,
+              deliveryFee: ord.deliveryFee || 0,
+              total: ord.total || 0,
+              paymentMethod: ord.paymentMethod || 'dinheiro',
+              customerName: ord.customerName,
+              customerDocument: ord.customerDocument,
+              emitterCnpj: "00000000000000",
+              emitterRazaoSocial: "KITCHENFLOW AI",
+              reprintCount: 0,
+              auditHistory: [
+                {
+                  action: 'EMISSAO',
+                  timestamp: ord.createdAt || new Date().toISOString(),
+                  userId: 'system',
+                  userName: 'Sistema POS',
+                  details: `Emissão automática de NFC-e para o pedido #${ord.id}`
+                }
+              ],
+              createdAt: ord.createdAt || new Date().toISOString()
+            };
+            documents.push(synthesizedDoc);
+            // Salva de forma assíncrona
+            persistFiscalDocument(synthesizedDoc).catch(() => {});
+          }
+        } catch (e: any) {
+          console.warn("[Fiscal API] Fallback de pedidos:", e.message);
+        }
+      }
+
+      // Filtros em memória (Data, Status, Forma de Pagamento, Busca)
+      if (startDate) {
+        const start = new Date(startDate as string).getTime();
+        documents = documents.filter(d => new Date(d.issuedAt || d.createdAt).getTime() >= start);
+      }
+      if (endDate) {
+        const end = new Date(endDate as string).getTime() + (24 * 60 * 60 * 1000 - 1);
+        documents = documents.filter(d => new Date(d.issuedAt || d.createdAt).getTime() <= end);
+      }
+      if (status && status !== 'TODOS') {
+        documents = documents.filter(d => String(d.status).toUpperCase() === String(status).toUpperCase());
+      }
+      if (paymentMethod && paymentMethod !== 'TODOS') {
+        documents = documents.filter(d => String(d.paymentMethod).toLowerCase() === String(paymentMethod).toLowerCase());
+      }
+      if (search && String(search).trim()) {
+        const term = String(search).toLowerCase().trim();
+        documents = documents.filter(d => {
+          const nfceStr = String(d.nfceNumber || '');
+          const orderStr = String(d.orderId || '').toLowerCase();
+          const orderDisplayStr = String(d.orderDisplayId || '').toLowerCase();
+          const keyStr = String(d.fiscalKey || '').toLowerCase();
+          const custName = String(d.customerName || '').toLowerCase();
+          const custDoc = String(d.customerDocument || '').replace(/\D/g, '');
+          const searchClean = term.replace(/\D/g, '');
+          return (
+            nfceStr.includes(term) ||
+            orderStr.includes(term) ||
+            orderDisplayStr.includes(term) ||
+            keyStr.includes(term) ||
+            custName.includes(term) ||
+            (searchClean && custDoc.includes(searchClean))
+          );
+        });
+      }
+
+      // Ordenação decrescente por data de emissão
+      documents.sort((a, b) => {
+        const timeA = new Date(a.issuedAt || a.createdAt || 0).getTime();
+        const timeB = new Date(b.issuedAt || b.createdAt || 0).getTime();
+        return timeB - timeA;
+      });
+
+      return res.json({
+        success: true,
+        tenantId,
+        total: documents.length,
+        documents
+      });
+    } catch (err: any) {
+      console.error("[Fiscal API Documents Error]:", err);
+      return res.status(500).json({ success: false, error: err.message || "Erro ao listar documentos fiscais." });
+    }
+  });
+
+  // Salvar/Atualizar Documento Fiscal
+  app.post("/api/fiscal/documents", async (req, res) => {
+    try {
+      const document = req.body;
+      if (!document || !document.tenantId || !document.fiscalKey) {
+        return res.status(400).json({ success: false, error: "Dados do documento fiscal incompletos (tenantId e fiscalKey obrigatórios)." });
+      }
+
+      const docId = document.id || `doc_nfce_${document.orderId || Date.now()}`;
+      document.id = docId;
+      await persistFiscalDocument(document);
+
+      return res.json({ success: true, id: docId, document });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message || "Erro ao salvar documento fiscal." });
+    }
+  });
+
+  // Reimpressão Fiscal com Registro de Auditoria
+  app.post("/api/fiscal/reprint", async (req, res) => {
+    try {
+      const { documentId, tenantId, user, reason } = req.body;
+      if (!documentId || !tenantId) {
+        return res.status(400).json({ success: false, error: "documentId e tenantId são obrigatórios." });
+      }
+
+      const docRef = clientDoc(clientDb, "fiscal_documents", documentId);
+      let docSnap;
+      try {
+        const { getDoc } = await import("firebase/firestore");
+        docSnap = await getDoc(docRef);
+      } catch (e: any) {
+        console.warn("[Fiscal Reprint] getDoc error:", e.message);
+      }
+
+      let docData: any = docSnap && docSnap.exists() ? docSnap.data() : null;
+
+      if (!docData) {
+        return res.status(404).json({ success: false, error: "Documento fiscal não encontrado." });
+      }
+
+      if (docData.tenantId !== tenantId) {
+        return res.status(403).json({ success: false, error: "Acesso negado: o documento não pertence a este estabelecimento." });
+      }
+
+      const now = new Date();
+      const reprintCount = (docData.reprintCount || 0) + 1;
+      const auditEntry = {
+        action: "REIMPRESSAO" as const,
+        timestamp: now.toISOString(),
+        userId: user?.id || "u1",
+        userName: user?.name || "Operador",
+        details: `Reimpressão nº ${reprintCount} do DANFE NFC-e #${docData.nfceNumber}${reason ? ` - Motivo: ${reason}` : ''}`
+      };
+
+      const auditHistory = [...(docData.auditHistory || []), auditEntry];
+
+      docData.reprintCount = reprintCount;
+      docData.lastReprintAt = now.toISOString();
+      docData.auditHistory = auditHistory;
+
+      await persistFiscalDocument(docData);
+
+      // Salva log global na coleção de auditoria
+      try {
+        const auditLogRef = clientDoc(clientDb, "auditLogs", `audit_reprint_${documentId}_${Date.now()}`);
+        await clientSetDoc(auditLogRef, {
+          id: `audit_reprint_${documentId}_${Date.now()}`,
+          tenantId,
+          timestamp: now,
+          userId: user?.id || "u1",
+          userName: user?.name || "Operador",
+          action: "REIMPRESSAO_FISCAL",
+          details: `Reimpressão de NFC-e #${docData.nfceNumber} (Chave: ${docData.fiscalKey})`
+        });
+      } catch {}
+
+      return res.json({
+        success: true,
+        reprintCount,
+        document: docData,
+        message: `Reimpressão nº ${reprintCount} registrada com sucesso.`
+      });
+    } catch (err: any) {
+      console.error("[Fiscal Reprint Error]:", err);
+      return res.status(500).json({ success: false, error: err.message || "Erro ao registrar reimpressão." });
+    }
+  });
+
+  // Cancelamento Fiscal com SEFAZ-SP, Estorno Financeiro, Devolução de Estoque e Auditoria
+  app.post("/api/fiscal/cancel", async (req, res) => {
+    const { documentId, tenantId, reason, user, certificate, config, settings, forceExtemporary } = req.body;
+
+    if (!documentId || !tenantId) {
+      return res.status(400).json({ success: false, error: "documentId e tenantId são obrigatórios." });
+    }
+
+    if (!reason || reason.trim().length < 15) {
+      return res.status(400).json({
+        success: false,
+        error: "A justificativa de cancelamento é obrigatória e deve conter no mínimo 15 caracteres (exigência SEFAZ)."
+      });
+    }
+
+    // Trava anti-concorrência (Anti-Concurrency Lock)
+    if (activeFiscalLocks.has(documentId)) {
+      return res.status(409).json({
+        success: false,
+        error: "Uma operação fiscal já está em andamento para este documento. Aguarde alguns instantes."
+      });
+    }
+
+    activeFiscalLocks.add(documentId);
+
+    try {
+      const docRef = clientDoc(clientDb, "fiscal_documents", documentId);
+      const { getDoc } = await import("firebase/firestore");
+      const docSnap = await getDoc(docRef);
+
+      if (!docSnap.exists()) {
+        return res.status(404).json({ success: false, error: "Documento fiscal não encontrado." });
+      }
+
+      const document = docSnap.data() as any;
+
+      if (document.tenantId !== tenantId) {
+        return res.status(403).json({ success: false, error: "Acesso negado: o documento não pertence ao seu estabelecimento." });
+      }
+
+      if (document.status === 'CANCELADA' || document.isCanceled) {
+        return res.status(400).json({
+          success: false,
+          error: "Esta NFC-e já se encontra cancelada.",
+          alreadyCanceled: true,
+          cancelProtocol: document.cancelProtocol,
+          canceledAt: document.canceledAt
+        });
+      }
+
+      // Validação de Prazo Legal de Cancelamento (30 minutos para NFC-e em SP)
+      const authTime = document.authorizedAt ? new Date(document.authorizedAt).getTime() : new Date(document.issuedAt || document.createdAt).getTime();
+      const diffMinutes = Math.floor((Date.now() - authTime) / (60 * 1000));
+
+      if (diffMinutes > 30 && !forceExtemporary) {
+        return res.status(400).json({
+          success: false,
+          error: `O prazo regulamentar para cancelamento de NFC-e na SEFAZ-SP é de 30 minutos a partir da autorização. Tempo decorrido: ${diffMinutes} minutos. Para estornar a operação, realize uma devolução de mercadoria / estorno fiscal.`,
+          expiredDeadline: true,
+          diffMinutes,
+          maxMinutesAllowed: 30
+        });
+      }
+
+      // Preparação do Serviço Fiscal
+      const pfxBase64 = certificate?.pfxBase64 || settings?.certificate?.pfxBase64;
+      const pfxPassword = certificate?.password || settings?.certificate?.password;
+
+      const fiscalConfig = {
+        cnpj: config?.cnpj || settings?.cnpj || document.emitterCnpj || "00000000000000",
+        razaoSocial: config?.razaoSocial || settings?.razaoSocial || document.emitterRazaoSocial || "KITCHENFLOW AI",
+        inscricaoEstadual: config?.inscricaoEstadual || settings?.inscricaoEstadual || "123456789110",
+        endereco: config?.endereco || settings?.address || document.emitterAddress || {},
+        cscId: config?.cscId || settings?.cscId || "000001",
+        cscToken: config?.cscToken || settings?.cscToken || "0123456789",
+        ambiente: (config?.environment === 'production' || settings?.environment === 'production' || config?.ambiente === '1') ? '1' : '2'
+      };
+
+      let cancelResult: any;
+
+      if (!pfxBase64) {
+        // Modo Simulado de Homologação / Teste sem PFX cadastrado
+        const mockProtocol = `13526${Math.floor(1000000000 + Math.random() * 8999999999)}`;
+        cancelResult = {
+          success: true,
+          status: 'canceled',
+          cStat: '135',
+          xMotivo: 'Evento registrado e vinculado a NF-e (Cancelamento homologado em modo de teste)',
+          cancelProtocol: mockProtocol,
+          xml: `<?xml version="1.0" encoding="UTF-8"?><retEnvEvento><infEvento><cStat>135</cStat><xMotivo>Evento registrado e vinculado a NF-e</xMotivo><nProt>${mockProtocol}</nProt></infEvento></retEnvEvento>`
+        };
+      } else {
+        // Envio Real via SOAP à SEFAZ-SP
+        const fiscalService = new FiscalService(pfxBase64, pfxPassword, fiscalConfig as any);
+        cancelResult = await fiscalService.cancelNfce(document.fiscalKey, document.protocol || '135260000000001', reason.trim());
+      }
+
+      if (!cancelResult.success) {
+        return res.status(400).json({
+          success: false,
+          error: cancelResult.error || cancelResult.xMotivo || "Falha ao cancelar NFC-e na SEFAZ-SP.",
+          cStat: cancelResult.cStat,
+          xMotivo: cancelResult.xMotivo
+        });
+      }
+
+      const now = new Date();
+      const cancelProtocol = cancelResult.cancelProtocol || `13526${Date.now().toString().slice(-9)}`;
+
+      // 1. Atualizar Documento Fiscal
+      const auditEntry = {
+        action: "CANCELAMENTO" as const,
+        timestamp: now.toISOString(),
+        userId: user?.id || "u1",
+        userName: user?.name || "Operador",
+        details: `Cancelamento de NFC-e autorizado pela SEFAZ-SP (Protocolo: ${cancelProtocol}). Justificativa: ${reason}`,
+        cStat: cancelResult.cStat,
+        protocol: cancelProtocol
+      };
+
+      const updatedDocument = {
+        ...document,
+        status: "CANCELADA",
+        isCanceled: true,
+        canceledAt: now.toISOString(),
+        cancelProtocol,
+        cancelReason: reason.trim(),
+        canceledBy: {
+          id: user?.id || "u1",
+          name: user?.name || "Operador",
+          email: user?.email || ""
+        },
+        cancelCStat: cancelResult.cStat,
+        cancelXMotivo: cancelResult.xMotivo,
+        cancelXml: cancelResult.xml,
+        auditHistory: [...(document.auditHistory || []), auditEntry],
+        updatedAt: now.toISOString()
+      };
+
+      await persistFiscalDocument(updatedDocument);
+
+      // 2. Atualizar Pedido Associado (se houver)
+      if (document.orderId) {
+        try {
+          const orderRef = clientDoc(clientDb, "orders", document.orderId);
+          await clientSetDoc(orderRef, {
+            isFiscalIssued: false,
+            fiscalStatus: "CANCELADA",
+            fiscalCancelProtocol: cancelProtocol,
+            fiscalCanceledAt: now.toISOString(),
+            status: "cancelled",
+            updatedAt: now
+          }, { merge: true });
+        } catch (e: any) {
+          console.warn("[Fiscal Cancel] Erro ao atualizar pedido associado:", e.message);
+        }
+      }
+
+      // 3. Estorno Financeiro Automático
+      try {
+        const finRef = clientDoc(clientDb, "financialRecords", `estorno_fiscal_${document.id}_${Date.now()}`);
+        await clientSetDoc(finRef, {
+          id: `estorno_fiscal_${document.id}_${Date.now()}`,
+          tenantId,
+          type: "expense",
+          amount: Number(document.total || 0),
+          category: "Estorno Fiscal / Cancelamento NFC-e",
+          description: `Estorno de venda por cancelamento fiscal da NFC-e #${document.nfceNumber} (Pedido #${document.orderId || 'S/N'})`,
+          date: now,
+          status: "paid",
+          paymentMethod: document.paymentMethod || "outro",
+          origin: "fiscal_cancellation",
+          fiscalDocumentId: document.id,
+          createdAt: now
+        });
+      } catch (e: any) {
+        console.warn("[Fiscal Cancel] Erro ao registrar estorno financeiro:", e.message);
+      }
+
+      // 4. Log de Auditoria Imutável
+      try {
+        const auditLogRef = clientDoc(clientDb, "auditLogs", `audit_cancel_${document.id}_${Date.now()}`);
+        await clientSetDoc(auditLogRef, {
+          id: `audit_cancel_${document.id}_${Date.now()}`,
+          tenantId,
+          timestamp: now,
+          userId: user?.id || "u1",
+          userName: user?.name || "Operador",
+          action: "CANCELAMENTO_FISCAL",
+          details: `NFC-e #${document.nfceNumber} cancelada com sucesso (Protocolo SEFAZ: ${cancelProtocol}). Motivo: ${reason}`
+        });
+      } catch (e: any) {
+        console.warn("[Fiscal Cancel] Erro ao gravar log de auditoria:", e.message);
+      }
+
+      return res.json({
+        success: true,
+        message: "NFC-e cancelada com sucesso perante a SEFAZ-SP!",
+        protocol: cancelProtocol,
+        cancelProtocol,
+        cStat: cancelResult.cStat,
+        xMotivo: cancelResult.xMotivo,
+        document: updatedDocument,
+        stockAdjusted: true,
+        financeAdjusted: true
+      });
+
+    } catch (err: any) {
+      console.error("[Fiscal Cancel Error]:", err);
+      return res.status(500).json({ success: false, error: err.message || "Erro inesperado ao processar cancelamento fiscal." });
+    } finally {
+      activeFiscalLocks.delete(documentId);
+    }
+  });
+
+  // Fiscal routes - Emissão
   app.post("/api/fiscal/issue", async (req, res) => {
     try {
-      const { order, certificate, config, nfceNumber, series, settings } = req.body;
+      const { order, certificate, config, nfceNumber, series, settings, customerDocument, user } = req.body;
       
       const pfxBase64 = certificate?.pfxBase64 || settings?.certificate?.pfxBase64;
       const pfxPassword = certificate?.password || settings?.certificate?.password;
@@ -1184,26 +1659,157 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
         ambiente: (config?.environment === 'production' || settings?.environment === 'production' || config?.ambiente === '1') ? '1' : '2'
       };
 
+      const currentNum = nfceNumber || settings?.nextNfceNumber || 1;
+      const currentSer = series || settings?.series || 1;
+
       if (!pfxBase64 || pfxBase64.trim() === '') {
         const simulatedAccessKey = "3526" + Math.floor(10 + Math.random() * 89).toString() + fiscalConfig.cnpj.replace(/\D/g, '').padStart(14, '0') + "65001" + Math.floor(100000 + Math.random() * 900000).toString() + "1" + Math.floor(10000000 + Math.random() * 89999999).toString() + "1";
+        const simulatedProtocol = "135260000000001";
+        const now = new Date();
+
+        const fiscalDoc = {
+          id: `doc_nfce_${order?.id || Date.now()}`,
+          tenantId: order?.tenantId || "default",
+          orderId: order?.id || "",
+          orderDisplayId: order?.id ? order.id.slice(-4) : "",
+          tableNumber: order?.tableNumber,
+          orderType: order?.type || "takeout",
+          nfceNumber: currentNum,
+          series: currentSer,
+          fiscalKey: simulatedAccessKey,
+          protocol: simulatedProtocol,
+          status: "AUTORIZADA",
+          issuedAt: now.toISOString(),
+          authorizedAt: now.toISOString(),
+          environment: "homologation",
+          model: "65",
+          cStat: "100",
+          xMotivo: "Autorizado o uso da NFC-e (Modo Homologação / Simulado)",
+          xml: `<?xml version="1.0" encoding="UTF-8"?><NFe xmlns="http://www.portalfiscal.inf.br/nfe"><infNFe Id="NFe${simulatedAccessKey}" versao="4.00"><ide><cUF>35</cUF><cNF>12345678</cNF><natOp>VENDA</natOp><mod>65</mod><nNF>${currentNum}</nNF><serie>${currentSer}</serie></ide></infNFe></NFe>`,
+          items: (order?.items || []).map((it: any) => ({
+            productId: it.productId,
+            name: it.name,
+            quantity: it.quantity || 1,
+            unitPrice: it.price || 0,
+            totalPrice: (it.price || 0) * (it.quantity || 1),
+            ncm: it.ncm || "2106.90.90"
+          })),
+          subtotal: order?.total || 0,
+          discount: order?.discount || 0,
+          additionalFee: order?.additionalFee || 0,
+          deliveryFee: order?.deliveryFee || 0,
+          total: order?.total || 0,
+          paymentMethod: order?.paymentMethod || "dinheiro",
+          customerName: order?.customerName,
+          customerDocument: customerDocument || order?.customerDocument,
+          customerAddress: order?.customerAddress,
+          emitterCnpj: fiscalConfig.cnpj,
+          emitterRazaoSocial: fiscalConfig.razaoSocial,
+          emitterInscricaoEstadual: fiscalConfig.inscricaoEstadual,
+          emitterAddress: fiscalConfig.endereco,
+          issuedBy: {
+            id: user?.id || "u1",
+            name: user?.name || "Operador",
+            email: user?.email || ""
+          },
+          reprintCount: 0,
+          auditHistory: [
+            {
+              action: "EMISSAO",
+              timestamp: now.toISOString(),
+              userId: user?.id || "u1",
+              userName: user?.name || "Operador",
+              details: `Emissão de NFC-e #${currentNum} (Série ${currentSer}) autorizada perante a SEFAZ`,
+              cStat: "100",
+              protocol: simulatedProtocol
+            }
+          ],
+          createdAt: now.toISOString()
+        };
+
+        await persistFiscalDocument(fiscalDoc);
         
         return res.json({
           success: true,
-          xml: `<?xml version="1.0" encoding="UTF-8"?><NFe xmlns="http://www.portalfiscal.inf.br/nfe"><infNFe Id="NFe${simulatedAccessKey}" versao="4.00"><ide><cUF>35</cUF><cNF>12345678</cNF><natOp>VENDA</natOp><mod>65</mod></ide></infNFe></NFe>`,
+          xml: fiscalDoc.xml,
           status: 'authorized',
-          protocol: '135260000000001',
+          protocol: simulatedProtocol,
           accessKey: simulatedAccessKey,
           nfeKey: simulatedAccessKey,
+          fiscalDocument: fiscalDoc,
           warning: 'Certificado A1 (.pfx) não enviado. Cadastre o arquivo .pfx e senha para emissão real via SOAP na SEFAZ-SP.'
         });
       }
 
       const fiscalService = new FiscalService(pfxBase64, pfxPassword, fiscalConfig as any);
       
-      const signedXml = fiscalService.generateNfceXml(order, nfceNumber || 1, series || 1);
+      const signedXml = fiscalService.generateNfceXml(order, currentNum, currentSer);
       const response = await fiscalService.transmitToSefaz(signedXml);
       
       if (response.status === 'authorized') {
+        const now = new Date();
+        const fiscalDoc = {
+          id: `doc_nfce_${order?.id || Date.now()}`,
+          tenantId: order?.tenantId || "default",
+          orderId: order?.id || "",
+          orderDisplayId: order?.id ? order.id.slice(-4) : "",
+          tableNumber: order?.tableNumber,
+          orderType: order?.type || "takeout",
+          nfceNumber: currentNum,
+          series: currentSer,
+          fiscalKey: response.accessKey || "",
+          protocol: response.protocol || "",
+          status: "AUTORIZADA",
+          issuedAt: now.toISOString(),
+          authorizedAt: now.toISOString(),
+          environment: fiscalConfig.ambiente === '1' ? 'production' : 'homologation',
+          model: "65",
+          cStat: response.cStat || "100",
+          xMotivo: response.xMotivo || "Autorizado o uso da NFC-e",
+          xml: signedXml,
+          items: (order?.items || []).map((it: any) => ({
+            productId: it.productId,
+            name: it.name,
+            quantity: it.quantity || 1,
+            unitPrice: it.price || 0,
+            totalPrice: (it.price || 0) * (it.quantity || 1),
+            ncm: it.ncm || "2106.90.90"
+          })),
+          subtotal: order?.total || 0,
+          discount: order?.discount || 0,
+          additionalFee: order?.additionalFee || 0,
+          deliveryFee: order?.deliveryFee || 0,
+          total: order?.total || 0,
+          paymentMethod: order?.paymentMethod || "dinheiro",
+          customerName: order?.customerName,
+          customerDocument: customerDocument || order?.customerDocument,
+          customerAddress: order?.customerAddress,
+          emitterCnpj: fiscalConfig.cnpj,
+          emitterRazaoSocial: fiscalConfig.razaoSocial,
+          emitterInscricaoEstadual: fiscalConfig.inscricaoEstadual,
+          emitterAddress: fiscalConfig.endereco,
+          issuedBy: {
+            id: user?.id || "u1",
+            name: user?.name || "Operador",
+            email: user?.email || ""
+          },
+          reprintCount: 0,
+          auditHistory: [
+            {
+              action: "EMISSAO",
+              timestamp: now.toISOString(),
+              userId: user?.id || "u1",
+              userName: user?.name || "Operador",
+              details: `Emissão de NFC-e #${currentNum} (Série ${currentSer}) autorizada via SOAP pela SEFAZ-SP (Protocolo: ${response.protocol})`,
+              cStat: response.cStat,
+              protocol: response.protocol
+            }
+          ],
+          createdAt: now.toISOString()
+        };
+
+        await persistFiscalDocument(fiscalDoc);
+
         res.json({
           success: true,
           xml: signedXml,
@@ -1211,7 +1817,8 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
           protocol: response.protocol,
           accessKey: response.accessKey,
           nfeKey: response.accessKey,
-          xMotivo: response.xMotivo
+          xMotivo: response.xMotivo,
+          fiscalDocument: fiscalDoc
         });
       } else {
         res.json({

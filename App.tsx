@@ -26,6 +26,7 @@ import CourierApp from './components/CourierApp';
 import IntelligentReports from './components/IntelligentReports';
 import LojistaCopilot from './components/LojistaCopilot';
 import { FiscalEngineModule } from './components/FiscalEngineModule';
+import { FiscalCoupons } from './components/FiscalCoupons';
 import { db as localDb } from './services/db';
 import { auth, db } from './firebase';
 import { handlePrintOrder } from './services/printService';
@@ -6034,6 +6035,7 @@ const App: React.FC = () => {
                            activeTab === 'users' ? 'Gestão de Equipe' :
                            activeTab === 'saas-admin' ? 'Gestão SaaS' :
                            activeTab === 'fiscal' ? 'Motor Tributário & Gestão Fiscal (CBS/IBS)' :
+                           activeTab === 'fiscal-coupons' ? 'Cupons Fiscais (NFC-e)' :
                            activeTab === 'settings' ? 'Configurações do Sistema' : activeTab}
                         </span>
                       </h1>
@@ -6591,6 +6593,16 @@ const App: React.FC = () => {
             settings={adminSettings}
             currentUser={currentUserData}
             onUpdateSettings={setAdminSettings}
+          />
+        )}
+        {activeTab === 'fiscal-coupons' && (
+          <FiscalCoupons
+            currentTenant={effectiveTenantId}
+            currentUser={currentUserData}
+            adminSettings={adminSettings}
+            orders={orders}
+            showToast={showToast}
+            addLog={handleAddAuditLog}
           />
         )}
         {(activeTab === 'settings' || activeTab === 'admin-settings') && hasPermission('admin_settings_manage') && (

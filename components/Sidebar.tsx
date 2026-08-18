@@ -79,6 +79,7 @@ const Sidebar: React.FC<SidebarProps> = memo(({
     { id: 'customers', label: 'Clientes / Fiado', icon: UserCircle, permission: 'customers_manage' },
     { id: 'inventory', label: 'Estoque', icon: Package, permission: 'inventory_edit' },
     { id: 'finance', label: 'Financeiro', icon: DollarSign, permission: 'finance_view' },
+    { id: 'fiscal-coupons', label: 'Cupons Fiscais', icon: Receipt, permission: 'fiscal_manage' },
     { id: 'users', label: 'Equipe', icon: UsersIcon, permission: 'users_manage' },
     { id: 'settings', label: 'Configurações', icon: Settings, permission: 'admin_settings_manage' },
     { id: 'support', label: 'Suporte Técnico', icon: LifeBuoy, permission: 'dashboard_view' },

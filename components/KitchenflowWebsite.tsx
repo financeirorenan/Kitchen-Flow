@@ -1082,7 +1082,7 @@ export default function KitchenflowWebsite() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
                     transition={{ duration: 0.25 }}
-                    className="grid grid-cols-1 md:grid-cols-12 gap-4 items-stretch min-h-[380px] sm:min-h-[400px]"
+                    className="grid grid-cols-1 md:grid-cols-12 gap-4 items-stretch min-h-[460px] sm:min-h-[500px]"
                     id="panel-ai-content"
                   >
                     {/* Left Column: Animated Kai Avatar */}
@@ -1099,18 +1099,18 @@ export default function KitchenflowWebsite() {
                       </div>
 
                       {/* Animated Kai Avatar with current expression/pose */}
-                      <div className="w-32 h-32 my-auto flex items-center justify-center scale-110">
+                      <div className="w-36 h-36 my-auto flex items-center justify-center scale-110 py-2">
                         <KaiAvatar 
                           expression={isTyping ? 'analisando' : (chatMessages[chatMessages.length - 1]?.expression as any || 'feliz')}
                           pose={isTyping ? 'analisando-dados' : (chatMessages[chatMessages.length - 1]?.pose as any || 'tudo-sob-controle')}
-                          size={120} 
+                          size={135} 
                         />
                       </div>
                       
                       <div className="w-full space-y-1 mt-2">
                         <span className="text-xs font-sans font-extrabold text-white uppercase tracking-wider block">Kai Copiloto</span>
                         <p className="text-[9px] text-slate-400 leading-tight">Auditor de CMV e inteligência de cardápio ativa</p>
-                        <div className="p-2 bg-[#0e1423] rounded-xl border border-white/5 mt-2 flex items-center justify-between text-[8px] font-mono">
+                        <div className="p-2.5 bg-[#0e1423] rounded-xl border border-white/5 mt-2 flex items-center justify-between text-[9px] font-mono">
                           <span className="text-slate-400">Economia sugerida:</span>
                           <span className="text-emerald-400 font-bold">+R$ 3.840/mês</span>
                         </div>
@@ -1129,7 +1129,7 @@ export default function KitchenflowWebsite() {
                       </div>
 
                       {/* Message Feed list */}
-                      <div className="flex-1 overflow-y-auto space-y-3 pr-1 text-xs max-h-56 sm:max-h-60 scrollbar-thin">
+                      <div className="flex-1 overflow-y-auto space-y-3 pr-1 text-xs max-h-72 sm:max-h-80 md:max-h-[300px] scrollbar-thin">
                         {chatMessages.map((msg, i) => (
                           <div
                             key={i}

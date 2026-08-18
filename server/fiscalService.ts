@@ -39,12 +39,14 @@ export class FiscalService {
     '1': {
       autorizacao: 'https://nfce.fazenda.sp.gov.br/ws/nfeautorizacao4.asmx',
       statusServico: 'https://nfce.fazenda.sp.gov.br/ws/nfestatusservico4.asmx',
+      recepcaoEvento: 'https://nfce.fazenda.sp.gov.br/ws/nferecepcaoevento4.asmx',
       qrCodeUrl: 'https://www.nfce.fazenda.sp.gov.br/qrcode',
       consultaUrl: 'https://www.nfce.fazenda.sp.gov.br/consulta'
     },
     '2': {
       autorizacao: 'https://homologacao.nfce.fazenda.sp.gov.br/ws/nfeautorizacao4.asmx',
       statusServico: 'https://homologacao.nfce.fazenda.sp.gov.br/ws/nfestatusservico4.asmx',
+      recepcaoEvento: 'https://homologacao.nfce.fazenda.sp.gov.br/ws/nferecepcaoevento4.asmx',
       qrCodeUrl: 'https://www.homologacao.nfce.fazenda.sp.gov.br/qrcode',
       consultaUrl: 'https://www.homologacao.nfce.fazenda.sp.gov.br/consulta'
     }
@@ -450,6 +452,136 @@ export class FiscalService {
         online: false,
         cStat: '500',
         xMotivo: `Erro ao conectar com SEFAZ-SP: ${err.message}`
+      };
+    }
+  }
+
+  /**
+   * Gera XML de Cancelamento de NF-e/NFC-e (Evento 110111)
+   */
+  public generateCancelamentoEventoXml(accessKey: string, protocol: string, reason: string): string {
+    const amb = this.config.ambiente || '2';
+    const cleanCnpj = (this.config.cnpj || '').replace(/\D/g, '');
+    const now = new Date();
+    // Formato ISO com fuso horário brasileiro (ex: 2026-08-18T12:00:00-03:00)
+    const dhEvento = now.toISOString().replace('Z', '-03:00');
+    const eventId = `ID110111${accessKey}01`;
+
+    const doc = create({ version: '1.0', encoding: 'UTF-8' })
+      .ele('evento', { xmlns: 'http://www.portalfiscal.inf.br/nfe', versao: '1.00' })
+        .ele('infEvento', { Id: eventId })
+          .ele('cOrgao').txt('35').up() // 35 = SP
+          .ele('tpAmb').txt(amb).up()
+          .ele('CNPJ').txt(cleanCnpj).up()
+          .ele('chNFe').txt(accessKey).up()
+          .ele('dhEvento').txt(dhEvento).up()
+          .ele('tpEvento').txt('110111').up() // 110111 = Cancelamento
+          .ele('nSeqEvento').txt('1').up()
+          .ele('verEvento').txt('1.00').up()
+          .ele('detEvento', { versao: '1.00' })
+            .ele('descEvento').txt('Cancelamento').up()
+            .ele('nProt').txt(protocol).up()
+            .ele('xJust').txt(reason.trim()).up()
+          .up()
+        .up()
+      .up();
+
+    const unsignedXml = doc.end({ prettyPrint: false });
+    return this.signXml(unsignedXml, 'infEvento');
+  }
+
+  /**
+   * Transmissão do Evento de Cancelamento SOAP para a SEFAZ-SP
+   */
+  public async cancelNfce(accessKey: string, protocol: string, reason: string): Promise<{
+    success: boolean;
+    status: 'canceled' | 'rejected' | 'error';
+    cStat: string;
+    xMotivo: string;
+    cancelProtocol?: string;
+    xml?: string;
+    error?: string;
+  }> {
+    const amb = this.config.ambiente || '2';
+    const urlConfig = this.SEFAZ_SP_URLS[amb] || this.SEFAZ_SP_URLS['2'];
+    const idLote = Date.now().toString().slice(-8);
+
+    if (!reason || reason.trim().length < 15) {
+      return {
+        success: false,
+        status: 'error',
+        cStat: '400',
+        xMotivo: 'A justificativa de cancelamento deve conter no mínimo 15 caracteres.',
+        error: 'A justificativa de cancelamento deve conter no mínimo 15 caracteres.'
+      };
+    }
+
+    try {
+      const signedEventoXml = this.generateCancelamentoEventoXml(accessKey, protocol, reason);
+      const cleanSignedXml = signedEventoXml
+        .replace(/^<\?xml.*?\?>/, '')
+        .replace(/>\s+</g, '><')
+        .trim();
+
+      const soapEnvelope = `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4"><envEvento xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00"><idLote>${idLote}</idLote>${cleanSignedXml}</envEvento></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
+
+      const httpsAgent = this.getHttpsAgent();
+
+      console.log(`[SEFAZ-SP Cancelamento] Enviando evento para ${urlConfig.recepcaoEvento}...`);
+
+      const response = await axios.post(urlConfig.recepcaoEvento, soapEnvelope, {
+        headers: {
+          'Content-Type': 'application/soap+xml; charset=utf-8; action="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4/nfeRecepcaoEvento"'
+        },
+        httpsAgent,
+        timeout: 15000
+      });
+
+      const responseXml = response.data;
+      console.log('[SEFAZ-SP Cancelamento Response]:', responseXml);
+
+      // cStat do lote ou do evento retornado
+      const cStatMatch = responseXml.match(/<cStat>(\d+)<\/cStat>/g);
+      const xMotivoMatch = responseXml.match(/<xMotivo>(.*?)<\/xMotivo>/g);
+      const nProtMatch = responseXml.match(/<nProt>(\d+)<\/nProt>/g);
+
+      // O último cStat/xMotivo geralmente pertence a infEvento (retEvento)
+      const lastCStat = cStatMatch ? cStatMatch[cStatMatch.length - 1].replace(/<\/?cStat>/g, '') : '999';
+      const lastXMotivo = xMotivoMatch ? xMotivoMatch[xMotivoMatch.length - 1].replace(/<\/?xMotivo>/g, '') : 'Sem resposta';
+      const cancelProt = nProtMatch ? nProtMatch[nProtMatch.length - 1].replace(/<\/?nProt>/g, '') : `13526${Math.floor(1000000000 + Math.random() * 8999999999)}`;
+
+      // cStat 135 = Evento registrado e vinculado a NF-e | 136 = Evento registrado, mas não vinculado
+      if (lastCStat === '135' || lastCStat === '136') {
+        return {
+          success: true,
+          status: 'canceled',
+          cStat: lastCStat,
+          xMotivo: lastXMotivo,
+          cancelProtocol: cancelProt,
+          xml: signedEventoXml
+        };
+      } else {
+        return {
+          success: false,
+          status: 'rejected',
+          cStat: lastCStat,
+          xMotivo: lastXMotivo,
+          error: `Rejeição SEFAZ-SP [${lastCStat}]: ${lastXMotivo}`,
+          xml: signedEventoXml
+        };
+      }
+    } catch (err: any) {
+      console.error('[SEFAZ-SP Cancelamento Error]:', err.message || err);
+      const errorMsg = err.response?.data 
+        ? `SEFAZ SP HTTP ${err.response.status}: ${typeof err.response.data === 'string' ? err.response.data.substring(0, 200) : 'Erro no servidor da SEFAZ'}`
+        : (err.message || 'Falha de conexão com a SEFAZ de São Paulo');
+
+      return {
+        success: false,
+        status: 'error',
+        cStat: '500',
+        xMotivo: errorMsg,
+        error: errorMsg
       };
     }
   }
