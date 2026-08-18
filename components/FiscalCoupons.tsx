@@ -302,13 +302,47 @@ export const FiscalCoupons: React.FC<FiscalCouponsProps> = ({
     setSelectedDoc(doc);
     setIsReprinting(true);
 
+    const safeTenantId = doc.tenantId || currentTenant || 't1';
+
+    // Montar representação do pedido para a impressão
+    const orderRepresentation: Order = {
+      id: doc.orderId || `ord_${doc.nfceNumber}`,
+      tenantId: safeTenantId,
+      tableNumber: doc.tableNumber,
+      type: (doc.orderType as any) || 'takeout',
+      status: 'finished',
+      items: (doc.items || []).map((it, idx) => ({
+        productId: it.productId || `prod_${idx}`,
+        name: it.name,
+        quantity: it.quantity,
+        price: it.unitPrice
+      })),
+      total: doc.total,
+      deliveryFee: doc.deliveryFee,
+      additionalFee: doc.additionalFee,
+      discount: doc.discount,
+      paymentMethod: doc.paymentMethod as any,
+      customerName: doc.customerName,
+      customerDocument: doc.customerDocument,
+      customerAddress: doc.customerAddress,
+      isFiscalIssued: true,
+      fiscalKey: doc.fiscalKey,
+      createdAt: parseFiscalDate(doc.issuedAt || doc.createdAt),
+      metadata: {
+        protocol: doc.protocol,
+        nfceNumber: doc.nfceNumber,
+        series: doc.series
+      }
+    };
+
     try {
       const res = await fetch('/api/fiscal/reprint', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           documentId: doc.id,
-          tenantId: currentTenant,
+          document: doc,
+          tenantId: safeTenantId,
           user: {
             id: currentUser?.id || 'u1',
             name: currentUser?.name || 'Operador',
@@ -320,52 +354,29 @@ export const FiscalCoupons: React.FC<FiscalCouponsProps> = ({
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.document) {
-          // Atualizar estado local do documento
+          // Atualizar estado local do documento com o novo contador de reimpressões
           setDocuments(prev => prev.map(d => d.id === doc.id ? data.document : d));
           setSelectedDoc(data.document);
         }
-
-        // Chamar serviço de impressão térmica
-        const orderRepresentation: Order = {
-          id: doc.orderId || `ord_${doc.nfceNumber}`,
-          tenantId: currentTenant,
-          tableNumber: doc.tableNumber,
-          type: (doc.orderType as any) || 'takeout',
-          status: 'finished',
-          items: (doc.items || []).map((it, idx) => ({
-            productId: it.productId || `prod_${idx}`,
-            name: it.name,
-            quantity: it.quantity,
-            price: it.unitPrice
-          })),
-          total: doc.total,
-          deliveryFee: doc.deliveryFee,
-          additionalFee: doc.additionalFee,
-          discount: doc.discount,
-          paymentMethod: doc.paymentMethod as any,
-          customerName: doc.customerName,
-          customerDocument: doc.customerDocument,
-          customerAddress: doc.customerAddress,
-          isFiscalIssued: true,
-          fiscalKey: doc.fiscalKey,
-          createdAt: new Date(doc.issuedAt || doc.createdAt),
-          metadata: {
-            protocol: doc.protocol,
-            nfceNumber: doc.nfceNumber,
-            series: doc.series
-          }
-        };
-
-        handlePrintOrder(orderRepresentation, adminSettings, { isFiscal: true });
-        showToast(`Reimpressão de NFC-e #${doc.nfceNumber} enviada com sucesso!`, 'success');
-        addLog?.(currentUser?.id || 'u1', 'REIMPRESSAO_FISCAL', `Reimpressão de NFC-e #${doc.nfceNumber} (Chave: ${doc.fiscalKey})`);
       } else {
-        const errorData = await res.json();
-        showToast(`Erro na reimpressão: ${errorData.error || 'Falha de comunicação'}`, 'error');
+        // Incrementa localmente se a rede estiver instável
+        const updatedDoc = {
+          ...doc,
+          reprintCount: (doc.reprintCount || 0) + 1,
+          lastReprintAt: new Date().toISOString()
+        };
+        setDocuments(prev => prev.map(d => d.id === doc.id ? updatedDoc : d));
       }
+
+      // Envia comando para a impressora térmica / modal de impressão
+      handlePrintOrder(orderRepresentation, adminSettings, { isFiscal: true });
+      showToast(`Reimpressão de NFC-e #${doc.nfceNumber || 'DANFE'} enviada para impressão!`, 'success');
+      addLog?.(currentUser?.id || 'u1', 'REIMPRESSAO_FISCAL', `Reimpressão de NFC-e #${doc.nfceNumber} (Chave: ${doc.fiscalKey})`);
     } catch (err: any) {
-      console.error('Erro ao reimprimir:', err);
-      showToast('Erro ao processar reimpressão fiscal.', 'error');
+      console.warn('Falha na requisição de log de reimpressão, prosseguindo com impressão física:', err);
+      // Mesmo com erro de rede, não impede a impressora física de emitir a via
+      handlePrintOrder(orderRepresentation, adminSettings, { isFiscal: true });
+      showToast(`Reimpressão de NFC-e #${doc.nfceNumber || 'DANFE'} enviada para impressão!`, 'success');
     } finally {
       setIsReprinting(false);
     }

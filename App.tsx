@@ -4234,13 +4234,16 @@ const App: React.FC = () => {
     // NFC-e Emission Logic
     if (fiscal) {
       try {
-        const currentNfceNum = adminSettings.fiscal?.nextNfceNumber || 1;
-        const currentSeries = adminSettings.fiscal?.series || 1;
+        const currentNfceNum = Number(adminSettings.fiscal?.nextNfceNumber) || 1;
+        const currentSeries = Number(adminSettings.fiscal?.series) || 1;
+        const targetTenantId = viewingTenantId || currentUserData?.tenantId || 't1';
+
         const response = await fetch('/api/fiscal/issue', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             order: newOrder,
+            tenantId: targetTenantId,
             settings: adminSettings.fiscal,
             customerDocument: customerDocument,
             nfceNumber: currentNfceNum,
@@ -4258,13 +4261,22 @@ const App: React.FC = () => {
         if (response.ok) {
           const result = await response.json();
           if (result.success) {
-            newOrder.fiscalKey = result.nfeKey;
+            const issuedKey = result.nfeKey || result.accessKey;
+            const actualNfceNum = result.nfceNumber || currentNfceNum;
+            const nextNum = result.nextNfceNumber || (actualNfceNum + 1);
+
+            newOrder.fiscalKey = issuedKey;
             newOrder.isFiscalIssued = true;
-            addLog('u1', 'FISCAL', `NFC-e #${currentNfceNum} emitida com sucesso (Protocolo: ${result.protocol || 'OK'}): ${result.nfeKey}`);
+            newOrder.metadata = {
+              ...(newOrder.metadata || {}),
+              nfceNumber: actualNfceNum,
+              series: currentSeries,
+              protocol: result.protocol || '135260000000001'
+            };
+            addLog('u1', 'FISCAL', `NFC-e #${actualNfceNum} emitida com sucesso (Protocolo: ${result.protocol || 'OK'}): ${issuedKey}`);
             
-            // Incrementar a sequência do próximo número de NFC-e
-            const nextNum = currentNfceNum + 1;
-            handleUpdateLogisticsSettings({
+            // Incrementar a sequência do próximo número de NFC-e no estado e banco
+            await handleUpdateLogisticsSettings({
               fiscal: {
                 ...adminSettings.fiscal,
                 nextNfceNumber: nextNum
@@ -6379,6 +6391,7 @@ const App: React.FC = () => {
           onAddCustomer={handleAddCustomer}
           onAddFinancialRecord={handleAddFinancialRecord}
           pdvEditOrder={pdvEditOrder}
+          onUpdateAdminSettings={handleUpdateLogisticsSettings}
           onCancelPdvEdit={() => {
             setPdvEditOrder(null);
             if (returnToTab) {

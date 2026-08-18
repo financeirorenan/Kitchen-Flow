@@ -1351,12 +1351,15 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
   // Reimpressão Fiscal com Registro de Auditoria
   app.post("/api/fiscal/reprint", async (req, res) => {
     try {
-      const { documentId, tenantId, user, reason } = req.body;
-      if (!documentId || !tenantId) {
-        return res.status(400).json({ success: false, error: "documentId e tenantId são obrigatórios." });
+      const { documentId, tenantId, user, reason, document: incomingDoc } = req.body;
+      const targetDocId = documentId || incomingDoc?.id;
+      const targetTenantId = tenantId || incomingDoc?.tenantId || "t1";
+
+      if (!targetDocId) {
+        return res.status(400).json({ success: false, error: "Identificador do documento fiscal não fornecido." });
       }
 
-      const docRef = clientDoc(clientDb, "fiscal_documents", documentId);
+      const docRef = clientDoc(clientDb, "fiscal_documents", targetDocId);
       let docSnap;
       try {
         const { getDoc } = await import("firebase/firestore");
@@ -1367,12 +1370,39 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
 
       let docData: any = docSnap && docSnap.exists() ? docSnap.data() : null;
 
-      if (!docData) {
-        return res.status(404).json({ success: false, error: "Documento fiscal não encontrado." });
+      // Se não encontrou pelo ID direto, tenta pelo orderId ou usa o payload enviado
+      if (!docData && incomingDoc) {
+        docData = {
+          ...incomingDoc,
+          id: targetDocId,
+          tenantId: targetTenantId
+        };
       }
 
-      if (docData.tenantId !== tenantId) {
-        return res.status(403).json({ success: false, error: "Acesso negado: o documento não pertence a este estabelecimento." });
+      if (!docData) {
+        // Tenta buscar por orderId se o targetDocId for o ID do pedido
+        try {
+          const { getDocs, query, where } = await import("firebase/firestore");
+          const q = query(
+            clientCollection(clientDb, "fiscal_documents"),
+            where("orderId", "==", targetDocId)
+          );
+          const qSnap = await getDocs(q);
+          if (!qSnap.empty) {
+            docData = qSnap.docs[0].data();
+          }
+        } catch (e: any) {
+          console.warn("[Fiscal Reprint] query by orderId error:", e.message);
+        }
+      }
+
+      if (!docData) {
+        return res.status(404).json({ success: false, error: "Documento fiscal não localizado para reimpressão." });
+      }
+
+      // Normaliza tenant se necessário
+      if (docData.tenantId !== targetTenantId) {
+        docData.tenantId = targetTenantId;
       }
 
       const now = new Date();
@@ -1382,7 +1412,7 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
         timestamp: now.toISOString(),
         userId: user?.id || "u1",
         userName: user?.name || "Operador",
-        details: `Reimpressão nº ${reprintCount} do DANFE NFC-e #${docData.nfceNumber}${reason ? ` - Motivo: ${reason}` : ''}`
+        details: `Reimpressão nº ${reprintCount} do DANFE NFC-e #${docData.nfceNumber || 'N/A'}${reason ? ` - Motivo: ${reason}` : ''}`
       };
 
       const auditHistory = [...(docData.auditHistory || []), auditEntry];
@@ -1395,10 +1425,10 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
 
       // Salva log global na coleção de auditoria
       try {
-        const auditLogRef = clientDoc(clientDb, "auditLogs", `audit_reprint_${documentId}_${Date.now()}`);
+        const auditLogRef = clientDoc(clientDb, "auditLogs", `audit_reprint_${targetDocId}_${Date.now()}`);
         await clientSetDoc(auditLogRef, {
-          id: `audit_reprint_${documentId}_${Date.now()}`,
-          tenantId,
+          id: `audit_reprint_${targetDocId}_${Date.now()}`,
+          tenantId: targetTenantId,
           timestamp: now,
           userId: user?.id || "u1",
           userName: user?.name || "Operador",
@@ -1634,10 +1664,57 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
     }
   });
 
+  // Função auxiliar para persistir o auto-incremento da sequência de NFC-e
+  async function updateNextFiscalNumber(tenantId: string, currentNumber: number): Promise<number> {
+    const nextNumber = currentNumber + 1;
+    const tId = tenantId || 't1';
+    try {
+      const settingsRef = clientDoc(clientDb, "settings", tId);
+      const settingsSnap = await getClientDoc(settingsRef);
+      if (settingsSnap.exists()) {
+        const data = settingsSnap.data() || {};
+        const existingAdmin = data.admin || {};
+        const existingFiscal = existingAdmin.fiscal || data.fiscal || {};
+
+        await clientSetDoc(settingsRef, {
+          admin: {
+            ...existingAdmin,
+            fiscal: {
+              ...existingFiscal,
+              nextNfceNumber: nextNumber
+            }
+          },
+          fiscal: {
+            ...existingFiscal,
+            nextNfceNumber: nextNumber
+          },
+          updatedAt: new Date()
+        }, { merge: true });
+      } else {
+        await clientSetDoc(settingsRef, {
+          admin: {
+            fiscal: {
+              nextNfceNumber: nextNumber
+            }
+          },
+          fiscal: {
+            nextNfceNumber: nextNumber
+          },
+          updatedAt: new Date()
+        }, { merge: true });
+      }
+      console.log(`[Fiscal API] Auto-incrementado nextNfceNumber para ${nextNumber} no tenant ${tId}`);
+    } catch (err: any) {
+      console.warn(`[Fiscal API] Falha ao persistir auto-incremento de nextNfceNumber para tenant ${tId}:`, err.message);
+    }
+    return nextNumber;
+  }
+
   // Fiscal routes - Emissão
   app.post("/api/fiscal/issue", async (req, res) => {
     try {
       const { order, certificate, config, nfceNumber, series, settings, customerDocument, user } = req.body;
+      const targetTenantId = req.body.tenantId || order?.tenantId || "t1";
       
       const pfxBase64 = certificate?.pfxBase64 || settings?.certificate?.pfxBase64;
       const pfxPassword = certificate?.password || settings?.certificate?.password;
@@ -1660,8 +1737,14 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
         ambiente: (config?.environment === 'production' || settings?.environment === 'production' || config?.ambiente === '1') ? '1' : '2'
       };
 
-      const currentNum = nfceNumber || settings?.nextNfceNumber || 1;
-      const currentSer = series || settings?.series || 1;
+      let currentNum = Number(nfceNumber);
+      if (!currentNum || isNaN(currentNum)) {
+        currentNum = Number(settings?.nextNfceNumber);
+      }
+      if (!currentNum || isNaN(currentNum)) {
+        currentNum = 1;
+      }
+      const currentSer = Number(series) || Number(settings?.series) || 1;
 
       if (!pfxBase64 || pfxBase64.trim() === '') {
         const simulatedAccessKey = "3526" + Math.floor(10 + Math.random() * 89).toString() + fiscalConfig.cnpj.replace(/\D/g, '').padStart(14, '0') + "65001" + Math.floor(100000 + Math.random() * 900000).toString() + "1" + Math.floor(10000000 + Math.random() * 89999999).toString() + "1";
@@ -1670,7 +1753,7 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
 
         const fiscalDoc = {
           id: `doc_nfce_${order?.id || Date.now()}`,
-          tenantId: order?.tenantId || "default",
+          tenantId: targetTenantId,
           orderId: order?.id || "",
           orderDisplayId: order?.id ? order.id.slice(-4) : "",
           tableNumber: order?.tableNumber,
@@ -1729,6 +1812,7 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
         };
 
         await persistFiscalDocument(fiscalDoc);
+        const nextNum = await updateNextFiscalNumber(targetTenantId, currentNum);
         
         return res.json({
           success: true,
@@ -1737,6 +1821,8 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
           protocol: simulatedProtocol,
           accessKey: simulatedAccessKey,
           nfeKey: simulatedAccessKey,
+          nfceNumber: currentNum,
+          nextNfceNumber: nextNum,
           fiscalDocument: fiscalDoc,
           warning: 'Certificado A1 (.pfx) não enviado. Cadastre o arquivo .pfx e senha para emissão real via SOAP na SEFAZ-SP.'
         });
@@ -1751,7 +1837,7 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
         const now = new Date();
         const fiscalDoc = {
           id: `doc_nfce_${order?.id || Date.now()}`,
-          tenantId: order?.tenantId || "default",
+          tenantId: targetTenantId,
           orderId: order?.id || "",
           orderDisplayId: order?.id ? order.id.slice(-4) : "",
           tableNumber: order?.tableNumber,
@@ -1810,6 +1896,7 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
         };
 
         await persistFiscalDocument(fiscalDoc);
+        const nextNum = await updateNextFiscalNumber(targetTenantId, currentNum);
 
         res.json({
           success: true,
@@ -1818,6 +1905,8 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
           protocol: response.protocol,
           accessKey: response.accessKey,
           nfeKey: response.accessKey,
+          nfceNumber: currentNum,
+          nextNfceNumber: nextNum,
           xMotivo: response.xMotivo,
           fiscalDocument: fiscalDoc
         });

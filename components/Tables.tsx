@@ -148,6 +148,7 @@ interface TablesProps {
   tenantId: string;
   defaultDeliveryFee?: number;
   pdvEditOrder?: Order | null;
+  onUpdateAdminSettings?: (updates: Partial<AdminSettings>) => Promise<void> | void;
   onCancelPdvEdit?: () => void;
   onUpdateOrder?: (id: string, updates: Partial<Order>) => void;
   onNavigate?: (tab: string) => void;
@@ -193,6 +194,7 @@ const Tables: React.FC<TablesProps> = memo(
     tenantId,
     defaultDeliveryFee = 0,
     pdvEditOrder,
+    onUpdateAdminSettings,
     onCancelPdvEdit,
     onUpdateOrder,
     onNavigate,
@@ -1882,13 +1884,26 @@ const Tables: React.FC<TablesProps> = memo(
           createdAt: new Date(),
         };
 
+        const currentNfceNum = Number(adminSettings.fiscal?.nextNfceNumber) || 1;
+        const currentSeries = Number(adminSettings.fiscal?.series) || 1;
+
         const response = await fetch("/api/fiscal/issue", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             order: virtualOrder,
+            tenantId: tenantId || "t1",
             settings: adminSettings.fiscal,
             customerDocument: doc || undefined,
+            nfceNumber: currentNfceNum,
+            series: currentSeries,
+            certificate: adminSettings.fiscal?.certificate,
+            config: {
+              environment: adminSettings.fiscal?.environment || "homologation",
+              cnpj: adminSettings.fiscal?.cnpj,
+              cscId: adminSettings.fiscal?.cscId,
+              cscToken: adminSettings.fiscal?.cscToken,
+            },
           }),
         });
 
@@ -1896,6 +1911,9 @@ const Tables: React.FC<TablesProps> = memo(
           const result = await response.json();
           if (result.success) {
             const key = result.nfeKey || result.accessKey;
+            const actualNfceNum = result.nfceNumber || currentNfceNum;
+            const nextNum = result.nextNfceNumber || (actualNfceNum + 1);
+
             setSplitParts((prev) =>
               prev.map((p) => {
                 if (p.id === partId) {
@@ -1909,9 +1927,19 @@ const Tables: React.FC<TablesProps> = memo(
                 return p;
               }),
             );
+
+            if (onUpdateAdminSettings) {
+              await onUpdateAdminSettings({
+                fiscal: {
+                  ...adminSettings.fiscal,
+                  nextNfceNumber: nextNum,
+                },
+              });
+            }
+
             if (showToast) {
               showToast(
-                `NFC-e parcial emitida com sucesso: ${key.substring(0, 10)}...`,
+                `NFC-e #${actualNfceNum} emitida com sucesso: ${key.substring(0, 10)}... (Próximo: #${nextNum})`,
                 "success",
               );
             }

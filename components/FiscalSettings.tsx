@@ -704,8 +704,9 @@ const FiscalSettings: React.FC<FiscalSettingsProps> = ({ settings, onUpdate }) =
                     <label className="block text-xs font-medium text-gray-500 uppercase mb-1">Próximo Número</label>
                     <input 
                       type="number" 
-                      value={settings.fiscal?.nextNfceNumber || 1}
-                      onChange={(e) => handleUpdateFiscal({ nextNfceNumber: parseInt(e.target.value) })}
+                      min="1"
+                      value={settings.fiscal?.nextNfceNumber ?? 1}
+                      onChange={(e) => handleUpdateFiscal({ nextNfceNumber: Math.max(1, parseInt(e.target.value, 10) || 1) })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none"
                     />
                   </div>

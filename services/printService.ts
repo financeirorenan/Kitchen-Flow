@@ -157,6 +157,10 @@ export const generateRawTextReceipt = (order: Partial<Order>, settings: AdminSet
   }
 
   if (isFiscal) {
+    const docNfceNum = order.metadata?.nfceNumber || (order as any).nfceNumber || fiscal?.nextNfceNumber || 1;
+    const docSeries = order.metadata?.series || (order as any).series || fiscal?.series || 1;
+    const docProtocol = order.metadata?.protocol || (order as any).protocol || '136263705823847';
+
     out += center('D.A.N.F.E  N.F.C.-e', lineCharLimit) + '\n';
     out += center('DOCUMENTO AUXILIAR DA NOTA FISCAL', lineCharLimit) + '\n';
     out += center('DE CONSUMIDOR ELETRONICA', lineCharLimit) + '\n';
@@ -164,8 +168,8 @@ export const generateRawTextReceipt = (order: Partial<Order>, settings: AdminSet
     out += `CHAVE DE ACESSO:\n`;
     out += `${formatFiscalKey(order.fiscalKey || '35260659256207000174650010000011091263520471')}\n`;
     out += divider + '\n';
-    out += `PROTOCOLO: ${order.metadata?.protocol || '136263705823847'}\n`;
-    out += `NFC-e Num: ${String(fiscal?.nextNfceNumber || 1109).padStart(9, '0')} Series: ${String(fiscal?.series || 1).padStart(3, '0')}\n`;
+    out += `PROTOCOLO: ${docProtocol}\n`;
+    out += `NFC-e Num: ${String(docNfceNum).padStart(9, '0')} Series: ${String(docSeries).padStart(3, '0')}\n`;
     out += divider + '\n';
     out += center('TRIBUTOS TOTAIS APROXIMADOS (IBPT)', lineCharLimit) + '\n';
     out += center(`R$ ${( (order.total || 0) * 0.3145 ).toFixed(2).replace('.', ',')} (31.45%)`, lineCharLimit) + '\n';
@@ -362,9 +366,9 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
 
         <div style="font-size: ${fontSizeSmall}; line-height: 1.35; text-transform: uppercase; font-weight: 700;">
           <div><strong>CONSUMIDOR CNPJ / CPF:</strong> ${order.customerDocument || 'NÃO IDENTIFICADO'}</div>
-          <div style="margin-top: 3px;"><strong>NFC-e nº</strong> ${String(fiscal?.nextNfceNumber || 1109).padStart(9, '0')} &nbsp;&nbsp; <strong>Série</strong> ${String(fiscal?.series || 1).padStart(3, '0')}</div>
+          <div style="margin-top: 3px;"><strong>NFC-e nº</strong> ${String(order.metadata?.nfceNumber || (order as any).nfceNumber || fiscal?.nextNfceNumber || 1).padStart(9, '0')} &nbsp;&nbsp; <strong>Série</strong> ${String(order.metadata?.series || (order as any).series || fiscal?.series || 1).padStart(3, '0')}</div>
           <div><strong>Data/Hora Emissão:</strong> ${dateStr} ${timeStr}</div>
-          <div><strong>Protocolo de Autorização:</strong> ${order.metadata?.protocol || '136263705823847'}</div>
+          <div><strong>Protocolo de Autorização:</strong> ${order.metadata?.protocol || (order as any).protocol || '136263705823847'}</div>
         </div>
 
         <div class="center" style="margin: 15px 0;">
