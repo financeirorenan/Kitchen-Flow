@@ -73,38 +73,19 @@ const maskPhone = (value: string) => {
     .replace(/(\d{5})(\d)/, '$1-$2');
 };
 
-const ChefHatLogo = ({ className = "w-6 h-6 text-[#FF4F18]" }) => (
-  <svg viewBox="0 0 100 100" className={className} fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path
-      d="M26 56 C16 56, 12 42, 22 34 C16 19, 32 6, 44 12 C52 0, 72 2, 76 18 C88 12, 94 28, 84 38 C90 49, 80 56, 72 56"
-      stroke="currentColor"
-      strokeWidth="6"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-    <path
-      d="M29 56 V66 C29 69, 33 71, 41 71 H71 C79 71, 83 66, 83 66 V56"
-      stroke="currentColor"
-      strokeWidth="6"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-    <circle cx="56" cy="66" r="4.5" fill="currentColor" />
-    <path d="M56 66 V59 H44" stroke="currentColor" strokeWidth="4.5" strokeLinecap="round" />
-    <path
-      d="M32 48 Q48 46, 56 30 L66 18"
-      stroke="currentColor"
-      strokeWidth="5.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-    <path
-      d="M56 18 H66 V28"
-      stroke="currentColor"
-      strokeWidth="5.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
+const KitchenFlowBrandLogo = ({ className = "w-10 h-10" }: { className?: string }) => (
+  <svg viewBox="0 0 512 512" className={className} xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="kfBrandGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stopColor="#FF5722" />
+        <stop offset="100%" stopColor="#E02A00" />
+      </linearGradient>
+    </defs>
+    {/* Smooth rounded background matching favicon */}
+    <rect width="512" height="512" rx="112" fill="url(#kfBrandGrad)" />
+    
+    {/* Crisp, solid white letter K */}
+    <path d="M 132,112 H 200 V 212 L 328,112 H 396 L 254,242 L 396,400 H 328 L 200,268 V 400 H 132 Z" fill="#FFFFFF" />
   </svg>
 );
 
@@ -501,9 +482,7 @@ export default function KitchenflowWebsite() {
         <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
           
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-tr from-[#FF4F18]/25 to-[#FF4F18]/10 border border-[#FF4F18]/20 rounded-xl flex items-center justify-center shadow-lg shadow-[#FF4F18]/10">
-              <ChefHatLogo className="w-6 h-6 text-[#FF4F18]" />
-            </div>
+            <KitchenFlowBrandLogo className="w-10 h-10 rounded-xl shadow-lg shadow-[#FF4F18]/20" />
             <div>
               <span className="font-sans font-extrabold text-lg tracking-tight text-white">KitchenFlow</span>
               <span className="text-[10px] font-black text-[#FF4F18] ml-1.5 bg-[#FF4F18]/10 px-2 py-0.5 rounded border border-[#FF4F18]/20 uppercase tracking-widest">AI</span>
@@ -1103,41 +1082,63 @@ export default function KitchenflowWebsite() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
                     transition={{ duration: 0.25 }}
-                    className="grid grid-cols-1 md:grid-cols-12 gap-4 h-[280px]"
+                    className="grid grid-cols-1 md:grid-cols-12 gap-4 items-stretch min-h-[380px] sm:min-h-[400px]"
                     id="panel-ai-content"
                   >
                     {/* Left Column: Animated Kai Avatar */}
-                    <div className="md:col-span-4 flex flex-col items-center justify-center p-4 bg-slate-950/60 rounded-2xl border border-white/5 text-center relative overflow-hidden">
-                      <div className="absolute top-0 left-0 w-20 h-20 bg-[#FF4F18]/5 rounded-full blur-xl" />
+                    <div className="md:col-span-4 flex flex-col items-center justify-between p-5 bg-slate-950/80 rounded-2xl border border-white/5 text-center relative overflow-hidden">
+                      <div className="absolute top-0 left-0 w-28 h-28 bg-[#FF4F18]/10 rounded-full blur-2xl pointer-events-none" />
                       
+                      <div className="w-full flex items-center justify-between">
+                        <span className="text-[9px] font-mono uppercase bg-[#FF4F18]/10 text-[#FF4F18] border border-[#FF4F18]/20 px-2 py-0.5 rounded font-black tracking-widest flex items-center gap-1">
+                          <Sparkles size={10} /> Copiloto IA
+                        </span>
+                        <span className="text-[8px] font-mono text-emerald-450 font-bold flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" /> Online
+                        </span>
+                      </div>
+
                       {/* Animated Kai Avatar with current expression/pose */}
-                      <div className="w-28 h-28 flex items-center justify-center scale-110">
+                      <div className="w-32 h-32 my-auto flex items-center justify-center scale-110">
                         <KaiAvatar 
                           expression={isTyping ? 'analisando' : (chatMessages[chatMessages.length - 1]?.expression as any || 'feliz')}
                           pose={isTyping ? 'analisando-dados' : (chatMessages[chatMessages.length - 1]?.pose as any || 'tudo-sob-controle')}
-                          size={110} 
+                          size={120} 
                         />
                       </div>
                       
-                      <span className="text-[10px] font-sans font-extrabold text-white uppercase tracking-wider mt-2">Kai Copiloto AI</span>
-                      <span className="text-[8px] font-mono text-emerald-400 uppercase font-black bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded mt-1 animate-pulse">
-                        Ativo & Monitorando
-                      </span>
+                      <div className="w-full space-y-1 mt-2">
+                        <span className="text-xs font-sans font-extrabold text-white uppercase tracking-wider block">Kai Copiloto</span>
+                        <p className="text-[9px] text-slate-400 leading-tight">Auditor de CMV e inteligência de cardápio ativa</p>
+                        <div className="p-2 bg-[#0e1423] rounded-xl border border-white/5 mt-2 flex items-center justify-between text-[8px] font-mono">
+                          <span className="text-slate-400">Economia sugerida:</span>
+                          <span className="text-emerald-400 font-bold">+R$ 3.840/mês</span>
+                        </div>
+                      </div>
                     </div>
 
                     {/* Right Column: Chat messages feed */}
-                    <div className="md:col-span-8 flex flex-col justify-between bg-slate-950/80 p-4 rounded-2xl border border-white/5 h-full relative overflow-hidden">
+                    <div className="md:col-span-8 flex flex-col justify-between bg-slate-950/80 p-4 sm:p-5 rounded-2xl border border-white/5 h-full relative overflow-hidden space-y-3">
+                      {/* Chat Header */}
+                      <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                          <span className="text-[10px] font-mono uppercase font-bold text-slate-300">Auditoria Operacional • Viva Lá Fome</span>
+                        </div>
+                        <span className="text-[8px] font-mono text-slate-500">IA Conectada ao Estoque & DRE</span>
+                      </div>
+
                       {/* Message Feed list */}
-                      <div className="flex-1 overflow-y-auto space-y-3 pr-1 text-xs max-h-32 scrollbar-thin">
+                      <div className="flex-1 overflow-y-auto space-y-3 pr-1 text-xs max-h-56 sm:max-h-60 scrollbar-thin">
                         {chatMessages.map((msg, i) => (
                           <div
                             key={i}
                             className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
                           >
-                            <div className={`p-2.5 rounded-xl max-w-[85%] leading-relaxed ${
+                            <div className={`p-3 rounded-2xl max-w-[90%] leading-relaxed ${
                               msg.sender === 'user'
-                                ? 'bg-[#FF4F18] text-white font-semibold rounded-br-none text-[10px]'
-                                : 'bg-[#0e1423] border border-white/5 text-orange-200 rounded-bl-none text-[10px] font-medium'
+                                ? 'bg-[#FF4F18] text-white font-semibold rounded-br-none text-[11px] shadow-md shadow-[#FF4F18]/10'
+                                : 'bg-[#0e1423] border border-white/10 text-orange-100 rounded-bl-none text-[11px] font-medium'
                             }`}>
                               {msg.text}
                             </div>
@@ -1146,20 +1147,20 @@ export default function KitchenflowWebsite() {
                         
                         {isTyping && (
                           <div className="flex justify-start">
-                            <div className="bg-[#0e1423] border border-white/5 text-slate-400 p-2.5 rounded-xl rounded-bl-none text-[10px] font-bold flex items-center gap-1">
+                            <div className="bg-[#0e1423] border border-white/10 text-slate-300 p-2.5 rounded-2xl rounded-bl-none text-[10px] font-bold flex items-center gap-1.5">
                               <span className="w-1.5 h-1.5 bg-[#FF4F18] rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
                               <span className="w-1.5 h-1.5 bg-[#FF4F18] rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
                               <span className="w-1.5 h-1.5 bg-[#FF4F18] rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                              <span className="text-[9px] font-mono ml-1 uppercase">Kai pensando...</span>
+                              <span className="text-[9px] font-mono ml-1 uppercase text-[#FF4F18]">Kai calculando margens...</span>
                             </div>
                           </div>
                         )}
                       </div>
 
                       {/* Pre-set strategic query buttons */}
-                      <div className="border-t border-white/5 pt-2.5 mt-2.5 flex flex-col gap-2">
-                        <p className="text-[8px] font-mono uppercase text-slate-500 text-left">Selecione uma dúvida para a IA rodar no Viva Lá Fome:</p>
-                        <div className="flex flex-wrap gap-1.5">
+                      <div className="border-t border-white/5 pt-3 flex flex-col gap-2">
+                        <p className="text-[8px] font-mono uppercase text-slate-500 text-left">Simule uma análise executiva em tempo real:</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                           <button
                             disabled={isTyping}
                             onClick={() => handleAiQuestion(
@@ -1168,9 +1169,10 @@ export default function KitchenflowWebsite() {
                               "planejamento",
                               "feliz"
                             )}
-                            className="px-2 py-1.5 bg-[#0e1423] hover:bg-[#FF4F18]/10 text-slate-300 hover:text-white border border-white/5 rounded-lg text-[9px] text-left transition-all font-semibold"
+                            className="px-2.5 py-2 bg-[#0e1423] hover:bg-[#FF4F18]/15 hover:border-[#FF4F18]/30 text-slate-300 hover:text-white border border-white/5 rounded-xl text-[9px] text-left transition-all font-semibold flex items-center gap-1.5"
                           >
-                            🥩 CMV Carne Bov.
+                            <span>🥩</span>
+                            <span className="truncate">Reduzir CMV Carne</span>
                           </button>
                           <button
                             disabled={isTyping}
@@ -1180,9 +1182,10 @@ export default function KitchenflowWebsite() {
                               "controle-estoque",
                               "alerta"
                             )}
-                            className="px-2 py-1.5 bg-[#0e1423] hover:bg-[#FF4F18]/10 text-slate-300 hover:text-white border border-white/5 rounded-lg text-[9px] text-left transition-all font-semibold"
+                            className="px-2.5 py-2 bg-[#0e1423] hover:bg-[#FF4F18]/15 hover:border-[#FF4F18]/30 text-slate-300 hover:text-white border border-white/5 rounded-xl text-[9px] text-left transition-all font-semibold flex items-center gap-1.5"
                           >
-                            📦 Estoque Crítico
+                            <span>📦</span>
+                            <span className="truncate">Estoque Crítico</span>
                           </button>
                           <button
                             disabled={isTyping}
@@ -1192,9 +1195,10 @@ export default function KitchenflowWebsite() {
                               "tudo-sob-controle",
                               "surpreso"
                             )}
-                            className="px-2 py-1.5 bg-[#0e1423] hover:bg-[#FF4F18]/10 text-[#FF4F18] border border-[#FF4F18]/10 rounded-lg text-[9px] text-left transition-all font-semibold"
+                            className="px-2.5 py-2 bg-[#0e1423] hover:bg-[#FF4F18]/15 hover:border-[#FF4F18]/30 text-[#FF4F18] border border-[#FF4F18]/20 rounded-xl text-[9px] text-left transition-all font-semibold flex items-center gap-1.5"
                           >
-                            💡 Criar Combo AI
+                            <span>💡</span>
+                            <span className="truncate">Criar Combo Lucrativo</span>
                           </button>
                         </div>
                       </div>
@@ -2038,9 +2042,7 @@ export default function KitchenflowWebsite() {
           
           <div className="space-y-4">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-orange-500/10 border border-orange-500/20 rounded-lg flex items-center justify-center">
-                <ChefHatLogo className="w-5 h-5 text-[#FF4F18]" />
-              </div>
+              <KitchenFlowBrandLogo className="w-8 h-8 rounded-lg shadow-md shadow-[#FF4F18]/20" />
               <span className="font-sans font-bold text-white">KitchenFlow AI</span>
             </div>
             <p className="text-[11px] text-slate-500 leading-relaxed font-semibold">
