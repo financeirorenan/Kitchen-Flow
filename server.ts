@@ -36,12 +36,12 @@ try {
 if (!firebaseConfig || !firebaseConfig.projectId) {
   firebaseConfig = {
     projectId: process.env.FIREBASE_PROJECT_ID || "gen-lang-client-0510005534",
-    appId: process.env.FIREBASE_APP_ID || "1:962186130985:web:d91f039ee615badecace38",
-    apiKey: process.env.FIREBASE_API_KEY || "AIzaSyB0W3IE_ska3PsdBytrBZySLp9_zeeRYyU",
+    appId: process.env.FIREBASE_APP_ID || "",
+    apiKey: process.env.FIREBASE_API_KEY || "",
     authDomain: process.env.FIREBASE_AUTH_DOMAIN || "gen-lang-client-0510005534.firebaseapp.com",
     firestoreDatabaseId: process.env.FIREBASE_DATABASE_ID || "ai-studio-a2f13cdd-6132-4b0a-bec9-cdb7d1da2816",
     storageBucket: process.env.FIREBASE_STORAGE_BUCKET || "gen-lang-client-0510005534.firebasestorage.app",
-    messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || "962186130985",
+    messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || "",
     measurementId: ""
   };
 }
