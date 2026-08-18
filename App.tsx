@@ -738,6 +738,10 @@ const App: React.FC = () => {
         return `/lojista/${currentTenant}/entregadores`;
       case 'fiscal':
         return `/lojista/${currentTenant}/fiscal`;
+      case 'fiscal-coupons':
+      case 'cupons-fiscais':
+      case 'cupons':
+        return `/lojista/${currentTenant}/cupons-fiscais`;
       case 'settings':
       case 'admin-settings':
         return `/lojista/${currentTenant}/configuracoes`;
@@ -849,7 +853,7 @@ const App: React.FC = () => {
       }
       if (currentProject !== 'PLATFORM') setCurrentProject('PLATFORM');
       if (!activeTab.startsWith('saas-')) setActiveTab('saas-admin');
-    } else if (path.startsWith('/lojista') || path.startsWith('/painel') || path.startsWith('/admin') || path.startsWith('/loja') || path.startsWith('/pdv') || path.startsWith('/mesas') || path.startsWith('/financeiro') || path.startsWith('/kds') || path.startsWith('/estoque') || path.startsWith('/suporte') || path.startsWith('/relatorios') || path.startsWith('/insights') || path.startsWith('/configuracoes')) {
+    } else if (path.startsWith('/lojista') || path.startsWith('/painel') || path.startsWith('/admin') || path.startsWith('/loja') || path.startsWith('/pdv') || path.startsWith('/mesas') || path.startsWith('/financeiro') || path.startsWith('/kds') || path.startsWith('/estoque') || path.startsWith('/suporte') || path.startsWith('/relatorios') || path.startsWith('/insights') || path.startsWith('/configuracoes') || path.startsWith('/cupons-fiscais') || path.startsWith('/fiscal')) {
       if (authLoading) return; // Aguarda autenticação
       
       // Se não há usuário logado, nunca acessa o painel do lojista ou KDS
@@ -931,6 +935,8 @@ const App: React.FC = () => {
         targetTab = 'couriers';
       } else if (subPath === 'fiscal') {
         targetTab = 'fiscal';
+      } else if (subPath === 'cupons-fiscais' || subPath === 'fiscal-coupons' || subPath === 'cupons') {
+        targetTab = 'fiscal-coupons';
       } else if (subPath === 'configuracoes' || subPath === 'settings' || subPath === 'admin-settings') {
         targetTab = 'settings';
       } else if (subPath === 'marketplace') {
@@ -998,6 +1004,7 @@ const App: React.FC = () => {
           'cmv': 'cmv_analysis',
           'users': 'users_manage',
           'fiscal': 'fiscal_manage',
+          'fiscal-coupons': 'fiscal_manage',
           'settings': 'admin_settings_manage',
           'merchant-copilot': 'finance_view',
           'intelligent-reports': 'cmv_analysis',
@@ -6602,7 +6609,7 @@ const App: React.FC = () => {
             adminSettings={adminSettings}
             orders={orders}
             showToast={showToast}
-            addLog={handleAddAuditLog}
+            addLog={addLog}
           />
         )}
         {(activeTab === 'settings' || activeTab === 'admin-settings') && hasPermission('admin_settings_manage') && (

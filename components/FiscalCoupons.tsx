@@ -47,6 +47,24 @@ interface FiscalCouponsProps {
   addLog?: (userId: string, action: string, details: string) => void;
 }
 
+export const parseFiscalDate = (val: any): Date => {
+  if (!val) return new Date();
+  if (val instanceof Date) return isNaN(val.getTime()) ? new Date() : val;
+  if (typeof val === 'number') return new Date(val);
+  if (typeof val === 'string') {
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) return d;
+  }
+  if (typeof val === 'object') {
+    if (typeof val.seconds === 'number') return new Date(val.seconds * 1000);
+    if (typeof val._seconds === 'number') return new Date(val._seconds * 1000);
+    if (typeof val.toDate === 'function') {
+      try { return val.toDate(); } catch {}
+    }
+  }
+  return new Date();
+};
+
 export const FiscalCoupons: React.FC<FiscalCouponsProps> = ({
   currentTenant,
   currentUser,
@@ -59,6 +77,83 @@ export const FiscalCoupons: React.FC<FiscalCouponsProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  // Unifica documentos da API com pedidos locais emitidos com chave fiscal
+  const allDocuments = useMemo(() => {
+    const docMap = new Map<string, FiscalDocument>();
+
+    // 1. Inserir documentos vindos da API/Banco
+    documents.forEach(doc => {
+      docMap.set(doc.id, doc);
+      if (doc.orderId) docMap.set(doc.orderId, doc);
+      if (doc.fiscalKey) docMap.set(doc.fiscalKey, doc);
+    });
+
+    // 2. Mapear pedidos reais emitidos que possam ainda não estar na coleção
+    orders.forEach((ord: any) => {
+      if (ord.isFiscalIssued || ord.fiscalKey || ord.metadata?.nfceNumber) {
+        const existing = docMap.get(ord.id) || (ord.fiscalKey ? docMap.get(ord.fiscalKey) : null);
+        if (!existing) {
+          const synthDoc: FiscalDocument = {
+            id: `doc_nfce_${ord.id}`,
+            tenantId: ord.tenantId || currentTenant,
+            orderId: ord.id,
+            orderDisplayId: ord.id ? ord.id.slice(-4) : '',
+            tableNumber: ord.tableNumber,
+            orderType: ord.type || 'takeout',
+            nfceNumber: ord.metadata?.nfceNumber || adminSettings.fiscal?.nextNfceNumber || 1,
+            series: ord.metadata?.series || adminSettings.fiscal?.series || 1,
+            fiscalKey: ord.fiscalKey || `352600${ord.id.replace(/\D/g, '').padEnd(38, '0')}`,
+            protocol: ord.metadata?.protocol || '135260000000001',
+            status: (ord.status === 'cancelled' || ord.fiscalStatus === 'CANCELADA') ? 'CANCELADA' : 'AUTORIZADA',
+            issuedAt: ord.createdAt || new Date(),
+            authorizedAt: ord.createdAt || new Date(),
+            environment: (adminSettings.fiscal?.environment as any) || 'homologation',
+            model: '65',
+            cStat: '100',
+            xMotivo: 'Autorizado o uso da NFC-e',
+            items: (ord.items || []).map((it: any, idx: number) => ({
+              productId: it.productId || `prod_${idx}`,
+              name: it.name,
+              quantity: it.quantity || 1,
+              unitPrice: it.price || 0,
+              totalPrice: (it.price || 0) * (it.quantity || 1),
+              ncm: it.ncm || '2106.90.90'
+            })),
+            subtotal: ord.total || 0,
+            discount: ord.discount || 0,
+            additionalFee: ord.additionalFee || 0,
+            deliveryFee: ord.deliveryFee || 0,
+            total: ord.total || 0,
+            paymentMethod: ord.paymentMethod || 'dinheiro',
+            customerName: ord.customerName,
+            customerDocument: ord.customerDocument,
+            emitterCnpj: adminSettings.fiscal?.cnpj || '00000000000000',
+            emitterRazaoSocial: adminSettings.fiscal?.razaoSocial || adminSettings.companyName || 'KITCHENFLOW AI',
+            reprintCount: 0,
+            auditHistory: [
+              {
+                action: 'EMISSAO',
+                timestamp: ord.createdAt || new Date(),
+                userId: currentUser?.id || 'u1',
+                userName: currentUser?.name || 'Operador',
+                details: `Emissão de NFC-e para o pedido #${ord.id}`
+              }
+            ],
+            createdAt: ord.createdAt || new Date()
+          };
+          docMap.set(synthDoc.id, synthDoc);
+        }
+      }
+    });
+
+    const list = Array.from(new Set(docMap.values()));
+    return list.sort((a, b) => {
+      const timeA = parseFiscalDate(a.issuedAt || a.createdAt).getTime();
+      const timeB = parseFiscalDate(b.issuedAt || b.createdAt).getTime();
+      return timeB - timeA;
+    });
+  }, [documents, orders, currentTenant, adminSettings, currentUser]);
 
   // Filtros
   const [searchTerm, setSearchTerm] = useState('');
@@ -120,11 +215,11 @@ export const FiscalCoupons: React.FC<FiscalCouponsProps> = ({
 
   // Estatísticas e Métricas Rápidas
   const metrics = useMemo(() => {
-    const totalCount = documents.length;
-    const authorizedDocs = documents.filter(d => d.status === 'AUTORIZADA');
-    const canceledDocs = documents.filter(d => d.status === 'CANCELADA');
-    const rejectedDocs = documents.filter(d => d.status === 'REJEITADA' || d.status === 'ERRO');
-    const processingDocs = documents.filter(d => d.status === 'PROCESSANDO' || d.status === 'PENDENTE');
+    const totalCount = allDocuments.length;
+    const authorizedDocs = allDocuments.filter(d => d.status === 'AUTORIZADA');
+    const canceledDocs = allDocuments.filter(d => d.status === 'CANCELADA');
+    const rejectedDocs = allDocuments.filter(d => d.status === 'REJEITADA' || d.status === 'ERRO');
+    const processingDocs = allDocuments.filter(d => d.status === 'PROCESSANDO' || d.status === 'PENDENTE');
 
     const totalAuthorizedValue = authorizedDocs.reduce((acc, d) => acc + (d.total || 0), 0);
     const totalCanceledValue = canceledDocs.reduce((acc, d) => acc + (d.total || 0), 0);
@@ -138,11 +233,11 @@ export const FiscalCoupons: React.FC<FiscalCouponsProps> = ({
       rejectedCount: rejectedDocs.length,
       processingCount: processingDocs.length
     };
-  }, [documents]);
+  }, [allDocuments]);
 
   // Filtragem Client-Side Reativa
   const filteredDocuments = useMemo(() => {
-    return documents.filter(doc => {
+    return allDocuments.filter(doc => {
       // Filtro de Status
       if (statusFilter !== 'TODOS' && String(doc.status).toUpperCase() !== statusFilter.toUpperCase()) {
         return false;
@@ -155,14 +250,14 @@ export const FiscalCoupons: React.FC<FiscalCouponsProps> = ({
 
       // Filtro de Data Inicial
       if (startDate) {
-        const docDate = new Date(doc.issuedAt || doc.createdAt).getTime();
+        const docDate = parseFiscalDate(doc.issuedAt || doc.createdAt).getTime();
         const filterStart = new Date(startDate).getTime();
         if (docDate < filterStart) return false;
       }
 
       // Filtro de Data Final
       if (endDate) {
-        const docDate = new Date(doc.issuedAt || doc.createdAt).getTime();
+        const docDate = parseFiscalDate(doc.issuedAt || doc.createdAt).getTime();
         const filterEnd = new Date(endDate).getTime() + (24 * 60 * 60 * 1000 - 1);
         if (docDate > filterEnd) return false;
       }
@@ -191,7 +286,7 @@ export const FiscalCoupons: React.FC<FiscalCouponsProps> = ({
 
       return true;
     });
-  }, [documents, statusFilter, paymentFilter, startDate, endDate, searchTerm]);
+  }, [allDocuments, statusFilter, paymentFilter, startDate, endDate, searchTerm]);
 
   // Copiar Chave de Acesso
   const handleCopyKey = (key: string, e?: React.MouseEvent) => {
@@ -352,7 +447,7 @@ export const FiscalCoupons: React.FC<FiscalCouponsProps> = ({
 
   // Cálculo de Prazo Restante para Cancelamento (30 minutos para NFC-e em SP)
   const getCancellationTimeInfo = (doc: FiscalDocument) => {
-    const authTime = doc.authorizedAt ? new Date(doc.authorizedAt).getTime() : new Date(doc.issuedAt || doc.createdAt).getTime();
+    const authTime = doc.authorizedAt ? parseFiscalDate(doc.authorizedAt).getTime() : parseFiscalDate(doc.issuedAt || doc.createdAt).getTime();
     const diffMs = Date.now() - authTime;
     const diffMinutes = Math.floor(diffMs / (60 * 1000));
     const remainingMinutes = Math.max(0, 30 - diffMinutes);
@@ -392,7 +487,7 @@ export const FiscalCoupons: React.FC<FiscalCouponsProps> = ({
     ];
 
     const rows = filteredDocuments.map(d => {
-      const dateObj = new Date(d.issuedAt || d.createdAt);
+      const dateObj = parseFiscalDate(d.issuedAt || d.createdAt);
       const dateStr = dateObj.toLocaleDateString('pt-BR');
       const timeStr = dateObj.toLocaleTimeString('pt-BR');
 
@@ -410,7 +505,7 @@ export const FiscalCoupons: React.FC<FiscalCouponsProps> = ({
         `"${d.fiscalKey || ''}"`,
         `"${d.protocol || ''}"`,
         `"${d.isCanceled || d.status === 'CANCELADA' ? 'SIM' : 'NAO'}"`,
-        `"${d.canceledAt ? new Date(d.canceledAt).toLocaleString('pt-BR') : ''}"`,
+        `"${d.canceledAt ? parseFiscalDate(d.canceledAt).toLocaleString('pt-BR') : ''}"`,
         `"${d.cancelProtocol || ''}"`,
         `"${(d.cancelReason || '').replace(/"/g, '""')}"`
       ].join(';');
@@ -761,7 +856,7 @@ export const FiscalCoupons: React.FC<FiscalCouponsProps> = ({
                 </tr>
               ) : (
                 filteredDocuments.map((doc) => {
-                  const dateObj = new Date(doc.issuedAt || doc.createdAt);
+                  const dateObj = parseFiscalDate(doc.issuedAt || doc.createdAt);
                   const isCanceled = doc.status === 'CANCELADA' || doc.isCanceled;
                   const timeInfo = getCancellationTimeInfo(doc);
 
@@ -939,7 +1034,7 @@ export const FiscalCoupons: React.FC<FiscalCouponsProps> = ({
                       {renderStatusBadge(selectedDoc.status)}
                     </div>
                     <p className="text-xs text-slate-500">
-                      Pedido #{selectedDoc.orderDisplayId || selectedDoc.orderId} • Emitido em {new Date(selectedDoc.issuedAt || selectedDoc.createdAt).toLocaleString('pt-BR')}
+                      Pedido #{selectedDoc.orderDisplayId || selectedDoc.orderId} • Emitido em {parseFiscalDate(selectedDoc.issuedAt || selectedDoc.createdAt).toLocaleString('pt-BR')}
                     </p>
                   </div>
                 </div>
@@ -1048,7 +1143,7 @@ export const FiscalCoupons: React.FC<FiscalCouponsProps> = ({
                           Documento Cancelado Perante a SEFAZ
                         </div>
                         <p className="text-xs">
-                          Protocolo de Cancelamento: <strong>{selectedDoc.cancelProtocol || 'N/A'}</strong> • Cancelado em {selectedDoc.canceledAt ? new Date(selectedDoc.canceledAt).toLocaleString('pt-BR') : 'N/A'}
+                          Protocolo de Cancelamento: <strong>{selectedDoc.cancelProtocol || 'N/A'}</strong> • Cancelado em {selectedDoc.canceledAt ? parseFiscalDate(selectedDoc.canceledAt).toLocaleString('pt-BR') : 'N/A'}
                         </p>
                         <p className="text-xs mt-1">
                           Justificativa: <em>"{selectedDoc.cancelReason || 'Sem justificativa informada'}"</em>
@@ -1115,7 +1210,7 @@ export const FiscalCoupons: React.FC<FiscalCouponsProps> = ({
                       <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
                         <div className="text-xs text-slate-500 uppercase font-semibold">Data/Hora Autorização</div>
                         <div className="text-sm font-bold text-slate-900 dark:text-white mt-1">
-                          {new Date(selectedDoc.authorizedAt || selectedDoc.issuedAt || selectedDoc.createdAt).toLocaleString('pt-BR')}
+                          {parseFiscalDate(selectedDoc.authorizedAt || selectedDoc.issuedAt || selectedDoc.createdAt).toLocaleString('pt-BR')}
                         </div>
                       </div>
 
@@ -1272,7 +1367,7 @@ export const FiscalCoupons: React.FC<FiscalCouponsProps> = ({
                           <div className="flex-1 text-xs space-y-1">
                             <div className="flex items-center justify-between">
                               <span className="font-bold text-slate-900 dark:text-white">{audit.details}</span>
-                              <span className="text-slate-400">{new Date(audit.timestamp).toLocaleString('pt-BR')}</span>
+                              <span className="text-slate-400">{parseFiscalDate(audit.timestamp).toLocaleString('pt-BR')}</span>
                             </div>
                             <div className="text-slate-500">
                               Operador: <strong>{audit.userName}</strong> (ID: {audit.userId})
@@ -1358,7 +1453,7 @@ export const FiscalCoupons: React.FC<FiscalCouponsProps> = ({
                 <div className="flex justify-between">
                   <span className="text-slate-500">Data/Hora Emissão:</span>
                   <span className="font-medium text-slate-800 dark:text-slate-200">
-                    {new Date(selectedDoc.issuedAt || selectedDoc.createdAt).toLocaleString('pt-BR')}
+                    {parseFiscalDate(selectedDoc.issuedAt || selectedDoc.createdAt).toLocaleString('pt-BR')}
                   </span>
                 </div>
 

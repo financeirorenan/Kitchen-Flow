@@ -1202,76 +1202,77 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
 
       let documents = (snapshot.docs || []).map(d => ({ id: d.id, ...d.data() }));
 
-      // Se a coleção de fiscal_documents estiver vazia ou parcial, podemos verificar se há pedidos emitidos com chave fiscal
-      if (documents.length === 0) {
-        try {
-          const ordersRef = getClientCollection(clientDb, "orders");
-          const ordersQ = clientQuery(
-            ordersRef,
-            clientWhere("tenantId", "==", tenantId),
-            clientLimit(100)
-          );
-          const ordersSnap = await getClientDocs(ordersQ);
-          const fiscalOrders = ordersSnap.docs
-            .map(d => ({ id: d.id, ...d.data() }))
-            .filter((o: any) => o.isFiscalIssued && o.fiscalKey);
+      // Sincronizar pedidos com emissão fiscal para garantir que documentos reais sempre apareçam
+      try {
+        const ordersRef = getClientCollection(clientDb, "orders");
+        const ordersQ = clientQuery(
+          ordersRef,
+          clientWhere("tenantId", "==", tenantId),
+          clientLimit(100)
+        );
+        const ordersSnap = await getClientDocs(ordersQ);
+        const existingOrderIds = new Set(documents.map(d => d.orderId || d.id));
+        const existingKeys = new Set(documents.map(d => d.fiscalKey).filter(Boolean));
 
-          for (const ord of fiscalOrders as any[]) {
-            const synthesizedDoc = {
-              id: `doc_nfce_${ord.id}`,
-              tenantId: ord.tenantId,
-              orderId: ord.id,
-              orderDisplayId: ord.id.slice(-4),
-              tableNumber: ord.tableNumber,
-              orderType: ord.type,
-              nfceNumber: ord.metadata?.nfceNumber || 1,
-              series: ord.metadata?.series || 1,
-              fiscalKey: ord.fiscalKey,
-              protocol: ord.metadata?.protocol || '135260000000001',
-              status: ord.status === 'cancelled' || ord.fiscalStatus === 'CANCELADA' ? 'CANCELADA' : 'AUTORIZADA',
-              issuedAt: ord.createdAt || new Date().toISOString(),
-              authorizedAt: ord.createdAt || new Date().toISOString(),
-              environment: 'homologation',
-              model: '65',
-              cStat: '100',
-              xMotivo: 'Autorizado o uso da NFC-e',
-              items: (ord.items || []).map((it: any) => ({
-                productId: it.productId,
-                name: it.name,
-                quantity: it.quantity || 1,
-                unitPrice: it.price || 0,
-                totalPrice: (it.price || 0) * (it.quantity || 1),
-                ncm: it.ncm || '2106.90.90'
-              })),
-              subtotal: ord.total || 0,
-              discount: ord.discount || 0,
-              additionalFee: ord.additionalFee || 0,
-              deliveryFee: ord.deliveryFee || 0,
-              total: ord.total || 0,
-              paymentMethod: ord.paymentMethod || 'dinheiro',
-              customerName: ord.customerName,
-              customerDocument: ord.customerDocument,
-              emitterCnpj: "00000000000000",
-              emitterRazaoSocial: "KITCHENFLOW AI",
-              reprintCount: 0,
-              auditHistory: [
-                {
-                  action: 'EMISSAO',
-                  timestamp: ord.createdAt || new Date().toISOString(),
-                  userId: 'system',
-                  userName: 'Sistema POS',
-                  details: `Emissão automática de NFC-e para o pedido #${ord.id}`
-                }
-              ],
-              createdAt: ord.createdAt || new Date().toISOString()
-            };
-            documents.push(synthesizedDoc);
-            // Salva de forma assíncrona
-            persistFiscalDocument(synthesizedDoc).catch(() => {});
-          }
-        } catch (e: any) {
-          console.warn("[Fiscal API] Fallback de pedidos:", e.message);
+        const fiscalOrders = ordersSnap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .filter((o: any) => (o.isFiscalIssued || o.fiscalKey) && !existingOrderIds.has(o.id) && !existingKeys.has(o.fiscalKey));
+
+        for (const ord of fiscalOrders as any[]) {
+          const synthesizedDoc = {
+            id: `doc_nfce_${ord.id}`,
+            tenantId: ord.tenantId,
+            orderId: ord.id,
+            orderDisplayId: ord.id.slice(-4),
+            tableNumber: ord.tableNumber,
+            orderType: ord.type,
+            nfceNumber: ord.metadata?.nfceNumber || 1,
+            series: ord.metadata?.series || 1,
+            fiscalKey: ord.fiscalKey,
+            protocol: ord.metadata?.protocol || '135260000000001',
+            status: ord.status === 'cancelled' || ord.fiscalStatus === 'CANCELADA' ? 'CANCELADA' : 'AUTORIZADA',
+            issuedAt: ord.createdAt || new Date().toISOString(),
+            authorizedAt: ord.createdAt || new Date().toISOString(),
+            environment: 'homologation',
+            model: '65',
+            cStat: '100',
+            xMotivo: 'Autorizado o uso da NFC-e',
+            items: (ord.items || []).map((it: any) => ({
+              productId: it.productId,
+              name: it.name,
+              quantity: it.quantity || 1,
+              unitPrice: it.price || 0,
+              totalPrice: (it.price || 0) * (it.quantity || 1),
+              ncm: it.ncm || '2106.90.90'
+            })),
+            subtotal: ord.total || 0,
+            discount: ord.discount || 0,
+            additionalFee: ord.additionalFee || 0,
+            deliveryFee: ord.deliveryFee || 0,
+            total: ord.total || 0,
+            paymentMethod: ord.paymentMethod || 'dinheiro',
+            customerName: ord.customerName,
+            customerDocument: ord.customerDocument,
+            emitterCnpj: "00000000000000",
+            emitterRazaoSocial: "KITCHENFLOW AI",
+            reprintCount: 0,
+            auditHistory: [
+              {
+                action: 'EMISSAO',
+                timestamp: ord.createdAt || new Date().toISOString(),
+                userId: 'system',
+                userName: 'Sistema POS',
+                details: `Emissão automática de NFC-e para o pedido #${ord.id}`
+              }
+            ],
+            createdAt: ord.createdAt || new Date().toISOString()
+          };
+          documents.push(synthesizedDoc);
+          // Salva de forma assíncrona
+          persistFiscalDocument(synthesizedDoc).catch(() => {});
         }
+      } catch (e: any) {
+        console.warn("[Fiscal API] Sincronização de pedidos fiscais:", e.message);
       }
 
       // Filtros em memória (Data, Status, Forma de Pagamento, Busca)
