@@ -31,6 +31,9 @@ import axios from "axios";
 import crypto from "crypto";
 var FiscalService = class {
   constructor(pfxBase64, password, config) {
+    this.pemKey = "";
+    this.pemCert = "";
+    this.caPems = [];
     // URLs oficiais da SEFAZ - Estado de São Paulo (SP)
     this.SEFAZ_SP_URLS = {
       "1": {
@@ -50,19 +53,56 @@ var FiscalService = class {
     this.password = password;
     this.config = config;
     if (pfxBase64) {
-      const pfxDer = forge.util.decode64(pfxBase64);
-      const p12Asn1 = forge.asn1.fromDer(pfxDer);
-      const p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, password);
-      const keyBags = p12.getBags({ bagType: forge.pki.oids.keyBag });
-      const pkcs8Bags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
-      const keyBag = keyBags[forge.pki.oids.keyBag]?.[0] || pkcs8Bags[forge.pki.oids.pkcs8ShroudedKeyBag]?.[0];
-      if (!keyBag) throw new Error("Private key not found in certificate");
-      this.privateKey = keyBag.key;
-      const certBags = p12.getBags({ bagType: forge.pki.oids.certBag });
-      const certBag = certBags[forge.pki.oids.certBag]?.[0];
-      if (!certBag) throw new Error("Certificate not found in PFX");
-      this.certificate = certBag.cert;
+      try {
+        const pfxDer = forge.util.decode64(pfxBase64);
+        const p12Asn1 = forge.asn1.fromDer(pfxDer);
+        const p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, password);
+        const keyBags = p12.getBags({ bagType: forge.pki.oids.keyBag });
+        const pkcs8Bags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
+        const keyBag = keyBags[forge.pki.oids.keyBag]?.[0] || pkcs8Bags[forge.pki.oids.pkcs8ShroudedKeyBag]?.[0];
+        if (!keyBag) throw new Error("Chave privada n\xE3o encontrada no certificado A1 (.pfx)");
+        this.privateKey = keyBag.key;
+        this.pemKey = forge.pki.privateKeyToPem(this.privateKey);
+        const certBagsObj = p12.getBags({ bagType: forge.pki.oids.certBag });
+        const certBags = certBagsObj[forge.pki.oids.certBag] || [];
+        if (certBags.length === 0) throw new Error("Certificado n\xE3o encontrado no arquivo PFX");
+        this.certificate = certBags[0].cert;
+        this.pemCert = forge.pki.certificateToPem(this.certificate);
+        this.caPems = certBags.slice(1).map((b) => {
+          try {
+            return forge.pki.certificateToPem(b.cert);
+          } catch {
+            return "";
+          }
+        }).filter(Boolean);
+      } catch (err) {
+        console.error("[FiscalService] Erro ao decodificar PFX:", err.message);
+        throw new Error(err.message || "Falha ao processar arquivo de certificado PFX.");
+      }
     }
+  }
+  /**
+   * Constrói o Agent HTTPS com o Certificado e Chave PEM extraídos
+   * Evita o erro "Unsupported PKCS12 PFX data" do OpenSSL 3 no Node.js
+   */
+  getHttpsAgent() {
+    if (this.pemCert && this.pemKey) {
+      return new https.Agent({
+        cert: this.caPems.length > 0 ? [this.pemCert, ...this.caPems].join("\n") : this.pemCert,
+        key: this.pemKey,
+        ca: this.caPems.length > 0 ? this.caPems : void 0,
+        rejectUnauthorized: false,
+        minVersion: "TLSv1.2",
+        ciphers: "DEFAULT:@SECLEVEL=0:ALL:!EXPORT:!LOW:!aNULL:!eNULL:!SSLv2"
+      });
+    }
+    const pfxBuffer = Buffer.from(this.pfxBase64, "base64");
+    return new https.Agent({
+      pfx: pfxBuffer,
+      passphrase: this.password,
+      rejectUnauthorized: false,
+      minVersion: "TLSv1.2"
+    });
   }
   getCertificateInfo() {
     if (!this.certificate) {
@@ -303,13 +343,7 @@ var FiscalService = class {
   </soap12:Body>
 </soap12:Envelope>`;
     try {
-      const pfxBuffer = Buffer.from(this.pfxBase64, "base64");
-      const httpsAgent = new https.Agent({
-        pfx: pfxBuffer,
-        passphrase: this.password,
-        rejectUnauthorized: false
-        // Permite certs de homologação/cadeias ICP-Brasil intermediárias
-      });
+      const httpsAgent = this.getHttpsAgent();
       console.log(`[SEFAZ-SP SOAP] Enviando lote ${idLote} para ${urlConfig.autorizacao}...`);
       const response = await axios.post(urlConfig.autorizacao, soapEnvelope, {
         headers: {
@@ -376,12 +410,7 @@ var FiscalService = class {
   </soap12:Body>
 </soap12:Envelope>`;
     try {
-      const pfxBuffer = Buffer.from(this.pfxBase64, "base64");
-      const httpsAgent = new https.Agent({
-        pfx: pfxBuffer,
-        passphrase: this.password,
-        rejectUnauthorized: false
-      });
+      const httpsAgent = this.getHttpsAgent();
       const response = await axios.post(urlConfig.statusServico, soapBody, {
         headers: {
           "Content-Type": 'application/soap+xml; charset=utf-8; action="http://www.portalfiscal.inf.br/nfe/wsdl/NFeStatusServico4/nfeStatusServicoNF"'

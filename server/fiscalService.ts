@@ -339,19 +339,14 @@ export class FiscalService {
     const urlConfig = this.SEFAZ_SP_URLS[amb] || this.SEFAZ_SP_URLS['2'];
     const idLote = Date.now().toString().slice(-8);
 
-    // Envelope SOAP 1.2 conforme especificação da SEFAZ NFeAutorizacao4
-    const soapEnvelope = `<?xml version="1.0" encoding="utf-8"?>
-<soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
-  <soap12:Body>
-    <nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4">
-      <enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
-        <idLote>${idLote}</idLote>
-        <indSinc>1</indSinc>
-        ${signedXml.replace(/^<\?xml.*?\?>/, '')}
-      </enviNFe>
-    </nfeDadosMsg>
-  </soap12:Body>
-</soap12:Envelope>`;
+    // Remove caracteres de edição e espaços entre tags conforme regra do MOC SEFAZ
+    const cleanSignedXml = signedXml
+      .replace(/^<\?xml.*?\?>/, '')
+      .replace(/>\s+</g, '><')
+      .trim();
+
+    // Envelope SOAP 1.2 estritamente minificado (sem quebras de linha ou espaços entre tags)
+    const soapEnvelope = `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4"><enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><idLote>${idLote}</idLote><indSinc>1</indSinc>${cleanSignedXml}</enviNFe></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
 
     try {
       // Configurar Agent HTTPS com Certificado A1 do Lojista (mTLS extraído em PEM)
@@ -426,18 +421,8 @@ export class FiscalService {
     const amb = this.config.ambiente || '2';
     const urlConfig = this.SEFAZ_SP_URLS[amb] || this.SEFAZ_SP_URLS['2'];
 
-    const soapBody = `<?xml version="1.0" encoding="utf-8"?>
-<soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
-  <soap12:Body>
-    <nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeStatusServico4">
-      <consStatServ xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
-        <tpAmb>${amb}</tpAmb>
-        <cUF>35</cUF>
-        <xServ>STATUS</xServ>
-      </consStatServ>
-    </nfeDadosMsg>
-  </soap12:Body>
-</soap12:Envelope>`;
+    // Mensagem SOAP estritamente compacta sem caracteres de edição (CR, LF, TAB, espaços extras)
+    const soapBody = `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeStatusServico4"><consStatServ xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><tpAmb>${amb}</tpAmb><cUF>35</cUF><xServ>STATUS</xServ></consStatServ></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
 
     try {
       const httpsAgent = this.getHttpsAgent();

@@ -74,6 +74,7 @@
     "fast-xml-parser": ">=5.11.0",
     "follow-redirects": ">=1.16.0",
     "body-parser": ">=2.3.0",
+    "turbo-stream": ">=2.4.1",
     "@babel/core": ">=7.29.7"
   }
 }

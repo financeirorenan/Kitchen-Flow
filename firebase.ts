@@ -6,7 +6,12 @@ import firebaseConfig from './firebase-applet-config.json';
 // Silence non-fatal Firestore internal warnings (such as primary lease acquisition on background index backfill across tabs/iframes)
 setLogLevel('silent');
 
-const app = initializeApp(firebaseConfig);
+const resolvedConfig = {
+  ...firebaseConfig,
+  apiKey: (typeof import.meta !== 'undefined' && import.meta.env?.VITE_FIREBASE_API_KEY) || (firebaseConfig as any).apiKey
+};
+
+const app = initializeApp(resolvedConfig);
 export const auth = getAuth(app);
 
 export const db = initializeFirestore(
