@@ -40,6 +40,110 @@ const formatFiscalKey = (key: string): string => {
 };
 
 /**
+ * Gera SHA-1 síncrono puro para validação e construção oficial do QR Code NFC-e v2.00 (SEFAZ-SP)
+ */
+function sha1Sync(str: string): string {
+  function utf8Encode(s: string) {
+    return unescape(encodeURIComponent(s));
+  }
+  const s = utf8Encode(str);
+  const words: number[] = [];
+  for (let i = 0; i < s.length * 8; i += 8) {
+    words[i >> 5] |= (s.charCodeAt(i / 8) & 0xff) << (24 - (i % 32));
+  }
+  words[((s.length * 8 + 64 >> 9) << 4) + 15] = s.length * 8;
+
+  let [h0, h1, h2, h3, h4] = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0];
+  const w = new Array(80);
+
+  for (let i = 0; i < words.length; i += 16) {
+    for (let t = 0; t < 16; t++) w[t] = words[i + t] || 0;
+    for (let t = 16; t < 80; t++) {
+      const n = w[t - 3] ^ w[t - 8] ^ w[t - 14] ^ w[t - 16];
+      w[t] = (n << 1) | (n >>> 31);
+    }
+    let [a, b, c, d, e] = [h0, h1, h2, h3, h4];
+    for (let t = 0; t < 80; t++) {
+      let f: number, k: number;
+      if (t < 20) {
+        f = (b & c) | ((~b) & d);
+        k = 0x5a827999;
+      } else if (t < 40) {
+        f = b ^ c ^ d;
+        k = 0x6ed9eba1;
+      } else if (t < 60) {
+        f = (b & c) | (b & d) | (c & d);
+        k = 0x8f1bbcdc;
+      } else {
+        f = b ^ c ^ d;
+        k = 0xca62c1d6;
+      }
+      const temp = (((a << 5) | (a >>> 27)) + f + e + k + w[t]) | 0;
+      e = d;
+      d = c;
+      c = (b << 30) | (b >>> 2);
+      b = a;
+      a = temp;
+    }
+    h0 = (h0 + a) | 0;
+    h1 = (h1 + b) | 0;
+    h2 = (h2 + c) | 0;
+    h3 = (h3 + d) | 0;
+    h4 = (h4 + e) | 0;
+  }
+
+  const toHex = (n: number) => ('00000000' + (n >>> 0).toString(16)).slice(-8);
+  return (toHex(h0) + toHex(h1) + toHex(h2) + toHex(h3) + toHex(h4)).toUpperCase();
+}
+
+/**
+ * Constrói a URL oficial do QR Code NFC-e conforme Manual de Padrões Técnicos do DANFE NFC-e e QR Code v5.0/v6.0
+ * Evita o erro 19158033 da SEFAZ-SP (que ocorre quando ?p= recebe apenas a chave ou dados malformados sem o layout v2.00)
+ */
+export const buildNfceQrCodeUrl = (order: Partial<Order>, settings: AdminSettings): { qrUrl: string; consultaUrl: string; displayConsultaUrl: string } => {
+  const amb = settings.fiscal?.environment === 'production' ? '1' : '2';
+  const isProd = amb === '1';
+
+  const baseQrUrl = isProd
+    ? 'https://www.nfce.fazenda.sp.gov.br/qrcode'
+    : 'https://www.homologacao.nfce.fazenda.sp.gov.br/qrcode';
+
+  const consultaUrl = isProd
+    ? 'https://www.nfce.fazenda.sp.gov.br/consulta'
+    : 'https://www.homologacao.nfce.fazenda.sp.gov.br/consulta';
+
+  const displayConsultaUrl = isProd
+    ? 'www.nfce.fazenda.sp.gov.br/consulta'
+    : 'www.homologacao.nfce.fazenda.sp.gov.br/consulta';
+
+  // 1. Se já existir uma URL completa de QR Code retornada no XML da SEFAZ
+  const existingQr = order.metadata?.qrCodeUrl || (order as any).qrCodeUrl;
+  if (existingQr && typeof existingQr === 'string' && existingQr.startsWith('http')) {
+    return { qrUrl: existingQr, consultaUrl, displayConsultaUrl };
+  }
+
+  const chNFe = (order.fiscalKey || order.metadata?.fiscalKey || '').replace(/\D/g, '');
+  if (!chNFe || chNFe.length !== 44) {
+    return { qrUrl: consultaUrl, consultaUrl, displayConsultaUrl };
+  }
+
+  const cIdToken = (settings.fiscal?.cscId || '000001').replace(/^0+/, '') || '1';
+  const cscToken = settings.fiscal?.cscToken || '';
+
+  // Se possuir CSC Token configurado com pelo menos 6 caracteres, gera o parâmetro padrão oficial da SEFAZ-SP (NFC-e v2.00)
+  if (cscToken && cscToken.length >= 6) {
+    const paramString = `${chNFe}|2|${amb}|${cIdToken}`;
+    const hash = sha1Sync(paramString + cscToken);
+    const qrUrl = `${baseQrUrl}?p=${paramString}|${hash}`;
+    return { qrUrl, consultaUrl, displayConsultaUrl };
+  }
+
+  // Fallback seguro: se não possuir CSC Token cadastrado no sistema, direciona o QR Code para a Consulta Pública oficial da SEFAZ
+  // Isso impede que a SEFAZ SP retorne o erro 19158033 ao ler o QR Code
+  return { qrUrl: `${consultaUrl}?p=${chNFe}`, consultaUrl, displayConsultaUrl };
+};
+
+/**
  * Gera uma versão em TEXTO PLANO (RAW TXT) otimizada para bobinas térmicas de 80mm/58mm.
  * Excelente para spoolers de comandos diretos / ESC-POS.
  */
@@ -420,6 +524,7 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
 
     const dateStr = createdAt.toLocaleDateString('pt-BR');
     const timeStr = createdAt.toLocaleTimeString('pt-BR');
+    const qrCodeInfo = buildNfceQrCodeUrl(order, settings);
 
     return `
       <!DOCTYPE html>
@@ -482,8 +587,16 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
           </div>
         </div>
 
+        <div style="border-top: 1px dashed #000; margin: 2px 0;"></div>
+
+        <div style="text-align: center; font-size: ${fontSizeSmall}; font-weight: 700; line-height: 1.15; margin: 1px 0;">
+          Consulte pela Chave de Acesso em:<br/>
+          <strong style="text-decoration: underline;">${qrCodeInfo.displayConsultaUrl}</strong>
+        </div>
+
         <div style="text-align: center; margin: 3px 0;">
-          <img src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=https://www.nfce.fazenda.sp.gov.br/qrcode?p=${order.fiscalKey || '34260659256207000174650010000011122263520412'}&ecc=M&format=png&color=000000&bgcolor=ffffff&qzone=1" style="width: ${qrCodeSize}; height: ${qrCodeSize}; image-rendering: pixelated; margin: 0 auto; display: block;" />
+          <img src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(qrCodeInfo.qrUrl)}&ecc=M&format=png&color=000000&bgcolor=ffffff&qzone=1" style="width: ${qrCodeSize}; height: ${qrCodeSize}; image-rendering: pixelated; margin: 0 auto; display: block;" />
+          <div style="font-size: ${fontSizeSmall}; font-weight: 900; margin-top: 1px;">Consulta via leitor de QR Code</div>
         </div>
 
         <div style="border-top: 1px dashed #000; margin: 2px 0;"></div>

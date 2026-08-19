@@ -1762,6 +1762,7 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
           series: currentSer,
           fiscalKey: simulatedAccessKey,
           protocol: simulatedProtocol,
+          qrCodeUrl: `https://www.homologacao.nfce.fazenda.sp.gov.br/consulta?p=${simulatedAccessKey}`,
           status: "AUTORIZADA",
           issuedAt: now.toISOString(),
           authorizedAt: now.toISOString(),
@@ -1832,6 +1833,9 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
       
       const signedXml = fiscalService.generateNfceXml(order, currentNum, currentSer);
       const response = await fiscalService.transmitToSefaz(signedXml);
+      const extractedQrCodeUrl = signedXml.match(/<qrCode><!\[CDATA\[(.*?)\]\]><\/qrCode>/)?.[1] 
+        || signedXml.match(/<qrCode>(.*?)<\/qrCode>/)?.[1] 
+        || `https://${fiscalConfig.ambiente === '1' ? 'www' : 'www.homologacao'}.nfce.fazenda.sp.gov.br/consulta?p=${response.accessKey || ''}`;
       
       if (response.status === 'authorized') {
         const now = new Date();
@@ -1846,6 +1850,7 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
           series: currentSer,
           fiscalKey: response.accessKey || "",
           protocol: response.protocol || "",
+          qrCodeUrl: extractedQrCodeUrl,
           status: "AUTORIZADA",
           issuedAt: now.toISOString(),
           authorizedAt: now.toISOString(),
