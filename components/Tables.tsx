@@ -25,6 +25,7 @@ import {
   printTestReceipt,
 } from "../services/printService";
 import { maskCurrency, parseCurrency, maskPhone } from "../utils/masks";
+import { normalizePaymentMethod } from "../utils/paymentUtils";
 import { deduplicateOrders, deduplicateFinancialRecords } from "../utils/deduplicate";
 import {
   Users,
@@ -772,80 +773,7 @@ const Tables: React.FC<TablesProps> = memo(
     }, [orders, financialRecords, cashSession]);
 
     const getStandardPaymentMethodKey = (method: string): string => {
-      if (!method) return "dinheiro";
-      const cleanMethod = String(method).trim().toLowerCase();
-
-      const standardKeys = [
-        "dinheiro",
-        "cartao_credito",
-        "cartao_debito",
-        "pix",
-        "vale_refeicao",
-        "conta_cliente",
-      ];
-      if (standardKeys.includes(cleanMethod)) return cleanMethod;
-
-      if (cleanMethod === "cash") return "dinheiro";
-      if (cleanMethod === "credit") return "cartao_credito";
-      if (cleanMethod === "debit") return "cartao_debito";
-      if (cleanMethod === "voucher") return "vale_refeicao";
-      if (cleanMethod === "account" || cleanMethod === "fiado") return "conta_cliente";
-
-      if (adminSettings && adminSettings.paymentMethods) {
-        const config = adminSettings.paymentMethods.find(
-          (m) =>
-            m.id === method ||
-            m.name.trim().toLowerCase() === cleanMethod ||
-            m.type.trim().toLowerCase() === cleanMethod,
-        );
-        if (config) {
-          switch (config.type) {
-            case "cash":
-              return "dinheiro";
-            case "credit":
-              return "cartao_credito";
-            case "debit":
-              return "cartao_debito";
-            case "pix":
-              return "pix";
-            case "voucher":
-              return "vale_refeicao";
-            case "account":
-              return "conta_cliente";
-          }
-        }
-      }
-
-      if (
-        cleanMethod.includes("dinheiro") ||
-        cleanMethod.includes("money") ||
-        cleanMethod.includes("efetivo") ||
-        cleanMethod.includes("cedula")
-      )
-        return "dinheiro";
-      if (cleanMethod.includes("credito") || cleanMethod.includes("crédito"))
-        return "cartao_credito";
-      if (cleanMethod.includes("debito") || cleanMethod.includes("débito"))
-        return "cartao_debito";
-      if (cleanMethod.includes("pix")) return "pix";
-      if (
-        cleanMethod.includes("vale") ||
-        cleanMethod.includes("refeicao") ||
-        cleanMethod.includes("refeição") ||
-        cleanMethod.includes("ticket") ||
-        cleanMethod.includes("sodexo") ||
-        cleanMethod.includes("vr")
-      )
-        return "vale_refeicao";
-      if (
-        cleanMethod.includes("fiado") ||
-        cleanMethod.includes("cliente") ||
-        cleanMethod.includes("carteira") ||
-        cleanMethod.includes("conta")
-      )
-        return "conta_cliente";
-
-      return "dinheiro";
+      return normalizePaymentMethod(method, adminSettings);
     };
 
     const getOrderMethodContribution = (order: Order, targetMethodId: string): number => {

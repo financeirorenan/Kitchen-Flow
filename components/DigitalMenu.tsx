@@ -10,6 +10,7 @@ import {
   CheckCircle2, Navigation, ShieldCheck, Tag, Copy
 } from 'lucide-react';
 import { maskPhone } from '../utils/masks';
+import { normalizePaymentMethod, getPaymentMethodLabel } from '../utils/paymentUtils';
 import { DigitalMenuSettings, Product, ProductOption } from '../types';
 
 interface DigitalMenuProps {
@@ -680,6 +681,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
 
   const handleFinishOrder = () => {
     const orderId = `DIG-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+    const normalizedMethod = normalizePaymentMethod(paymentMethod);
     const orderData = {
       id: orderId,
       items: cart.map(item => ({
@@ -697,8 +699,8 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
       customerPhone,
       customerAddress: orderType === 'delivery' ? customerAddress : undefined,
       tableNumber: orderType === 'table' ? parseInt(tableNumber) : undefined,
-      paymentMethod,
-      changeFor: paymentMethod === 'dinheiro' ? parseFloat(changeFor) || undefined : undefined,
+      paymentMethod: normalizedMethod,
+      changeFor: normalizedMethod === 'dinheiro' ? parseFloat(changeFor) || undefined : undefined,
       type: orderType,
       notes: notes || undefined,
       status: 'pending',
@@ -735,8 +737,8 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
         `📍 *Tipo:* ${orderType === 'delivery' ? 'Entrega' : 'Retirada'}\n` +
         (orderType === 'delivery' ? `🏠 *Endereço:* ${customerAddress}\n` : '') +
         (notes ? `📝 *Observação:* ${notes}\n` : '') +
-        `💳 *Pagamento:* ${paymentMethod.toUpperCase()}\n` +
-        (paymentMethod === 'dinheiro' && changeFor ? `💵 *Troco para:* R$ ${parseFloat(changeFor).toFixed(2)}\n` : '') +
+        `💳 *Pagamento:* ${getPaymentMethodLabel(normalizedMethod).toUpperCase()}\n` +
+        (normalizedMethod === 'dinheiro' && changeFor ? `💵 *Troco para:* R$ ${parseFloat(changeFor).toFixed(2)}\n` : '') +
         `\n🛒 *ITENS:*\n` +
         cart.map(item => 
           `- ${item.quantity}x ${item.product.name} (R$ ${(item.product.price + (item.selectedOptions?.reduce((sum, opt) => sum + (opt.price || 0), 0) || 0)).toFixed(2)})\n` +
@@ -1718,18 +1720,23 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                     </div>
 
                     <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-50 space-y-4">
-                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Pagamento</h4>
-                      <div className="grid grid-cols-3 gap-2">
-                        {['pix', 'cartao', 'dinheiro'].map(method => (
+                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Forma de Pagamento</h4>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {[
+                          { id: 'pix', label: 'Pix ⚡', icon: Smartphone },
+                          { id: 'cartao_credito', label: 'C. Crédito', icon: CreditCard },
+                          { id: 'cartao_debito', label: 'C. Débito', icon: CreditCard },
+                          { id: 'dinheiro', label: 'Dinheiro', icon: Wallet }
+                        ].map(method => (
                           <button 
-                            key={method}
+                            key={method.id}
                             type="button"
-                            onClick={() => setPaymentMethod(method)}
-                            className={`p-3 rounded-xl border-2 flex flex-col items-center gap-2 transition-all ${paymentMethod === method ? 'text-white' : 'bg-white border-slate-100 text-slate-400'}`}
-                            style={{ backgroundColor: paymentMethod === method ? effectivePrimaryColor : undefined, borderColor: paymentMethod === method ? effectivePrimaryColor : undefined }}
+                            onClick={() => setPaymentMethod(method.id)}
+                            className={`p-3 rounded-xl border-2 flex flex-col items-center gap-1.5 transition-all ${paymentMethod === method.id ? 'text-white shadow-md' : 'bg-white border-slate-100 text-slate-500 hover:border-slate-200'}`}
+                            style={{ backgroundColor: paymentMethod === method.id ? effectivePrimaryColor : undefined, borderColor: paymentMethod === method.id ? effectivePrimaryColor : undefined }}
                           >
-                            {method === 'pix' ? <Smartphone size={16} /> : method === 'cartao' ? <CreditCard size={16} /> : <Wallet size={16} />}
-                            <span className="text-[8px] font-black uppercase">{method === 'pix' ? 'Pix ⚡' : method}</span>
+                            <method.icon size={16} />
+                            <span className="text-[9px] font-black uppercase tracking-tight">{method.label}</span>
                           </button>
                         ))}
                       </div>
@@ -1759,6 +1766,21 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                             <Copy size={13} />
                             {pixCopied ? 'Chave Pix Copiada com Sucesso! 🎉' : 'Copiar Chave Pix de Teste'}
                           </button>
+                        </div>
+                      )}
+
+                      {(paymentMethod === 'cartao_credito' || paymentMethod === 'cartao_debito' || paymentMethod === 'cartao') && (
+                        <div className="p-4 bg-indigo-50/80 border border-indigo-200 rounded-2xl space-y-1.5 animate-in fade-in duration-200">
+                          <div className="flex items-center justify-between text-indigo-900">
+                            <span className="text-xs font-black uppercase tracking-wider flex items-center gap-1.5">
+                              <CreditCard size={14} className="text-indigo-600" />
+                              {paymentMethod === 'cartao_debito' ? 'Cartão de Débito' : 'Cartão de Crédito'}
+                            </span>
+                            <span className="text-[9px] font-bold bg-indigo-200/70 text-indigo-800 px-2 py-0.5 rounded-full uppercase">Pague na Entrega</span>
+                          </div>
+                          <p className="text-[10px] text-indigo-700 font-medium">
+                            O entregador ou atendente levará a maquininha com a modalidade <strong>{paymentMethod === 'cartao_debito' ? 'Débito' : 'Crédito'}</strong> para você passar o cartão.
+                          </p>
                         </div>
                       )}
 

@@ -46,6 +46,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { db, auth } from "../firebase";
+import { normalizePaymentMethod, getPaymentMethodLabel } from "../utils/paymentUtils";
 import {
   collection,
   onSnapshot,
@@ -1762,9 +1763,11 @@ const Marketplace: React.FC<MarketplaceProps> = ({
               const initialStatus = isAutoAccept ? "preparing" : "pending";
               const mFeePercent = marketplaceSettings?.serviceFee || 0;
               const marketplaceFeeAmount = (order.total * mFeePercent) / 100;
+              const normalizedPaymentMethod = normalizePaymentMethod(order.paymentMethod, storeAdminSettings);
 
               const orderWithTenant = sanitize({
                 ...order,
+                paymentMethod: normalizedPaymentMethod,
                 status: initialStatus,
                 tenantId: selectedTenant.id,
                 source: "marketplace",
@@ -1778,7 +1781,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 doc(db, "orders", order.id),
                 orderWithTenant,
               );
-              console.log("Pedido salvo com sucesso! ID:", order.id);
+              console.log("Pedido salvo com sucesso! ID:", order.id, "Método:", normalizedPaymentMethod);
 
               // Registrar evento na fila de integração para Saipos e ERPs de terceiros
               try {
@@ -1817,8 +1820,8 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                       observation: it.observation || ""
                     })),
                     payments: {
-                      prepaid: true,
-                      methods: [{ method: order.paymentMethod || "PIX", value: order.total }]
+                      prepaid: normalizedPaymentMethod === "pix",
+                      methods: [{ method: normalizedPaymentMethod.toUpperCase(), value: order.total }]
                     },
                     total: {
                       subTotal: (order.total || 0) - (order.deliveryFee || 0),
