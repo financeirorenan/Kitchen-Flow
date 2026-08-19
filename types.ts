@@ -252,6 +252,8 @@ export interface AdminSettings {
   printing: {
     paperWidth: '58mm' | '80mm';
     autoPrintOrder: boolean;
+    autoPrintMarketplace?: boolean;
+    showPreviewModal?: boolean;
     headerText: string;
     footerText: string;
     showLogo: boolean;

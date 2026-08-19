@@ -29,7 +29,7 @@ import { FiscalEngineModule } from './components/FiscalEngineModule';
 import { FiscalCoupons } from './components/FiscalCoupons';
 import { db as localDb } from './services/db';
 import { auth, db } from './firebase';
-import { handlePrintOrder } from './services/printService';
+import { handlePrintOrder, enqueueBrowserPrint } from './services/printService';
 import { onAuthStateChanged, signOut, User as FirebaseUser, updateEmail, updatePassword } from 'firebase/auth';
 import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, onSnapshot, query, where, orderBy, limit, addDoc, writeBatch } from 'firebase/firestore';
 import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
@@ -326,6 +326,11 @@ const App: React.FC = () => {
     isFiscal: boolean;
   } | null>(null);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+
+  const adminSettingsRef = useRef<AdminSettings>(adminSettings);
+  useEffect(() => {
+    adminSettingsRef.current = adminSettings;
+  }, [adminSettings]);
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
     setToast({ message, type });
@@ -1414,7 +1419,18 @@ const App: React.FC = () => {
           );
           
           if (newOrders.length > 0) {
-            newOrders.forEach(o => notifiedOrdersRef.current.add(o.id));
+            newOrders.forEach(o => {
+              notifiedOrdersRef.current.add(o.id);
+              // Auto-impressão de novos pedidos vindos de Marketplaces, Cardápio Digital ou Mesas
+              if (adminSettingsRef.current?.printing?.autoPrintOrder) {
+                try {
+                  console.log(`[Auto-Print] Enviando pedido #${o.id} para impressão simultânea na cozinha/balcão`);
+                  enqueueBrowserPrint(o, adminSettingsRef.current);
+                } catch (printErr) {
+                  console.warn('[Auto-Print] Erro ao enfileirar impressão automática:', printErr);
+                }
+              }
+            });
           }
 
           // Proteção contra downgrade de status para pedidos (Sync Resiliency)

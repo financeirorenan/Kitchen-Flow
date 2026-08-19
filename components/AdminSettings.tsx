@@ -15,7 +15,7 @@ import {
   Fingerprint, ShieldAlert, Key, Download, UploadCloud,
   Database, RefreshCw, FileJson, ExternalLink, Monitor, Loader2,
   Palette, LayoutDashboard, ShoppingBag, Share2, Upload, Camera,
-  Award, Sparkles, ArrowRight, Sliders
+  Award, Sparkles, ArrowRight, Sliders, Eye
 } from 'lucide-react';
 import { maskPhone, maskCPF, maskCNPJ, maskCEP } from '../utils/masks';
 import { compressImage } from '../lib/imageUtils';
@@ -1003,8 +1003,8 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
 
                     <div className="flex items-center justify-between p-2 bg-white rounded-lg border border-slate-100">
                       <div>
-                        <p className="text-[9px] font-black text-slate-800">Impressão Automática</p>
-                        <p className="text-[6.5px] text-slate-500 font-medium">Imprimir cupom automaticamente ao fechar pedidos ou emitir notas</p>
+                        <p className="text-[9px] font-black text-slate-800">Impressão Automática (Marketplace / Cardápio / Mesas)</p>
+                        <p className="text-[6.5px] text-slate-500 font-medium">Imprimir cupom automaticamente ao receber ou fechar pedidos sem confirmação manual</p>
                       </div>
                       <label className="relative inline-flex items-center cursor-pointer">
                         <input 
@@ -1012,6 +1012,22 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
                           className="sr-only peer"
                           checked={settings.printing.autoPrintOrder}
                           onChange={(e) => onUpdateSettings({...settings, printing: {...settings.printing, autoPrintOrder: e.target.checked}})}
+                        />
+                        <div className="w-7 h-3.5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-indigo-600"></div>
+                      </label>
+                    </div>
+
+                    <div className="flex items-center justify-between p-2 bg-white rounded-lg border border-slate-100">
+                      <div>
+                        <p className="text-[9px] font-black text-slate-800">Exibir Janela de Pré-visualização na Tela</p>
+                        <p className="text-[6.5px] text-slate-500 font-medium">Se desligado, a impressão sai 100% direta no hardware sem abrir popup/modal</p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          className="sr-only peer"
+                          checked={settings.printing.showPreviewModal ?? false}
+                          onChange={(e) => onUpdateSettings({...settings, printing: {...settings.printing, showPreviewModal: e.target.checked}})}
                         />
                         <div className="w-7 h-3.5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-indigo-600"></div>
                       </label>
@@ -1204,16 +1220,26 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
                           <Monitor size={14} />
                        </div>
                        <div>
-                          <h4 className="text-[10px] font-black text-slate-800 uppercase">Instalação de Impressora</h4>
-                          <p className="text-[7px] text-slate-500 font-medium">Como configurar sua impressora térmica</p>
+                          <h4 className="text-[10px] font-black text-slate-800 uppercase">Instalação & Testes de Impressão</h4>
+                          <p className="text-[7px] text-slate-500 font-medium">Teste a saída direta no hardware ou visualize o cupom na tela</p>
                        </div>
                     </div>
-                    <button 
-                      onClick={() => printTestReceipt(settings)}
-                      className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg font-black text-[7px] uppercase tracking-widest shadow-sm hover:bg-indigo-700 transition-all flex items-center gap-1.5"
-                    >
-                      <Printer size={10} /> Realizar Teste de Impressão
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => printTestReceipt(settings, { forceModal: false })}
+                        className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg font-black text-[7px] uppercase tracking-widest shadow-sm hover:bg-emerald-700 transition-all flex items-center gap-1.5"
+                        title="Envia diretamente para a impressora sem abrir janela de pré-visualização"
+                      >
+                        <Printer size={10} /> Teste Direto (Hardware)
+                      </button>
+                      <button 
+                        onClick={() => printTestReceipt(settings, { forceModal: true })}
+                        className="px-3 py-1.5 bg-slate-700 text-white rounded-lg font-black text-[7px] uppercase tracking-widest shadow-sm hover:bg-slate-800 transition-all flex items-center gap-1.5"
+                        title="Abre a janela de pré-visualização para conferência de layout"
+                      >
+                        <Eye size={10} /> Ver na Tela
+                      </button>
+                    </div>
                  </div>
 
                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">

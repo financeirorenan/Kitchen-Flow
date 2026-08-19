@@ -794,7 +794,7 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
   `;
 };
 
-export const printTestReceipt = (settings: AdminSettings) => {
+export const printTestReceipt = (settings: AdminSettings, options?: { forceModal?: boolean }) => {
   const mockOrder: any = {
     id: 'CALIB-' + Math.random().toString(36).substr(2, 6).toUpperCase(),
     items: [
@@ -811,7 +811,7 @@ export const printTestReceipt = (settings: AdminSettings) => {
     paymentMethod: 'cartao_credito'
   };
   
-  handlePrintOrder(mockOrder, settings, { isFiscal: true });
+  handlePrintOrder(mockOrder, settings, { isFiscal: true, forceModal: options?.forceModal });
 };
 
 /**
@@ -1020,7 +1020,11 @@ export const enqueueBrowserPrint = (order: Partial<Order>, settings: AdminSettin
   }
 };
 
-export const handlePrintOrder = async (order: Partial<Order>, settings: AdminSettings, options?: { isFiscal?: boolean }) => {
+export const handlePrintOrder = async (
+  order: Partial<Order>, 
+  settings: AdminSettings, 
+  options?: { isFiscal?: boolean; forceModal?: boolean; skipModal?: boolean }
+) => {
   if (!order) return;
   const wantsFiscal = options?.isFiscal !== undefined 
     ? options.isFiscal 
@@ -1035,16 +1039,22 @@ export const handlePrintOrder = async (order: Partial<Order>, settings: AdminSet
   const mode = settings.printing.connectionMode || 'browser';
   const rawTextContent = generateRawTextReceipt(printOrder, settings);
 
-  // Despachar evento para que a interface global do App exiba o modal interativo de impressão
-  window.dispatchEvent(new CustomEvent('kitchenflow-show-print-modal', {
-    detail: {
-      order: printOrder,
-      settings,
-      html: generateReceiptHtml(printOrder, settings),
-      rawText: rawTextContent,
-      isFiscal: wantsFiscal
-    }
-  }));
+  // O modal interativo de pré-visualização só deve abrir se:
+  // 1. Foi explicitamente forçado via opções (forceModal)
+  // 2. OU se a configuração showPreviewModal estiver ligada E NÃO for modo direto WebUSB E NÃO tiver skipModal
+  const shouldShowModal = options?.forceModal || (settings.printing.showPreviewModal && mode !== 'webusb' && !options?.skipModal);
+
+  if (shouldShowModal) {
+    window.dispatchEvent(new CustomEvent('kitchenflow-show-print-modal', {
+      detail: {
+        order: printOrder,
+        settings,
+        html: generateReceiptHtml(printOrder, settings),
+        rawText: rawTextContent,
+        isFiscal: wantsFiscal
+      }
+    }));
+  }
 
   // ==========================================
   // OPÇÃO 1: WEBUSB DIRECT ESC/POS SILENT PRINTING
