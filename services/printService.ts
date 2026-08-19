@@ -161,18 +161,13 @@ export const generateRawTextReceipt = (order: Partial<Order>, settings: AdminSet
     const docSeries = order.metadata?.series || (order as any).series || fiscal?.series || 1;
     const docProtocol = order.metadata?.protocol || (order as any).protocol || '136263705823847';
 
-    out += center('D.A.N.F.E  N.F.C.-e', lineCharLimit) + '\n';
-    out += center('DOCUMENTO AUXILIAR DA NOTA FISCAL', lineCharLimit) + '\n';
-    out += center('DE CONSUMIDOR ELETRONICA', lineCharLimit) + '\n';
+    out += center('DANFE NFC-e - DOC AUXILIAR NOTA FISCAL', lineCharLimit) + '\n';
     out += divider + '\n';
-    out += `CHAVE DE ACESSO:\n`;
-    out += `${formatFiscalKey(order.fiscalKey || '35260659256207000174650010000011091263520471')}\n`;
+    out += `CHAVE: ${formatFiscalKey(order.fiscalKey || '35260659256207000174650010000011091263520471')}\n`;
+    out += `NFC-e:${String(docNfceNum).padStart(9, '0')} Ser:${String(docSeries).padStart(3, '0')} Prot:${docProtocol}\n`;
+    out += `CONSUMIDOR: ${order.customerDocument || 'NAO IDENTIFICADO'}\n`;
     out += divider + '\n';
-    out += `PROTOCOLO: ${docProtocol}\n`;
-    out += `NFC-e Num: ${String(docNfceNum).padStart(9, '0')} Series: ${String(docSeries).padStart(3, '0')}\n`;
-    out += divider + '\n';
-    out += center('TRIBUTOS TOTAIS APROXIMADOS (IBPT)', lineCharLimit) + '\n';
-    out += center(`R$ ${( (order.total || 0) * 0.3145 ).toFixed(2).replace('.', ',')} (31.45%)`, lineCharLimit) + '\n';
+    out += center(`TRIB APROX: R$ ${( (order.total || 0) * 0.3145 ).toFixed(2).replace('.', ',')} (31.45%) IBPT`, lineCharLimit) + '\n';
     out += divider + '\n';
   }
 
@@ -192,18 +187,20 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
 
   // Variáveis de fontes e espaçamento otimizadas para impressoras térmicas (maior nitidez)
   const fontSizeBase = isFiscal 
-    ? (is80mm ? `${Math.round(11.5 * scale * 10) / 10}px` : `${Math.round(10 * scale * 10) / 10}px`) 
+    ? (is80mm ? `${Math.round(9.5 * scale * 10) / 10}px` : `${Math.round(8.5 * scale * 10) / 10}px`) 
     : (is80mm ? `${Math.round(13.5 * scale * 10) / 10}px` : `${Math.round(12 * scale * 10) / 10}px`);
   const fontSizeSmall = isFiscal 
-    ? (is80mm ? `${Math.round(10 * scale * 10) / 10}px` : `${Math.round(9 * scale * 10) / 10}px`) 
+    ? (is80mm ? `${Math.round(8 * scale * 10) / 10}px` : `${Math.round(7.2 * scale * 10) / 10}px`) 
     : (is80mm ? `${Math.round(11.5 * scale * 10) / 10}px` : `${Math.round(10 * scale * 10) / 10}px`);
   const fontSizeItem = isFiscal 
-    ? (is80mm ? `${Math.round(11 * scale * 10) / 10}px` : `${Math.round(9.5 * scale * 10) / 10}px`) 
+    ? (is80mm ? `${Math.round(8.5 * scale * 10) / 10}px` : `${Math.round(7.8 * scale * 10) / 10}px`) 
     : (is80mm ? `${Math.round(14.5 * scale * 10) / 10}px` : `${Math.round(12.5 * scale * 10) / 10}px`); 
   const fontSizeHeader = isFiscal 
-    ? (is80mm ? `${Math.round(14 * scale * 10) / 10}px` : `${Math.round(12 * scale * 10) / 10}px`) 
+    ? (is80mm ? `${Math.round(11 * scale * 10) / 10}px` : `${Math.round(9.5 * scale * 10) / 10}px`) 
     : (is80mm ? `${Math.round(17 * scale * 10) / 10}px` : `${Math.round(14.5 * scale * 10) / 10}px`);
-  const qrCodeSize = is80mm ? '120px' : '90px';
+  const qrCodeSize = isFiscal
+    ? (is80mm ? '65px' : '52px')
+    : (is80mm ? '120px' : '90px');
 
   const isUltraBold = printing.fontDensity === 'ultra' || printing.highContrastMode !== false;
 
@@ -227,12 +224,12 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
     html, body { 
       width: ${width}; 
       margin: 0 auto; 
-      padding: 1.5mm 3.5mm; 
+      padding: ${isFiscal ? '0.5mm 1mm' : '1.5mm 3.5mm'}; 
       font-family: 'Courier New', Courier, 'Liberation Mono', 'Consolas', monospace; 
       font-weight: ${isUltraBold ? '800' : '700'};
       color: #000000 !important;
       background-color: #ffffff !important;
-      line-height: 1.25;
+      line-height: ${isFiscal ? '1.12' : '1.25'};
       box-sizing: border-box;
       -webkit-font-smoothing: antialiased !important;
       -moz-osx-font-smoothing: grayscale !important;
@@ -240,12 +237,12 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
       font-smooth: never !important;
       letter-spacing: 0.1px;
     }
-    .header { text-align: center; margin-bottom: 6px; }
-    .header-title { font-weight: 900; font-size: ${fontSizeHeader}; text-transform: uppercase; margin-bottom: 3px; color: #000000 !important; }
-    .header-info { font-size: ${fontSizeSmall}; margin-bottom: 2px; font-weight: 700; color: #000000 !important; }
-    .divider { border-top: 1.5px solid #000000; margin: 6px 0; }
-    .total-row { display: flex; justify-content: space-between; font-size: ${fontSizeBase}; font-weight: 900; margin-bottom: 4px; color: #000000 !important; }
-    .fiscal-title { text-align: center; font-weight: 900; font-size: ${fontSizeBase}; margin: 6px 0; line-height: 1.3; color: #000000 !important; }
+    .header { text-align: center; margin-bottom: ${isFiscal ? '2px' : '6px'}; }
+    .header-title { font-weight: 900; font-size: ${fontSizeHeader}; text-transform: uppercase; margin-bottom: 2px; color: #000000 !important; }
+    .header-info { font-size: ${fontSizeSmall}; margin-bottom: 1px; font-weight: 700; color: #000000 !important; }
+    .divider { border-top: ${isFiscal ? '1px solid #000000' : '1.5px solid #000000'}; margin: ${isFiscal ? '2px 0' : '6px 0'}; }
+    .total-row { display: flex; justify-content: space-between; font-size: ${fontSizeBase}; font-weight: 900; margin-bottom: ${isFiscal ? '1px' : '4px'}; color: #000000 !important; }
+    .fiscal-title { text-align: center; font-weight: 900; font-size: ${fontSizeSmall}; margin: 2px 0; line-height: 1.15; color: #000000 !important; }
     .bold { font-weight: 900; color: #000000 !important; }
     .center { text-align: center; }
     img {
@@ -255,33 +252,39 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
     }
   `;
 
-  // Se for IMPRESSÃO FISCAL baseada na NFC-e
+  // Se for IMPRESSÃO FISCAL baseada na NFC-e (ULTRA COMPACTA)
   if (isFiscal) {
-    // Itens formatados de forma oficial NFC-e com alto contraste
+    const docNfceNum = order.metadata?.nfceNumber || (order as any).nfceNumber || fiscal?.nextNfceNumber || 1;
+    const docSeries = order.metadata?.series || (order as any).series || fiscal?.series || 1;
+    const docProtocol = order.metadata?.protocol || (order as any).protocol || '136263705823847';
+    const addressStr = fiscal?.address
+      ? `${fiscal.address.logradouro}, ${fiscal.address.numero} - ${fiscal.address.municipio}/${fiscal.address.uf}`
+      : (address || '');
+
+    // Itens formatados de forma ultra-compacta oficial NFC-e
     const itemsHtml = order.items?.map((item, idx) => {
       const itemNumber = String(idx + 1).padStart(3, '0');
-      const code = item.productId ? item.productId.slice(0, 8).toUpperCase().padStart(8, '0') : '23262449';
       const cleanName = item.name.split('(')[0].trim().toUpperCase();
       const totalItemRow = (item.price * item.quantity).toFixed(2).replace('.', ',');
       const priceStr = item.price.toFixed(2).replace('.', ',');
       
       return `
-        <div style="font-size: ${fontSizeSmall}; margin-bottom: 6px; line-height: 1.25; font-family: 'Courier New', Courier, monospace; color: #000000 !important;">
-          <div style="display: flex;">
-            <span style="width: 10%; margin-right: 2px; font-weight: 900;">${itemNumber}</span>
-            <span style="width: 25%; margin-right: 4px; font-weight: 700;">${code}</span>
-            <span style="width: 65%; font-weight: 900; word-break: break-all;">${cleanName}</span>
-          </div>
-          <div style="text-align: right; font-weight: 900; margin-top: 1px;">
-            ${item.quantity} UN X ${priceStr} Vl Unit. Vl Total ${totalItemRow}
+        <div style="font-size: ${fontSizeItem}; margin-bottom: 2px; line-height: 1.15; font-family: 'Courier New', Courier, monospace; color: #000000 !important;">
+          <div style="display: flex; justify-content: space-between; align-items: baseline;">
+            <span style="font-weight: 900; word-break: break-all; flex: 1; margin-right: 4px;">
+              ${itemNumber} ${cleanName}
+            </span>
+            <span style="font-weight: 900; white-space: nowrap; text-align: right;">
+              ${item.quantity} UN x ${priceStr} = ${totalItemRow}
+            </span>
           </div>
           ${item.observation ? `
-            <div style="font-size: ${fontSizeSmall}; font-weight: 900; margin-left: 10%; text-transform: uppercase; font-style: italic; color: #000000 !important; white-space: pre-line;">
+            <div style="font-size: ${fontSizeSmall}; font-weight: 700; margin-left: 6px; text-transform: uppercase; font-style: italic; color: #000000 !important;">
               * OBS: ${item.observation} *
             </div>
           ` : ''}
           ${item.selectedOptions && item.selectedOptions.length > 0 ? `
-            <div style="font-size: ${fontSizeSmall}; margin-left: 10%; font-weight: 700; color: #000000 !important;">
+            <div style="font-size: ${fontSizeSmall}; margin-left: 6px; font-weight: 700; color: #000000 !important;">
               ${item.selectedOptions.map(opt => `+ ${opt.name.toUpperCase()}`).join(', ')}
             </div>
           ` : ''}
@@ -303,89 +306,67 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
         </style>
       </head>
       <body>
-        <div class="header">
-          <div class="header-title">${fiscal?.razaoSocial || companyName}</div>
-          <div class="header-info">CNPJ: ${fiscal?.cnpj || cnpj}</div>
-          <div class="header-info">${fiscal?.address ? `${fiscal.address.logradouro}, ${fiscal.address.numero}` : address}</div>
-          <div class="header-info">${fiscal?.address ? `${fiscal.address.bairro} - ${fiscal.address.municipio} - ${fiscal.address.uf}` : ''}</div>
-          ${phone ? `<div class="header-info">Fone: ${phone} ${fiscal?.inscricaoEstadual ? `I.E.: ${fiscal.inscricaoEstadual}` : ''}</div>` : ''}
+        <div style="text-align: center; margin-bottom: 2px;">
+          <div style="font-weight: 900; font-size: ${fontSizeHeader}; text-transform: uppercase; line-height: 1.1;">${fiscal?.razaoSocial || companyName}</div>
+          <div style="font-size: ${fontSizeSmall}; font-weight: 700; line-height: 1.1;">CNPJ: ${fiscal?.cnpj || cnpj} ${fiscal?.inscricaoEstadual ? `IE: ${fiscal.inscricaoEstadual}` : ''}</div>
+          ${addressStr ? `<div style="font-size: ${fontSizeSmall}; font-weight: 700; line-height: 1.1;">${addressStr}</div>` : ''}
         </div>
 
-        <div class="divider"></div>
+        <div style="border-top: 1px solid #000; margin: 2px 0;"></div>
 
-        <div class="fiscal-title">
-          DOCUMENTO AUXILIAR DA NOTA FISCAL DE CONSUMIDOR ELETRÔNICA
+        <div style="text-align: center; font-weight: 900; font-size: ${fontSizeSmall}; text-transform: uppercase; line-height: 1.1; margin: 1px 0;">
+          DANFE NFC-e - Doc. Auxiliar Nota Fiscal Consumidor Eletrônica
         </div>
 
-        <div class="divider"></div>
+        <div style="border-top: 1px solid #000; margin: 2px 0;"></div>
 
-        <div style="display: flex; font-size: ${fontSizeSmall}; font-weight: 900; margin-bottom: 4px; color: #000000 !important;">
-          <span style="width: 10%;">#</span>
-          <span style="width: 25%;">CÓD</span>
-          <span style="width: 35%;">DESCRIÇÃO</span>
-          <span style="width: 30%; text-align: right;">QTD UN X VALOR</span>
+        <div style="display: flex; justify-content: space-between; font-size: ${fontSizeSmall}; font-weight: 900; margin-bottom: 1px; color: #000000 !important;">
+          <span>ITEM / DESCRIÇÃO</span>
+          <span style="text-align: right;">QTD x VL UN = TOTAL</span>
         </div>
-        
-        <div class="divider"></div>
+
+        <div style="border-top: 1px dashed #000; margin: 1px 0 2px 0;"></div>
 
         <div class="items">
-          ${itemsHtml || '<div style="text-align: center; padding: 10px; font-weight: 900;">NENHUM ITEM</div>'}
+          ${itemsHtml || '<div style="text-align: center; padding: 4px; font-weight: 900;">NENHUM ITEM</div>'}
         </div>
 
-        <div class="divider"></div>
+        <div style="border-top: 1px solid #000; margin: 2px 0;"></div>
 
-        <div class="total-row">
-          <span>QTD. TOTAL DE ITENS</span>
-          <span>${String(totalQuantity).padStart(3, '0')}</span>
+        <div style="display: flex; justify-content: space-between; font-size: ${fontSizeBase}; font-weight: 900; line-height: 1.15; margin: 1px 0;">
+          <span>QTD. ITENS: ${totalQuantity}</span>
+          <span>TOTAL R$ ${(order.total || 0).toFixed(2).replace('.', ',')}</span>
         </div>
-        <div class="total-row">
-          <span>VALOR TOTAL R$</span>
-          <span>${(order.total || 0).toFixed(2).replace('.', ',')}</span>
-        </div>
-        <div class="total-row">
-          <span>VALOR PAGO R$</span>
-          <span>${(order.total || 0).toFixed(2).replace('.', ',')}</span>
+        <div style="display: flex; justify-content: space-between; font-size: ${fontSizeBase}; font-weight: 900; line-height: 1.15; margin: 1px 0;">
+          <span style="text-transform: uppercase;">PAGTO (${paymentMethodLabel(order.paymentMethod || 'cartao_credito')}):</span>
+          <span>R$ ${(order.total || 0).toFixed(2).replace('.', ',')}</span>
         </div>
 
-        <div class="bold" style="font-size: ${fontSizeSmall}; margin-top: 6px; margin-bottom: 3px; text-transform: uppercase;">FORMA DE PAGAMENTO:</div>
-        <div style="display: flex; justify-content: space-between; font-size: ${fontSizeBase}; font-weight: 900; margin-bottom: 4px; color: #000000 !important;">
-          <span style="text-transform: uppercase;">${paymentMethodLabel(order.paymentMethod || 'cartao_credito')}</span>
-          <span class="bold">${(order.total || 0).toFixed(2).replace('.', ',')}</span>
+        <div style="border-top: 1px solid #000; margin: 2px 0;"></div>
+
+        <div style="font-size: ${fontSizeSmall}; line-height: 1.15; font-weight: 700; margin: 1px 0;">
+          <div style="font-weight: 900; word-break: break-all;">CHAVE: ${formatFiscalKey(order.fiscalKey || '35260659256207000174650010000011091263520471')}</div>
+          <div style="display: flex; justify-content: space-between; margin-top: 1px;">
+            <span><strong>NFC-e:</strong> ${String(docNfceNum).padStart(9, '0')} <strong>Sér:</strong> ${String(docSeries).padStart(3, '0')}</span>
+            <span><strong>Emissão:</strong> ${dateStr} ${timeStr}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-top: 1px;">
+            <span><strong>CPF/CNPJ:</strong> ${order.customerDocument || 'NÃO IDENTIFICADO'}</span>
+            <span><strong>Prot:</strong> ${docProtocol}</span>
+          </div>
         </div>
 
-        <div class="divider"></div>
-
-        <div class="center" style="font-size: ${fontSizeSmall}; margin-bottom: 6px; font-weight: 700;">
-          Consulte pela Chave de Acesso em<br/>
-          <strong>https://www.nfce.fazenda.sp.gov.br/qrcode</strong>
+        <div style="text-align: center; margin: 3px 0;">
+          <img src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=https://www.nfce.fazenda.sp.gov.br/qrcode?p=${order.fiscalKey || '34260659256207000174650010000011122263520412'}&ecc=M&format=png&color=000000&bgcolor=ffffff&qzone=1" style="width: ${qrCodeSize}; height: ${qrCodeSize}; image-rendering: pixelated; margin: 0 auto; display: block;" />
         </div>
 
-        <div class="center bold" style="font-size: ${fontSizeBase}; margin-bottom: 12px; word-break: break-all; letter-spacing: 0.5px; font-weight: 900;">
-          ${formatFiscalKey(order.fiscalKey || '35260659256207000174650010000011091263520471')}
+        <div style="border-top: 1px dashed #000; margin: 2px 0;"></div>
+
+        <div style="text-align: center; font-size: ${fontSizeSmall}; line-height: 1.1; font-style: italic; font-weight: 700; margin: 1px 0;">
+          Trib aprox: R$ ${( (order.total || 0) * 0.3145 ).toFixed(2).replace('.', ',')} (31.45%) - Fed: R$ ${( (order.total || 0) * 0.1345 ).toFixed(2).replace('.', ',')} Est: R$ ${( (order.total || 0) * 0.1800 ).toFixed(2).replace('.', ',')} (IBPT)
         </div>
 
-        <div style="font-size: ${fontSizeSmall}; line-height: 1.35; text-transform: uppercase; font-weight: 700;">
-          <div><strong>CONSUMIDOR CNPJ / CPF:</strong> ${order.customerDocument || 'NÃO IDENTIFICADO'}</div>
-          <div style="margin-top: 3px;"><strong>NFC-e nº</strong> ${String(order.metadata?.nfceNumber || (order as any).nfceNumber || fiscal?.nextNfceNumber || 1).padStart(9, '0')} &nbsp;&nbsp; <strong>Série</strong> ${String(order.metadata?.series || (order as any).series || fiscal?.series || 1).padStart(3, '0')}</div>
-          <div><strong>Data/Hora Emissão:</strong> ${dateStr} ${timeStr}</div>
-          <div><strong>Protocolo de Autorização:</strong> ${order.metadata?.protocol || (order as any).protocol || '136263705823847'}</div>
-        </div>
-
-        <div class="center" style="margin: 15px 0;">
-          <img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https://www.nfce.fazenda.sp.gov.br/qrcode?p=${order.fiscalKey || '34260659256207000174650010000011122263520412'}&ecc=M&format=png&color=000000&bgcolor=ffffff&qzone=1" style="width: ${qrCodeSize}; height: ${qrCodeSize}; image-rendering: pixelated;" />
-        </div>
-
-        <div class="divider"></div>
-
-        <div class="center" style="font-size: ${fontSizeSmall}; line-height: 1.3; font-style: italic; font-weight: 700;">
-          Tributos Aproximados - Total R$ ${( (order.total || 0) * 0.3145 ).toFixed(2).replace('.', ',')} (31.45%)<br/>
-          Federal R$ ${( (order.total || 0) * 0.1345 ).toFixed(2).replace('.', ',')}, Estadual R$ ${( (order.total || 0) * 0.1800 ).toFixed(2).replace('.', ',')}, Municipal R$ 0,00 - Fonte IBPT<br/>
-          www.satpox.com.br
-        </div>
-
-        <div class="divider"></div>
-
-        <div class="center bold" style="font-size: ${fontSizeSmall}; text-transform: uppercase; margin-top: 8px;">
+        <div style="text-align: center; font-weight: 900; font-size: ${fontSizeSmall}; text-transform: uppercase; margin-top: 2px; line-height: 1.1;">
           ${printing.footerText || 'Obrigado pela preferência!'}
         </div>
 
