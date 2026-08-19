@@ -706,11 +706,17 @@ const Tables: React.FC<TablesProps> = memo(
       // Monetary sums should exclude automated sale records (which already exist in sessionOrders)
       // and also exclude the opening cash record itself to avoid double counting
       const extraIncomes = sessionRecords
-        .filter((r) => r.category === "Suprimento" || r.description?.toLowerCase().includes("suprimento"))
+        .filter((r) => {
+          const cat = (r.category || "").toLowerCase();
+          return r.type === "income" && 
+                 getStandardPaymentMethod(r.paymentMethod || "dinheiro") === "dinheiro" &&
+                 !cat.includes("abertura") && 
+                 !cat.startsWith("venda");
+        })
         .reduce((acc, r) => acc + (r.amount || 0), 0);
 
       const extraExpenses = sessionRecords
-        .filter((r) => r.category === "Sangria" || r.description?.toLowerCase().includes("sangria"))
+        .filter((r) => r.type === "expense" && getStandardPaymentMethod(r.paymentMethod || "dinheiro") === "dinheiro")
         .reduce((acc, r) => acc + (r.amount || 0), 0);
 
       const totalsByMethod = {
@@ -881,14 +887,14 @@ const Tables: React.FC<TablesProps> = memo(
         const openedAt = new Date(lastClosingReport.openedAt);
         const closedAt = new Date(lastClosingReport.closedAt);
         sourceOrders = orders.filter((o) => {
-          const created = new Date(o.createdAt);
-          return created >= openedAt && created <= closedAt && o.status !== "cancelled" && !o.isSubTicket && !o.mergedIntoOrderId;
+          const act = new Date(o.paidAt || o.completedAt || o.finishedAt || o.updatedAt || o.createdAt);
+          return act >= openedAt && act <= closedAt && o.status !== "cancelled" && !o.isSubTicket && !o.mergedIntoOrderId;
         });
       } else if (cashSession.openedAt) {
         const openedAt = new Date(cashSession.openedAt);
         sourceOrders = orders.filter((o) => {
-          const created = new Date(o.createdAt);
-          return created >= openedAt && o.status !== "cancelled" && !o.isSubTicket && !o.mergedIntoOrderId;
+          const act = new Date(o.paidAt || o.completedAt || o.finishedAt || o.updatedAt || o.createdAt);
+          return act >= openedAt && o.status !== "cancelled" && !o.isSubTicket && !o.mergedIntoOrderId;
         });
       } else {
         sourceOrders = orders.filter((o) => o.status !== "cancelled" && !o.isSubTicket && !o.mergedIntoOrderId);
@@ -1665,11 +1671,13 @@ const Tables: React.FC<TablesProps> = memo(
         const finalPayments = isSplitting
           ? [
               ...splitParts.map((p) => ({
+                id: p.id,
                 method: p.method,
                 amount: p.amount,
                 customerId: p.customerId,
+                alreadyRecorded: p.alreadyRecorded,
               })),
-              { method, amount: amountToPay },
+              { method, amount: amountToPay, alreadyRecorded: false },
             ]
           : [
               {
@@ -1681,6 +1689,7 @@ const Tables: React.FC<TablesProps> = memo(
                     : 0) +
                   additionalFee -
                   discount,
+                alreadyRecorded: false,
               },
             ];
 
@@ -1835,12 +1844,14 @@ const Tables: React.FC<TablesProps> = memo(
           deliveryInfo,
           isFiscalEmission ? customerDocumentInput : undefined,
           partsToUse.map((p) => ({
+            id: p.id,
             method: p.method,
             amount: p.amount,
             customerId: p.customerId,
             isFiscalIssued: p.isFiscalIssued,
             fiscalKey: p.fiscalKey,
             customerDocument: p.customerDocument,
+            alreadyRecorded: p.alreadyRecorded,
           })),
         );
         setIsProcessing(false);

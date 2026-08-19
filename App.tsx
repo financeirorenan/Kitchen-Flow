@@ -2549,16 +2549,11 @@ const App: React.FC = () => {
       return;
     }
 
-    // Prevenção estrita contra duplicidade de lançamentos por pedido
-    if (record.orderId && record.type === 'income') {
-      const isAlreadyRecorded = financialRecords.some(r => 
-        r.orderId === record.orderId && 
-        r.type === 'income' && 
-        r.paymentMethod === record.paymentMethod && 
-        Math.abs((r.amount || 0) - (record.amount || 0)) < 0.01
-      );
+    // Prevenção estrita contra duplicidade real por id único
+    if (record.id) {
+      const isAlreadyRecorded = financialRecords.some(r => r.id === record.id);
       if (isAlreadyRecorded) {
-        console.warn(`[Financial] Lançamento já registrado anteriormente para o pedido ${record.orderId}`);
+        console.warn(`[Financial] Lançamento com ID ${record.id} já registrado anteriormente.`);
         return;
       }
     }
@@ -2578,7 +2573,7 @@ const App: React.FC = () => {
     }
 
     const newRecord: FinancialRecord = {
-      id: record.id || Math.random().toString(36).substr(2, 9),
+      id: record.id || `fin-${Date.now()}-${Math.random().toString(36).substr(2, 7)}`,
       tenantId: effectiveTenantId || 't1',
       type: record.type || 'expense',
       amount: record.amount || 0,
@@ -4529,30 +4524,49 @@ const App: React.FC = () => {
     if (payments && payments.length > 0) {
       const customerUpdates: Record<string, { totalDebit: number, transactions: CustomerTransaction[] }> = {};
       
-      for (const p of payments) {
+      for (let i = 0; i < payments.length; i++) {
+        const p = payments[i];
         const currentCustomerId = p.customerId || customerId;
+        const paymentRecordId = (p as any).id || `fin-${newOrder.id}-${p.method}-${p.amount}-${i}-${Date.now()}`;
+
         if (p.method === 'conta_cliente' && currentCustomerId) {
           if (!customerUpdates[currentCustomerId]) {
             customerUpdates[currentCustomerId] = { totalDebit: 0, transactions: [] };
           }
           customerUpdates[currentCustomerId].totalDebit += p.amount;
           customerUpdates[currentCustomerId].transactions.push({
-            id: `tr-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+            id: `tr-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 5)}`,
             type: 'debit',
             amount: p.amount,
             description: `Consumo Parcial ${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} (Pedido #${newOrder.id})`,
             date: new Date(),
             items: newOrder.items?.map(it => ({ name: it.name, quantity: it.quantity, price: it.price }))
           });
+
+          if (!(p as any).alreadyRecorded) {
+            await handleAddFinancialRecord({
+              id: paymentRecordId,
+              type: 'income',
+              amount: p.amount,
+              category: isRealDelivery ? 'Vendas Entrega' : (isCounter ? 'Vendas Balcão' : 'Vendas Mesa'),
+              description: `${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} - Conta Cliente / Fiado (Pedido #${newOrder.id})`,
+              date: new Date(),
+              paymentMethod: 'conta_cliente',
+              orderId: newOrder.id,
+              status: 'pending'
+            });
+          }
         } else if (!(p as any).alreadyRecorded) {
           await handleAddFinancialRecord({
+            id: paymentRecordId,
             type: 'income',
             amount: p.amount,
             category: isRealDelivery ? 'Vendas Entrega' : (isCounter ? 'Vendas Balcão' : 'Vendas Mesa'),
             description: `${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} - Pagamento: ${p.method}`,
             date: new Date(),
             paymentMethod: p.method,
-            orderId: newOrder.id
+            orderId: newOrder.id,
+            status: 'paid'
           });
         }
       }
@@ -4568,6 +4582,7 @@ const App: React.FC = () => {
       }
     } else {
       // Pagamento único (legado/simples)
+      const paymentRecordId = `fin-${newOrder.id}-${method}-${finalTotal}-${Date.now()}`;
       if (method === 'conta_cliente' && customerId) {
         const customer = customers.find(c => c.id === customerId);
         if (customer) {
@@ -4584,15 +4599,28 @@ const App: React.FC = () => {
             history: [transaction, ...customer.history]
           });
         }
+        await handleAddFinancialRecord({
+          id: paymentRecordId,
+          type: 'income',
+          amount: finalTotal,
+          category: isRealDelivery ? 'Vendas Entrega' : (isCounter ? 'Vendas Balcão' : 'Vendas Mesa'),
+          description: `${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} - Conta Cliente / Fiado (Pedido #${newOrder.id})`,
+          date: new Date(),
+          paymentMethod: 'conta_cliente',
+          orderId: newOrder.id,
+          status: 'pending'
+        });
       } else {
         await handleAddFinancialRecord({
+          id: paymentRecordId,
           type: 'income',
           amount: finalTotal,
           category: isRealDelivery ? 'Vendas Entrega' : (isCounter ? 'Vendas Balcão' : 'Vendas Mesa'),
           description: `${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} - Pagamento: ${method}`,
           date: new Date(),
           paymentMethod: method,
-          orderId: newOrder.id
+          orderId: newOrder.id,
+          status: 'paid'
         });
       }
     }
@@ -5318,12 +5346,18 @@ const App: React.FC = () => {
         return 'dinheiro';
       };
 
-      // ROBUST CALCULATION: Fetch ALL orders during the session
-      let salesSinceOpen: Order[] = deduplicateOrders(orders.filter(o => {
+      // Helper to check if an order belongs to this cash session
+      const isOrderInSession = (o: Order) => {
         if (o.status === 'cancelled' || o.isSubTicket || o.mergedIntoOrderId) return false;
+        const activityDate = parseToDate(o.paidAt || o.completedAt || o.finishedAt || o.updatedAt || o.createdAt);
+        if (activityDate >= openedDate) return true;
+        if (o.payments && o.payments.some(p => p.timestamp && parseToDate(p.timestamp) >= openedDate)) return true;
         const createdAt = parseToDate(o.createdAt);
         return createdAt >= openedDate;
-      }));
+      };
+
+      // ROBUST CALCULATION: Fetch ALL orders during the session
+      let salesSinceOpen: Order[] = deduplicateOrders(orders.filter(isOrderInSession));
 
       let recordsDuringSession: FinancialRecord[] = deduplicateFinancialRecords(financialRecords.filter(r => {
         const isPaid = r.status === 'paid' || !r.status;
@@ -5351,14 +5385,14 @@ const App: React.FC = () => {
                 ...data, 
                 id: data.id || d.id, 
                 docId: d.id, 
-                createdAt: (data.createdAt as any)?.toDate ? (data.createdAt as any).toDate() : new Date(data.createdAt) 
+                createdAt: (data.createdAt as any)?.toDate ? (data.createdAt as any).toDate() : new Date(data.createdAt),
+                updatedAt: (data.updatedAt as any)?.toDate ? (data.updatedAt as any).toDate() : (data.updatedAt ? new Date(data.updatedAt) : undefined),
+                finishedAt: (data.finishedAt as any)?.toDate ? (data.finishedAt as any).toDate() : (data.finishedAt ? new Date(data.finishedAt) : undefined),
+                completedAt: (data.completedAt as any)?.toDate ? (data.completedAt as any).toDate() : (data.completedAt ? new Date(data.completedAt) : undefined),
+                paidAt: (data.paidAt as any)?.toDate ? (data.paidAt as any).toDate() : (data.paidAt ? new Date(data.paidAt) : undefined)
               } as Order;
             });
-            salesSinceOpen = deduplicateOrders(fetchedOrders.filter(o => {
-              if (o.status === 'cancelled' || o.isSubTicket || o.mergedIntoOrderId) return false;
-              const createdAt = parseToDate(o.createdAt);
-              return createdAt >= openedDate;
-            }));
+            salesSinceOpen = deduplicateOrders(fetchedOrders.filter(isOrderInSession));
           }
           if (!recordsSnapshot.empty) {
             const fetchedRecords = recordsSnapshot.docs.map(d => {
@@ -5415,11 +5449,17 @@ const App: React.FC = () => {
       });
 
        const cashIncomes = recordsDuringSession
-         .filter(r => (r.category === 'Suprimento' || r.description?.toLowerCase().includes('suprimento')))
+         .filter(r => {
+           const cat = (r.category || '').toLowerCase();
+           return r.type === 'income' && 
+                  getStandardPaymentMethod(r.paymentMethod || 'dinheiro') === 'dinheiro' && 
+                  !cat.includes('abertura') && 
+                  !cat.startsWith('venda');
+         })
          .reduce((acc, r) => acc + (r.amount || 0), 0);
        
        const cashExpenses = recordsDuringSession
-         .filter(r => (r.category === 'Sangria' || r.description?.toLowerCase().includes('sangria')))
+         .filter(r => r.type === 'expense' && getStandardPaymentMethod(r.paymentMethod || 'dinheiro') === 'dinheiro')
          .reduce((acc, r) => acc + (r.amount || 0), 0);
 
       const expectedCash = (cashSession.openingValue || 0) + (salesByMethod.dinheiro || 0) + cashIncomes - cashExpenses;

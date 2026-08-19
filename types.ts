@@ -260,6 +260,12 @@ export interface AdminSettings {
     highContrastMode?: boolean;
     fontDensity?: 'normal' | 'high' | 'ultra';
     fontSizeLevel?: 'normal' | 'large' | 'extra_large';
+    printerModel?: 'generic' | 'epson' | 'elgin' | 'bematech' | 'daruma' | 'pos58' | 'pos80' | string;
+    marginLeftMm?: number;
+    marginRightMm?: number;
+    marginTopMm?: number;
+    marginBottomMm?: number;
+    antiClippingGuard?: boolean;
   };
   apis: {
     googleMapsKey: string;

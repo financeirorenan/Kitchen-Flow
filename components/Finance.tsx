@@ -316,7 +316,7 @@ const Finance: React.FC<FinanceProps> = memo(
         const totalDaily = c.dailyFee || 0;
         const cashHand = courierOrders
           .filter((o) => o.paymentMethod === "dinheiro")
-          .reduce((acc, o) => acc + (o.changeFor || o.total), 0);
+          .reduce((acc, o) => acc + (o.total || 0), 0);
 
         // O que o restaurante DEVE ao entregador (se positivo) ou o que o entregador DEVE ao restaurante (se negativo)
         const balance = totalFees + totalDaily - cashHand;
@@ -790,34 +790,42 @@ const Finance: React.FC<FinanceProps> = memo(
       orders
         .filter((o) => o.status === "delivered" || o.status === "finished")
         .forEach((order) => {
-          const method = order.paymentMethod || "dinheiro";
-          if (!methodCounts[method]) {
-            methodCounts[method] = { count: 0, total: 0, fees: 0 };
-          }
+          const paymentsList =
+            order.payments && order.payments.length > 0
+              ? order.payments
+              : [{ method: order.paymentMethod || "dinheiro", amount: order.total || 0 }];
 
-          methodCounts[method].count += 1;
-          methodCounts[method].total += order.total;
+          paymentsList.forEach((p) => {
+            const method = p.method || "dinheiro";
+            const amt = p.amount || 0;
+            if (!methodCounts[method]) {
+              methodCounts[method] = { count: 0, total: 0, fees: 0 };
+            }
 
-          // Calculate fees based on adminSettings.paymentMethods
-          const config = adminSettings.paymentMethods?.find(
-            (p) =>
-              p.id === method ||
-              p.name.toLowerCase() === method.toLowerCase() ||
-              p.type === method,
-          );
-          if (config) {
-            const fee =
-              order.total * (config.feePercentage / 100) +
-              (config.fixedFee || 0);
-            methodCounts[method].fees += fee;
-          } else {
-            // Default fees if not configured (backwards compatibility)
-            let fee = 0;
-            if (method === "cartao_credito") fee = order.total * 0.032;
-            else if (method === "cartao_debito") fee = order.total * 0.019;
-            else if (method === "vale_refeicao") fee = order.total * 0.05;
-            methodCounts[method].fees += fee;
-          }
+            methodCounts[method].count += 1;
+            methodCounts[method].total += amt;
+
+            // Calculate fees based on adminSettings.paymentMethods
+            const config = adminSettings.paymentMethods?.find(
+              (cfg) =>
+                cfg.id === method ||
+                cfg.name.toLowerCase() === method.toLowerCase() ||
+                cfg.type === method,
+            );
+            if (config) {
+              const fee =
+                amt * (config.feePercentage / 100) +
+                (config.fixedFee || 0);
+              methodCounts[method].fees += fee;
+            } else {
+              // Default fees if not configured (backwards compatibility)
+              let fee = 0;
+              if (method === "cartao_credito") fee = amt * 0.032;
+              else if (method === "cartao_debito") fee = amt * 0.019;
+              else if (method === "vale_refeicao") fee = amt * 0.05;
+              methodCounts[method].fees += fee;
+            }
+          });
         });
 
       return Object.entries(methodCounts)

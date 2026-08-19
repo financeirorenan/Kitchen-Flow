@@ -15,7 +15,7 @@ import {
   Fingerprint, ShieldAlert, Key, Download, UploadCloud,
   Database, RefreshCw, FileJson, ExternalLink, Monitor, Loader2,
   Palette, LayoutDashboard, ShoppingBag, Share2, Upload, Camera,
-  Award, Sparkles, ArrowRight
+  Award, Sparkles, ArrowRight, Sliders
 } from 'lucide-react';
 import { maskPhone, maskCPF, maskCNPJ, maskCEP } from '../utils/masks';
 import { compressImage } from '../lib/imageUtils';
@@ -939,108 +939,260 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="space-y-2">
-                  <div className="space-y-0.5">
-                    <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest ml-1">Largura do Papel</label>
-                    <select 
-                      className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg outline-none font-bold text-[10px]"
-                      value={settings.printing.paperWidth}
-                      onChange={(e) => onUpdateSettings({...settings, printing: {...settings.printing, paperWidth: e.target.value as any}})}
-                    >
-                      <option value="58mm">58mm (Estreito)</option>
-                      <option value="80mm">80mm (Padrão)</option>
-                    </select>
-                  </div>
-                  <div className="flex items-center justify-between p-2 bg-slate-50 rounded-lg border">
-                    <div>
-                      <p className="text-[10px] font-black text-slate-800">Impressão Automática</p>
-                      <p className="text-[7px] text-slate-500 font-medium">Imprimir cupom ao fechar pedido</p>
+                  {/* SELEÇÃO E IDENTIFICAÇÃO DE IMPRESSORA E BOBINA */}
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
+                    <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                      <div className="flex items-center gap-2">
+                        <div className="p-1.5 bg-slate-800 text-white rounded-lg">
+                          <Printer size={13} />
+                        </div>
+                        <div>
+                          <h4 className="text-[10px] font-black text-slate-800 uppercase tracking-wide">Identificação da Impressora & Bobina</h4>
+                          <p className="text-[7px] font-bold text-slate-400 uppercase">Defina o tamanho do papel e modelo para alinhamento correto</p>
+                        </div>
+                      </div>
+                      <span className="px-2 py-0.5 bg-slate-200 text-slate-700 text-[7px] font-black rounded-full uppercase">
+                        {settings.printing.paperWidth === '58mm' ? '58mm • 32 Col' : '80mm • 48 Col'}
+                      </span>
                     </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input 
-                        type="checkbox" 
-                        className="sr-only peer"
-                        checked={settings.printing.autoPrintOrder}
-                        onChange={(e) => onUpdateSettings({...settings, printing: {...settings.printing, autoPrintOrder: e.target.checked}})}
-                      />
-                      <div className="w-7 h-3.5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-indigo-600"></div>
-                    </label>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div className="space-y-0.5">
+                        <label className="text-[7px] font-black text-slate-500 uppercase tracking-widest ml-1">Largura da Bobina</label>
+                        <select 
+                          className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg outline-none font-bold text-[10px] text-slate-800"
+                          value={settings.printing.paperWidth || '80mm'}
+                          onChange={(e) => onUpdateSettings({
+                            ...settings, 
+                            printing: {
+                              ...settings.printing, 
+                              paperWidth: e.target.value as any
+                            }
+                          })}
+                        >
+                          <option value="80mm">80mm (Padrão 72-80mm • 48 Colunas)</option>
+                          <option value="58mm">58mm (Estreito / Mini POS • 32 Colunas)</option>
+                        </select>
+                        <p className="text-[6px] text-slate-400 leading-tight pl-1">Ajusta as colunas e espaçamento para não cortar as margens.</p>
+                      </div>
+
+                      <div className="space-y-0.5">
+                        <label className="text-[7px] font-black text-slate-500 uppercase tracking-widest ml-1">Modelo / Perfil da Impressora</label>
+                        <select 
+                          className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg outline-none font-bold text-[10px] text-slate-800"
+                          value={settings.printing.printerModel || 'generic'}
+                          onChange={(e) => onUpdateSettings({
+                            ...settings, 
+                            printing: {
+                              ...settings.printing, 
+                              printerModel: e.target.value as any
+                            }
+                          })}
+                        >
+                          <option value="generic">Térmica Genérica ESC/POS</option>
+                          <option value="epson">Epson TM-T20 / TM-T88</option>
+                          <option value="elgin">Elgin i7 / i8 / i9 / Wind</option>
+                          <option value="bematech">Bematech MP-4200 TH / MP-100</option>
+                          <option value="daruma">Daruma DR700 / DR800</option>
+                          <option value="pos58">Mini POS 58mm Bluetooth/USB</option>
+                          <option value="pos80">POS 80mm Rede/USB</option>
+                        </select>
+                        <p className="text-[6px] text-slate-400 leading-tight pl-1">Define o perfil de renderização de margens do hardware.</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between p-2 bg-white rounded-lg border border-slate-100">
+                      <div>
+                        <p className="text-[9px] font-black text-slate-800">Impressão Automática</p>
+                        <p className="text-[6.5px] text-slate-500 font-medium">Imprimir cupom automaticamente ao fechar pedidos ou emitir notas</p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          className="sr-only peer"
+                          checked={settings.printing.autoPrintOrder}
+                          onChange={(e) => onUpdateSettings({...settings, printing: {...settings.printing, autoPrintOrder: e.target.checked}})}
+                        />
+                        <div className="w-7 h-3.5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-indigo-600"></div>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* CALIBRAÇÃO E ALINHAMENTO DE MARGENS (ANTI-CORTE) */}
+                  <div className="p-3 bg-amber-50/60 border border-amber-200/80 rounded-2xl space-y-2">
+                    <div className="flex items-center justify-between border-b border-amber-200/60 pb-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <div className="p-1 bg-amber-600 text-white rounded">
+                          <Sliders size={12} />
+                        </div>
+                        <div>
+                          <h4 className="text-[9px] font-black text-amber-950 uppercase tracking-wide">Calibração de Margens & Alinhamento</h4>
+                          <p className="text-[6.5px] font-bold text-amber-700 uppercase">Equilíbrio milimétrico entre as margens esquerda e direita</p>
+                        </div>
+                      </div>
+                      <span className="text-[6.5px] font-black text-amber-800 bg-amber-200/70 px-1.5 py-0.5 rounded uppercase">
+                        Simetria Ativa
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      <div className="space-y-0.5">
+                        <label className="text-[6.5px] font-black text-amber-900 uppercase tracking-wider block">Margem Esq. (mm)</label>
+                        <input 
+                          type="number"
+                          step="0.5"
+                          min="0"
+                          max="8"
+                          className="w-full px-2 py-1 bg-white border border-amber-200 rounded-lg outline-none font-black text-[9px] text-slate-800 text-center"
+                          value={settings.printing.marginLeftMm ?? (settings.printing.paperWidth === '58mm' ? 0.5 : 1.0)}
+                          onChange={(e) => onUpdateSettings({
+                            ...settings,
+                            printing: {
+                              ...settings.printing,
+                              marginLeftMm: parseFloat(e.target.value) || 0
+                            }
+                          })}
+                        />
+                      </div>
+                      <div className="space-y-0.5">
+                        <label className="text-[6.5px] font-black text-amber-900 uppercase tracking-wider block">Margem Dir. (mm)</label>
+                        <input 
+                          type="number"
+                          step="0.5"
+                          min="0"
+                          max="8"
+                          className="w-full px-2 py-1 bg-white border border-amber-200 rounded-lg outline-none font-black text-[9px] text-slate-800 text-center"
+                          value={settings.printing.marginRightMm ?? (settings.printing.paperWidth === '58mm' ? 0.5 : 1.0)}
+                          onChange={(e) => onUpdateSettings({
+                            ...settings,
+                            printing: {
+                              ...settings.printing,
+                              marginRightMm: parseFloat(e.target.value) || 0
+                            }
+                          })}
+                        />
+                      </div>
+                      <div className="space-y-0.5">
+                        <label className="text-[6.5px] font-black text-amber-900 uppercase tracking-wider block">Topo (mm)</label>
+                        <input 
+                          type="number"
+                          step="0.5"
+                          min="0"
+                          max="8"
+                          className="w-full px-2 py-1 bg-white border border-amber-200 rounded-lg outline-none font-black text-[9px] text-slate-800 text-center"
+                          value={settings.printing.marginTopMm ?? 0}
+                          onChange={(e) => onUpdateSettings({
+                            ...settings,
+                            printing: {
+                              ...settings.printing,
+                              marginTopMm: parseFloat(e.target.value) || 0
+                            }
+                          })}
+                        />
+                      </div>
+                      <div className="space-y-0.5">
+                        <label className="text-[6.5px] font-black text-amber-900 uppercase tracking-wider block">Base (mm)</label>
+                        <input 
+                          type="number"
+                          step="0.5"
+                          min="0"
+                          max="8"
+                          className="w-full px-2 py-1 bg-white border border-amber-200 rounded-lg outline-none font-black text-[9px] text-slate-800 text-center"
+                          value={settings.printing.marginBottomMm ?? 0}
+                          onChange={(e) => onUpdateSettings({
+                            ...settings,
+                            printing: {
+                              ...settings.printing,
+                              marginBottomMm: parseFloat(e.target.value) || 0
+                            }
+                          })}
+                        />
+                      </div>
+                    </div>
+
+                    <p className="text-[6px] text-amber-800/90 leading-tight">
+                      💡 <strong>Dica de Alinhamento:</strong> Se a impressão estiver muito deslocada para a direita, deixe a Margem Esquerda em <strong>0.5mm</strong> ou <strong>0mm</strong>. Se o texto do lado direito estiver cortando, diminua a Margem Esquerda para centralizar a coluna útil.
+                    </p>
                   </div>
                 </div>
 
                 {/* PAINEL DE NITIDEZ E DENSIDADE TÉRMICA DA IMPRESSÃO */}
-                <div className="p-3 bg-indigo-50/70 border border-indigo-100 rounded-2xl space-y-2.5">
-                  <div className="flex items-center justify-between border-b border-indigo-100 pb-2">
-                    <div className="flex items-center gap-2">
-                      <div className="p-1.5 bg-indigo-600 text-white rounded-lg">
-                        <Printer size={13} />
+                <div className="space-y-2">
+                  <div className="p-3 bg-indigo-50/70 border border-indigo-100 rounded-2xl space-y-2.5">
+                    <div className="flex items-center justify-between border-b border-indigo-100 pb-2">
+                      <div className="flex items-center gap-2">
+                        <div className="p-1.5 bg-indigo-600 text-white rounded-lg">
+                          <Printer size={13} />
+                        </div>
+                        <div>
+                          <h4 className="text-[10px] font-black text-indigo-950 uppercase tracking-wide">Ajustes de Nitidez & Qualidade Térmica</h4>
+                          <p className="text-[7px] font-bold text-indigo-600/80 uppercase">Otimização para Impressoras Fiscais e Térmicas (NFC-e)</p>
+                        </div>
                       </div>
-                      <div>
-                        <h4 className="text-[10px] font-black text-indigo-950 uppercase tracking-wide">Ajustes de Nitidez & Qualidade Térmica</h4>
-                        <p className="text-[7px] font-bold text-indigo-600/80 uppercase">Otimização para Impressoras Fiscais e Térmicas (NFC-e)</p>
-                      </div>
-                    </div>
-                    <span className="px-2 py-0.5 bg-indigo-600 text-white text-[7px] font-black rounded-full uppercase tracking-wider">
-                      Ultra-Nitidez Ativa
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <label className="text-[7px] font-black text-slate-500 uppercase tracking-widest ml-1">Tamanho e Legibilidade das Fontes</label>
-                      <select 
-                        className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg outline-none font-bold text-[10px] text-slate-800"
-                        value={settings.printing.fontSizeLevel || 'large'}
-                        onChange={(e) => onUpdateSettings({
-                          ...settings, 
-                          printing: {
-                            ...settings.printing, 
-                            fontSizeLevel: e.target.value as any
-                          }
-                        })}
-                      >
-                        <option value="normal">Padrão (100% - Compacto)</option>
-                        <option value="large">Ampliado (+15% - Recomendado para Leitura Nítida)</option>
-                        <option value="extra_large">Extra Grande (+30% - Máximo Destaque Visual)</option>
-                      </select>
-                      <p className="text-[6px] text-slate-500 leading-tight pl-1">Aumenta o tamanho dos caracteres na bobina para facilitar a leitura rápida.</p>
+                      <span className="px-2 py-0.5 bg-indigo-600 text-white text-[7px] font-black rounded-full uppercase tracking-wider">
+                        Ultra-Nitidez Ativa
+                      </span>
                     </div>
 
-                    <div className="space-y-1">
-                      <label className="text-[7px] font-black text-slate-500 uppercase tracking-widest ml-1">Densidade do Traço Térmico</label>
-                      <select 
-                        className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg outline-none font-bold text-[10px] text-slate-800"
-                        value={settings.printing.fontDensity || 'ultra'}
-                        onChange={(e) => onUpdateSettings({
-                          ...settings, 
-                          printing: {
-                            ...settings.printing, 
-                            fontDensity: e.target.value as any
-                          }
-                        })}
-                      >
-                        <option value="normal">Normal (Alto Contraste #000)</option>
-                        <option value="ultra">Negrito Total Escuro (Otimizado para Bobinas Térmicas)</option>
-                      </select>
-                      <p className="text-[6px] text-slate-500 leading-tight pl-1">Aplica preto absoluto (#000000) e traços sólidos sem pontilhado cinza.</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[7px] font-black text-slate-500 uppercase tracking-widest ml-1">Tamanho e Legibilidade das Fontes</label>
+                        <select 
+                          className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg outline-none font-bold text-[10px] text-slate-800"
+                          value={settings.printing.fontSizeLevel || 'large'}
+                          onChange={(e) => onUpdateSettings({
+                            ...settings, 
+                            printing: {
+                              ...settings.printing, 
+                              fontSizeLevel: e.target.value as any
+                            }
+                          })}
+                        >
+                          <option value="normal">Padrão (100% - Compacto)</option>
+                          <option value="large">Ampliado (+15% - Recomendado para Leitura Nítida)</option>
+                          <option value="extra_large">Extra Grande (+30% - Máximo Destaque Visual)</option>
+                        </select>
+                        <p className="text-[6px] text-slate-500 leading-tight pl-1">Aumenta o tamanho dos caracteres na bobina para facilitar a leitura rápida.</p>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[7px] font-black text-slate-500 uppercase tracking-widest ml-1">Densidade do Traço Térmico</label>
+                        <select 
+                          className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg outline-none font-bold text-[10px] text-slate-800"
+                          value={settings.printing.fontDensity || 'ultra'}
+                          onChange={(e) => onUpdateSettings({
+                            ...settings, 
+                            printing: {
+                              ...settings.printing, 
+                              fontDensity: e.target.value as any
+                            }
+                          })}
+                        >
+                          <option value="normal">Normal (Alto Contraste #000)</option>
+                          <option value="ultra">Negrito Total Escuro (Otimizado para Bobinas Térmicas)</option>
+                        </select>
+                        <p className="text-[6px] text-slate-500 leading-tight pl-1">Aplica preto absoluto (#000000) e traços sólidos sem pontilhado cinza.</p>
+                      </div>
                     </div>
                   </div>
-                </div>
-                <div className="space-y-1.5">
-                  <div className="space-y-0.5">
-                    <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest ml-1">Cabeçalho do Cupom</label>
-                    <textarea 
-                      className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg outline-none font-bold text-[10px] h-12 resize-none"
-                      value={settings.printing.headerText}
-                      onChange={(e) => onUpdateSettings({...settings, printing: {...settings.printing, headerText: e.target.value}})}
-                    />
-                  </div>
-                  <div className="space-y-0.5">
-                    <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest ml-1">Rodapé do Cupom</label>
-                    <textarea 
-                      className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg outline-none font-bold text-[10px] h-12 resize-none"
-                      value={settings.printing.footerText}
-                      onChange={(e) => onUpdateSettings({...settings, printing: {...settings.printing, footerText: e.target.value}})}
-                    />
+
+                  <div className="space-y-1.5">
+                    <div className="space-y-0.5">
+                      <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest ml-1">Cabeçalho do Cupom</label>
+                      <textarea 
+                        className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg outline-none font-bold text-[10px] h-12 resize-none"
+                        value={settings.printing.headerText}
+                        onChange={(e) => onUpdateSettings({...settings, printing: {...settings.printing, headerText: e.target.value}})}
+                      />
+                    </div>
+                    <div className="space-y-0.5">
+                      <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest ml-1">Rodapé do Cupom</label>
+                      <textarea 
+                        className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg outline-none font-bold text-[10px] h-12 resize-none"
+                        value={settings.printing.footerText}
+                        onChange={(e) => onUpdateSettings({...settings, printing: {...settings.printing, footerText: e.target.value}})}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
