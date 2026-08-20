@@ -53,6 +53,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 import { compressImage } from './lib/imageUtils';
 import { ensureLojistaTenantWithData, restoreCategoryForProduct } from './lib/ensureLojistaTenant';
+import { normalizePaymentMethod, getPaymentMethodLabel } from './utils/paymentUtils';
 import { 
   BarChart as BarChartIcon,
   Plus, 
@@ -2365,107 +2366,102 @@ const App: React.FC = () => {
           const ids = oldFinishedOrders.map(o => o.id);
           await localDb.orders.bulkDelete(ids);
           setOrders(prev => prev.filter(o => !ids.includes(o.id)));
-          console.log(`Limpando ${ids.length} pedidos finalizados de dias anteriores.`);
         }
       };
       clearOldOrders();
     }
   }, [isDbLoaded]);
 
-  // Real-time Cloud Order Listener (Marketplace Integration)
+  // Real-time Cloud Order Listener (Strictly isolated per merchant/tenant and merchant view)
   useEffect(() => {
-    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    // Isolamento: Notificações e fila de pedidos em tempo real só devem rodar no ambiente do lojista (RESTAURANT ou SaaS Admin inspecionando loja)
+    // NUNCA no Website institucional, Marketplace de clientes, Entregador ou telas públicas
+    const isPublicOrCustomerView = 
+      currentProject === 'WEBSITE' || 
+      currentProject === 'MARKETPLACE' || 
+      currentProject === 'COURIER' || 
+      location.pathname === '/' || 
+      location.pathname.startsWith('/site') || 
+      location.pathname.startsWith('/kitchenflow') || 
+      location.pathname.startsWith('/marketplace') || 
+      location.pathname.startsWith('/cardapio') || 
+      location.pathname.startsWith('/c/') || 
+      location.pathname.startsWith('/m/') || 
+      location.pathname.startsWith('/menu') || 
+      location.pathname.startsWith('/entregador') || 
+      location.pathname.startsWith('/perfil') || 
+      location.pathname === '/login';
+
+    const isMerchantView = (currentProject === 'RESTAURANT' || (currentProject === 'PLATFORM' && isSuperAdmin && !!viewingTenantId)) && !isPublicOrCustomerView;
+    const effectiveTenantId = viewingTenantId || (user && currentUserData && !['CUSTOMER', 'COURIER'].includes(currentUserData.role) ? currentUserData.tenantId : null);
     
-    if (effectiveTenantId) {
-      // Usar query simples por tenantId para evitar dependência de índices compostos
-      const q = query(
-        collection(db, 'orders'),
-        where('tenantId', '==', effectiveTenantId)
-      );
+    if (!isMerchantView || !effectiveTenantId) {
+      // Limpa qualquer notificação ou modal pendente se estiver fora do painel do lojista
+      setIncomingDigitalOrders([]);
+      setMockWhatsAppNotify(null);
+      return;
+    }
 
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        snapshot.docChanges().forEach(async (change) => {
-          const docData = change.doc.data();
-          
-          const isPending = docData.status === 'pending';
+    // Query estritamente isolada por tenantId do lojista
+    const q = query(
+      collection(db, 'orders'),
+      where('tenantId', '==', effectiveTenantId)
+    );
 
-          if (change.type === 'added' || change.type === 'modified') {
-            if (isPending) {
-              const cloudOrder = { ...docData, id: change.doc.id, docId: change.doc.id } as Order;
-              
-              const createdAt = cloudOrder.createdAt instanceof Date 
-                ? cloudOrder.createdAt 
-                : (cloudOrder.createdAt ? new Date((cloudOrder.createdAt as any).toDate ? (cloudOrder.createdAt as any).toDate() : cloudOrder.createdAt) : null);
-              
-              const yesterday = new Date();
-              yesterday.setHours(yesterday.getHours() - 36);
-              if (createdAt && createdAt < yesterday) {
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      snapshot.docChanges().forEach(async (change) => {
+        const docData = change.doc.data();
+        
+        // Barreira extra de isolamento de segurança
+        if (docData.tenantId && docData.tenantId !== effectiveTenantId) {
+          return;
+        }
+
+        const isPending = docData.status === 'pending';
+
+        if (change.type === 'added' || change.type === 'modified') {
+          if (isPending) {
+            const rawCloudOrder = { ...docData, id: change.doc.id, docId: change.doc.id } as Order;
+            const cloudOrder: Order = {
+              ...rawCloudOrder,
+              paymentMethod: normalizePaymentMethod(rawCloudOrder.paymentMethod, adminSettings)
+            };
+            
+            const createdAt = cloudOrder.createdAt instanceof Date 
+              ? cloudOrder.createdAt 
+              : (cloudOrder.createdAt ? new Date((cloudOrder.createdAt as any).toDate ? (cloudOrder.createdAt as any).toDate() : cloudOrder.createdAt) : null);
+            
+            const yesterday = new Date();
+            yesterday.setHours(yesterday.getHours() - 36);
+            if (createdAt && createdAt < yesterday) {
+              return;
+            }
+
+            try {
+              if ((cloudOrder.createdAt as any)?.toDate) {
+                cloudOrder.createdAt = (cloudOrder.createdAt as any).toDate();
+              } else if (cloudOrder.createdAt) {
+                cloudOrder.createdAt = new Date(cloudOrder.createdAt);
+              }
+
+              const localOrder = await localDb.orders.get(cloudOrder.id);
+              // Ignore notify if already processed or in a final state locally
+              if (localOrder && (['preparing', 'ready', 'delivering', 'delivered', 'cancelled', 'finished'].includes(localOrder.status))) {
+                console.log(`Sync: Order ${cloudOrder.id} already in state ${localOrder.status}, ignoring duplicate notify.`);
                 return;
               }
 
-              try {
-                if ((cloudOrder.createdAt as any)?.toDate) {
-                  cloudOrder.createdAt = (cloudOrder.createdAt as any).toDate();
-                } else if (cloudOrder.createdAt) {
-                  cloudOrder.createdAt = new Date(cloudOrder.createdAt);
-                }
+              // Double check if it's already in the main state to prevent UI flickers
+              if (ordersRef.current.some(o => o.id === cloudOrder.id && (['preparing', 'ready', 'delivering', 'delivered', 'cancelled', 'finished'].includes(o.status)))) {
+                return;
+              }
+              
+              // Verificar se o pedido veio de canal digital (Cardápio Digital ou Marketplace)
+              const isDigital = isDigitalOrMarketplaceOrder(cloudOrder);
 
-                const localOrder = await localDb.orders.get(cloudOrder.id);
-                // Ignore notify if already processed or in a final state locally
-                if (localOrder && (['preparing', 'ready', 'delivering', 'delivered', 'cancelled', 'finished'].includes(localOrder.status))) {
-                  console.log(`Sync: Order ${cloudOrder.id} already in state ${localOrder.status}, ignoring duplicate notify.`);
-                  return;
-                }
-
-                // Double check if it's already in the main state to prevent UI flickers
-                if (ordersRef.current.some(o => o.id === cloudOrder.id && (['preparing', 'ready', 'delivering', 'delivered', 'cancelled', 'finished'].includes(o.status)))) {
-                  return;
-                }
-                
-                // Verificar se o pedido veio de canal digital (Cardápio Digital ou Marketplace)
-                const isDigital = isDigitalOrMarketplaceOrder(cloudOrder);
-
-                if (!isDigital) {
-                  // Pedidos lançados manualmente pelo atendente (Mesa, Balcão, Retirada ou Delivery manual)
-                  // Salva normalmente no sistema sem abrir modal de aceite nem tocar campainha
-                  await localDb.orders.put(cloudOrder);
-                  setOrders(prev => {
-                    const exists = prev.some(o => o.id === cloudOrder.id || o.docId === cloudOrder.docId);
-                    if (exists) {
-                      return prev.map(o => (o.id === cloudOrder.id || o.docId === cloudOrder.docId) ? { ...o, ...cloudOrder } : o);
-                    }
-                    return [cloudOrder, ...prev];
-                  });
-                  return;
-                }
-
-                // Pedido veio de canal digital (Marketplace ou Cardápio Digital)
-                triggerWhatsAppMock("🛒 Novo Pedido!", `Olá! Você recebeu um novo pedido de ${cloudOrder.customerName} via ${cloudOrder.source === 'marketplace' ? 'Marketplace' : 'Cardápio Digital'}.`);
-
-                if (adminSettings.autoAcceptOrders) {
-                   const rawAcceptedOrder: Order = { 
-                     ...cloudOrder, 
-                     source: cloudOrder.source || 'digital_menu',
-                     status: 'preparing' as const, 
-                     deliveryFee: cloudOrder.type === 'delivery' ? globalDeliveryFee : 0 
-                   };
-                   const acceptedOrder = assignDailyNumberToOrder(rawAcceptedOrder);
-                   await localDb.orders.put(acceptedOrder);
-                   setOrders(prev => [acceptedOrder, ...prev.filter(o => o.id !== acceptedOrder.id)]);
-                   
-                   await updateDoc(doc(db, 'orders', cloudOrder.id), { 
-                     status: 'preparing', 
-                     updatedAt: new Date(),
-                     acceptedAt: new Date(),
-                     dailyNumber: acceptedOrder.dailyNumber
-                   });
-                   
-                   triggerWhatsAppMock("✅ Pedido Aceito!", `Olá ${cloudOrder.customerName}, pedido #${cloudOrder.id.slice(-4)} em produção!`);
-                   addLog('u1', 'DIGITAL', `Pedido #${cloudOrder.id.slice(-4)} ACEITO AUTOMATICAMENTE`);
-                   return;
-                }
-
-                // Se não for aceito automaticamente, salva na lista principal e na fila de pendentes
+              if (!isDigital) {
+                // Pedidos lançados manualmente pelo atendente (Mesa, Balcão, Retirada ou Delivery manual)
+                // Salva normalmente no sistema sem abrir modal de aceite nem tocar campainha
                 await localDb.orders.put(cloudOrder);
                 setOrders(prev => {
                   const exists = prev.some(o => o.id === cloudOrder.id || o.docId === cloudOrder.docId);
@@ -2474,81 +2470,122 @@ const App: React.FC = () => {
                   }
                   return [cloudOrder, ...prev];
                 });
-
-                setIncomingDigitalOrders(prev => {
-                  if (prev.some(o => o.id === cloudOrder.id)) return prev;
-                  return [cloudOrder, ...prev];
-                });
-                addLog('u1', 'DIGITAL', `Novo pedido digital: #${cloudOrder.id.slice(-4)}`);
-              } catch (err) {
-                console.error("Error processing cloud order:", err);
-              }
-            } else {
-              // Quando o pedido é modificado em tempo real para qualquer status (preparing, ready, delivering, delivered, cancelled, finished)
-              const cloudOrder = { ...docData, id: docData.id || change.doc.id, docId: change.doc.id } as Order;
-              
-              // Normalizar datas do Firestore
-              if ((cloudOrder.createdAt as any)?.toDate) cloudOrder.createdAt = (cloudOrder.createdAt as any).toDate();
-              else if (cloudOrder.createdAt) cloudOrder.createdAt = new Date(cloudOrder.createdAt);
-
-              if ((cloudOrder.updatedAt as any)?.toDate) cloudOrder.updatedAt = (cloudOrder.updatedAt as any).toDate();
-              else if (cloudOrder.updatedAt) cloudOrder.updatedAt = new Date(cloudOrder.updatedAt);
-
-              if ((cloudOrder.acceptedAt as any)?.toDate) cloudOrder.acceptedAt = (cloudOrder.acceptedAt as any).toDate();
-              else if (cloudOrder.acceptedAt) cloudOrder.acceptedAt = new Date(cloudOrder.acceptedAt);
-
-              if ((cloudOrder.readyAt as any)?.toDate) cloudOrder.readyAt = (cloudOrder.readyAt as any).toDate();
-              else if (cloudOrder.readyAt) cloudOrder.readyAt = new Date(cloudOrder.readyAt);
-
-              if ((cloudOrder.dispatchedAt as any)?.toDate) cloudOrder.dispatchedAt = (cloudOrder.dispatchedAt as any).toDate();
-              else if (cloudOrder.dispatchedAt) cloudOrder.dispatchedAt = new Date(cloudOrder.dispatchedAt);
-
-              if ((cloudOrder.deliveredAt as any)?.toDate) cloudOrder.deliveredAt = (cloudOrder.deliveredAt as any).toDate();
-              else if (cloudOrder.deliveredAt) cloudOrder.deliveredAt = new Date(cloudOrder.deliveredAt);
-
-              if ((cloudOrder.finishedAt as any)?.toDate) cloudOrder.finishedAt = (cloudOrder.finishedAt as any).toDate();
-              else if (cloudOrder.finishedAt) cloudOrder.finishedAt = new Date(cloudOrder.finishedAt);
-
-              if ((cloudOrder.completedAt as any)?.toDate) cloudOrder.completedAt = (cloudOrder.completedAt as any).toDate();
-              else if (cloudOrder.completedAt) cloudOrder.completedAt = new Date(cloudOrder.completedAt);
-
-              // Remover da fila de digitais pendentes se deixou de ser pending
-              setIncomingDigitalOrders(prev => prev.filter(o => o.id !== change.doc.id && o.id !== cloudOrder.id));
-
-              // Atualizar banco local e estado global em tempo real para sincronização entre Admin, Cozinha, Garçom e Entregas
-              try {
-                await localDb.orders.put(cloudOrder);
-              } catch (e) {
-                console.warn("Local DB sync warning:", e);
+                return;
               }
 
+              // Pedido veio de canal digital (Marketplace ou Cardápio Digital)
+              triggerWhatsAppMock("🛒 Novo Pedido!", `Olá! Você recebeu um novo pedido de ${cloudOrder.customerName} via ${cloudOrder.source === 'marketplace' ? 'Marketplace' : 'Cardápio Digital'}.`);
+
+              if (adminSettings.autoAcceptOrders) {
+                 const rawAcceptedOrder: Order = { 
+                   ...cloudOrder, 
+                   source: cloudOrder.source || 'digital_menu',
+                   status: 'preparing' as const, 
+                   deliveryFee: cloudOrder.type === 'delivery' ? globalDeliveryFee : 0 
+                 };
+                 const acceptedOrder = assignDailyNumberToOrder(rawAcceptedOrder);
+                 await localDb.orders.put(acceptedOrder);
+                 setOrders(prev => [acceptedOrder, ...prev.filter(o => o.id !== acceptedOrder.id)]);
+                 
+                 await updateDoc(doc(db, 'orders', cloudOrder.id), { 
+                   status: 'preparing', 
+                   updatedAt: new Date(),
+                   acceptedAt: new Date(),
+                   dailyNumber: acceptedOrder.dailyNumber
+                 });
+                 
+                 triggerWhatsAppMock("✅ Pedido Aceito!", `Olá ${cloudOrder.customerName}, pedido #${cloudOrder.id.slice(-4)} em produção!`);
+                 addLog('u1', 'DIGITAL', `Pedido #${cloudOrder.id.slice(-4)} ACEITO AUTOMATICAMENTE`);
+                 return;
+              }
+
+              // Se não for aceito automaticamente, salva na lista principal e na fila de pendentes
+              await localDb.orders.put(cloudOrder);
               setOrders(prev => {
-                const idx = prev.findIndex(o => o.id === cloudOrder.id || o.docId === cloudOrder.docId);
-                if (idx !== -1) {
-                  const updatedList = [...prev];
-                  updatedList[idx] = { ...updatedList[idx], ...cloudOrder };
-                  return updatedList;
+                const exists = prev.some(o => o.id === cloudOrder.id || o.docId === cloudOrder.docId);
+                if (exists) {
+                  return prev.map(o => (o.id === cloudOrder.id || o.docId === cloudOrder.docId) ? { ...o, ...cloudOrder } : o);
                 }
                 return [cloudOrder, ...prev];
               });
-            }
-          } else if (change.type === 'removed') {
-            setIncomingDigitalOrders(prev => prev.filter(o => o.id !== change.doc.id));
-            setOrders(prev => prev.filter(o => o.id !== change.doc.id && o.docId !== change.doc.id));
-            try {
-              await localDb.orders.delete(change.doc.id);
-            } catch (e) {
-              console.warn("Local DB delete error:", e);
-            }
-          }
-        });
-      }, (error) => {
-        handleFirestoreError(error, OperationType.LIST, 'orders');
-      });
 
-      return () => unsubscribe();
-    }
-  }, [currentUserData?.tenantId, viewingTenantId, adminSettings.autoAcceptOrders, globalDeliveryFee]);
+              setIncomingDigitalOrders(prev => {
+                if (prev.some(o => o.id === cloudOrder.id)) return prev;
+                return [cloudOrder, ...prev];
+              });
+              addLog('u1', 'DIGITAL', `Novo pedido digital: #${cloudOrder.id.slice(-4)}`);
+            } catch (err) {
+              console.error("Error processing cloud order:", err);
+            }
+          } else {
+            // Quando o pedido é modificado em tempo real para qualquer status (preparing, ready, delivering, delivered, cancelled, finished)
+            const rawCloudOrder = { ...docData, id: docData.id || change.doc.id, docId: change.doc.id } as Order;
+            const cloudOrder: Order = {
+              ...rawCloudOrder,
+              paymentMethod: normalizePaymentMethod(rawCloudOrder.paymentMethod, adminSettings)
+            };
+            
+            // Normalizar datas do Firestore
+            if ((cloudOrder.createdAt as any)?.toDate) cloudOrder.createdAt = (cloudOrder.createdAt as any).toDate();
+            else if (cloudOrder.createdAt) cloudOrder.createdAt = new Date(cloudOrder.createdAt);
+
+            if ((cloudOrder.updatedAt as any)?.toDate) cloudOrder.updatedAt = (cloudOrder.updatedAt as any).toDate();
+            else if (cloudOrder.updatedAt) cloudOrder.updatedAt = new Date(cloudOrder.updatedAt);
+
+            if ((cloudOrder.acceptedAt as any)?.toDate) cloudOrder.acceptedAt = (cloudOrder.acceptedAt as any).toDate();
+            else if (cloudOrder.acceptedAt) cloudOrder.acceptedAt = new Date(cloudOrder.acceptedAt);
+
+            if ((cloudOrder.readyAt as any)?.toDate) cloudOrder.readyAt = (cloudOrder.readyAt as any).toDate();
+            else if (cloudOrder.readyAt) cloudOrder.readyAt = new Date(cloudOrder.readyAt);
+
+            if ((cloudOrder.dispatchedAt as any)?.toDate) cloudOrder.dispatchedAt = (cloudOrder.dispatchedAt as any).toDate();
+            else if (cloudOrder.dispatchedAt) cloudOrder.dispatchedAt = new Date(cloudOrder.dispatchedAt);
+
+            if ((cloudOrder.deliveredAt as any)?.toDate) cloudOrder.deliveredAt = (cloudOrder.deliveredAt as any).toDate();
+            else if (cloudOrder.deliveredAt) cloudOrder.deliveredAt = new Date(cloudOrder.deliveredAt);
+
+            if ((cloudOrder.finishedAt as any)?.toDate) cloudOrder.finishedAt = (cloudOrder.finishedAt as any).toDate();
+            else if (cloudOrder.finishedAt) cloudOrder.finishedAt = new Date(cloudOrder.finishedAt);
+
+            if ((cloudOrder.completedAt as any)?.toDate) cloudOrder.completedAt = (cloudOrder.completedAt as any).toDate();
+            else if (cloudOrder.completedAt) cloudOrder.completedAt = new Date(cloudOrder.completedAt);
+
+            // Remover da fila de digitais pendentes se deixou de ser pending
+            setIncomingDigitalOrders(prev => prev.filter(o => o.id !== change.doc.id && o.id !== cloudOrder.id));
+
+            // Atualizar banco local e estado global em tempo real para sincronização entre Admin, Cozinha, Garçom e Entregas
+            try {
+              await localDb.orders.put(cloudOrder);
+            } catch (e) {
+              console.warn("Local DB sync warning:", e);
+            }
+
+            setOrders(prev => {
+              const idx = prev.findIndex(o => o.id === cloudOrder.id || o.docId === cloudOrder.docId);
+              if (idx !== -1) {
+                const updatedList = [...prev];
+                updatedList[idx] = { ...updatedList[idx], ...cloudOrder };
+                return updatedList;
+              }
+              return [cloudOrder, ...prev];
+            });
+          }
+        } else if (change.type === 'removed') {
+          setIncomingDigitalOrders(prev => prev.filter(o => o.id !== change.doc.id));
+          setOrders(prev => prev.filter(o => o.id !== change.doc.id && o.docId !== change.doc.id));
+          try {
+            await localDb.orders.delete(change.doc.id);
+          } catch (e) {
+            console.warn("Local DB delete error:", e);
+          }
+        }
+      });
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'orders');
+    });
+
+    return () => unsubscribe();
+  }, [currentUserData?.tenantId, currentUserData?.role, viewingTenantId, adminSettings.autoAcceptOrders, globalDeliveryFee, currentProject, location.pathname, isSuperAdmin]);
 
   const [mockWhatsAppNotify, setMockWhatsAppNotify] = useState<{title: string, msg: string} | null>(null);
 
@@ -6708,7 +6745,7 @@ const App: React.FC = () => {
       )}
     </main>
 
-      {mockWhatsAppNotify && (
+      {mockWhatsAppNotify && (currentProject === 'RESTAURANT' || (currentProject === 'PLATFORM' && isSuperAdmin && !!viewingTenantId)) && (
         <div className="fixed top-8 right-8 z-[300] w-full max-w-sm px-4 animate-in slide-in-from-right-10">
            <div className="bg-white border-l-4 border-emerald-500 rounded-2xl shadow-2xl p-4 flex gap-4 items-center ring-1 ring-black/5">
               <div className="w-12 h-12 bg-emerald-500 text-white rounded-xl flex items-center justify-center shrink-0 shadow-lg shadow-emerald-100"><MessageCircle size={24} /></div>
@@ -6721,7 +6758,10 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {incomingDigitalOrders.filter(isDigitalOrMarketplaceOrder).length > 0 && (
+      {(currentProject === 'RESTAURANT' || (currentProject === 'PLATFORM' && isSuperAdmin && !!viewingTenantId)) && incomingDigitalOrders.filter(isDigitalOrMarketplaceOrder).filter(o => {
+        const effectiveId = viewingTenantId || currentUserData?.tenantId;
+        return !effectiveId || o.tenantId === effectiveId;
+      }).length > 0 && (
         <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md animate-in fade-in duration-300">
           <div className="w-full max-w-lg space-y-4">
             {incomingDigitalOrders.filter(isDigitalOrMarketplaceOrder).slice(0, 1).map((order) => (

@@ -1260,9 +1260,9 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
                  <div className="flex items-center gap-1.5 p-1.5 bg-amber-50 rounded-lg border border-amber-100">
                     <Info size={10} className="text-amber-600" />
                     <p className="text-[6px] text-amber-700 font-medium">Selecione abaixo o modo avançado de comunicação para impressão automatizada.</p>
-                  </div>
+                 </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 border-t border-slate-250/60 pt-3 pb-3 text-left w-full">
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 border-t border-slate-250/60 pt-3 pb-3 text-left w-full">
                      <div className="space-y-1">
                        <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest ml-1 font-sans">Modo de Transmissão</label>
                        <select 
@@ -1276,20 +1276,20 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
                            }
                          })}
                        >
-                         <option value="browser">Navegador (Fila de Impressão de Background)</option>
-                         <option value="spool_file">Download de Spool (.print Automático)</option>
+                         <option value="browser">Impressão Direta / Sistema (Padrão Térmica)</option>
                          <option value="webusb">Impressão Direta USB (WebUSB - Sem Drivers)</option>
                          <option value="websocket">Ponte de Impressão Local (WebSocket)</option>
+                         <option value="spool_file">Download de Spool (.print Automático)</option>
                        </select>
                        <p className="text-[6px] text-slate-500 leading-tight p-0.5">
                          {(!settings.printing.connectionMode || settings.printing.connectionMode === 'browser') && 
-                           "Envia a impressão em background via HTML em uma fila de background (spooler), sem abrir novas abas."}
-                          {settings.printing.connectionMode === 'spool_file' && 
-                            "Gera e baixa um arquivo .print automaticamente para ser capturado por sistemas locais."}
+                           "Aciona a impressora térmica diretamente através do gerenciador de impressão, sem gerar downloads de arquivos."}
                          {settings.printing.connectionMode === 'webusb' && 
-                           "Usa a porta USB para enviar os comandos ESC/POS diretamente à impressora térmica de forma silenciosa."}
+                           "Envia comandos ESC/POS diretos via cabo USB. Caso a impressora não esteja conectada, aciona a impressora padrão do sistema automaticamente."}
                          {settings.printing.connectionMode === 'websocket' && 
-                           "Envia o cupom para um aplicativo local rodando no seu computador que gerencia as filas de impressão."}
+                           "Envia o cupom para um aplicativo local na porta 1221. Caso offline, aciona a impressora padrão do sistema."}
+                         {settings.printing.connectionMode === 'spool_file' && 
+                           "Gera e baixa um arquivo .print automaticamente para ser capturado por integradores ou pastas monitoradas."}
                        </p>
                      </div>
 

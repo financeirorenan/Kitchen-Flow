@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Printer, Copy, ExternalLink, X, Check, FileText, AlertTriangle, Download } from 'lucide-react';
 import { Order, AdminSettings } from '../types';
+import { executeDirectThermalPrint } from '../services/printService';
 
 interface PrintPreviewModalProps {
   isOpen: boolean;
@@ -18,6 +19,7 @@ interface PrintPreviewModalProps {
 export const PrintPreviewModal: React.FC<PrintPreviewModalProps> = ({ isOpen, onClose, printJob }) => {
   const [copied, setCopied] = useState(false);
   const [isIframeSandbox, setIsIframeSandbox] = useState(false);
+  const [isPrinting, setIsPrinting] = useState(false);
 
   useEffect(() => {
     // Detect if running inside an iframe (like the AI Studio Preview panel)
@@ -48,7 +50,16 @@ export const PrintPreviewModal: React.FC<PrintPreviewModalProps> = ({ isOpen, on
       const newWin = window.open('', '_blank');
       if (newWin) {
         newWin.document.open();
-        newWin.document.write(html);
+        newWin.document.write(html + `
+          <script>
+            window.onload = function() {
+              setTimeout(function() {
+                window.focus();
+                window.print();
+              }, 250);
+            };
+          </script>
+        `);
         newWin.document.close();
       } else {
         alert('O bloqueador de popups do seu navegador impediu a abertura do recibo. Por favor, libere popups para o KitchenFlow AI neste navegador.');
@@ -58,49 +69,14 @@ export const PrintPreviewModal: React.FC<PrintPreviewModalProps> = ({ isOpen, on
     }
   };
 
-  const handleNativePrint = () => {
-    // Tenta imprimir chamando o print da janela temporária diretamente
+  const handleNativePrint = async () => {
+    setIsPrinting(true);
     try {
-      const iframe = document.createElement('iframe');
-      iframe.style.position = 'absolute';
-      iframe.style.top = '-9999px';
-      iframe.style.left = '-9999px';
-      iframe.style.width = '0px';
-      iframe.style.height = '0px';
-      iframe.style.border = 'none';
-      document.body.appendChild(iframe);
-
-      const doc = iframe.contentWindow?.document || iframe.contentDocument;
-      if (doc) {
-        doc.open();
-        // Adiciona um pequeno script para imprimir e fechar automaticamente
-        const printHtmlWithScript = html.replace('</body>', `
-          <script>
-            window.onload = function() {
-              setTimeout(function() {
-                window.focus();
-                window.print();
-                setTimeout(function() {
-                  window.close();
-                }, 1000);
-              }, 200);
-            };
-          </script>
-        </body>`);
-        doc.write(printHtmlWithScript);
-        doc.close();
-
-        setTimeout(() => {
-          try {
-            iframe.contentWindow?.focus();
-            iframe.contentWindow?.print();
-          } catch (e) {
-            console.error('Falha ao executar print direto no iframe:', e);
-          }
-        }, 500);
-      }
+      await executeDirectThermalPrint(html, orderIdShort);
     } catch (err) {
-      console.error('Falha ao acionar impressão:', err);
+      console.error('Falha ao acionar impressão direta:', err);
+    } finally {
+      setIsPrinting(false);
     }
   };
 
@@ -225,9 +201,11 @@ export const PrintPreviewModal: React.FC<PrintPreviewModalProps> = ({ isOpen, on
               <div className="space-y-3 mt-6">
                 <button
                   onClick={handleNativePrint}
-                  className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 transition-all shadow-lg shadow-indigo-950/50"
+                  disabled={isPrinting}
+                  className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-75 text-white rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 transition-all shadow-lg shadow-indigo-950/50"
                 >
-                  <Printer size={16} /> Disparar Impressão Direta
+                  <Printer size={16} className={isPrinting ? 'animate-bounce' : ''} /> 
+                  {isPrinting ? 'Acionando Impressora...' : 'Disparar Impressão Direta'}
                 </button>
 
                 <div className="grid grid-cols-2 gap-3">

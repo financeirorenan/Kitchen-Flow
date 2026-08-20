@@ -50,13 +50,27 @@ import {
   Activity,
   User as UserIcon,
   ChevronDown,
+  ChevronUp,
   Info,
   CreditCard,
   ShieldAlert,
-  Star
+  Star,
+  Search,
+  Filter,
+  ArrowUpRight,
+  ArrowDownRight,
+  Award,
+  Zap,
+  CheckCircle,
+  BarChart2,
+  CalendarDays,
+  Gauge,
+  Timer,
+  Layers,
+  SlidersHorizontal
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
+import { ResponsiveContainer, LineChart, Line, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from 'recharts';
 import { maskPhone } from '../utils/masks';
 import { CourierNavigation } from './CourierNavigation';
 import { APIProvider, Map, AdvancedMarker, useMap } from '@vis.gl/react-google-maps';
@@ -147,7 +161,7 @@ interface CourierAppProps {
   onLogout?: () => void;
 }
 
-type CourierTab = 'home' | 'deliveries' | 'earnings' | 'profile';
+type CourierTab = 'home' | 'deliveries' | 'earnings' | 'history' | 'profile';
 
 const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout }) => {
   const [courierData, setCourierData] = useState<Courier | null>(null);
@@ -158,6 +172,14 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout }) => {
   const [selectedOrderSummary, setSelectedOrderSummary] = useState<Order | null>(null);
   const [copiedAddress, setCopiedAddress] = useState(false);
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
+
+  // Estados de Controle para Histórico Detalhado & Estatísticas Semanais
+  const [historyPeriod, setHistoryPeriod] = useState<'this_week' | 'last_week' | '30_days' | 'all'>('this_week');
+  const [historyMetric, setHistoryMetric] = useState<'earnings' | 'deliveries' | 'duration'>('earnings');
+  const [historyChartType, setHistoryChartType] = useState<'bar' | 'area' | 'line'>('bar');
+  const [historySearchTerm, setHistorySearchTerm] = useState('');
+  const [historyStatusFilter, setHistoryStatusFilter] = useState<'all' | 'delivered' | 'delivering' | 'cancelled'>('all');
+  const [historyViewMode, setHistoryViewMode] = useState<'kpi_chart' | 'orders_list'>('kpi_chart');
   const [editingData, setEditingData] = useState({
     name: currentUser.name || '',
     phone: currentUser.phone || '',
@@ -882,6 +904,225 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout }) => {
       }));
   }, [earningsByDay]);
 
+  // Estatísticas e Cálculo Semanal de Desempenho
+  const weeklyPerformance = useMemo(() => {
+    const now = new Date();
+    
+    // Início e fim da semana atual (Segunda 00:00 -> Domingo 23:59)
+    const currentMonday = new Date(now);
+    const dayOfWeek = currentMonday.getDay();
+    const diffToMonday = (dayOfWeek === 0 ? -6 : 1) - dayOfWeek;
+    currentMonday.setDate(currentMonday.getDate() + diffToMonday);
+    currentMonday.setHours(0, 0, 0, 0);
+
+    const currentSunday = new Date(currentMonday);
+    currentSunday.setDate(currentSunday.getDate() + 6);
+    currentSunday.setHours(23, 59, 59, 999);
+
+    // Início e fim da semana anterior
+    const prevMonday = new Date(currentMonday);
+    prevMonday.setDate(prevMonday.getDate() - 7);
+    prevMonday.setHours(0, 0, 0, 0);
+
+    const prevSunday = new Date(prevMonday);
+    prevSunday.setDate(prevSunday.getDate() + 6);
+    prevSunday.setHours(23, 59, 59, 999);
+
+    const deliveredOrders = assignedOrders.filter(o => o.status === 'delivered');
+
+    // Pedidos da semana atual
+    const thisWeekOrders = deliveredOrders.filter(o => {
+      const d = o.deliveredAt || o.createdAt || new Date();
+      return d >= currentMonday && d <= currentSunday;
+    });
+
+    // Pedidos da semana anterior
+    const lastWeekOrders = deliveredOrders.filter(o => {
+      const d = o.deliveredAt || o.createdAt || new Date();
+      return d >= prevMonday && d <= prevSunday;
+    });
+
+    const totalEarningsThisWeek = thisWeekOrders.reduce((sum, o) => sum + (o.courierEarnings || 0), 0);
+    const totalEarningsLastWeek = lastWeekOrders.reduce((sum, o) => sum + (o.courierEarnings || 0), 0);
+    const totalDeliveredThisWeek = thisWeekOrders.length;
+    const totalDeliveredLastWeek = lastWeekOrders.length;
+
+    const avgEarningsPerDelivery = totalDeliveredThisWeek > 0 ? (totalEarningsThisWeek / totalDeliveredThisWeek) : 0;
+
+    // Cálculo de Duração Média (minutos)
+    const durations = thisWeekOrders.map(o => {
+      const start = o.dispatchedAt ? new Date(o.dispatchedAt).getTime() : (o.createdAt ? new Date(o.createdAt).getTime() : 0);
+      const end = o.deliveredAt ? new Date(o.deliveredAt).getTime() : 0;
+      if (start > 0 && end > start) {
+        return (end - start) / 60000;
+      }
+      return 18; // média de referência
+    });
+    const avgDurationMinutes = durations.length > 0 ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : 0;
+
+    // Comparativos com semana anterior
+    const earningsGrowth = totalEarningsLastWeek > 0 
+      ? Math.round(((totalEarningsThisWeek - totalEarningsLastWeek) / totalEarningsLastWeek) * 100)
+      : (totalEarningsThisWeek > 0 ? 100 : 0);
+
+    const deliveriesGrowth = totalDeliveredLastWeek > 0 
+      ? Math.round(((totalDeliveredThisWeek - totalDeliveredLastWeek) / totalDeliveredLastWeek) * 100)
+      : (totalDeliveredThisWeek > 0 ? 100 : 0);
+
+    // Dia de maior movimento nesta semana
+    const dayCounts: { [dayIndex: number]: { count: number; earnings: number } } = {};
+    thisWeekOrders.forEach(o => {
+      const d = o.deliveredAt || o.createdAt || new Date();
+      const idx = d.getDay();
+      if (!dayCounts[idx]) dayCounts[idx] = { count: 0, earnings: 0 };
+      dayCounts[idx].count += 1;
+      dayCounts[idx].earnings += (o.courierEarnings || 0);
+    });
+    const dayNames = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+    let peakDayName = 'Sem entregas';
+    let maxDeliveries = 0;
+    Object.entries(dayCounts).forEach(([idxStr, val]) => {
+      if (val.count > maxDeliveries) {
+        maxDeliveries = val.count;
+        peakDayName = `${dayNames[Number(idxStr)]} (${val.count} ${val.count === 1 ? 'entrega' : 'entregas'})`;
+      }
+    });
+
+    // Dados diários de Segunda a Domingo para o gráfico semanal
+    const targetMonday = historyPeriod === 'last_week' ? prevMonday : currentMonday;
+    const targetSunday = historyPeriod === 'last_week' ? prevSunday : currentSunday;
+    const targetOrders = historyPeriod === 'last_week' ? lastWeekOrders : thisWeekOrders;
+
+    const shortDayNames = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
+    const weekDaysData = shortDayNames.map((name, i) => {
+      const dayDate = new Date(targetMonday);
+      dayDate.setDate(targetMonday.getDate() + i);
+      dayDate.setHours(0, 0, 0, 0);
+      const nextDay = new Date(dayDate);
+      nextDay.setDate(dayDate.getDate() + 1);
+
+      const ordersOnThisDay = targetOrders.filter(o => {
+        const d = o.deliveredAt || o.createdAt || new Date();
+        return d >= dayDate && d < nextDay;
+      });
+
+      const dayEarnings = ordersOnThisDay.reduce((sum, o) => sum + (o.courierEarnings || 0), 0);
+      const dayDurations = ordersOnThisDay.map(o => {
+        const start = o.dispatchedAt ? new Date(o.dispatchedAt).getTime() : (o.createdAt ? new Date(o.createdAt).getTime() : 0);
+        const end = o.deliveredAt ? new Date(o.deliveredAt).getTime() : 0;
+        return (start > 0 && end > start) ? (end - start) / 60000 : 18;
+      });
+      const dayAvgDuration = dayDurations.length > 0 ? Math.round(dayDurations.reduce((a, b) => a + b, 0) / dayDurations.length) : 0;
+
+      const isToday = dayDate.toDateString() === now.toDateString();
+
+      return {
+        dayName: name,
+        dateStr: `${String(dayDate.getDate()).padStart(2, '0')}/${String(dayDate.getMonth() + 1).padStart(2, '0')}`,
+        fullDateFormatted: dayDate.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' }),
+        ganhos: Number(dayEarnings.toFixed(2)),
+        entregas: ordersOnThisDay.length,
+        tempoMedio: dayAvgDuration,
+        isToday,
+        orders: ordersOnThisDay
+      };
+    });
+
+    return {
+      currentMonday,
+      currentSunday,
+      prevMonday,
+      prevSunday,
+      totalEarningsThisWeek,
+      totalEarningsLastWeek,
+      totalDeliveredThisWeek,
+      totalDeliveredLastWeek,
+      avgEarningsPerDelivery,
+      avgDurationMinutes,
+      earningsGrowth,
+      deliveriesGrowth,
+      peakDayName,
+      weekDaysData
+    };
+  }, [assignedOrders, historyPeriod]);
+
+  // Dados do gráfico correspondentes ao período selecionado
+  const selectedPeriodChartData = useMemo(() => {
+    if (historyPeriod === 'this_week' || historyPeriod === 'last_week') {
+      return weeklyPerformance.weekDaysData;
+    }
+
+    if (historyPeriod === '30_days') {
+      return chartData.map(item => ({
+        dayName: item.dateStr,
+        dateStr: item.dateStr,
+        fullDateFormatted: item.dateFormatted,
+        ganhos: item.ganhos,
+        entregas: earningsByDay.find(d => d.date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) === item.dateStr)?.count || 0,
+        tempoMedio: 18,
+        isToday: false,
+        orders: earningsByDay.find(d => d.date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) === item.dateStr)?.orders || []
+      }));
+    }
+
+    // Todos os dias
+    return [...earningsByDay].reverse().map(item => ({
+      dayName: item.date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
+      dateStr: item.date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
+      fullDateFormatted: item.dateFormatted,
+      ganhos: Number(item.totalCommission.toFixed(2)),
+      entregas: item.count,
+      tempoMedio: 18,
+      isToday: false,
+      orders: item.orders
+    }));
+  }, [historyPeriod, weeklyPerformance, chartData, earningsByDay]);
+
+  // Lista de pedidos filtrados para a visualização de histórico detalhado
+  const filteredHistoryOrders = useMemo(() => {
+    return assignedOrders.filter(order => {
+      // Filtro de status
+      if (historyStatusFilter !== 'all' && order.status !== historyStatusFilter) {
+        return false;
+      }
+
+      const orderDate = order.deliveredAt || order.createdAt || new Date();
+
+      // Filtro de período
+      if (historyPeriod === 'this_week') {
+        if (orderDate < weeklyPerformance.currentMonday || orderDate > weeklyPerformance.currentSunday) {
+          return false;
+        }
+      } else if (historyPeriod === 'last_week') {
+        if (orderDate < weeklyPerformance.prevMonday || orderDate > weeklyPerformance.prevSunday) {
+          return false;
+        }
+      } else if (historyPeriod === '30_days') {
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        if (orderDate < thirtyDaysAgo) return false;
+      }
+
+      // Filtro de busca textual
+      if (historySearchTerm.trim()) {
+        const term = historySearchTerm.toLowerCase();
+        const matchesId = String(order.id).toLowerCase().includes(term);
+        const matchesCustomer = (order.customerName || '').toLowerCase().includes(term);
+        const matchesAddress = (order.customerAddress || '').toLowerCase().includes(term);
+        const matchesItem = (order.items || []).some(it => it.name.toLowerCase().includes(term));
+        if (!matchesId && !matchesCustomer && !matchesAddress && !matchesItem) {
+          return false;
+        }
+      }
+
+      return true;
+    }).sort((a, b) => {
+      const dateA = a.deliveredAt || a.createdAt || new Date(0);
+      const dateB = b.deliveredAt || b.createdAt || new Date(0);
+      return dateB.getTime() - dateA.getTime();
+    });
+  }, [assignedOrders, historyStatusFilter, historyPeriod, historySearchTerm, weeklyPerformance]);
+
   // Filtering lists
   const activeDeliveries = useMemo(() => assignedOrders.filter(o => ['ready', 'delivering'].includes(o.status)), [assignedOrders]);
   const readyDeliveries = useMemo(() => assignedOrders.filter(o => o.status === 'ready'), [assignedOrders]);
@@ -1369,190 +1610,634 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout }) => {
             </motion.div>
           )}
 
-          {/* SCREEN 3: VALORES A RECEBER (Earnings History by Day) */}
-          {activeTab === 'earnings' && (
+          {/* SCREEN 3: HISTÓRICO DETALHADO & ESTATÍSTICAS SEMANAIS DE DESEMPENHO */}
+          {(activeTab === 'earnings' || activeTab === 'history') && (
             <motion.div 
-              key="tab-earnings"
+              key="tab-history-performance"
               initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -15 }}
               className="space-y-6"
             >
-              {/* Earnings Overview card */}
-              <div className="bg-slate-900 p-6 rounded-[2.5rem] shadow-2xl shadow-slate-950/40 border border-slate-800/60 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-orange-950/20 text-brand-primary rounded-2xl flex items-center justify-center shadow-inner">
-                    <TrendingUp size={24} />
-                  </div>
-                  <div>
-                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest leading-none">Ganhos Acumulados</span>
-                    <h3 className="text-2xl font-black text-slate-100 tracking-tight mt-1">R$ {courierData?.earnings?.toFixed(2) || '0,00'}</h3>
-                  </div>
-                </div>
-                
-                <div className="text-right">
-                  <span className="text-[9px] font-black text-slate-500 uppercase tracking-wider block">Registros</span>
-                  <span className="text-xs font-black text-slate-300 bg-slate-950 px-2 py-1 rounded-full">{earningsByDay.length} dias</span>
-                </div>
+              {/* Header Navigation Segmented Controls */}
+              <div className="bg-slate-900 p-1.5 rounded-[2rem] border border-slate-800/80 shadow-2xl flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setHistoryViewMode('kpi_chart')}
+                  className={`flex-1 py-3 px-3 rounded-[1.5rem] text-[9.5px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all ${
+                    historyViewMode === 'kpi_chart'
+                      ? 'bg-brand-primary text-white shadow-lg shadow-orange-950/40'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-950/40'
+                  }`}
+                >
+                  <BarChart2 size={14} />
+                  <span>Desempenho Semanal</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHistoryViewMode('orders_list')}
+                  className={`flex-1 py-3 px-3 rounded-[1.5rem] text-[9.5px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all ${
+                    historyViewMode === 'orders_list'
+                      ? 'bg-brand-primary text-white shadow-lg shadow-orange-950/40'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-950/40'
+                  }`}
+                >
+                  <History size={14} />
+                  <span>Histórico ({filteredHistoryOrders.length})</span>
+                </button>
               </div>
 
-              {/* Line Chart of Daily Earnings */}
-              <div className="bg-slate-900 p-6 rounded-[2.5rem] shadow-2xl shadow-slate-950/40 border border-slate-800/60 space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-sm font-black text-slate-100 tracking-tight">Evolução de Ganhos</h3>
-                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-0.5">Últimos 30 dias de atividades</p>
-                  </div>
-                  {chartData.length > 0 && (
-                    <span className="text-[9px] font-black text-brand-primary bg-orange-950/30 border border-orange-900/20 px-2 py-0.5 rounded-full uppercase">
-                      Desempenho Ativo
-                    </span>
-                  )}
-                </div>
-
-                {chartData.length === 0 ? (
-                  <div className="h-40 flex flex-col items-center justify-center text-center bg-slate-950/35 rounded-[1.5rem] border border-dashed border-slate-800/80 p-4">
-                    <TrendingUp className="text-slate-700 mb-2 animate-pulse" size={24} />
-                    <p className="text-[10px] text-slate-400 font-black uppercase tracking-wider">Histórico Gráfico Indisponível</p>
-                    <p className="text-[9px] text-slate-600 font-medium mt-1">Conclua sua primeira entrega para iniciar o gráfico.</p>
-                  </div>
-                ) : (
-                  <div className="h-48 w-full bg-slate-950/30 p-3 rounded-[1.5rem] border border-slate-800/50">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" opacity={0.3} />
-                        <XAxis 
-                          dataKey="dateStr" 
-                          stroke="#64748b" 
-                          fontSize={9} 
-                          tickLine={false} 
-                          axisLine={false} 
-                          dy={10}
-                        />
-                        <YAxis 
-                          stroke="#64748b" 
-                          fontSize={9} 
-                          tickLine={false} 
-                          axisLine={false} 
-                          tickFormatter={(val) => `R$${val}`}
-                        />
-                        <Tooltip 
-                          contentStyle={{ 
-                            backgroundColor: '#0f172a', 
-                            border: '1px solid #334155', 
-                            borderRadius: '16px',
-                            boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)'
-                          }} 
-                          labelStyle={{ color: '#94a3b8', fontSize: '10px', fontWeight: 'bold' }} 
-                          itemStyle={{ color: '#FF4F18', fontSize: '11px', fontWeight: 'black' }} 
-                          formatter={(value: any) => [`R$ ${Number(value).toFixed(2)}`, 'Ganhos']}
-                          labelFormatter={(label, items) => {
-                            const item = items[0]?.payload;
-                            return item ? item.dateFormatted : label;
-                          }}
-                        />
-                        <Line 
-                          type="monotone" 
-                          dataKey="ganhos" 
-                          stroke="#FF4F18" 
-                          strokeWidth={3} 
-                          dot={{ r: 4, fill: '#FF4F18', stroke: '#0f172a', strokeWidth: 1.5 }} 
-                          activeDot={{ r: 6, fill: '#FF4F18', stroke: '#ffffff', strokeWidth: 1.5 }} 
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
+              {/* Quick Period Selector Pills */}
+              <div className="flex items-center justify-between gap-2 overflow-x-auto no-scrollbar pb-1">
+                {[
+                  { id: 'this_week', label: 'Esta Semana' },
+                  { id: 'last_week', label: 'Semana Anterior' },
+                  { id: '30_days', label: 'Últimos 30 Dias' },
+                  { id: 'all', label: 'Todas as Entregas' }
+                ].map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => setHistoryPeriod(p.id as any)}
+                    className={`shrink-0 px-4 py-2.5 rounded-2xl text-[9px] font-black uppercase tracking-wider transition-all border ${
+                      historyPeriod === p.id
+                        ? 'bg-slate-100 text-slate-900 border-white shadow-md'
+                        : 'bg-slate-900/80 text-slate-400 border-slate-800 hover:border-slate-700 hover:text-slate-200'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
               </div>
 
-              {/* Day-by-day Breakdown List */}
-              <div className="space-y-4">
-                <h3 className="text-xs font-black text-slate-500 uppercase tracking-widest ml-1">Valores a receber por dia</h3>
-                
-                {earningsByDay.length === 0 ? (
-                  <div className="bg-slate-900 rounded-[2.5rem] p-12 text-center border-2 border-dashed border-slate-800">
-                    <Calendar size={32} className="text-slate-700 mx-auto mb-4" />
-                    <p className="text-xs font-heavy text-slate-500 uppercase tracking-widest font-black">Nenhuma entrega consolidada nos últimos 30 dias</p>
-                  </div>
-                ) : (
-                  earningsByDay.map((dayGroup) => {
-                    const dateStr = dayGroup.date.toDateString();
-                    const isExpanded = expandedDay === dateStr;
+              {historyViewMode === 'kpi_chart' ? (
+                <>
+                  {/* KPI Cards Grid */}
+                  <div className="grid grid-cols-2 gap-3">
+                    {/* Card 1: Ganhos na Semana */}
+                    <div className="bg-slate-900 p-5 rounded-[2rem] border border-slate-800/80 shadow-xl space-y-2 relative overflow-hidden">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
+                          {historyPeriod === 'this_week' ? 'Ganhos Semanais' : historyPeriod === 'last_week' ? 'Semana Anterior' : 'Total Ganhos'}
+                        </span>
+                        <div className="w-8 h-8 bg-orange-950/30 text-brand-primary rounded-xl flex items-center justify-center border border-orange-900/30">
+                          <DollarSign size={16} />
+                        </div>
+                      </div>
+                      <div>
+                        <h4 className="text-2xl font-black text-slate-100 tracking-tight">
+                          R$ {(historyPeriod === 'last_week' ? weeklyPerformance.totalEarningsLastWeek : weeklyPerformance.totalEarningsThisWeek).toFixed(2)}
+                        </h4>
+                        <div className="flex items-center gap-1.5 mt-1">
+                          {weeklyPerformance.earningsGrowth >= 0 ? (
+                            <span className="flex items-center text-[8.5px] font-black text-emerald-400 bg-emerald-950/30 px-1.5 py-0.5 rounded-md border border-emerald-900/30">
+                              <ArrowUpRight size={11} /> +{weeklyPerformance.earningsGrowth}%
+                            </span>
+                          ) : (
+                            <span className="flex items-center text-[8.5px] font-black text-rose-400 bg-rose-950/30 px-1.5 py-0.5 rounded-md border border-rose-900/30">
+                              <ArrowDownRight size={11} /> {weeklyPerformance.earningsGrowth}%
+                            </span>
+                          )}
+                          <span className="text-[8px] font-medium text-slate-500">vs semana ant.</span>
+                        </div>
+                      </div>
+                    </div>
 
-                    return (
-                      <div key={dateStr} className="bg-slate-900 rounded-[2rem] p-5 border border-slate-800/60 shadow-sm space-y-4 overflow-hidden transition-all duration-300">
-                        {/* Day Card Summary */}
-                        <div 
-                          onClick={() => setExpandedDay(isExpanded ? null : dateStr)}
-                          className="flex items-center justify-between group cursor-pointer"
+                    {/* Card 2: Entregas Realizadas */}
+                    <div className="bg-slate-900 p-5 rounded-[2rem] border border-slate-800/80 shadow-xl space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
+                          Entregas Feitas
+                        </span>
+                        <div className="w-8 h-8 bg-indigo-950/30 text-indigo-400 rounded-xl flex items-center justify-center border border-indigo-900/30">
+                          <Bike size={16} />
+                        </div>
+                      </div>
+                      <div>
+                        <h4 className="text-2xl font-black text-slate-100 tracking-tight">
+                          {historyPeriod === 'last_week' ? weeklyPerformance.totalDeliveredLastWeek : weeklyPerformance.totalDeliveredThisWeek}
+                        </h4>
+                        <p className="text-[8.5px] font-black uppercase text-indigo-400 mt-1 truncate">
+                          Média: R$ {weeklyPerformance.avgEarningsPerDelivery.toFixed(2)} / corrida
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Card 3: Tempo Médio de Entrega */}
+                    <div className="bg-slate-900 p-5 rounded-[2rem] border border-slate-800/80 shadow-xl space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
+                          Tempo Médio
+                        </span>
+                        <div className="w-8 h-8 bg-amber-950/30 text-amber-400 rounded-xl flex items-center justify-center border border-amber-900/30">
+                          <Timer size={16} />
+                        </div>
+                      </div>
+                      <div>
+                        <h4 className="text-2xl font-black text-slate-100 tracking-tight">
+                          {weeklyPerformance.avgDurationMinutes || 18} min
+                        </h4>
+                        <span className="text-[8px] font-bold text-amber-400 bg-amber-950/20 px-1.5 py-0.5 rounded-md border border-amber-900/30">
+                          ⚡ Alta pontualidade
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Card 4: Dia de Maior Pico */}
+                    <div className="bg-slate-900 p-5 rounded-[2rem] border border-slate-800/80 shadow-xl space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
+                          Dia de Pico
+                        </span>
+                        <div className="w-8 h-8 bg-emerald-950/30 text-emerald-400 rounded-xl flex items-center justify-center border border-emerald-900/30">
+                          <Award size={16} />
+                        </div>
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-slate-100 tracking-tight line-clamp-1 mt-1">
+                          {weeklyPerformance.peakDayName}
+                        </h4>
+                        <span className="text-[8px] font-bold text-emerald-400 bg-emerald-950/20 px-1.5 py-0.5 rounded-md border border-emerald-900/30">
+                          Maior faturamento
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Weekly Interactive Performance Chart with Controls */}
+                  <div className="bg-slate-900 p-6 rounded-[2.5rem] shadow-2xl shadow-slate-950/40 border border-slate-800/80 space-y-5">
+                    {/* Header with Metric & Chart Type Switchers */}
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <BarChart2 size={16} className="text-brand-primary" />
+                          <h3 className="text-sm font-black text-slate-100 tracking-tight">
+                            Gráfico de Desempenho
+                          </h3>
+                        </div>
+                        <p className="text-[9.5px] text-slate-500 font-bold uppercase tracking-wider mt-0.5">
+                          {historyPeriod === 'this_week' ? 'Segunda a Domingo (Semana Atual)' : historyPeriod === 'last_week' ? 'Semana Anterior' : 'Histórico Consolidado'}
+                        </p>
+                      </div>
+
+                      {/* Metric Toggle Chips */}
+                      <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-2xl border border-slate-800 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setHistoryMetric('earnings')}
+                          className={`px-3 py-1.5 rounded-xl text-[8.5px] font-black uppercase tracking-wider transition-all ${
+                            historyMetric === 'earnings'
+                              ? 'bg-brand-primary text-white shadow-sm'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
                         >
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-slate-950 rounded-xl flex flex-col items-center justify-center border border-slate-800/80 text-slate-400">
-                              <span className="text-[9px] font-black uppercase text-brand-primary leading-none">
-                                {dayGroup.date.getDate()}
-                              </span>
-                              <span className="text-[7px] font-black uppercase tracking-widest mt-0.5">
-                                {dayGroup.date.toLocaleDateString('pt-BR', { month: 'short' }).slice(0,3)}
-                              </span>
-                            </div>
-                            <div>
-                              <h4 className="text-sm font-black text-slate-100 tracking-tight capitalize">{dayGroup.dateFormatted}</h4>
-                              <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest leading-none mt-1">
-                                {dayGroup.count} {dayGroup.count === 1 ? 'entrega' : 'entregas'} realizada
-                              </p>
-                            </div>
-                          </div>
-                          
-                          <div className="flex items-center gap-3">
-                            <div className="text-right">
-                              <span className="text-xs font-black text-brand-primary">R$ {dayGroup.totalCommission.toFixed(2)}</span>
-                              <span className="text-[8px] font-black uppercase tracking-wider block text-slate-500 mt-0.5">A Receber</span>
-                            </div>
-                            <ChevronDown size={16} className={`text-slate-400 transform transition-transform duration-300 ${isExpanded ? 'rotate-180 text-brand-primary' : ''}`} />
-                          </div>
+                          Ganhos (R$)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setHistoryMetric('deliveries')}
+                          className={`px-3 py-1.5 rounded-xl text-[8.5px] font-black uppercase tracking-wider transition-all ${
+                            historyMetric === 'deliveries'
+                              ? 'bg-indigo-600 text-white shadow-sm'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          Qtd Entregas
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setHistoryMetric('duration')}
+                          className={`px-3 py-1.5 rounded-xl text-[8.5px] font-black uppercase tracking-wider transition-all ${
+                            historyMetric === 'duration'
+                              ? 'bg-amber-600 text-white shadow-sm'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          Tempo (min)
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Chart Render */}
+                    {selectedPeriodChartData.length === 0 ? (
+                      <div className="h-52 flex flex-col items-center justify-center text-center bg-slate-950/40 rounded-[1.8rem] border border-dashed border-slate-800 p-6">
+                        <TrendingUp className="text-slate-700 mb-2 animate-pulse" size={28} />
+                        <p className="text-[10px] text-slate-400 font-black uppercase tracking-wider">Sem dados no período</p>
+                        <p className="text-[9px] text-slate-600 font-medium mt-1">Realize entregas para preencher as estatísticas semanais.</p>
+                      </div>
+                    ) : (
+                      <div className="h-56 w-full bg-slate-950/40 p-3 pt-4 rounded-[1.8rem] border border-slate-800/60 relative">
+                        {/* Visual Chart Mode Switcher in corner */}
+                        <div className="absolute top-3 right-3 flex items-center gap-1 z-10 bg-slate-900/90 px-2 py-1 rounded-xl border border-slate-800">
+                          <button 
+                            type="button"
+                            onClick={() => setHistoryChartType('bar')}
+                            title="Barras"
+                            className={`p-1 rounded-lg text-[9px] font-bold ${historyChartType === 'bar' ? 'bg-brand-primary text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                          >
+                            Barras
+                          </button>
+                          <button 
+                            type="button"
+                            onClick={() => setHistoryChartType('area')}
+                            title="Área"
+                            className={`p-1 rounded-lg text-[9px] font-bold ${historyChartType === 'area' ? 'bg-brand-primary text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                          >
+                            Área
+                          </button>
+                          <button 
+                            type="button"
+                            onClick={() => setHistoryChartType('line')}
+                            title="Linhas"
+                            className={`p-1 rounded-lg text-[9px] font-bold ${historyChartType === 'line' ? 'bg-brand-primary text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                          >
+                            Linha
+                          </button>
                         </div>
 
-                        {/* Expandable Day Details */}
-                        {isExpanded && (
-                          <motion.div 
-                            initial={{ opacity: 0, height: 0 }}
-                            animate={{ opacity: 1, height: 'auto' }}
-                            exit={{ opacity: 0, height: 0 }}
-                            className="pt-4 border-t border-slate-800 space-y-3"
-                          >
-                            <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest block mb-1">Relação de Entregas</span>
-                            {dayGroup.orders.map((order) => (
-                              <div 
-                                key={order.id} 
-                                onClick={() => setSelectedOrderSummary(order)}
-                                className="bg-slate-950 hover:bg-slate-850/40 p-3 rounded-2xl flex items-center justify-between gap-4 border border-slate-850 cursor-pointer transition-colors"
+                        <ResponsiveContainer width="100%" height="100%">
+                          {historyChartType === 'bar' ? (
+                            <BarChart data={selectedPeriodChartData} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" opacity={0.3} />
+                              <XAxis 
+                                dataKey="dayName" 
+                                stroke="#64748b" 
+                                fontSize={9} 
+                                tickLine={false} 
+                                axisLine={false} 
+                                dy={8}
+                              />
+                              <YAxis 
+                                stroke="#64748b" 
+                                fontSize={9} 
+                                tickLine={false} 
+                                axisLine={false} 
+                                tickFormatter={(val) => historyMetric === 'earnings' ? `R$${val}` : historyMetric === 'duration' ? `${val}m` : `${val}`}
+                              />
+                              <Tooltip 
+                                contentStyle={{ 
+                                  backgroundColor: '#0f172a', 
+                                  border: '1px solid #334155', 
+                                  borderRadius: '16px',
+                                  boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)'
+                                }} 
+                                labelStyle={{ color: '#94a3b8', fontSize: '10px', fontWeight: 'bold' }} 
+                                itemStyle={{ color: '#FF4F18', fontSize: '11px', fontWeight: 'black' }} 
+                                formatter={(value: any) => [
+                                  historyMetric === 'earnings' 
+                                    ? `R$ ${Number(value).toFixed(2)}` 
+                                    : historyMetric === 'duration' 
+                                      ? `${value} minutos` 
+                                      : `${value} entregas`,
+                                  historyMetric === 'earnings' ? 'Ganhos' : historyMetric === 'duration' ? 'Tempo Médio' : 'Entregas'
+                                ]}
+                                labelFormatter={(label, items) => {
+                                  const item = items[0]?.payload;
+                                  return item ? `${item.fullDateFormatted || label} (${item.entregas} entregas)` : label;
+                                }}
+                              />
+                              <Bar 
+                                dataKey={historyMetric === 'earnings' ? 'ganhos' : historyMetric === 'duration' ? 'tempoMedio' : 'entregas'} 
+                                radius={[8, 8, 2, 2]}
                               >
-                                <div>
-                                  <div className="flex items-center gap-1.5">
-                                    <span className="text-[9px] font-black text-slate-300">Pedido #{String(order.id).slice(-4)}</span>
-                                    <span className="text-[8px] font-bold text-slate-500 italic">({order.deliveredAt ? order.deliveredAt.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--'})</span>
-                                  </div>
-                                  <p className="text-[10px] text-slate-400 font-medium truncate max-w-[200px] mt-0.5">{order.customerAddress}</p>
+                                {selectedPeriodChartData.map((entry, index) => {
+                                  const fillColor = entry.isToday 
+                                    ? '#FF4F18' 
+                                    : historyMetric === 'earnings' 
+                                      ? '#EA580C' 
+                                      : historyMetric === 'duration' 
+                                        ? '#D97706' 
+                                        : '#6366F1';
+                                  return <Cell key={`cell-${index}`} fill={fillColor} fillOpacity={entry.isToday ? 1 : 0.85} />;
+                                })}
+                              </Bar>
+                            </BarChart>
+                          ) : historyChartType === 'area' ? (
+                            <AreaChart data={selectedPeriodChartData} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
+                              <defs>
+                                <linearGradient id="colorMetric" x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="5%" stopColor={historyMetric === 'earnings' ? '#FF4F18' : historyMetric === 'duration' ? '#F59E0B' : '#6366F1'} stopOpacity={0.8}/>
+                                  <stop offset="95%" stopColor={historyMetric === 'earnings' ? '#FF4F18' : historyMetric === 'duration' ? '#F59E0B' : '#6366F1'} stopOpacity={0}/>
+                                </linearGradient>
+                              </defs>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" opacity={0.3} />
+                              <XAxis dataKey="dayName" stroke="#64748b" fontSize={9} tickLine={false} axisLine={false} dy={8} />
+                              <YAxis 
+                                stroke="#64748b" 
+                                fontSize={9} 
+                                tickLine={false} 
+                                axisLine={false} 
+                                tickFormatter={(val) => historyMetric === 'earnings' ? `R$${val}` : historyMetric === 'duration' ? `${val}m` : `${val}`}
+                              />
+                              <Tooltip 
+                                contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '16px' }} 
+                                labelStyle={{ color: '#94a3b8', fontSize: '10px', fontWeight: 'bold' }} 
+                                itemStyle={{ color: '#FF4F18', fontSize: '11px', fontWeight: 'black' }} 
+                                formatter={(value: any) => [
+                                  historyMetric === 'earnings' ? `R$ ${Number(value).toFixed(2)}` : historyMetric === 'duration' ? `${value} min` : `${value} entregas`,
+                                  historyMetric === 'earnings' ? 'Ganhos' : historyMetric === 'duration' ? 'Duração' : 'Entregas'
+                                ]}
+                              />
+                              <Area 
+                                type="monotone" 
+                                dataKey={historyMetric === 'earnings' ? 'ganhos' : historyMetric === 'duration' ? 'tempoMedio' : 'entregas'} 
+                                stroke={historyMetric === 'earnings' ? '#FF4F18' : historyMetric === 'duration' ? '#F59E0B' : '#6366F1'} 
+                                fillOpacity={1} 
+                                fill="url(#colorMetric)" 
+                                strokeWidth={3} 
+                              />
+                            </AreaChart>
+                          ) : (
+                            <LineChart data={selectedPeriodChartData} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" opacity={0.3} />
+                              <XAxis dataKey="dayName" stroke="#64748b" fontSize={9} tickLine={false} axisLine={false} dy={8} />
+                              <YAxis 
+                                stroke="#64748b" 
+                                fontSize={9} 
+                                tickLine={false} 
+                                axisLine={false} 
+                                tickFormatter={(val) => historyMetric === 'earnings' ? `R$${val}` : historyMetric === 'duration' ? `${val}m` : `${val}`}
+                              />
+                              <Tooltip 
+                                contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '16px' }} 
+                                labelStyle={{ color: '#94a3b8', fontSize: '10px', fontWeight: 'bold' }} 
+                                itemStyle={{ color: '#FF4F18', fontSize: '11px', fontWeight: 'black' }} 
+                                formatter={(value: any) => [
+                                  historyMetric === 'earnings' ? `R$ ${Number(value).toFixed(2)}` : `${value}`,
+                                  historyMetric === 'earnings' ? 'Ganhos' : 'Entregas'
+                                ]}
+                              />
+                              <Line 
+                                type="monotone" 
+                                dataKey={historyMetric === 'earnings' ? 'ganhos' : historyMetric === 'duration' ? 'tempoMedio' : 'entregas'} 
+                                stroke="#FF4F18" 
+                                strokeWidth={3} 
+                                dot={{ r: 4, fill: '#FF4F18', stroke: '#0f172a', strokeWidth: 1.5 }} 
+                                activeDot={{ r: 6, fill: '#FF4F18', stroke: '#ffffff', strokeWidth: 1.5 }} 
+                              />
+                            </LineChart>
+                          )}
+                        </ResponsiveContainer>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Day-by-Day Breakdown List */}
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between ml-1">
+                      <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">
+                        Detalhamento por Dia da Semana
+                      </h3>
+                      <span className="text-[9px] font-black text-brand-primary uppercase">
+                        {selectedPeriodChartData.filter(d => d.entregas > 0).length} dias ativos
+                      </span>
+                    </div>
+
+                    {selectedPeriodChartData.length === 0 ? (
+                      <div className="bg-slate-900 rounded-[2.5rem] p-12 text-center border-2 border-dashed border-slate-800">
+                        <Calendar size={32} className="text-slate-700 mx-auto mb-4" />
+                        <p className="text-xs font-heavy text-slate-500 uppercase tracking-widest font-black">Nenhum registro no período</p>
+                      </div>
+                    ) : (
+                      selectedPeriodChartData.map((dayGroup, dIdx) => {
+                        const dateKey = `day-${dayGroup.dateStr}-${dIdx}`;
+                        const isExpanded = expandedDay === dateKey;
+                        const dayOrders = dayGroup.orders || [];
+
+                        return (
+                          <div key={dateKey} className="bg-slate-900 rounded-[2rem] p-5 border border-slate-800/60 shadow-sm space-y-4 overflow-hidden transition-all duration-300">
+                            {/* Day Card Summary */}
+                            <div 
+                              onClick={() => setExpandedDay(isExpanded ? null : dateKey)}
+                              className="flex items-center justify-between group cursor-pointer"
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className={`w-11 h-11 rounded-2xl flex flex-col items-center justify-center border text-slate-400 shadow-sm ${
+                                  dayGroup.isToday 
+                                    ? 'bg-orange-950/40 border-brand-primary/50 text-brand-primary' 
+                                    : 'bg-slate-950 border-slate-800/80'
+                                }`}>
+                                  <span className="text-[10px] font-black uppercase leading-none">
+                                    {dayGroup.dayName}
+                                  </span>
+                                  <span className="text-[7.5px] font-bold uppercase tracking-wider mt-0.5 text-slate-400">
+                                    {dayGroup.dateStr}
+                                  </span>
                                 </div>
-                                <div className="text-right shrink-0">
-                                  <span className="text-xs font-black text-slate-100">+ R$ {(order.courierEarnings || 0).toFixed(2)}</span>
-                                  <span className="text-[7px] font-bold uppercase tracking-widest text-[#FF4F18] block">Comissão</span>
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <h4 className="text-sm font-black text-slate-100 tracking-tight capitalize">
+                                      {dayGroup.fullDateFormatted || dayGroup.dayName}
+                                    </h4>
+                                    {dayGroup.isToday && (
+                                      <span className="text-[7.5px] font-black uppercase bg-brand-primary text-white px-2 py-0.5 rounded-full shadow-sm">
+                                        Hoje
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest leading-none mt-1">
+                                    {dayGroup.entregas} {dayGroup.entregas === 1 ? 'entrega realizada' : 'entregas realizadas'} {dayGroup.tempoMedio > 0 ? `• ~${dayGroup.tempoMedio} min/corrida` : ''}
+                                  </p>
                                 </div>
                               </div>
-                            ))}
-                          </motion.div>
-                        )}
-                      </div>
-                    );
-                  })
-                )}
-              </div>
+                              
+                              <div className="flex items-center gap-3">
+                                <div className="text-right">
+                                  <span className="text-xs font-black text-brand-primary">R$ {dayGroup.ganhos.toFixed(2)}</span>
+                                  <span className="text-[8px] font-black uppercase tracking-wider block text-slate-500 mt-0.5">Comissão</span>
+                                </div>
+                                <ChevronDown size={16} className={`text-slate-400 transform transition-transform duration-300 ${isExpanded ? 'rotate-180 text-brand-primary' : ''}`} />
+                              </div>
+                            </div>
+
+                            {/* Expandable Day Details */}
+                            {isExpanded && (
+                              <motion.div 
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: 'auto' }}
+                                exit={{ opacity: 0, height: 0 }}
+                                className="pt-4 border-t border-slate-800 space-y-2.5"
+                              >
+                                <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest block mb-1">
+                                  Relação de Entregas ({dayOrders.length})
+                                </span>
+                                {dayOrders.length === 0 ? (
+                                  <p className="text-xs text-slate-500 italic py-2">Nenhum pedido individual registrado neste dia.</p>
+                                ) : (
+                                  dayOrders.map((order) => (
+                                    <div 
+                                      key={order.id} 
+                                      onClick={() => setSelectedOrderSummary(order)}
+                                      className="bg-slate-950 hover:bg-slate-850/60 p-3.5 rounded-2xl flex items-center justify-between gap-4 border border-slate-800/80 cursor-pointer transition-all hover:border-brand-primary/40 group"
+                                    >
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-[10px] font-black text-slate-200">
+                                            #{String(order.id).slice(-4).toUpperCase()}
+                                          </span>
+                                          <span className="text-[8px] font-bold text-slate-500 italic">
+                                            ({order.deliveredAt ? new Date(order.deliveredAt).toLocaleTimeString([], { hour: '2-digit', minute:'2-digit' }) : '--:--'})
+                                          </span>
+                                          <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-800">
+                                            {order.customerName || 'Cliente'}
+                                          </span>
+                                        </div>
+                                        <p className="text-[10px] text-slate-400 font-medium truncate mt-1">
+                                          {order.customerAddress || 'Endereço não informado'}
+                                        </p>
+                                      </div>
+                                      <div className="text-right shrink-0 flex items-center gap-2">
+                                        <div>
+                                          <span className="text-xs font-black text-slate-100 block">+ R$ {(order.courierEarnings || 0).toFixed(2)}</span>
+                                          <span className="text-[7.5px] font-bold uppercase tracking-widest text-[#FF4F18]">Ver Detalhes</span>
+                                        </div>
+                                        <ChevronRight size={14} className="text-slate-600 group-hover:text-brand-primary transition-colors" />
+                                      </div>
+                                    </div>
+                                  ))
+                                )}
+                              </motion.div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </>
+              ) : (
+                /* History Orders List View with Live Search and Filters */
+                <div className="space-y-4">
+                  {/* Search Bar */}
+                  <div className="relative">
+                    <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
+                    <input 
+                      type="text"
+                      value={historySearchTerm}
+                      onChange={(e) => setHistorySearchTerm(e.target.value)}
+                      placeholder="Buscar por cliente, endereço ou #ID..."
+                      className="w-full bg-slate-900 border border-slate-800 rounded-2xl pl-11 pr-4 py-3.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-brand-primary transition-all"
+                    />
+                    {historySearchTerm && (
+                      <button 
+                        onClick={() => setHistorySearchTerm('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-500 hover:text-slate-300"
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Status Filters */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                    {[
+                      { id: 'all', label: 'Todos os Status' },
+                      { id: 'delivered', label: 'Concluídos' },
+                      { id: 'delivering', label: 'Em Trânsito' },
+                      { id: 'cancelled', label: 'Cancelados' }
+                    ].map(st => (
+                      <button
+                        key={st.id}
+                        onClick={() => setHistoryStatusFilter(st.id as any)}
+                        className={`px-3 py-1.5 rounded-xl text-[8.5px] font-black uppercase tracking-wider shrink-0 transition-all border ${
+                          historyStatusFilter === st.id
+                            ? 'bg-brand-primary text-white border-brand-primary'
+                            : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                        }`}
+                      >
+                        {st.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Orders Cards List */}
+                  {filteredHistoryOrders.length === 0 ? (
+                    <div className="bg-slate-900 rounded-[2.5rem] p-12 text-center border-2 border-dashed border-slate-800 space-y-3">
+                      <ShoppingBag size={32} className="text-slate-700 mx-auto" />
+                      <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Nenhum pedido encontrado</p>
+                      <p className="text-[10px] text-slate-600 font-medium">Tente ajustar o período ou os termos de busca.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {filteredHistoryOrders.map((order) => {
+                        const isDelivered = order.status === 'delivered';
+                        const isDelivering = order.status === 'delivering';
+                        const isCancelled = order.status === 'cancelled';
+                        const orderDate = order.deliveredAt || order.createdAt || new Date();
+
+                        return (
+                          <div 
+                            key={order.id}
+                            onClick={() => setSelectedOrderSummary(order)}
+                            className="bg-slate-900 rounded-[2rem] p-5 border border-slate-800/80 shadow-md space-y-3.5 hover:border-brand-primary/50 transition-all cursor-pointer group"
+                          >
+                            {/* Card Top Row */}
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2.5">
+                                <div className="w-9 h-9 bg-slate-950 rounded-xl flex items-center justify-center border border-slate-800 text-brand-primary font-mono text-xs font-black">
+                                  #{String(order.id).slice(-4).toUpperCase()}
+                                </div>
+                                <div>
+                                  <h4 className="text-xs font-black text-slate-200 group-hover:text-brand-primary transition-colors">
+                                    {order.customerName || 'Cliente Anônimo'}
+                                  </h4>
+                                  <p className="text-[8.5px] font-bold text-slate-500 uppercase tracking-wider">
+                                    {new Date(orderDate).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} às {new Date(orderDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="text-right">
+                                <span className={`px-2.5 py-1 rounded-full text-[8px] font-black uppercase tracking-wider border ${
+                                  isDelivered 
+                                    ? 'bg-emerald-950/30 text-emerald-400 border-emerald-900/30'
+                                    : isDelivering
+                                      ? 'bg-amber-950/30 text-amber-400 border-amber-900/30'
+                                      : isCancelled
+                                        ? 'bg-rose-950/30 text-rose-400 border-rose-900/30'
+                                        : 'bg-indigo-950/30 text-indigo-400 border-indigo-900/30'
+                                }`}>
+                                  {isDelivered ? 'Entregue' : isDelivering ? 'Em Rota' : isCancelled ? 'Cancelado' : order.status}
+                                </span>
+                                <span className="text-xs font-black text-slate-100 block mt-1">
+                                  + R$ {(order.courierEarnings || 0).toFixed(2)}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Address Row */}
+                            {order.customerAddress && (
+                              <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800/60 flex items-start gap-2 text-[10px] text-slate-400">
+                                <MapPin size={14} className="text-brand-primary shrink-0 mt-0.5" />
+                                <span className="line-clamp-2 leading-relaxed flex-1">{order.customerAddress}</span>
+                              </div>
+                            )}
+
+                            {/* Card Footer */}
+                            <div className="flex items-center justify-between text-[9px] pt-1 border-t border-slate-800/60 font-bold text-slate-500">
+                              <div className="flex items-center gap-2">
+                                <span className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400">
+                                  {(order.items || []).length} {(order.items || []).length === 1 ? 'item' : 'itens'}
+                                </span>
+                                <span className="uppercase text-slate-400">
+                                  {order.paymentMethod === 'dinheiro' ? 'Dinheiro' : order.paymentMethod?.toUpperCase() || 'Digital'}
+                                </span>
+                              </div>
+                              <span className="text-brand-primary font-black uppercase flex items-center gap-1 group-hover:translate-x-1 transition-transform">
+                                Ver Detalhes <ChevronRight size={12} />
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Ledger notice */}
               <div className="bg-[#111111] rounded-[2.5rem] p-8 text-white relative overflow-hidden shadow-lg shadow-slate-950/40">
                  <div className="relative z-10">
                     <h3 className="text-xl font-black tracking-tighter mb-2">Resumo da Carteira</h3>
-                    <p className="text-xs text-orange-200/80 font-medium">Todos os repasses e cobranças em dinheiro em mãos são calculados em tempo real.</p>
+                    <p className="text-xs text-orange-200/80 font-medium">Todos os repasses e cobranças em dinheiro em mãos são consolidados e atualizados em tempo real.</p>
                  </div>
                  <DollarSign size={100} className="absolute -right-8 -bottom-8 text-white/5 rotate-12" strokeWidth={1} />
               </div>
@@ -1913,12 +2598,12 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout }) => {
          </button>
 
          <button 
-           onClick={() => setActiveTab('earnings')}
-           className={`flex flex-col items-center justify-center w-14 h-14 rounded-2xl gap-1 transition-all ${activeTab === 'earnings' ? 'text-brand-primary scale-110 font-bold bg-orange-950/25' : 'text-slate-500 hover:text-slate-400'}`}
-           title="Valores por dia"
+           onClick={() => setActiveTab('history')}
+           className={`flex flex-col items-center justify-center w-14 h-14 rounded-2xl gap-1 transition-all ${activeTab === 'history' || activeTab === 'earnings' ? 'text-brand-primary scale-110 font-bold bg-orange-950/25' : 'text-slate-500 hover:text-slate-400'}`}
+           title="Histórico & Estatísticas Semanais"
          >
-            <Calendar size={22} strokeWidth={activeTab === 'earnings' ? 3 : 2} />
-            <span className="text-[7.5px] font-black uppercase tracking-widest">Ganhos</span>
+            <History size={22} strokeWidth={activeTab === 'history' || activeTab === 'earnings' ? 3 : 2} />
+            <span className="text-[7.5px] font-black uppercase tracking-widest">Histórico</span>
          </button>
 
          <button 

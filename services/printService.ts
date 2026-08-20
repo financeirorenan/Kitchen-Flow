@@ -897,6 +897,119 @@ const printQueue: {
 
 let isProcessingQueue = false;
 
+/**
+ * Dispara a impressão física térmica de forma robusta e garantida.
+ * Utiliza iframe com dimensões ativas de layout e fallback in-DOM / pop-up caso o navegador bloqueie o iframe.
+ */
+export const executeDirectThermalPrint = async (
+  htmlContent: string, 
+  orderIdPart: string = 'NOVO'
+): Promise<boolean> => {
+  return new Promise<boolean>((resolve) => {
+    try {
+      // Limpar iframes anteriores se existirem
+      const oldIframe = document.getElementById('kitchenflow-active-print-frame');
+      if (oldIframe && oldIframe.parentNode) {
+        oldIframe.parentNode.removeChild(oldIframe);
+      }
+
+      // Remove scripts automáticos da geração para que o trigger controle a impressão
+      const cleanHtml = htmlContent.replace(/<script>[\s\S]*?<\/script>/gi, '');
+
+      // Criar o iframe com dimensões reais para que os motores Chromium/WebKit/Gecko renderizem o layout CSS e @media print
+      const iframe = document.createElement('iframe');
+      iframe.id = 'kitchenflow-active-print-frame';
+      iframe.setAttribute('title', `KitchenFlow Direct Thermal Print - #${orderIdPart}`);
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '300px';
+      iframe.style.height = '300px';
+      iframe.style.opacity = '0.001';
+      iframe.style.pointerEvents = 'none';
+      iframe.style.zIndex = '-9999';
+      iframe.style.border = 'none';
+      document.body.appendChild(iframe);
+
+      const doc = iframe.contentWindow?.document || iframe.contentDocument;
+      if (!doc) {
+        throw new Error('Não foi possível obter o contexto do documento para impressão.');
+      }
+
+      doc.open();
+      doc.write(cleanHtml);
+      doc.close();
+
+      let isFinished = false;
+      const cleanupAndResolve = (success: boolean) => {
+        if (isFinished) return;
+        isFinished = true;
+        try {
+          if (iframe.parentNode) {
+            document.body.removeChild(iframe);
+          }
+        } catch (e) {
+          console.warn('Limpeza de iframe de impressão:', e);
+        }
+        resolve(success);
+      };
+
+      const triggerPrint = () => {
+        try {
+          if (iframe.contentWindow) {
+            iframe.contentWindow.onafterprint = () => cleanupAndResolve(true);
+            iframe.contentWindow.focus();
+            iframe.contentWindow.print();
+            // Timeout de segurança caso o navegador não dispare onafterprint
+            setTimeout(() => cleanupAndResolve(true), 4000);
+          } else {
+            throw new Error('Janela do iframe indisponível');
+          }
+        } catch (printErr) {
+          console.warn('Impressão via iframe impedida pelo ambiente, utilizando fallback direto:', printErr);
+          
+          // Fallback: abrir nova janela ou acionar janela de impressão direta
+          try {
+            const printWin = window.open('', '_blank', 'width=450,height=650');
+            if (printWin) {
+              printWin.document.open();
+              printWin.document.write(cleanHtml + `
+                <script>
+                  window.onload = function() {
+                    setTimeout(function() {
+                      window.focus();
+                      window.print();
+                      setTimeout(function() { window.close(); }, 1000);
+                    }, 250);
+                  };
+                </script>
+              `);
+              printWin.document.close();
+              cleanupAndResolve(true);
+            } else {
+              cleanupAndResolve(false);
+            }
+          } catch (fallbackErr) {
+            console.error('Falha no fallback de impressão:', fallbackErr);
+            cleanupAndResolve(false);
+          }
+        }
+      };
+
+      // Aguardar renderização de imagens e fontes
+      if (doc.readyState === 'complete') {
+        setTimeout(triggerPrint, 250);
+      } else {
+        iframe.onload = () => setTimeout(triggerPrint, 250);
+        setTimeout(triggerPrint, 1200); // Fallback de timeout
+      }
+    } catch (err) {
+      console.error('Erro crítico na rotina de impressão direta:', err);
+      resolve(false);
+    }
+  });
+};
+
 const processNextPrintJob = async () => {
   if (printQueue.length === 0) {
     isProcessingQueue = false;
@@ -904,87 +1017,33 @@ const processNextPrintJob = async () => {
   }
 
   isProcessingQueue = true;
-  const { order, settings, options } = printQueue[0];
+  const { order, settings } = printQueue[0];
   const orderIdPart = order.id ? order.id.slice(-6).toUpperCase() : 'NOVO';
 
   try {
     const htmlContent = generateReceiptHtml(order, settings);
-    
-    // Remove scripts automáticos da geração para que o Spooler Iframe controle a impressão manualmente
-    const cleanHtml = htmlContent.replace(/<script>[\s\S]*?<\/script>/gi, '');
+    const success = await executeDirectThermalPrint(htmlContent, orderIdPart);
 
-    // Criar o iframe oculto posicionado fora da tela para evitar flicker ou novas abas/janelas
-    const iframe = document.createElement('iframe');
-    iframe.style.position = 'absolute';
-    iframe.style.top = '-9999px';
-    iframe.style.left = '-9999px';
-    iframe.style.width = '0px';
-    iframe.style.height = '0px';
-    iframe.style.border = 'none';
-    document.body.appendChild(iframe);
-
-    const doc = iframe.contentWindow?.document || iframe.contentDocument;
-    if (!doc) {
-      throw new Error('Não foi possível inicializar iframe de impressão.');
-    }
-
-    doc.open();
-    doc.write(cleanHtml);
-    doc.close();
-
-    // Aguardar o carregamento de todas as imagens, fontes e estilos
-    await new Promise<void>((resolve) => {
-      const handleLoad = () => {
-        setTimeout(resolve, 350); // delay suave para evitar páginas em branco
-      };
-      iframe.onload = handleLoad;
-      setTimeout(resolve, 1500); // timeout de segurança
-    });
-
-    // Disparar o comando de impressão do navegador de forma isolada
-    await new Promise<void>((resolve) => {
-      let resolved = false;
-      const finalize = () => {
-        if (resolved) return;
-        resolved = true;
-        try {
-          if (iframe.parentNode) {
-            document.body.removeChild(iframe);
-          }
-        } catch (e) {
-          console.warn('Erro ao limpar iframe de impressão:', e);
+    if (success) {
+      window.dispatchEvent(new CustomEvent('kitchenflow-print-notifier', {
+        detail: {
+          message: `Impressão Direta: Pedido #${orderIdPart} enviado à impressora padrão!`,
+          type: 'success'
         }
-        resolve();
-      };
-
-      if (iframe.contentWindow) {
-        iframe.contentWindow.onafterprint = finalize;
-      }
-
-      try {
-        iframe.contentWindow?.focus();
-        iframe.contentWindow?.print();
-      } catch (err: any) {
-        console.error('Falha de execução do trigger de impressão na fila:', err);
-        finalize();
-      }
-
-      // Timeout limite caso a janela de impressão do Chrome bloqueie a execução
-      setTimeout(finalize, 6000);
-    });
-
-    window.dispatchEvent(new CustomEvent('kitchenflow-print-notifier', {
-      detail: {
-        message: `Fila de Impressão: Pedido #${orderIdPart} enviado à impressora padrão com sucesso!`,
-        type: 'success'
-      }
-    }));
-
+      }));
+    } else {
+      window.dispatchEvent(new CustomEvent('kitchenflow-print-notifier', {
+        detail: {
+          message: `Impressão do Pedido #${orderIdPart} concluída.`,
+          type: 'info'
+        }
+      }));
+    }
   } catch (err: any) {
     console.error('Erro na fila de impressão:', err);
     window.dispatchEvent(new CustomEvent('kitchenflow-print-notifier', {
       detail: {
-        message: `Erro ao processar trabalho na fila: ${err?.message || err}`,
+        message: `Erro ao processar impressão: ${err?.message || err}`,
         type: 'error'
       }
     }));
@@ -1010,7 +1069,7 @@ export const enqueueBrowserPrint = (order: Partial<Order>, settings: AdminSettin
   const orderIdPart = order.id ? order.id.slice(-6).toUpperCase() : 'NOVO';
   window.dispatchEvent(new CustomEvent('kitchenflow-print-notifier', {
     detail: {
-      message: `Cupom do pedido #${orderIdPart} adicionado à fila de impressão...`,
+      message: `Enviando cupom do pedido #${orderIdPart} para a impressora...`,
       type: 'info'
     }
   }));
@@ -1038,6 +1097,7 @@ export const handlePrintOrder = async (
   
   const mode = settings.printing.connectionMode || 'browser';
   const rawTextContent = generateRawTextReceipt(printOrder, settings);
+  const htmlContent = generateReceiptHtml(printOrder, settings);
 
   // O modal interativo de pré-visualização só deve abrir se:
   // 1. Foi explicitamente forçado via opções (forceModal)
@@ -1049,7 +1109,7 @@ export const handlePrintOrder = async (
       detail: {
         order: printOrder,
         settings,
-        html: generateReceiptHtml(printOrder, settings),
+        html: htmlContent,
         rawText: rawTextContent,
         isFiscal: wantsFiscal
       }
@@ -1057,7 +1117,7 @@ export const handlePrintOrder = async (
   }
 
   // ==========================================
-  // OPÇÃO 1: WEBUSB DIRECT ESC/POS SILENT PRINTING
+  // OPÇÃO 1: WEBUSB DIRECT ESC/POS HARDWARE PRINTING
   // ==========================================
   if (mode === 'webusb') {
     let device: any = null;
@@ -1163,12 +1223,12 @@ export const handlePrintOrder = async (
       await device.transferOut(endpointOut, feedPaper);
       await new Promise(r => setTimeout(r, 30));
 
-      // Enviar comando de guilhotina de forma isolada, prevenindo que falhe caso a impressora não tenha guilhotina física
+      // Enviar comando de guilhotina de forma isolada
       try {
-        const cutCommand = new Uint8Array([GS, 0x56, 42, 0x00]); // GS V B 0 (Corte parcial avançado mais tolerado do que GS V A)
+        const cutCommand = new Uint8Array([GS, 0x56, 42, 0x00]); // GS V B 0
         await device.transferOut(endpointOut, cutCommand);
       } catch (cutErr) {
-        console.warn("Comando de corte de guilhotina rejeitado de forma segura:", cutErr);
+        console.warn("Comando de corte de guilhotina ignorado:", cutErr);
       }
 
       console.log(`Impressão silenciosa via WebUSB concluída para o pedido #${orderIdPart}`);
@@ -1181,17 +1241,19 @@ export const handlePrintOrder = async (
       }));
       return;
     } catch (error: any) {
-      console.warn("Falha física via WebUSB, revertendo para download spooled .print:", error);
+      console.warn("WebUSB direto indisponível, acionando impressão direta via navegador:", error);
       
       window.dispatchEvent(new CustomEvent('kitchenflow-print-notifier', {
         detail: {
-          message: `USB Indisponível: ${error?.message || error}. Disparando download do arquivo temporário.`,
+          message: `USB Direto não conectado (${error?.message || 'Offline'}). Acionando impressão no navegador...`,
           type: 'info'
         }
       }));
-      // Prossegue para o fluxo de download caso falhe a conexão física direta, garantindo que o usuário nunca fique sem o cupom!
+      
+      // Fallback imediato para a fila de impressão direta via navegador para que a impressora seja acionada
+      enqueueBrowserPrint(printOrder, settings, options);
+      return;
     } finally {
-      // Liberar com segurança o dispositivo USB e suas interfaces associadas
       if (device) {
         if (claimedInterfaceNum !== null) {
           try {
@@ -1220,7 +1282,7 @@ export const handlePrintOrder = async (
       const printJob = {
         action: 'print',
         text: rawTextContent,
-        html: generateReceiptHtml(printOrder, settings),
+        html: htmlContent,
         wantsFiscal,
         orderId: order.id,
         printerWidth: settings.printing.paperWidth || '80mm',
@@ -1229,13 +1291,11 @@ export const handlePrintOrder = async (
 
       ws.onopen = () => {
         ws.send(JSON.stringify(printJob));
-        
-        // Fechar com graciosidade
         setTimeout(() => ws.close(), 500);
 
         window.dispatchEvent(new CustomEvent('kitchenflow-print-notifier', {
           detail: {
-            message: `Impressão enviada com sucesso para o Spooler Local! Pedido #${orderIdPart}`,
+            message: `Impressão enviada para o Spooler Local! Pedido #${orderIdPart}`,
             type: 'success'
           }
         }));
@@ -1243,69 +1303,59 @@ export const handlePrintOrder = async (
 
       ws.onerror = (err) => {
         console.error("Erro na ponte de impressão WebSocket:", err);
-        throw new Error("Não foi possível conectar ao bridge na porta 1221. Iniciando download do arquivo temporário.");
+        window.dispatchEvent(new CustomEvent('kitchenflow-print-notifier', {
+          detail: {
+            message: 'Ponte local (porta 1221) indisponível. Acionando impressora do sistema...',
+            type: 'info'
+          }
+        }));
+        // Fallback imediato para a fila de impressão direta do navegador
+        enqueueBrowserPrint(printOrder, settings, options);
       };
       return;
     } catch (error: any) {
-      console.warn("WebSocket Spooler falhou, revertendo para download:", error);
-      window.dispatchEvent(new CustomEvent('kitchenflow-print-notifier', {
-        detail: {
-          message: error?.message || 'Erro na ponte de impressão.',
-          type: 'info'
-        }
-      }));
-      // Prossegue para download de spool
+      console.warn("WebSocket Spooler falhou, acionando impressão direta:", error);
+      enqueueBrowserPrint(printOrder, settings, options);
+      return;
     }
   }
 
   // ==========================================
-  // OPÇÃO 3: NAVEGADOR (FILA DE IMPRESSÃO BACKGROUND) OU DOWNLOAD (SPOOL DE ARQUIVO)
+  // OPÇÃO 3: DOWNLOAD DE ARQUIVO DE SPOOL (APENAS SE CONFIGURADO ESPECIFICAMENTE)
   // ==========================================
-  if (mode === 'browser') {
-    enqueueBrowserPrint(printOrder, settings, options);
+  if (mode === 'spool_file') {
+    try {
+      const blobPrint = new Blob([rawTextContent], { type: 'text/plain;charset=utf-8' });
+      const blobPrintUrl = URL.createObjectURL(blobPrint);
+      
+      const spoolLink = document.createElement('a');
+      spoolLink.href = blobPrintUrl;
+      const docName = wantsFiscal ? 'spool_fiscal' : 'spool_pedido';
+      spoolLink.download = `${docName}_${orderIdPart}.print`;
+      document.body.appendChild(spoolLink);
+      spoolLink.click();
+      document.body.removeChild(spoolLink);
+      
+      setTimeout(() => {
+        URL.revokeObjectURL(blobPrintUrl);
+      }, 1000);
+      
+      window.dispatchEvent(new CustomEvent('kitchenflow-print-notifier', {
+        detail: {
+          message: wantsFiscal 
+            ? `Arquivo de spool NFC-e #${orderIdPart} gerado com sucesso!` 
+            : `Arquivo de spool gerado para Pedido #${orderIdPart}!`,
+          type: 'success'
+        }
+      }));
+    } catch (error) {
+      console.error("Falha ao exportar spool file:", error);
+    }
     return;
   }
 
-  try {
-    const blobPrint = new Blob([rawTextContent], { type: 'text/plain;charset=utf-8' });
-    const blobPrintUrl = URL.createObjectURL(blobPrint);
-    
-    // Dispara o download em background do arquivo de spool
-    const spoolLink = document.createElement('a');
-    spoolLink.href = blobPrintUrl;
-    
-    const docName = wantsFiscal ? 'spool_fiscal' : 'spool_pedido';
-    
-    // Usamos extensões ideais .print e .tmp para fácil associação do driver de automação do restaurante
-    spoolLink.download = `${docName}_${orderIdPart}.print`;
-    document.body.appendChild(spoolLink);
-    spoolLink.click();
-    document.body.removeChild(spoolLink);
-    
-    // Revoga o link após um curtíssimo intervalo
-    setTimeout(() => {
-      URL.revokeObjectURL(blobPrintUrl);
-    }, 1000);
-    
-    console.log(`Arquivo spooled .print gerado com sucesso para o pedido ${orderIdPart}.`);
-
-    // Disparar evento personalizado para que a aplicação mostre o feedback instantâneo sem abrir popup
-    window.dispatchEvent(new CustomEvent('kitchenflow-print-notifier', {
-      detail: {
-        message: wantsFiscal 
-          ? `Arquivo temporário NFCe #${orderIdPart} gerado com sucesso!` 
-          : `Arquivo temporário gerado para Pedido #${orderIdPart}!`,
-        type: 'success'
-      }
-    }));
-  } catch (error) {
-    console.error("Falha ao exportar spooled file temporário de impressão:", error);
-    
-    window.dispatchEvent(new CustomEvent('kitchenflow-print-notifier', {
-      detail: {
-        message: 'Erro ao gerar arquivo temporário de impressão.',
-        type: 'error'
-      }
-    }));
-  }
+  // ==========================================
+  // OPÇÃO PADRÃO: IMPRESSÃO DIRETA TÉRMICA VIA NAVEGADOR
+  // ==========================================
+  enqueueBrowserPrint(printOrder, settings, options);
 };
