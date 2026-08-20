@@ -253,23 +253,25 @@ export class FiscalService {
     return finalXml;
   }
 
-  private generateQrCodeSp(chNFe: string, tpAmb: string, total: number, dhEmi: string, baseUrl: string) {
-    const cIdToken = (this.config.cscId || '000001').replace(/^0+/, ''); // ex: 1
-    const cscToken = this.config.cscToken || '0123456789';
-    const dhEmiHex = Buffer.from(dhEmi).toString('hex');
-    const vNF = total.toFixed(2);
-    const vICMS = '0.00';
-    const digValHex = '0000000000000000000000000000000000000000';
+  private generateQrCodeSp(chNFe: string, tpAmb: string, _total: number, _dhEmi: string, baseUrl: string) {
+    const cIdToken = (this.config.cscId || '000001').replace(/^0+/, '') || '1'; // ex: 1
+    const cscToken = this.config.cscToken || '';
 
-    // Formato QR Code NFC-e v2.00
-    // chNFe|2|tpAmb|dhEmiHex|vNF|vICMS|digValHex|cIdToken
-    const paramString = `${chNFe}|2|${tpAmb}|${dhEmiHex}|${vNF}|${vICMS}|${digValHex}|${cIdToken}`;
+    // Formato QR Code NFC-e v2.00 Oficial SEFAZ-SP (Emissão Normal - tpEmis = 1)
+    // Parâmetro: chNFe|2|tpAmb|cIdToken
+    const paramString = `${chNFe}|2|${tpAmb}|${cIdToken}`;
     
-    // Hash SHA1 do parâmetro + Token CSC
-    const hashHex = crypto.createHash('sha1').update(paramString + cscToken).digest('hex').toUpperCase();
-    const qrCodeUrl = `${baseUrl}?p=${paramString}|${hashHex}`;
+    if (cscToken && cscToken.length >= 6) {
+      // Hash SHA1 do parâmetro concatenado com o CSC Token do contribuinte
+      const hashHex = crypto.createHash('sha1').update(paramString + cscToken).digest('hex').toUpperCase();
+      const qrCodeUrl = `${baseUrl}?p=${paramString}|${hashHex}`;
+      return { qrUrl: qrCodeUrl, qrCodeUrl, hashHex };
+    }
 
-    return { qrCodeUrl, hashHex };
+    // Fallback: Se não houver CSC configurado, utiliza URL de consulta pública direta da SEFAZ
+    const consultaBase = baseUrl.replace('/qrcode', '/consulta');
+    const qrCodeUrl = `${consultaBase}?p=${chNFe}`;
+    return { qrUrl: qrCodeUrl, qrCodeUrl, hashHex: '' };
   }
 
   private signXml(xml: string, tag: string): string {

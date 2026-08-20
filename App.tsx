@@ -39,6 +39,7 @@ import { setLocalCache, getLocalCache } from './lib/cacheUtils';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt';
 import { UserProfileModal } from './components/UserProfileModal';
 import { PrintPreviewModal } from './components/PrintPreviewModal';
+import { OpenCashModal } from './components/OpenCashModal';
 import { 
   INITIAL_PRODUCTS, 
   INITIAL_TABLES, 
@@ -517,6 +518,25 @@ const App: React.FC = () => {
   const [productCategories, setProductCategories] = useState<string[]>(['Entradas', 'Buffet', 'Pratos Principais', 'Lanches', 'Batatas Recheadas', 'Pasteis', 'Bebidas']);
   const [rawMaterialCategories, setRawMaterialCategories] = useState<string[]>(['Proteínas', 'Hortifruti', 'Laticínios', 'Grãos', 'Bebidas', 'Embalagens', 'Limpeza', 'Outros']);
   const [cashSession, setCashSession] = useState<CashSession>({ isOpen: false, openingValue: 0, openedAt: null });
+  const [showGlobalOpenCashModal, setShowGlobalOpenCashModal] = useState(false);
+  const [pendingOrderToAcceptAfterCashOpen, setPendingOrderToAcceptAfterCashOpen] = useState<Order | null>(null);
+  const cashSessionRef = useRef<CashSession>(cashSession);
+  useEffect(() => {
+    cashSessionRef.current = cashSession;
+  }, [cashSession]);
+
+  useEffect(() => {
+    const handleOpenCashEvent = (e: any) => {
+      const order = e.detail?.order || null;
+      if (order) {
+        setPendingOrderToAcceptAfterCashOpen(order);
+      }
+      setShowGlobalOpenCashModal(true);
+    };
+    window.addEventListener('kitchenflow-open-cash-modal', handleOpenCashEvent);
+    return () => window.removeEventListener('kitchenflow-open-cash-modal', handleOpenCashEvent);
+  }, []);
+
   const lastWriteTimeRef = useRef<number>(0);
   const ordersRef = useRef<Order[]>([]);
   const processedEventIdsRef = useRef<Set<string>>(new Set());
@@ -2476,11 +2496,18 @@ const App: React.FC = () => {
               // Pedido veio de canal digital (Marketplace ou Cardápio Digital)
               triggerWhatsAppMock("🛒 Novo Pedido!", `Olá! Você recebeu um novo pedido de ${cloudOrder.customerName} via ${cloudOrder.source === 'marketplace' ? 'Marketplace' : 'Cardápio Digital'}.`);
 
+              // Se o caixa estiver fechado, aciona automaticamente o modal para abrir o caixa e contabilizar as vendas
+              if (!cashSessionRef.current.isOpen) {
+                setPendingOrderToAcceptAfterCashOpen(cloudOrder);
+                setShowGlobalOpenCashModal(true);
+              }
+
               if (adminSettings.autoAcceptOrders) {
                  const rawAcceptedOrder: Order = { 
                    ...cloudOrder, 
                    source: cloudOrder.source || 'digital_menu',
                    status: 'preparing' as const, 
+                   shiftOpenedAt: cashSessionRef.current.isOpen ? (cashSessionRef.current.openedAt || new Date()) : new Date(),
                    deliveryFee: cloudOrder.type === 'delivery' ? globalDeliveryFee : 0 
                  };
                  const acceptedOrder = assignDailyNumberToOrder(rawAcceptedOrder);
@@ -5249,6 +5276,87 @@ const App: React.FC = () => {
     addLog('u1', 'INSUMOS', `Novo insumo cadastrado: ${newMaterial.name}`);
   };
 
+  const handleAcceptIncomingOrder = async (order: Order) => {
+    if (order.customerPhone) {
+      try {
+        const existingCustomer = customers.find(c => c.phone === order.customerPhone);
+        if (!existingCustomer) {
+          await handleAddCustomer({
+            name: order.customerName,
+            phone: order.customerPhone,
+            history: [{
+              id: `tr-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+              date: new Date(),
+              type: 'debit',
+              description: `Primeiro pedido via Marketplace (#${order.id.slice(-4)})`,
+              items: order.items?.map(it => ({ name: it.name, quantity: it.quantity, price: it.price })),
+              amount: order.total
+            }]
+          });
+        } else {
+          const updatedHistory: CustomerTransaction[] = [
+            ...(existingCustomer.history || []),
+            {
+              id: `tr-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+              date: new Date(),
+              type: 'debit',
+              description: `Pedido via Marketplace (#${order.id.slice(-4)})`,
+              items: order.items?.map(it => ({ name: it.name, quantity: it.quantity, price: it.price })),
+              amount: order.total
+            }
+          ];
+          await handleUpdateCustomer(existingCustomer.id, { 
+            history: updatedHistory,
+            address: order.customerAddress || existingCustomer.address
+          });
+        }
+      } catch (e) {
+        console.error("Erro ao processar cliente do marketplace:", e);
+      }
+    }
+
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    const now = new Date();
+    const rawAcceptedOrder: Order = { 
+      ...order, 
+      tenantId: order.tenantId || effectiveTenantId || 'HCL1177LRQVPEKCTYRAHU7IGBQ42',
+      source: order.source || 'whatsapp',
+      status: 'preparing',
+      shiftOpenedAt: cashSessionRef.current.isOpen ? (cashSessionRef.current.openedAt || now) : now,
+      deliveryFee: order.type === 'delivery' ? globalDeliveryFee : 0 
+    };
+    const acceptedOrder = assignDailyNumberToOrder(rawAcceptedOrder);
+    await localDb.orders.put(acceptedOrder);
+    setOrders(prev => {
+      const exists = prev.some(o => o.id === acceptedOrder.id);
+      if (exists) {
+        return prev.map(o => o.id === acceptedOrder.id ? acceptedOrder : o);
+      }
+      return [acceptedOrder, ...prev];
+    });
+    setIncomingDigitalOrders(prev => prev.filter(o => o.id !== order.id));
+    
+    triggerWhatsAppMock("✅ Pedido Confirmado", `Recebemos seu pedido #${order.id.slice(-4)}! Já estamos preparando.`);
+    
+    if (order.id) {
+      try {
+        await setDoc(doc(db, 'orders', order.id), cleanObject({
+          ...acceptedOrder,
+          updatedAt: now,
+          acceptedAt: now
+        }));
+      } catch (e) {
+        console.error("Error accepting cloud order:", e);
+      }
+    }
+
+    if (order.type === 'table' && order.tableNumber) {
+      handleUpdateTable(order.tableNumber, order.items, 'occupied');
+    }
+    triggerWhatsAppMock("✅ Pedido Aceito!", `Olá ${order.customerName}, seu pedido #${order.id.slice(-4)} foi aceito e já está em produção!`);
+    addLog('u1', 'DIGITAL', `Pedido #${order.id.slice(-4)} ACEITO E ENVIADO À COZINHA`);
+  };
+
   const handleOpenCash = async (value: number) => {
     try {
       const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
@@ -6813,6 +6921,30 @@ const App: React.FC = () => {
                   </div>
                 )}
 
+                {!cashSession.isOpen && (
+                  <div className="bg-amber-50 border border-amber-200/90 rounded-2xl p-4 flex items-center justify-between gap-3 text-left">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-sm">
+                        <Lock size={18} />
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-black uppercase text-amber-800 tracking-wider">Caixa Fechado</p>
+                        <p className="text-xs font-medium text-amber-700 leading-tight">Abra o caixa para contabilizar este pedido no turno atual.</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPendingOrderToAcceptAfterCashOpen(order);
+                        setShowGlobalOpenCashModal(true);
+                      }}
+                      className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-black text-[10px] uppercase tracking-wider transition-all whitespace-nowrap shadow-sm"
+                    >
+                      Abrir Caixa
+                    </button>
+                  </div>
+                )}
+
                 <div className="flex gap-3">
                   <button onClick={async () => {
                      if (confirm("Deseja realmente recusar este pedido? Esta ação não pode ser desfeita.")) {
@@ -6831,83 +6963,15 @@ const App: React.FC = () => {
                      }
                   }} className="flex-1 py-4 bg-slate-100 text-slate-500 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-rose-50 hover:text-rose-600 transition-all">Recusar Pedido</button>
                   <button onClick={async () => {
-                     if (order.customerPhone) {
-                       try {
-                          const existingCustomer = customers.find(c => c.phone === order.customerPhone);
-                          if (!existingCustomer) {
-                            await handleAddCustomer({
-                              name: order.customerName,
-                              phone: order.customerPhone,
-                                     history: [{
-                                id: `tr-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-                                date: new Date(),
-                                type: 'debit',
-                                description: `Primeiro pedido via Marketplace (#${order.id.slice(-4)})`, items: order.items?.map(it => ({ name: it.name, quantity: it.quantity, price: it.price })),
-                                amount: order.total
-                              }]
-                            });
-                          } else {
-                            const updatedHistory: CustomerTransaction[] = [
-                              ...(existingCustomer.history || []),
-                              {
-                                id: `tr-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-                                date: new Date(),
-                                type: 'debit',
-                                description: `Pedido via Marketplace (#${order.id.slice(-4)})`, items: order.items?.map(it => ({ name: it.name, quantity: it.quantity, price: it.price })),
-                                amount: order.total
-                              }
-                            ];
-                            await handleUpdateCustomer(existingCustomer.id, { 
-                              history: updatedHistory,
-                              address: order.customerAddress || existingCustomer.address
-                            });
-                          }
-                       } catch (e) {
-                         console.error("Erro ao processar cliente do marketplace:", e);
-                       }
+                     if (!cashSession.isOpen) {
+                       setPendingOrderToAcceptAfterCashOpen(order);
+                       setShowGlobalOpenCashModal(true);
+                       return;
                      }
-
-                     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
-                     const rawAcceptedOrder: Order = { 
-                       ...order, 
-                       tenantId: order.tenantId || effectiveTenantId || 'HCL1177LRQVPEKCTYRAHU7IGBQ42',
-                       source: order.source || 'whatsapp',
-                       status: 'preparing',
-                       deliveryFee: order.type === 'delivery' ? globalDeliveryFee : 0 
-                     };
-                     const acceptedOrder = assignDailyNumberToOrder(rawAcceptedOrder);
-                     await localDb.orders.put(acceptedOrder);
-                     setOrders(prev => {
-                       const exists = prev.some(o => o.id === acceptedOrder.id);
-                       if (exists) {
-                         return prev.map(o => o.id === acceptedOrder.id ? acceptedOrder : o);
-                       }
-                       return [acceptedOrder, ...prev];
-                     });
-                     setIncomingDigitalOrders(prev => prev.filter(o => o.id !== order.id));
-                     
-                     triggerWhatsAppMock("✅ Pedido Confirmado", `Recebemos seu pedido #${order.id.slice(-4)}! Já estamos preparando.`);
-                     
-                     if (order.id) {
-                       try {
-                         // Salvar o pedido COMPLETO no Firestore (com itens, cliente, e tenantId)
-                         // para sincronização imediata em todas as telas (KDS, Entregas, Admin, etc.)
-                         await setDoc(doc(db, 'orders', order.id), cleanObject({
-                           ...acceptedOrder,
-                           updatedAt: new Date(),
-                           acceptedAt: new Date()
-                         }));
-                       } catch (e) {
-                         console.error("Error accepting cloud order:", e);
-                       }
-                     }
-
-                     if (order.type === 'table' && order.tableNumber) {
-                       handleUpdateTable(order.tableNumber, order.items, 'occupied');
-                     }
-                     triggerWhatsAppMock("✅ Pedido Aceito!", `Olá ${order.customerName}, seu pedido #${order.id.slice(-4)} foi aceito e já está em produção!`);
-                     addLog('u1', 'DIGITAL', `Pedido #${order.id.slice(-4)} ACEITO E ENVIADO À COZINHA`);
-                  }} className="flex-[1.5] py-4 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-200">Aceitar Pedido</button>
+                     await handleAcceptIncomingOrder(order);
+                  }} className="flex-[1.5] py-4 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-200">
+                    {cashSession.isOpen ? "Aceitar Pedido" : "Abrir Caixa & Aceitar"}
+                  </button>
                 </div>
               </div>
             ))}
@@ -6916,6 +6980,25 @@ const App: React.FC = () => {
       )}
 
       <AnimatePresence>
+        {showGlobalOpenCashModal && (
+          <OpenCashModal
+            isOpen={showGlobalOpenCashModal}
+            onClose={() => {
+              setShowGlobalOpenCashModal(false);
+              setPendingOrderToAcceptAfterCashOpen(null);
+            }}
+            onConfirm={async (val) => {
+              await handleOpenCash(val);
+              if (pendingOrderToAcceptAfterCashOpen) {
+                const orderToProcess = pendingOrderToAcceptAfterCashOpen;
+                setPendingOrderToAcceptAfterCashOpen(null);
+                await handleAcceptIncomingOrder(orderToProcess);
+              }
+            }}
+            triggerOrder={pendingOrderToAcceptAfterCashOpen}
+            pendingCount={incomingDigitalOrders.filter(isDigitalOrMarketplaceOrder).length}
+          />
+        )}
         {isProfileOpen && (
           <UserProfileModal
             isOpen={isProfileOpen}

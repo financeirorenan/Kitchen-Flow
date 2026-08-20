@@ -305,7 +305,7 @@ export const FiscalCoupons: React.FC<FiscalCouponsProps> = ({
     const safeTenantId = doc.tenantId || currentTenant || 't1';
 
     // Montar representação do pedido para a impressão
-    const orderRepresentation: Order = {
+    let orderRepresentation: Order = {
       id: doc.orderId || `ord_${doc.nfceNumber}`,
       tenantId: safeTenantId,
       tableNumber: doc.tableNumber,
@@ -331,7 +331,8 @@ export const FiscalCoupons: React.FC<FiscalCouponsProps> = ({
       metadata: {
         protocol: doc.protocol,
         nfceNumber: doc.nfceNumber,
-        series: doc.series
+        series: doc.series,
+        qrCodeUrl: doc.qrCodeUrl
       }
     };
 
@@ -354,9 +355,22 @@ export const FiscalCoupons: React.FC<FiscalCouponsProps> = ({
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.document) {
-          // Atualizar estado local do documento com o novo contador de reimpressões
-          setDocuments(prev => prev.map(d => d.id === doc.id ? data.document : d));
-          setSelectedDoc(data.document);
+          // Atualizar estado local do documento com o novo contador de reimpressões e chaves saneadas
+          const updatedDoc = data.document;
+          setDocuments(prev => prev.map(d => d.id === doc.id ? updatedDoc : d));
+          setSelectedDoc(updatedDoc);
+
+          orderRepresentation = {
+            ...orderRepresentation,
+            fiscalKey: updatedDoc.fiscalKey || orderRepresentation.fiscalKey,
+            metadata: {
+              ...orderRepresentation.metadata,
+              protocol: updatedDoc.protocol || orderRepresentation.metadata?.protocol,
+              nfceNumber: updatedDoc.nfceNumber || orderRepresentation.metadata?.nfceNumber,
+              series: updatedDoc.series || orderRepresentation.metadata?.series,
+              qrCodeUrl: updatedDoc.qrCodeUrl || orderRepresentation.metadata?.qrCodeUrl
+            }
+          };
         }
       } else {
         // Incrementa localmente se a rede estiver instável
@@ -371,7 +385,7 @@ export const FiscalCoupons: React.FC<FiscalCouponsProps> = ({
       // Envia comando para a impressora térmica / modal de impressão
       handlePrintOrder(orderRepresentation, adminSettings, { isFiscal: true });
       showToast(`Reimpressão de NFC-e #${doc.nfceNumber || 'DANFE'} enviada para impressão!`, 'success');
-      addLog?.(currentUser?.id || 'u1', 'REIMPRESSAO_FISCAL', `Reimpressão de NFC-e #${doc.nfceNumber} (Chave: ${doc.fiscalKey})`);
+      addLog?.(currentUser?.id || 'u1', 'REIMPRESSAO_FISCAL', `Reimpressão de NFC-e #${doc.nfceNumber} (Chave: ${orderRepresentation.fiscalKey || doc.fiscalKey})`);
     } catch (err: any) {
       console.warn('Falha na requisição de log de reimpressão, prosseguindo com impressão física:', err);
       // Mesmo com erro de rede, não impede a impressora física de emitir a via

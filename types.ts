@@ -377,16 +377,22 @@ export interface MarketplaceInvoice {
   createdAt: Date;
 }
 
+export interface MarketplacePromotion {
+  id: string;
+  title: string; 
+  active: boolean; 
+  bannerUrl?: string;
+  participatingTenantIds: string[];
+  description?: string;
+  type?: 'free_delivery' | 'percentage_discount' | 'fixed_discount';
+  minOrderValue?: number; // Ex: R$ 65,00 para entrega grátis
+  discountValue?: number; // Ex: 10 (%) ou 15 (R$)
+  couponCode?: string; // Código opcional (ex: FRETE65)
+}
+
 export interface MarketplaceSettings {
   id: string;
-  promotions: { 
-    id: string;
-    title: string; 
-    active: boolean; 
-    bannerUrl?: string;
-    participatingTenantIds: string[];
-    description?: string;
-  }[];
+  promotions: MarketplacePromotion[];
   serviceFee: number;
   maintenance: {
     active: boolean;
@@ -609,6 +615,10 @@ export interface Order {
   additionalFee?: number;
   additionalFeeReason?: string;
   discount?: number;
+  coupon?: string;
+  appliedPromotion?: string;
+  freeDeliveryApplied?: boolean;
+  originalDeliveryFee?: number;
   paymentMethod?: PaymentMethod;
   payments?: OrderPayment[];
   isFiscalIssued?: boolean;

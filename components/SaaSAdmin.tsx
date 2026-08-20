@@ -4,7 +4,7 @@ import { db } from '../firebase';
 import { collection, onSnapshot, doc, setDoc, updateDoc, query, orderBy, deleteDoc, addDoc, where, getDocs, getDoc } from 'firebase/firestore';
 import { compressImage } from '../lib/imageUtils';
 import { ensureLojistaTenantWithData } from '../lib/ensureLojistaTenant';
-import { Tenant, Plan, Permission, User, MarketplaceInvoice, MarketplaceSettings } from '../types';
+import { Tenant, Plan, Permission, User, MarketplaceInvoice, MarketplaceSettings, MarketplacePromotion } from '../types';
 import { maskPhone } from '../utils/masks';
 import { sendSaasInvoiceEmailResend } from '../services/emailService';
 import { 
@@ -1054,7 +1054,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   });
   const [marketplaceConfigSubTab, setMarketplaceConfigSubTab] = useState<'fees' | 'operations' | 'marketing' | 'ranking' | 'maintenance'>('fees');
   const [marketplaceBanner, setMarketplaceBanner] = useState('https://images.unsplash.com/photo-1504674900247-0877df9cc836?q=80&w=800&auto=format&fit=crop');
-  const [marketplacePromotions, setMarketplacePromotions] = useState<{ id: string; title: string; active: boolean; participatingTenantIds: string[]; bannerUrl?: string }[]>([]);
+  const [marketplacePromotions, setMarketplacePromotions] = useState<MarketplacePromotion[]>([]);
   const [maintenanceConfig, setMaintenanceConfig] = useState({
     active: false,
     startAt: '',
@@ -5032,11 +5032,21 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                         <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100 space-y-4">
                            <div className="flex items-center justify-between">
                               <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
-                                <Sparkles size={16} className="text-amber-500" /> Campanhas e Cupons Promocionais
+                                <Sparkles size={16} className="text-amber-500" /> Campanhas e Promoções do Marketplace
                               </h4>
                               <button 
                                 onClick={() => {
-                                   setEditingPromo({ id: `promo_${Date.now()}`, title: '', active: true, participatingTenantIds: [] });
+                                   setEditingPromo({ 
+                                     id: `promo_${Date.now()}`, 
+                                     title: '', 
+                                     description: '',
+                                     active: true, 
+                                     type: 'free_delivery',
+                                     minOrderValue: 65,
+                                     discountValue: 0,
+                                     couponCode: '',
+                                     participatingTenantIds: [] 
+                                   });
                                    setShowPromoModal(true);
                                 }}
                                 className="px-3 py-1.5 bg-indigo-600 text-white rounded-xl font-black text-[9px] uppercase tracking-wider hover:bg-indigo-500 transition-all flex items-center gap-1 shadow-sm"
@@ -5047,7 +5057,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
 
                            <div className="space-y-3 pt-2">
                               {marketplacePromotions.map((promo, idx) => (
-                                 <div key={idx} className="p-4 bg-white border border-slate-200 rounded-2xl flex items-center justify-between shadow-xs">
+                                 <div key={idx} className="p-4 bg-white border border-slate-200 rounded-2xl flex items-center justify-between shadow-xs hover:border-indigo-200 transition-all">
                                     <div className="flex items-center gap-3">
                                        <button 
                                          onClick={() => {
@@ -5060,16 +5070,54 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                                        </button>
                                        <button 
                                          onClick={() => {
-                                           setEditingPromo({...promo, index: idx});
+                                           setEditingPromo({
+                                             ...promo, 
+                                             type: promo.type || 'free_delivery',
+                                             minOrderValue: promo.minOrderValue ?? 65,
+                                             discountValue: promo.discountValue ?? 0,
+                                             couponCode: promo.couponCode || '',
+                                             index: idx
+                                           });
                                            setShowPromoModal(true);
                                          }}
                                          className="p-1.5 text-slate-300 hover:text-indigo-600 transition-all"
                                        >
                                           <Edit3 size={14} />
                                        </button>
-                                       <div>
-                                         <p className="text-xs font-bold text-slate-800">{promo.title}</p>
-                                         <span className="text-[9px] font-black text-indigo-600 uppercase">{promo.participatingTenantIds?.length || 0} Lojas Participantes</span>
+                                       <div className="space-y-1">
+                                         <div className="flex items-center gap-2 flex-wrap">
+                                           <p className="text-xs font-black text-slate-800">{promo.title}</p>
+                                           {promo.type === 'free_delivery' && (
+                                             <span className="text-[8px] font-black bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                                               🚚 Frete Grátis {promo.minOrderValue ? `acima de R$ ${promo.minOrderValue.toFixed(2)}` : ''}
+                                             </span>
+                                           )}
+                                           {promo.type === 'percentage_discount' && (
+                                             <span className="text-[8px] font-black bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                                               🏷️ {promo.discountValue}% OFF {promo.minOrderValue ? `(min R$ ${promo.minOrderValue.toFixed(2)})` : ''}
+                                             </span>
+                                           )}
+                                           {promo.type === 'fixed_discount' && (
+                                             <span className="text-[8px] font-black bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                                               💵 R$ {promo.discountValue?.toFixed(2)} OFF {promo.minOrderValue ? `(min R$ ${promo.minOrderValue.toFixed(2)})` : ''}
+                                             </span>
+                                           )}
+                                           {promo.couponCode && (
+                                             <span className="text-[8px] font-black bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded uppercase">
+                                               Cupom: {promo.couponCode}
+                                             </span>
+                                           )}
+                                         </div>
+                                         <div className="flex items-center gap-2 text-[9px]">
+                                           <span className="font-bold text-indigo-600 uppercase">
+                                             {(!promo.participatingTenantIds || promo.participatingTenantIds.length === 0 || promo.participatingTenantIds.includes('all')) 
+                                               ? 'Válido para Todos os Restaurantes' 
+                                               : `${promo.participatingTenantIds.length} Restaurante(s) Participante(s)`}
+                                           </span>
+                                           {promo.description && (
+                                             <span className="text-slate-400 font-medium">• {promo.description}</span>
+                                           )}
+                                         </div>
                                        </div>
                                     </div>
                                     <div 
@@ -5919,7 +5967,110 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                            className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-500 transition-all"
                            value={editingPromo.title}
                            onChange={(e) => setEditingPromo({...editingPromo, title: e.target.value})}
-                           placeholder="Ex: Festival de Verão"
+                           placeholder="Ex: Entrega Grátis Especial"
+                         />
+                      </div>
+
+                      <div className="space-y-1">
+                         <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Tipo de Promoção / Benefício</label>
+                         <div className="grid grid-cols-3 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setEditingPromo({...editingPromo, type: 'free_delivery'})}
+                              className={`p-3 rounded-2xl border-2 font-bold text-[10px] flex flex-col items-center gap-1.5 transition-all ${(editingPromo.type || 'free_delivery') === 'free_delivery' ? 'bg-emerald-50 border-emerald-500 text-emerald-800' : 'bg-slate-50 border-slate-100 text-slate-500'}`}
+                            >
+                               <span className="text-base">🚚</span>
+                               <span>Frete Grátis</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingPromo({...editingPromo, type: 'percentage_discount'})}
+                              className={`p-3 rounded-2xl border-2 font-bold text-[10px] flex flex-col items-center gap-1.5 transition-all ${editingPromo.type === 'percentage_discount' ? 'bg-amber-50 border-amber-500 text-amber-800' : 'bg-slate-50 border-slate-100 text-slate-500'}`}
+                            >
+                               <span className="text-base">🏷️</span>
+                               <span>Desconto %</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingPromo({...editingPromo, type: 'fixed_discount'})}
+                              className={`p-3 rounded-2xl border-2 font-bold text-[10px] flex flex-col items-center gap-1.5 transition-all ${editingPromo.type === 'fixed_discount' ? 'bg-blue-50 border-blue-500 text-blue-800' : 'bg-slate-50 border-slate-100 text-slate-500'}`}
+                            >
+                               <span className="text-base">💵</span>
+                               <span>Desconto R$</span>
+                            </button>
+                         </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                         <div className="space-y-1">
+                            <label className="text-[10px] font-black text-slate-400 uppercase ml-1">
+                              Valor Mínimo (R$)
+                            </label>
+                            <input 
+                              type="number" 
+                              step="0.5"
+                              min="0"
+                              className="w-full p-3.5 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-500 transition-all"
+                              value={editingPromo.minOrderValue ?? ''}
+                              onChange={(e) => setEditingPromo({...editingPromo, minOrderValue: parseFloat(e.target.value) || 0})}
+                              placeholder="Ex: 65.00"
+                            />
+                            <p className="text-[8px] text-slate-400 font-bold ml-1">Pedido mínimo para ativar</p>
+                         </div>
+
+                         {(editingPromo.type === 'percentage_discount' || editingPromo.type === 'fixed_discount') ? (
+                           <div className="space-y-1">
+                              <label className="text-[10px] font-black text-slate-400 uppercase ml-1">
+                                {editingPromo.type === 'percentage_discount' ? 'Desconto (%)' : 'Desconto (R$)'}
+                              </label>
+                              <input 
+                                type="number" 
+                                step="0.5"
+                                min="0"
+                                className="w-full p-3.5 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-500 transition-all"
+                                value={editingPromo.discountValue ?? ''}
+                                onChange={(e) => setEditingPromo({...editingPromo, discountValue: parseFloat(e.target.value) || 0})}
+                                placeholder={editingPromo.type === 'percentage_discount' ? 'Ex: 10' : 'Ex: 15.00'}
+                              />
+                              <p className="text-[8px] text-slate-400 font-bold ml-1">Valor do benefício</p>
+                           </div>
+                         ) : (
+                           <div className="space-y-1">
+                              <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Código Cupom (Opcional)</label>
+                              <input 
+                                type="text" 
+                                className="w-full p-3.5 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-xs uppercase outline-none focus:border-indigo-500 transition-all"
+                                value={editingPromo.couponCode || ''}
+                                onChange={(e) => setEditingPromo({...editingPromo, couponCode: e.target.value.toUpperCase()})}
+                                placeholder="Ex: FRETE65"
+                              />
+                              <p className="text-[8px] text-slate-400 font-bold ml-1">Vazio = Automático</p>
+                           </div>
+                         )}
+                      </div>
+
+                      {(editingPromo.type === 'percentage_discount' || editingPromo.type === 'fixed_discount') && (
+                        <div className="space-y-1">
+                           <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Código Cupom (Opcional)</label>
+                           <input 
+                             type="text" 
+                             className="w-full p-3.5 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-xs uppercase outline-none focus:border-indigo-500 transition-all"
+                             value={editingPromo.couponCode || ''}
+                             onChange={(e) => setEditingPromo({...editingPromo, couponCode: e.target.value.toUpperCase()})}
+                             placeholder="Ex: FESTA10"
+                           />
+                           <p className="text-[8px] text-slate-400 font-bold ml-1">Vazio = Desconto automático acima do valor mínimo</p>
+                        </div>
+                      )}
+
+                      <div className="space-y-1">
+                         <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Descrição / Regras (Exibida ao Cliente)</label>
+                         <input 
+                           type="text" 
+                           className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-xs outline-none focus:border-indigo-500 transition-all"
+                           value={editingPromo.description || ''}
+                           onChange={(e) => setEditingPromo({...editingPromo, description: e.target.value})}
+                           placeholder="Ex: Entrega grátis em pedidos acima de R$ 65,00"
                          />
                       </div>
                       
@@ -5958,13 +6109,31 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                    </div>
 
                    <div className="space-y-4">
-                      <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest ml-1">Restaurantes Participantes ({editingPromo.participatingTenantIds?.length || 0})</label>
-                      <div className="bg-slate-50 border-2 border-slate-100 rounded-2xl overflow-hidden flex flex-col h-64">
+                      <div className="flex items-center justify-between">
+                         <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest ml-1">
+                           Restaurantes ({editingPromo.participatingTenantIds?.length || 0}/{tenants.length})
+                         </label>
+                         <button
+                           type="button"
+                           onClick={() => {
+                             const allIds = tenants.map(t => t.id);
+                             const isAllSelected = (editingPromo.participatingTenantIds || []).length >= tenants.length;
+                             setEditingPromo({
+                               ...editingPromo,
+                               participatingTenantIds: isAllSelected ? [] : allIds
+                             });
+                           }}
+                           className="text-[9px] font-black text-indigo-600 hover:text-indigo-700 uppercase tracking-wider hover:underline"
+                         >
+                           {(editingPromo.participatingTenantIds || []).length >= tenants.length ? 'Desmarcar Todos' : 'Marcar Todos'}
+                         </button>
+                      </div>
+                      <div className="bg-slate-50 border-2 border-slate-100 rounded-2xl overflow-hidden flex flex-col h-80">
                          <div className="p-3 border-b bg-white flex items-center gap-2">
                            <Search size={14} className="text-slate-400" />
                            <input 
                              type="text" 
-                             placeholder="Buscar loja..." 
+                             placeholder="Buscar restaurante..." 
                              className="text-[10px] font-bold outline-none w-full" 
                              value={promoTenantSearch}
                              onChange={(e) => setPromoTenantSearch(e.target.value)}
@@ -5973,33 +6142,43 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                          <div className="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
                             {tenants
                              .filter(t => t.name.toLowerCase().includes(promoTenantSearch.toLowerCase()))
-                             .map(tenant => (
-                               <button
-                                 key={tenant.id}
-                                 onClick={() => {
-                                    const currentIds = editingPromo.participatingTenantIds || [];
-                                    const newIds = currentIds.includes(tenant.id) 
-                                      ? currentIds.filter((id: string) => id !== tenant.id)
-                                      : [...currentIds, tenant.id];
-                                    setEditingPromo({...editingPromo, participatingTenantIds: newIds});
-                                 }}
-                                 className={`w-full p-3 rounded-xl flex items-center justify-between transition-all ${
-                                    (editingPromo.participatingTenantIds || []).includes(tenant.id)
-                                      ? 'bg-indigo-600 text-white'
-                                      : 'bg-white text-slate-600 hover:bg-slate-100'
-                                 }`}
-                               >
-                                  <div className="flex items-center gap-3">
-                                     <div className="w-6 h-6 rounded bg-white/20 overflow-hidden flex items-center justify-center">
-                                        {tenant.logoUrl ? <img src={tenant.logoUrl} className="w-full h-full object-cover" /> : <Building2 size={12} />}
-                                     </div>
-                                     <span className="text-[10px] font-black uppercase text-left">{tenant.name}</span>
-                                  </div>
-                                  {(editingPromo.participatingTenantIds || []).includes(tenant.id) && <CheckCircle2 size={14} />}
-                               </button>
-                            ))}
+                             .map(tenant => {
+                               const isSelected = (editingPromo.participatingTenantIds || []).includes(tenant.id);
+                               return (
+                                 <button
+                                   key={tenant.id}
+                                   type="button"
+                                   onClick={() => {
+                                      const currentIds = editingPromo.participatingTenantIds || [];
+                                      const newIds = isSelected 
+                                        ? currentIds.filter((id: string) => id !== tenant.id)
+                                        : [...currentIds, tenant.id];
+                                      setEditingPromo({...editingPromo, participatingTenantIds: newIds});
+                                   }}
+                                   className={`w-full p-3 rounded-xl flex items-center justify-between transition-all ${
+                                      isSelected
+                                        ? 'bg-indigo-600 text-white shadow-sm'
+                                        : 'bg-white text-slate-600 hover:bg-slate-100'
+                                   }`}
+                                 >
+                                    <div className="flex items-center gap-3">
+                                       <div className="w-7 h-7 rounded-lg bg-white/20 overflow-hidden flex items-center justify-center">
+                                          {tenant.logoUrl ? <img src={tenant.logoUrl} className="w-full h-full object-cover" /> : <Building2 size={13} />}
+                                       </div>
+                                       <div className="text-left">
+                                         <p className="text-[10px] font-black uppercase leading-tight">{tenant.name}</p>
+                                         <p className={`text-[8px] ${isSelected ? 'text-indigo-100' : 'text-slate-400'} font-medium`}>{tenant.segment || 'Restaurante'}</p>
+                                       </div>
+                                    </div>
+                                    {isSelected ? <CheckCircle2 size={16} className="text-white" /> : <div className="w-4 h-4 rounded-full border border-slate-300" />}
+                                 </button>
+                               );
+                             })}
                          </div>
                       </div>
+                      <p className="text-[9px] text-slate-400 font-bold ml-1">
+                        * Se nenhum restaurante for selecionado ou todos estiverem marcados, a promoção é válida para todo o marketplace.
+                      </p>
                    </div>
                 </div>
 

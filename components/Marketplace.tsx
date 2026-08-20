@@ -1692,6 +1692,15 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   }
 
   if (selectedTenant && storeSettings) {
+    const storeApplicablePromotions = (marketplaceSettings?.promotions || []).filter(p => 
+      p.active && (
+        !p.participatingTenantIds || 
+        p.participatingTenantIds.length === 0 || 
+        p.participatingTenantIds.includes(selectedTenant.id) ||
+        p.participatingTenantIds.includes('all')
+      )
+    );
+
     return (
       <div className="h-full overflow-y-auto bg-white w-full">
         <DigitalMenu
@@ -1713,6 +1722,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
           minOrderValue={storeAdminSettings?.minOrderValue}
           estimatedDeliveryTime={storeAdminSettings?.estimatedDeliveryTime}
           estimatedPickupTime={storeAdminSettings?.estimatedPickupTime}
+          promotions={storeApplicablePromotions}
           onBack={
             isDirectCardapioRoute
               ? undefined

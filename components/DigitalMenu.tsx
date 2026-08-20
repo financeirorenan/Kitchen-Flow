@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { maskPhone } from '../utils/masks';
 import { normalizePaymentMethod, getPaymentMethodLabel } from '../utils/paymentUtils';
-import { DigitalMenuSettings, Product, ProductOption } from '../types';
+import { DigitalMenuSettings, Product, ProductOption, MarketplacePromotion } from '../types';
 
 interface DigitalMenuProps {
   settings: DigitalMenuSettings;
@@ -37,6 +37,7 @@ interface DigitalMenuProps {
   restaurantCity?: string;
   isOpen?: boolean;
   openStatusMessage?: string;
+  promotions?: MarketplacePromotion[];
 }
 
 interface CartItem {
@@ -69,6 +70,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
   restaurantCity,
   isOpen = true,
   openStatusMessage,
+  promotions = [],
 }) => {
   const [activeCategory, setActiveCategory] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -544,25 +546,99 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
   }, 0);
   const cartCount = cart.reduce((acc, item) => acc + item.quantity, 0);
 
-  const freeDeliveryMin = 50;
+  const activePromos = useMemo(() => {
+    return (promotions || []).filter(p => p.active !== false);
+  }, [promotions]);
+
+  // Promoção de Frete Grátis específica para a loja ou geral
+  const freeDeliveryPromo = useMemo(() => {
+    return activePromos.find(p => p.type === 'free_delivery' || (!p.type && (p.title?.toLowerCase().includes('frete') || p.title?.toLowerCase().includes('entrega'))));
+  }, [activePromos]);
+
+  const freeDeliveryMin = useMemo(() => {
+    if (freeDeliveryPromo?.minOrderValue !== undefined && freeDeliveryPromo.minOrderValue > 0) {
+      return freeDeliveryPromo.minOrderValue;
+    }
+    return 50;
+  }, [freeDeliveryPromo]);
+
+  const isFreeDeliveryEligible = useMemo(() => {
+    if (appliedCoupon?.freeShipping) return true;
+    if (freeDeliveryPromo && freeDeliveryPromo.minOrderValue !== undefined) {
+      return cartTotal >= freeDeliveryPromo.minOrderValue;
+    }
+    return cartTotal >= freeDeliveryMin;
+  }, [appliedCoupon, freeDeliveryPromo, cartTotal, freeDeliveryMin]);
+
   const missingForFreeDelivery = Math.max(0, freeDeliveryMin - cartTotal);
   const freeDeliveryProgress = Math.min(100, (cartTotal / freeDeliveryMin) * 100);
 
-  const effectiveDeliveryFee = (orderType === 'delivery' && !appliedCoupon?.freeShipping) ? deliveryFee : 0;
-  
+  const effectiveDeliveryFee = (orderType === 'delivery') 
+    ? (isFreeDeliveryEligible ? 0 : deliveryFee) 
+    : 0;
+
+  // Promoção de desconto percentual ou fixo automático
+  const autoDiscountPromo = useMemo(() => {
+    return activePromos.find(p => 
+      (p.type === 'percentage_discount' || p.type === 'fixed_discount') &&
+      (!p.couponCode || p.couponCode.trim() === '') &&
+      (!p.minOrderValue || cartTotal >= p.minOrderValue)
+    );
+  }, [activePromos, cartTotal]);
+
   const discountAmount = useMemo(() => {
-    if (!appliedCoupon) return 0;
-    if (appliedCoupon.isPercentage) {
-      return (cartTotal * appliedCoupon.discount) / 100;
+    let promoDiscount = 0;
+    let couponDiscount = 0;
+
+    if (appliedCoupon) {
+      if (appliedCoupon.isPercentage) {
+        couponDiscount = (cartTotal * appliedCoupon.discount) / 100;
+      } else if (!appliedCoupon.freeShipping) {
+        couponDiscount = appliedCoupon.discount;
+      }
     }
-    return appliedCoupon.discount;
-  }, [appliedCoupon, cartTotal]);
+
+    if (autoDiscountPromo) {
+      if (autoDiscountPromo.type === 'percentage_discount' && autoDiscountPromo.discountValue) {
+        promoDiscount = (cartTotal * autoDiscountPromo.discountValue) / 100;
+      } else if (autoDiscountPromo.type === 'fixed_discount' && autoDiscountPromo.discountValue) {
+        promoDiscount = Math.min(cartTotal, autoDiscountPromo.discountValue);
+      }
+    }
+
+    return Math.min(cartTotal, Math.max(promoDiscount, couponDiscount));
+  }, [appliedCoupon, autoDiscountPromo, cartTotal]);
 
   const finalTotal = Math.max(0, cartTotal - discountAmount + (orderType === 'delivery' ? effectiveDeliveryFee : 0));
 
   const handleApplyCoupon = () => {
     const code = couponInput.trim().toUpperCase();
     if (!code) return;
+
+    // Verificar se corresponde a alguma promoção cadastrada
+    const matchedPromo = activePromos.find(p => p.couponCode && p.couponCode.trim().toUpperCase() === code);
+    if (matchedPromo) {
+      if (matchedPromo.minOrderValue && cartTotal < matchedPromo.minOrderValue) {
+        setCouponError(`Cupom válido apenas para pedidos a partir de R$ ${matchedPromo.minOrderValue.toFixed(2)}`);
+        return;
+      }
+      if (matchedPromo.type === 'free_delivery') {
+        setAppliedCoupon({ code, discount: 0, isPercentage: false, freeShipping: true });
+        setCouponError(null);
+        return;
+      }
+      if (matchedPromo.type === 'percentage_discount') {
+        setAppliedCoupon({ code, discount: matchedPromo.discountValue || 10, isPercentage: true });
+        setCouponError(null);
+        return;
+      }
+      if (matchedPromo.type === 'fixed_discount') {
+        setAppliedCoupon({ code, discount: matchedPromo.discountValue || 5, isPercentage: false });
+        setCouponError(null);
+        return;
+      }
+    }
+
     if (code === 'PRIMEIRA10' || code === 'PRIMEIRA') {
       setAppliedCoupon({ code: 'PRIMEIRA10', discount: 10, isPercentage: true });
       setCouponError(null);
@@ -573,7 +649,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
       setAppliedCoupon({ code: 'FRETEGRATIS', discount: 0, isPercentage: false, freeShipping: true });
       setCouponError(null);
     } else {
-      setCouponError('Cupom inválido. Dica: Use PRIMEIRA10 ou BENVINDO');
+      setCouponError('Cupom inválido ou não atende aos requisitos.');
     }
   };
 
@@ -693,6 +769,12 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
         selectedOptions: item.selectedOptions
       })),
       total: finalTotal,
+      deliveryFee: orderType === 'delivery' ? effectiveDeliveryFee : 0,
+      originalDeliveryFee: orderType === 'delivery' ? deliveryFee : 0,
+      freeDeliveryApplied: orderType === 'delivery' && isFreeDeliveryEligible && (deliveryFee > 0),
+      appliedPromotion: (orderType === 'delivery' && isFreeDeliveryEligible && deliveryFee > 0)
+        ? (freeDeliveryPromo?.title || 'Entrega Grátis')
+        : (autoDiscountPromo?.title || (appliedCoupon ? `Cupom ${appliedCoupon.code}` : undefined)),
       coupon: appliedCoupon ? appliedCoupon.code : undefined,
       discount: discountAmount > 0 ? discountAmount : undefined,
       customerName,
@@ -704,7 +786,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
       type: orderType,
       notes: notes || undefined,
       status: 'pending',
-      source: 'digital_menu',
+      source: isMarketplace ? 'marketplace' : 'digital_menu',
       createdAt: new Date()
     };
 
@@ -744,7 +826,11 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
           `- ${item.quantity}x ${item.product.name} (R$ ${(item.product.price + (item.selectedOptions?.reduce((sum, opt) => sum + (opt.price || 0), 0) || 0)).toFixed(2)})\n` +
           (item.selectedOptions?.length ? `  _Adicionais: ${item.selectedOptions.map(o => o.name).join(', ')}_\n` : '')
         ).join('') +
-        `\n💰 *TOTAL: R$ ${(cartTotal + (orderType === 'delivery' ? deliveryFee : 0)).toFixed(2)}*`
+        (orderType === 'delivery' && isFreeDeliveryEligible && deliveryFee > 0 
+          ? `\n🚚 *Entrega:* GRÁTIS (Promoção - economia de R$ ${deliveryFee.toFixed(2)})` 
+          : (orderType === 'delivery' && deliveryFee > 0 ? `\n🚚 *Entrega:* R$ ${deliveryFee.toFixed(2)}` : '')) +
+        (discountAmount > 0 ? `\n🏷️ *Desconto:* -R$ ${discountAmount.toFixed(2)}` : '') +
+        `\n💰 *TOTAL A PAGAR: R$ ${finalTotal.toFixed(2)}*`
       );
       window.open(`https://wa.me/55${whatsappNumber.replace(/\D/g, '')}?text=${message}`, '_blank');
     }
@@ -2444,8 +2530,23 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                <Bike size={16} />
                <span className="text-xs font-black uppercase tracking-widest">Taxa de Entrega:</span>
             </div>
-            <span className="text-sm font-black text-emerald-600 tracking-tight">{deliveryFee > 0 ? `R$ ${deliveryFee.toFixed(2)}` : 'Grátis'}</span>
+            <span className="text-sm font-black text-emerald-600 tracking-tight">
+              {orderType === 'delivery' 
+                ? (effectiveDeliveryFee === 0 && deliveryFee > 0 
+                    ? 'Grátis (Promoção)' 
+                    : (effectiveDeliveryFee === 0 ? 'Grátis' : `R$ ${effectiveDeliveryFee.toFixed(2)}`))
+                : 'Não aplicável (Retirada)'}
+            </span>
           </div>
+          {discountAmount > 0 && (
+            <div className="flex justify-between items-center text-amber-600">
+              <div className="flex items-center gap-3">
+                 <Tag size={16} />
+                 <span className="text-xs font-black uppercase tracking-widest">Desconto:</span>
+              </div>
+              <span className="text-sm font-black tracking-tight">- R$ {discountAmount.toFixed(2)}</span>
+            </div>
+          )}
           <div className="flex justify-between items-center opacity-40">
             <div className="flex items-center gap-3 text-slate-400">
                <Sparkles size={16} />
@@ -2459,7 +2560,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                <span className="text-lg font-black uppercase tracking-tighter">Valor Final</span>
             </div>
             <span className="text-3xl font-black tracking-tighter" style={{ color: effectivePrimaryColor }}>
-              R$ {(cartTotal + (orderType === 'delivery' ? deliveryFee : 0)).toFixed(2)}
+              R$ {finalTotal.toFixed(2)}
             </span>
           </div>
         </div>

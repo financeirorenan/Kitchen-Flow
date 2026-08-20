@@ -4,6 +4,7 @@ import cors from "cors";
 import compression from "compression";
 import dotenv from "dotenv";
 import fs from "fs";
+import crypto from "crypto";
 
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
@@ -11,6 +12,77 @@ import { getAuth } from "firebase-admin/auth";
 import { Resend } from "resend";
 
 dotenv.config();
+
+/**
+ * Funções Padronizadas do Manual do DANFE NFC-e e QR Code da SEFAZ
+ */
+function calculateNfceDv(key43: string): number {
+  let sum = 0;
+  let weight = 2;
+  for (let i = key43.length - 1; i >= 0; i--) {
+    sum += parseInt(key43[i], 10) * weight;
+    weight = weight === 9 ? 2 : weight + 1;
+  }
+  const remainder = sum % 11;
+  return remainder < 2 ? 0 : 11 - remainder;
+}
+
+function generateStandardNfceKey(params: {
+  cUF?: string;
+  date?: Date | string;
+  cnpj?: string;
+  series?: number | string;
+  nfceNumber?: number | string;
+  tpEmis?: string;
+  cNF?: string | number;
+}): { fiscalKey: string; cDV: number } {
+  const cUF = (params.cUF || "35").replace(/\D/g, "").padStart(2, "0").slice(0, 2);
+  const now = params.date ? (params.date instanceof Date ? params.date : new Date(params.date)) : new Date();
+  const validDate = isNaN(now.getTime()) ? new Date() : now;
+  const yy = String(validDate.getFullYear()).slice(-2);
+  const mm = String(validDate.getMonth() + 1).padStart(2, "0");
+  const aamm = `${yy}${mm}`;
+  const cnpj = (params.cnpj || "59256207000174").replace(/\D/g, "").padStart(14, "0").slice(0, 14);
+  const mod = "65"; // Modelo 65 - NFC-e
+  const serie = String(params.series || 1).replace(/\D/g, "").padStart(3, "0").slice(-3);
+  const nNF = String(params.nfceNumber || 1).replace(/\D/g, "").padStart(9, "0").slice(-9);
+  const tpEmis = String(params.tpEmis || "1").replace(/\D/g, "").slice(0, 1) || "1";
+
+  let cNF = params.cNF ? String(params.cNF).replace(/\D/g, "").padStart(8, "0").slice(-8) : "";
+  if (!cNF || cNF.length !== 8) {
+    cNF = Math.floor(10000000 + Math.random() * 89999999).toString();
+  }
+
+  const key43 = `${cUF}${aamm}${cnpj}${mod}${serie}${nNF}${tpEmis}${cNF}`;
+  const cDV = calculateNfceDv(key43);
+  const fiscalKey = `${key43}${cDV}`;
+
+  return { fiscalKey, cDV };
+}
+
+function buildSefazNfceQrCodeUrl(key44: string, amb: string, cscId?: string, cscToken?: string): string {
+  const isProd = amb === "1";
+  const baseQrUrl = isProd
+    ? "https://www.nfce.fazenda.sp.gov.br/qrcode"
+    : "https://www.homologacao.nfce.fazenda.sp.gov.br/qrcode";
+  const consultaUrl = isProd
+    ? "https://www.nfce.fazenda.sp.gov.br/consulta"
+    : "https://www.homologacao.nfce.fazenda.sp.gov.br/consulta";
+
+  const cleanKey = key44.replace(/\D/g, "");
+  if (!cleanKey || cleanKey.length !== 44) {
+    return consultaUrl;
+  }
+
+  const cIdToken = (cscId || "000001").replace(/^0+/, "") || "1";
+  if (cscToken && cscToken.length >= 6) {
+    const paramString = `${cleanKey}|2|${amb}|${cIdToken}`;
+    const hashHex = crypto.createHash("sha1").update(paramString + cscToken).digest("hex").toUpperCase();
+    return `${baseQrUrl}?p=${paramString}|${hashHex}`;
+  }
+
+  return `${consultaUrl}?p=${cleanKey}`;
+}
 
 const getResendClient = () => {
   const apiKey = process.env.RESEND_API_KEY;
@@ -1405,6 +1477,24 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
         docData.tenantId = targetTenantId;
       }
 
+      // Validação e Autocorreção da Chave Fiscal e QR Code para a reimpressão
+      const cleanKey = (docData.fiscalKey || "").replace(/\D/g, "");
+      let validKey = cleanKey;
+      if (cleanKey.length !== 44 || cleanKey.slice(20, 22) !== "65" || Number(cleanKey[43]) !== calculateNfceDv(cleanKey.slice(0, 43))) {
+        const { fiscalKey: repairedKey } = generateStandardNfceKey({
+          cUF: "35",
+          date: docData.issuedAt || docData.createdAt || new Date(),
+          cnpj: docData.emitterCnpj || "59256207000174",
+          series: docData.series || 1,
+          nfceNumber: docData.nfceNumber || 1
+        });
+        validKey = repairedKey;
+        docData.fiscalKey = validKey;
+      }
+
+      const amb = docData.environment === "production" ? "1" : "2";
+      docData.qrCodeUrl = buildSefazNfceQrCodeUrl(validKey, amb, docData.cscId, docData.cscToken);
+
       const now = new Date();
       const reprintCount = (docData.reprintCount || 0) + 1;
       const auditEntry = {
@@ -1747,9 +1837,21 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
       const currentSer = Number(series) || Number(settings?.series) || 1;
 
       if (!pfxBase64 || pfxBase64.trim() === '') {
-        const simulatedAccessKey = "3526" + Math.floor(10 + Math.random() * 89).toString() + fiscalConfig.cnpj.replace(/\D/g, '').padStart(14, '0') + "65001" + Math.floor(100000 + Math.random() * 900000).toString() + "1" + Math.floor(10000000 + Math.random() * 89999999).toString() + "1";
-        const simulatedProtocol = "135260000000001";
         const now = new Date();
+        const { fiscalKey: simulatedAccessKey } = generateStandardNfceKey({
+          cUF: "35",
+          date: now,
+          cnpj: fiscalConfig.cnpj,
+          series: currentSer,
+          nfceNumber: currentNum
+        });
+        const simulatedProtocol = "135260000000001";
+        const simulatedQrCodeUrl = buildSefazNfceQrCodeUrl(
+          simulatedAccessKey,
+          fiscalConfig.ambiente,
+          fiscalConfig.cscId,
+          fiscalConfig.cscToken
+        );
 
         const fiscalDoc = {
           id: `doc_nfce_${order?.id || Date.now()}`,
@@ -1762,11 +1864,11 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
           series: currentSer,
           fiscalKey: simulatedAccessKey,
           protocol: simulatedProtocol,
-          qrCodeUrl: `https://www.homologacao.nfce.fazenda.sp.gov.br/consulta?p=${simulatedAccessKey}`,
+          qrCodeUrl: simulatedQrCodeUrl,
           status: "AUTORIZADA",
           issuedAt: now.toISOString(),
           authorizedAt: now.toISOString(),
-          environment: "homologation",
+          environment: fiscalConfig.ambiente === '1' ? "production" : "homologation",
           model: "65",
           cStat: "100",
           xMotivo: "Autorizado o uso da NFC-e (Modo Homologação / Simulado)",
