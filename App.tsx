@@ -3261,19 +3261,29 @@ const App: React.FC = () => {
     }
 
     // Criar pedido KDS inicial se não houver nenhum pedido ativo
+    const isDeliveryCounter = isCounter && !!tableInfo?.isDelivery;
     const rawKitchenOrder: Order = {
       id: `KDS-${Math.random().toString(36).substr(2, 4).toUpperCase()}`,
       tableNumber: isCounter ? undefined : displayTableNumber,
-      type: isCounter ? 'takeout' : 'table',
+      type: isCounter ? (isDeliveryCounter ? 'delivery' : 'takeout') : 'table',
+      deliveryMethod: isDeliveryCounter ? 'entrega' : (isCounter ? 'retirada' : undefined),
+      customerName: tableInfo?.customerName,
+      customerPhone: tableInfo?.customerPhone,
+      customerAddress: tableInfo?.customerAddress,
+      deliveryFee: tableInfo?.deliveryFee,
+      customerId: tableInfo?.customerId,
+      counterId: isCounter ? tableInfo?.id : undefined,
       status: 'preparing',
       items: items.map(i => ({ ...i, sentToKitchen: true, isNew: false })),
-      total: items.reduce((acc, i) => acc + (i.price * i.quantity), 0),
+      total: items.reduce((acc, i) => acc + (i.price * i.quantity), 0) + (tableInfo?.deliveryFee || 0),
       createdAt: now,
       updatedAt: now,
       tenantId: effectiveTenantId,
       version: 1,
       isManual: true,
-      source: 'pos'
+      source: 'pos',
+      isSettled: false,
+      paymentStatus: 'pending'
     };
     const kitchenOrder = assignDailyNumberToOrder(rawKitchenOrder);
 
@@ -3289,7 +3299,11 @@ const App: React.FC = () => {
     }
 
     if (isCounter) {
-      setCounterOrders(prev => prev.map(t => (t.id === tableId || String(t.id) === String(tableId)) ? { ...t, currentOrderId: kitchenOrder.id } : t));
+      setCounterOrders(prev => prev.map(t => (t.id === tableId || String(t.id) === String(tableId)) ? { 
+        ...t, 
+        currentOrderId: kitchenOrder.id,
+        items: t.items.map(i => ({ ...i, sentToKitchen: true }))
+      } : t));
     } else {
       setTables(prev => prev.map(t => (t.id === tableId || (t as any).docId === tableId || t.number === displayTableNumber) ? { ...t, currentOrderId: kitchenOrder.id } : t));
     }
