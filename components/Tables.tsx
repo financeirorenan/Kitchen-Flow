@@ -386,6 +386,31 @@ const Tables: React.FC<TablesProps> = memo(
       useState<Customer | null>(null);
     const [showAddressSelector, setShowAddressSelector] = useState(false);
 
+    const resetCustomerFields = useCallback(() => {
+      setCustomerName("");
+      setCustomerPhone("");
+      setDeliveryAddress("");
+      setDeliveryFeeInput("0");
+      setSelectedDeliveryCustomer(null);
+      setSelectedCustomerId("");
+      setShowDeliveryCustomerResults(false);
+      setShowAddressSelector(false);
+      setCustomerDocumentInput("");
+      setAdditionalFee(0);
+      setAdditionalFeeReason("");
+      setDiscount(0);
+    }, []);
+
+    const handleExitOrder = useCallback(() => {
+      if (pdvEditOrder && onCancelPdvEdit) {
+        onCancelPdvEdit();
+      }
+      setSelectedTable(null);
+      setIsCounterContext(false);
+      setIsDeliveryOrder(false);
+      resetCustomerFields();
+    }, [pdvEditOrder, onCancelPdvEdit, resetCustomerFields]);
+
     // Helper to handle order completion (new or update)
     const handleOrderCompletion = (
       method: PaymentMethod,
@@ -933,6 +958,7 @@ const Tables: React.FC<TablesProps> = memo(
         setShowCashModal(true);
         return;
       }
+      resetCustomerFields();
       setIsCounterContext(false);
       setIsDeliveryOrder(false);
       if (table.status === "available") {
@@ -940,12 +966,23 @@ const Tables: React.FC<TablesProps> = memo(
         setSelectedTable({ ...table, status: "occupied", items: [], total: 0 });
       } else {
         setSelectedTable(table);
+        if (table.customerName) setCustomerName(table.customerName);
+        if (table.customerPhone) setCustomerPhone(table.customerPhone);
+        if (table.customerAddress) setDeliveryAddress(table.customerAddress);
+        if (table.customerId) setSelectedCustomerId(table.customerId);
       }
       setActiveSeat("Geral");
     };
 
     const openCounterOrder = (order: Table) => {
+      resetCustomerFields();
       setIsCounterContext(true);
+      if (order.customerName) setCustomerName(order.customerName);
+      if (order.customerPhone) setCustomerPhone(order.customerPhone);
+      if (order.customerAddress) setDeliveryAddress(order.customerAddress);
+      if (order.deliveryFee) setDeliveryFeeInput(String(order.deliveryFee).replace(".", ","));
+      if (order.isDelivery !== undefined) setIsDeliveryOrder(!!order.isDelivery);
+      if (order.customerId) setSelectedCustomerId(order.customerId);
       setSelectedTable(order);
       setActiveSeat("Geral");
     };
@@ -956,8 +993,10 @@ const Tables: React.FC<TablesProps> = memo(
         setShowCashModal(true);
         return;
       }
+      resetCustomerFields();
       const newId = await onAddCounterOrder();
       setIsCounterContext(true);
+      setIsDeliveryOrder(false);
       setSelectedTable({
         id: newId,
         number: counterOrders.length + 1,
@@ -966,6 +1005,7 @@ const Tables: React.FC<TablesProps> = memo(
         total: 0,
         tenantId,
       });
+      setActiveSeat("Geral");
     };
 
     const addToTable = useCallback(
@@ -1465,7 +1505,7 @@ const Tables: React.FC<TablesProps> = memo(
           else if (editingItemIndex !== null) setEditingItemIndex(null);
           else if (showCashModal) setShowCashModal(false);
           else if (selectedTable) {
-            setSelectedTable(null);
+            handleExitOrder();
           }
           return;
         }
@@ -1641,11 +1681,9 @@ const Tables: React.FC<TablesProps> = memo(
         setIsProcessing(false);
         setShowPaymentModal(false);
         setSelectedTable(null);
+        setIsCounterContext(false);
         setIsDeliveryOrder(false);
-        setDeliveryAddress("");
-        setDeliveryFeeInput("0");
-        setCustomerName("");
-        setCustomerPhone("");
+        resetCustomerFields();
         setIsSplitting(false);
         setSplitParts([]);
       }, 0);
@@ -1749,9 +1787,9 @@ const Tables: React.FC<TablesProps> = memo(
         setShowChangeModal(false);
         setShowPaymentModal(false);
         setSelectedTable(null);
+        setIsCounterContext(false);
         setIsDeliveryOrder(false);
-        setDeliveryAddress("");
-        setDeliveryFeeInput("0");
+        resetCustomerFields();
       }, 0);
     };
 
@@ -1795,10 +1833,9 @@ const Tables: React.FC<TablesProps> = memo(
         setSelectedTable(null);
         setIsSplitting(false);
         setSplitParts([]);
+        setIsCounterContext(false);
         setIsDeliveryOrder(false);
-        setDeliveryAddress("");
-        setDeliveryFeeInput("0");
-        setSelectedCustomerId("");
+        resetCustomerFields();
       }, 0);
     };
 
@@ -1997,11 +2034,10 @@ const Tables: React.FC<TablesProps> = memo(
         setShowCustomerSelection(false);
         setShowPaymentModal(false);
         setSelectedTable(null);
-        setSelectedCustomerId("");
-        setCustomerSearch("");
+        setIsCounterContext(false);
         setIsDeliveryOrder(false);
-        setDeliveryAddress("");
-        setDeliveryFeeInput("0");
+        resetCustomerFields();
+        setCustomerSearch("");
         setIsSplitting(false);
         setSplitParts([]);
       }, 0);
@@ -3542,7 +3578,7 @@ const Tables: React.FC<TablesProps> = memo(
                     try {
                       await onCancelTable(selectedTable.id, isCounterContext);
                       setShowCancelModal(false);
-                      setSelectedTable(null);
+                      handleExitOrder();
                     } catch (error) {
                       console.error("Erro ao cancelar:", error);
                     } finally {
@@ -3622,11 +3658,7 @@ const Tables: React.FC<TablesProps> = memo(
                   </div>
                   <button
                     onClick={() => {
-                      if (pdvEditOrder && onCancelPdvEdit) {
-                        onCancelPdvEdit();
-                      }
-                      setSelectedTable(null);
-                      setIsCounterContext(false);
+                      handleExitOrder();
                     }}
                     className="p-1 lg:p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400"
                   >
@@ -3666,6 +3698,22 @@ const Tables: React.FC<TablesProps> = memo(
                     <div
                       className={`p-3 lg:p-4 border-b space-y-2 lg:space-y-3 animate-in slide-in-from-top-2 transition-all duration-300 ${isDeliveryOrder ? "bg-indigo-50/50" : "bg-slate-50 border-double border-slate-200"}`}
                     >
+                      <div className="flex items-center justify-between">
+                        <span
+                          className={`text-[8px] font-black uppercase tracking-widest ${isDeliveryOrder ? "text-indigo-600" : "text-slate-500"}`}
+                        >
+                          {isDeliveryOrder ? "Dados para Entrega" : "Cliente / Identificação"}
+                        </span>
+                        {(customerName || customerPhone || deliveryAddress) && (
+                          <button
+                            type="button"
+                            onClick={() => resetCustomerFields()}
+                            className="text-[8px] font-black text-rose-500 hover:text-rose-700 uppercase tracking-wider flex items-center gap-1 hover:underline transition-colors"
+                          >
+                            <X size={10} /> Limpar Dados
+                          </button>
+                        )}
+                      </div>
                       <div className="grid grid-cols-2 gap-2 relative">
                         <div className="space-y-1">
                           <label

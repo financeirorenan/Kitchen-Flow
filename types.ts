@@ -651,6 +651,12 @@ export interface Table {
   currentOrderId?: string;
   items: OrderItem[];
   total: number;
+  customerName?: string;
+  customerPhone?: string;
+  customerAddress?: string;
+  deliveryFee?: number;
+  isDelivery?: boolean;
+  customerId?: string;
   partialPayments?: {
     id?: string;
     method: PaymentMethod;
