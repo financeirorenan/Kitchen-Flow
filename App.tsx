@@ -734,6 +734,8 @@ const App: React.FC = () => {
     const currentTenant = tenantId || viewingTenantId || currentUserData?.tenantId || tenantData?.slug || 'default-tenant';
     switch (tab) {
       case 'saas-admin':
+      case 'saas-diagnostics':
+      case 'saas-suppliers':
       case 'saas-tenants':
       case 'saas-plans':
       case 'saas-finance':
@@ -1442,13 +1444,17 @@ const App: React.FC = () => {
           if (newOrders.length > 0) {
             newOrders.forEach(o => {
               notifiedOrdersRef.current.add(o.id);
-              // Auto-impressão de novos pedidos vindos de Marketplaces, Cardápio Digital ou Mesas
+              // Auto-impressão de novos pedidos vindos de Marketplaces ou Cardápio Digital
+              // Nunca disparar popup no monitor KDS e nunca em lançamentos de mesa (bebidas/itens adicionais têm fluxo silencioso como no Saipos)
               if (adminSettingsRef.current?.printing?.autoPrintOrder) {
-                try {
-                  console.log(`[Auto-Print] Enviando pedido #${o.id} para impressão simultânea na cozinha/balcão`);
-                  enqueueBrowserPrint(o, adminSettingsRef.current);
-                } catch (printErr) {
-                  console.warn('[Auto-Print] Erro ao enfileirar impressão automática:', printErr);
+                const isKdsActive = activeTab === 'kds' || activeTab === 'kds-kitchen-only';
+                if (!isKdsActive && o.type !== 'table' && o.source !== 'pos') {
+                  try {
+                    console.log(`[Auto-Print] Enviando pedido #${o.id} para impressão simultânea no balcão`);
+                    enqueueBrowserPrint(o, adminSettingsRef.current);
+                  } catch (printErr) {
+                    console.warn('[Auto-Print] Erro ao enfileirar impressão automática:', printErr);
+                  }
                 }
               }
             });
@@ -4282,6 +4288,8 @@ const App: React.FC = () => {
       status: determinedStatus,
       deliveryMethod: isRealDelivery ? 'entrega' : undefined,
       createdAt: activeOrderObj?.createdAt || new Date(),
+      paidAt: new Date(),
+      paymentStatus: 'paid',
       paymentMethod: method,
       payments: payments?.map(p => ({ ...p, timestamp: new Date() })),
       isFiscalIssued: fiscal,
@@ -4742,35 +4750,52 @@ const App: React.FC = () => {
           console.error(`Error settling cloud order ${id}:`, e);
         }
       }
-      await localDb.orders.update(id, { isSettled: true, status: 'finished' });
+      await localDb.orders.update(id, { isSettled: true, status: 'finished', updatedAt: new Date(), finishedAt: new Date(), completedAt: new Date() });
     }
 
+    // Atualizar estado React de pedidos instantaneamente
+    setOrders(prev => prev.map(o => orderIds.includes(o.id) ? { 
+      ...o, 
+      isSettled: true, 
+      status: 'finished', 
+      paidAt: o.paidAt || new Date(),
+      paymentStatus: 'paid',
+      updatedAt: new Date(), 
+      finishedAt: o.finishedAt || new Date(), 
+      completedAt: o.completedAt || new Date() 
+    } : o));
+
     // Update courier balances
-    if (courierId && effectiveTenantId) {
-      try {
-        const courier = couriers.find(c => c.id === courierId);
-        if (courier) {
-          const newEarnings = Math.max(0, (courier.earnings || 0) - totalEarningsToDeduct);
-          const newCash = Math.max(0, (courier.cashHeld || 0) - totalCashToDeduct);
-          
-          await updateDoc(doc(db, 'couriers', courierId), {
-            earnings: newEarnings,
-            cashHeld: newCash,
-            updatedAt: new Date()
-          });
-          
-          // Also create a financial record for the collective settlement if relevant
-          await handleAddFinancialRecord({
-            type: 'expense',
-            amount: totalEarningsToDeduct,
-            category: 'Entregadores',
-            description: `Acerto de ${orderIds.length} entregas - ${courier.name}`,
-            date: new Date(),
-            status: 'paid'
-          });
+    if (courierId) {
+      const courier = couriers.find(c => c.id === courierId);
+      if (courier) {
+        const newEarnings = Math.max(0, (courier.earnings || 0) - totalEarningsToDeduct);
+        const newCash = Math.max(0, (courier.cashHeld || 0) - totalCashToDeduct);
+        
+        await localDb.couriers.update(courierId, { earnings: newEarnings, cashHeld: newCash });
+        setCouriers(prev => prev.map(c => c.id === courierId ? { ...c, earnings: newEarnings, cashHeld: newCash } : c));
+
+        if (effectiveTenantId) {
+          try {
+            await updateDoc(doc(db, 'couriers', courierId), {
+              earnings: newEarnings,
+              cashHeld: newCash,
+              updatedAt: new Date()
+            });
+          } catch (e) {
+            console.error("Error updating courier balance in cloud after settlement:", e);
+          }
         }
-      } catch (e) {
-        console.error("Error updating courier balance after settlement:", e);
+        
+        // Also create a financial record for the collective settlement if relevant
+        await handleAddFinancialRecord({
+          type: 'expense',
+          amount: totalEarningsToDeduct,
+          category: 'Entregadores',
+          description: `Acerto de ${orderIds.length} entregas - ${courier.name}`,
+          date: new Date(),
+          status: 'paid'
+        });
       }
     }
 
@@ -5510,6 +5535,8 @@ const App: React.FC = () => {
       // Helper to check if an order belongs to this cash session
       const isOrderInSession = (o: Order) => {
         if (o.status === 'cancelled' || o.isSubTicket || o.mergedIntoOrderId) return false;
+        const isPaid = o.isSettled || o.paymentStatus === 'paid' || (o.payments && o.payments.length > 0) || o.status === 'finished' || o.status === 'delivered';
+        if (!isPaid) return false;
         const activityDate = parseToDate(o.paidAt || o.completedAt || o.finishedAt || o.updatedAt || o.createdAt);
         if (activityDate >= openedDate) return true;
         if (o.payments && o.payments.some(p => p.timestamp && parseToDate(p.timestamp) >= openedDate)) return true;
@@ -5553,7 +5580,7 @@ const App: React.FC = () => {
                 paidAt: (data.paidAt as any)?.toDate ? (data.paidAt as any).toDate() : (data.paidAt ? new Date(data.paidAt) : undefined)
               } as Order;
             });
-            salesSinceOpen = deduplicateOrders(fetchedOrders.filter(isOrderInSession));
+            salesSinceOpen = deduplicateOrders([...orders, ...fetchedOrders].filter(isOrderInSession));
           }
           if (!recordsSnapshot.empty) {
             const fetchedRecords = recordsSnapshot.docs.map(d => {
@@ -5566,7 +5593,7 @@ const App: React.FC = () => {
                 shiftOpenedAt: data.shiftOpenedAt?.toDate ? data.shiftOpenedAt.toDate() : (data.shiftOpenedAt ? new Date(data.shiftOpenedAt) : undefined)
               } as FinancialRecord;
             });
-            recordsDuringSession = deduplicateFinancialRecords(fetchedRecords.filter(r => {
+            recordsDuringSession = deduplicateFinancialRecords([...financialRecords, ...fetchedRecords].filter(r => {
               const isPaid = r.status === 'paid' || !r.status;
               if (!isPaid) return false;
               if (r.shiftOpenedAt) {
@@ -5582,8 +5609,6 @@ const App: React.FC = () => {
         }
       }
 
-      const totalSales = salesSinceOpen.reduce((acc, o) => acc + (o.total || 0), 0);
-      
       const salesByMethod: Record<PaymentMethod, number> = {
         dinheiro: 0,
         cartao_credito: 0,
@@ -5599,15 +5624,21 @@ const App: React.FC = () => {
             const method = getStandardPaymentMethod(p.method);
             if (salesByMethod[method] !== undefined) {
               salesByMethod[method] += (p.amount || 0);
+            } else {
+              salesByMethod.dinheiro += (p.amount || 0);
             }
           });
-        } else if (o.paymentMethod) {
-          const method = getStandardPaymentMethod(o.paymentMethod);
+        } else {
+          const method = getStandardPaymentMethod(o.paymentMethod || 'dinheiro');
           if (salesByMethod[method] !== undefined) {
             salesByMethod[method] += (o.total || 0);
+          } else {
+            salesByMethod.dinheiro += (o.total || 0);
           }
         }
       });
+
+      const totalSales = Object.values(salesByMethod).reduce((acc, val) => acc + val, 0);
 
        const cashIncomes = recordsDuringSession
          .filter(r => {
@@ -6598,14 +6629,16 @@ const App: React.FC = () => {
             if (returnToTab) {
               setActiveTab(returnToTab);
               setReturnToTab(null);
+            } else {
+              setActiveTab('tables');
             }
           }}
           onUpdateOrder={handleUpdateOrder}
           onNavigate={setActiveTab}
           showToast={showToast}
         />}
-        {activeTab === 'customers' && hasPermission('customers_manage') && <CustomersPanel customers={customers} onAddCustomer={handleAddCustomer} onUpdateCustomer={handleUpdateCustomer} onAddFinancialRecord={handleAddFinancialRecord} />}
-        {activeTab === 'delivery' && hasPermission('delivery_manage') && (
+        {pdvEditOrder === null && activeTab === 'customers' && hasPermission('customers_manage') && <CustomersPanel customers={customers} onAddCustomer={handleAddCustomer} onUpdateCustomer={handleUpdateCustomer} onAddFinancialRecord={handleAddFinancialRecord} />}
+        {pdvEditOrder === null && activeTab === 'delivery' && hasPermission('delivery_manage') && (
           <Delivery 
             orders={orders} 
             couriers={couriers} 
@@ -6649,7 +6682,7 @@ const App: React.FC = () => {
             onNavigate={setActiveTab}
           />
         )}
-        {activeTab === 'inventory' && hasPermission('inventory_edit') && (
+        {pdvEditOrder === null && activeTab === 'inventory' && hasPermission('inventory_edit') && (
           <Inventory 
             products={products} 
             rawMaterials={rawMaterials} 
@@ -6669,7 +6702,7 @@ const App: React.FC = () => {
             orders={orders}
           />
         )}
-        {activeTab === 'finance' && hasPermission('finance_view') && (
+        {pdvEditOrder === null && activeTab === 'finance' && hasPermission('finance_view') && (
           <Finance 
             tenantId={effectiveTenantId}
             orders={orders} 
@@ -6693,10 +6726,10 @@ const App: React.FC = () => {
             onUpdateAdminSettings={handleSaveSettings}
           />
         )}
-        {activeTab === 'merchant-copilot' && hasPermission('finance_view') && (
+        {pdvEditOrder === null && activeTab === 'merchant-copilot' && hasPermission('finance_view') && (
           <LojistaCopilot 
             tenantId={effectiveTenantId}
-            orders={orders}
+            orders={orders} 
             products={products}
             manualRecords={financialRecords}
             adminSettings={adminSettings}
@@ -6710,7 +6743,7 @@ const App: React.FC = () => {
             onUpdateSettings={setAdminSettings}
           />
         )}
-        {activeTab === 'users' && hasPermission('users_manage') && (
+        {pdvEditOrder === null && activeTab === 'users' && hasPermission('users_manage') && (
           <UsersPanel 
             users={users} 
             auditLogs={auditLogs} 
@@ -6727,7 +6760,7 @@ const App: React.FC = () => {
             onAddFinancialRecord={handleAddFinancialRecord}
           />
         )}
-        {activeTab === 'kds' && hasPermission('kds_view') && (
+        {pdvEditOrder === null && activeTab === 'kds' && hasPermission('kds_view') && (
           <KDS 
             orders={orders} 
             couriers={couriers} 
@@ -6748,7 +6781,7 @@ const App: React.FC = () => {
             onNavigate={setActiveTab}
           />
         )}
-        {activeTab === 'kds-kitchen-only' && (hasPermission('kds_view') || hasPermission('kds_kitchen_only_view')) && (
+        {pdvEditOrder === null && activeTab === 'kds-kitchen-only' && (hasPermission('kds_view') || hasPermission('kds_kitchen_only_view')) && (
           <KDSKitchenOnly 
             orders={orders}
             products={products}

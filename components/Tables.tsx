@@ -699,9 +699,13 @@ const Tables: React.FC<TablesProps> = memo(
 
       const sessionOrders = deduplicateOrders(orders.filter((o) => {
         if (o.status === "cancelled" || o.isSubTicket || o.mergedIntoOrderId) return false;
-        const activityDate = parseToDate(o.paidAt || o.completedAt || o.finishedAt || o.createdAt);
         const isPaid = o.isSettled || o.paymentStatus === "paid" || (o.payments && o.payments.length > 0) || o.status === "finished" || o.status === "delivered";
-        return isPaid && activityDate >= sessionOpenedAt;
+        if (!isPaid) return false;
+        const activityDate = parseToDate(o.paidAt || o.completedAt || o.finishedAt || o.updatedAt || o.createdAt);
+        if (activityDate >= sessionOpenedAt) return true;
+        if (o.payments && o.payments.some(p => p.timestamp && parseToDate(p.timestamp) >= sessionOpenedAt)) return true;
+        const createdAt = parseToDate(o.createdAt);
+        return createdAt >= sessionOpenedAt;
       }));
 
       // Monetary sums should exclude automated sale records (which already exist in sessionOrders)
@@ -734,13 +738,17 @@ const Tables: React.FC<TablesProps> = memo(
           o.payments.forEach((p) => {
             const method = getStandardPaymentMethod(p.method);
             if (totalsByMethod.hasOwnProperty(method)) {
-              (totalsByMethod as any)[method] += p.amount;
+              (totalsByMethod as any)[method] += (p.amount || 0);
+            } else {
+              totalsByMethod.dinheiro += (p.amount || 0);
             }
           });
-        } else if (o.paymentMethod) {
-          const method = getStandardPaymentMethod(o.paymentMethod);
+        } else {
+          const method = getStandardPaymentMethod(o.paymentMethod || "dinheiro");
           if (totalsByMethod.hasOwnProperty(method)) {
-            (totalsByMethod as any)[method] += o.total;
+            (totalsByMethod as any)[method] += (o.total || 0);
+          } else {
+            totalsByMethod.dinheiro += (o.total || 0);
           }
         }
       });

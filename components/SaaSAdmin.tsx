@@ -7,6 +7,7 @@ import { ensureLojistaTenantWithData } from '../lib/ensureLojistaTenant';
 import { Tenant, Plan, Permission, User, MarketplaceInvoice, MarketplaceSettings, MarketplacePromotion } from '../types';
 import { maskPhone } from '../utils/masks';
 import { sendSaasInvoiceEmailResend } from '../services/emailService';
+import { SystemDiagnosticsSuite } from './SystemDiagnosticsSuite';
 import { 
   AreaChart, 
   Area, 
@@ -320,7 +321,23 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'tenants' | 'plans' | 'financial' | 'support' | 'leads' | 'team' | 'marketplace_config' | 'suppliers' | 'subscription_rules' | 'telemetry'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'tenants' | 'plans' | 'financial' | 'support' | 'leads' | 'team' | 'marketplace_config' | 'suppliers' | 'subscription_rules' | 'telemetry' | 'diagnostics'>('dashboard');
+
+  useEffect(() => {
+    if (parentActiveTab === 'saas-diagnostics' || parentActiveTab === 'diagnostics') {
+      setActiveTab('diagnostics');
+    } else if (parentActiveTab === 'saas-suppliers' || parentActiveTab === 'suppliers') {
+      setActiveTab('suppliers');
+    } else if (parentActiveTab === 'saas-tenants' || parentActiveTab === 'tenants') {
+      setActiveTab('tenants');
+    } else if (parentActiveTab === 'saas-plans' || parentActiveTab === 'plans') {
+      setActiveTab('plans');
+    } else if (parentActiveTab === 'saas-finance' || parentActiveTab === 'financial') {
+      setActiveTab('financial');
+    } else if (parentActiveTab === 'saas-admin') {
+      setActiveTab('dashboard');
+    }
+  }, [parentActiveTab]);
 
   // Telemetry & Infrastructure States
   const [dbLatency, setDbLatency] = useState<number | null>(null);
@@ -2103,6 +2120,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
              activeTab === 'team' ? 'Equipe de Gestão SaaS' :
              activeTab === 'marketplace_config' ? 'Marketplace B2C / Nova' :
              activeTab === 'suppliers' ? 'Rede de Fornecedores B2B' :
+             activeTab === 'diagnostics' ? 'Diagnóstico & Autotestes do Sistema' :
              'Dashboard da Plataforma'}
           </h1>
         </div>
@@ -2163,6 +2181,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
           { id: 'team', label: 'Equipe SaaS', icon: Users },
           { id: 'marketplace_config', label: 'Marketplace Nova', icon: Sparkles },
           { id: 'suppliers', label: 'Fornecedores B2B', icon: Layers },
+          { id: 'diagnostics', label: 'Diagnóstico & Testes', icon: Activity },
         ].map(tab => {
           const IconComp = tab.icon;
           const isActive = activeTab === tab.id;
@@ -5734,6 +5753,10 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
               </div>
             </div>
           </div>
+        </div>
+      ) : activeTab === 'diagnostics' ? (
+        <div className="animate-in slide-in-from-right-4 duration-500">
+          <SystemDiagnosticsSuite />
         </div>
       ) : (
         <div className="flex flex-col items-center justify-center py-20 text-slate-400">

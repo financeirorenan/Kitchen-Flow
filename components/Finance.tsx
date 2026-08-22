@@ -273,11 +273,12 @@ const Finance: React.FC<FinanceProps> = memo(
           type: "income" as const,
           amount: order.total,
           category: "Vendas PDV",
-          description: `Pedido #${order.id.slice(-4)} (${order.type})`,
-          date: order.createdAt,
+          description: `Pedido #${order.dailyNumber ? String(order.dailyNumber) : order.id.slice(-4)} (${order.type})`,
+          date: order.paidAt || order.createdAt,
           status: "paid" as const,
-          dueDate: order.createdAt,
+          dueDate: order.paidAt || order.createdAt,
           orderId: order.id,
+          paymentMethod: order.paymentMethod || "dinheiro",
         })),
       [orders],
     );
@@ -367,11 +368,12 @@ const Finance: React.FC<FinanceProps> = memo(
       today.setHours(0, 0, 0, 0);
       return orders
         .filter(
-          (o) =>
-            !o.isSubTicket &&
-            !o.mergedIntoOrderId &&
-            new Date(o.createdAt) >= today &&
-            (o.status === "delivered" || o.status === "finished"),
+          (o) => {
+            if (o.status === "cancelled" || o.isSubTicket || o.mergedIntoOrderId) return false;
+            const isPaid = o.isSettled || o.paymentStatus === "paid" || (o.payments && o.payments.length > 0) || o.status === "delivered" || o.status === "finished";
+            const orderDate = new Date(o.paidAt || o.completedAt || o.finishedAt || o.createdAt);
+            return isPaid && orderDate >= today;
+          },
         )
         .reduce((acc, o) => acc + o.total, 0);
     }, [orders]);
@@ -501,13 +503,10 @@ const Finance: React.FC<FinanceProps> = memo(
       today.setHours(0, 0, 0, 0);
 
       const todayOrders = orders.filter((o) => {
-        const orderDate = new Date(o.createdAt);
-        return (
-          !o.isSubTicket &&
-          !o.mergedIntoOrderId &&
-          orderDate >= today &&
-          (o.status === "delivered" || o.status === "finished")
-        );
+        if (o.status === "cancelled" || o.isSubTicket || o.mergedIntoOrderId) return false;
+        const isPaid = o.isSettled || o.paymentStatus === "paid" || (o.payments && o.payments.length > 0) || o.status === "delivered" || o.status === "finished";
+        const orderDate = new Date(o.paidAt || o.completedAt || o.finishedAt || o.createdAt);
+        return isPaid && orderDate >= today;
       });
 
       const revenue = todayOrders.reduce((acc, o) => acc + o.total, 0);
@@ -788,7 +787,10 @@ const Finance: React.FC<FinanceProps> = memo(
       > = {};
 
       orders
-        .filter((o) => o.status === "delivered" || o.status === "finished")
+        .filter((o) => {
+          if (o.status === "cancelled" || o.isSubTicket || o.mergedIntoOrderId) return false;
+          return o.isSettled || o.paymentStatus === "paid" || (o.payments && o.payments.length > 0) || o.status === "delivered" || o.status === "finished";
+        })
         .forEach((order) => {
           const paymentsList =
             order.payments && order.payments.length > 0

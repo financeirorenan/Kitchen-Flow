@@ -27,7 +27,10 @@ import {
   Monitor,
   ChefHat,
   Receipt,
-  ArrowLeft
+  ArrowLeft,
+  Activity,
+  Layers,
+  Gauge
 } from 'lucide-react';
 import { User, Permission } from '../types';
 
@@ -87,6 +90,8 @@ const Sidebar: React.FC<SidebarProps> = memo(({
 
   const saasMenuItems = [
     { id: 'saas-admin', label: 'Dashboard SaaS', icon: LayoutDashboard, permission: 'admin_settings_manage' },
+    { id: 'saas-diagnostics', label: 'Diagnóstico & Testes', icon: Activity, permission: 'admin_settings_manage' },
+    { id: 'saas-suppliers', label: 'Fornecedores B2B', icon: Layers, permission: 'admin_settings_manage' },
     { id: 'saas-tenants', label: 'Clientes (Tenants)', icon: UsersIcon, permission: 'admin_settings_manage' },
     { id: 'saas-plans', label: 'Planos e Preços', icon: Package, permission: 'admin_settings_manage' },
     { id: 'saas-finance', label: 'Financeiro SaaS', icon: DollarSign, permission: 'admin_settings_manage' },

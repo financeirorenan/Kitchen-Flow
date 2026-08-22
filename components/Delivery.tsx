@@ -100,6 +100,11 @@ const Delivery: React.FC<DeliveryProps> = memo(({
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success'>('idle');
   const [settlementError, setSettlementError] = useState<string | null>(null);
   const [settlementSuccess, setSettlementSuccess] = useState<string | null>(null);
+
+  // Quick Payment Change state
+  const [quickPaymentOrder, setQuickPaymentOrder] = useState<Order | null>(null);
+  const [quickPaymentMethod, setQuickPaymentMethod] = useState<string>('dinheiro');
+  const [quickChangeFor, setQuickChangeFor] = useState<string>('');
   
   // States para filtros do monitor
   const [monitorSearch, setMonitorSearch] = useState('');
@@ -623,9 +628,10 @@ const Delivery: React.FC<DeliveryProps> = memo(({
                       <div className="flex items-center gap-1">
                         <button 
                           onClick={() => onEditOrderInPDV(order)}
-                          className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-all"
+                          className="px-2 py-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white rounded-md font-black text-[9px] uppercase tracking-wider transition-all shadow-sm flex items-center gap-1"
+                          title="Ver comanda e editar pedido"
                         >
-                          <Edit size={12} />
+                          <Edit size={11} /> VER
                         </button>
                         <button 
                           onClick={() => handlePrintOrder(order, adminSettings, { isFiscal: true })}
@@ -652,6 +658,29 @@ const Delivery: React.FC<DeliveryProps> = memo(({
                         <MapPin size={10} className="text-rose-500 shrink-0 mt-0.5" />
                         <span className="line-clamp-1 leading-relaxed">{order.customerAddress}</span>
                      </div>
+                  </div>
+
+                  {/* Forma de Pagamento com Botão Alterar Rápido */}
+                  <div className="flex items-center justify-between text-[8px] bg-slate-50 p-1.5 rounded-lg border border-slate-100">
+                    <span className="font-bold text-slate-600 uppercase flex items-center gap-1">
+                      <CreditCard size={11} className="text-indigo-500 shrink-0" />
+                      <span>Pagamento: <strong className="text-slate-800 font-black">{order.paymentMethod ? order.paymentMethod.replace('_', ' ') : 'dinheiro'}</strong></span>
+                      {order.paymentMethod === 'dinheiro' && order.changeFor ? (
+                        <span className="text-emerald-600 font-black"> (Troco p/ R$ {order.changeFor.toFixed(2)})</span>
+                      ) : null}
+                    </span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setQuickPaymentOrder(order);
+                        setQuickPaymentMethod(order.paymentMethod || 'dinheiro');
+                        setQuickChangeFor(order.changeFor ? String(order.changeFor) : '');
+                      }}
+                      className="px-2 py-0.5 bg-indigo-100 text-indigo-700 hover:bg-indigo-600 hover:text-white rounded font-black uppercase text-[8px] tracking-wider transition-all"
+                      title="Alterar forma de pagamento desta entrega"
+                    >
+                      Alterar
+                    </button>
                   </div>
 
                   <div className="flex gap-1.5">
@@ -779,9 +808,31 @@ const Delivery: React.FC<DeliveryProps> = memo(({
                                    <div>
                                      <p className="text-[8px] font-black text-slate-700 uppercase">{order.customerName?.split(' ')[0]}</p>
                                      <p className="text-[6px] text-slate-400 truncate w-24">{order.customerAddress}</p>
+                                     <div className="flex items-center gap-1 mt-0.5">
+                                       <span className="text-[7px] font-bold text-slate-500 uppercase">{order.paymentMethod ? order.paymentMethod.replace('_', ' ') : 'dinheiro'}</span>
+                                       <button
+                                         onClick={(e) => {
+                                           e.stopPropagation();
+                                           setQuickPaymentOrder(order);
+                                           setQuickPaymentMethod(order.paymentMethod || 'dinheiro');
+                                           setQuickChangeFor(order.changeFor ? String(order.changeFor) : '');
+                                         }}
+                                         className="text-[7px] text-indigo-600 font-black hover:underline uppercase"
+                                         title="Alterar Pagamento"
+                                       >
+                                         [Alterar]
+                                       </button>
+                                     </div>
                                    </div>
                                 </div>
                                  <div className="flex items-center gap-1">
+                                   <button 
+                                     onClick={() => onEditOrderInPDV(order)} 
+                                     title="Ver Detalhes do Pedido" 
+                                     className="px-1.5 py-1 bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-600 rounded text-[7px] font-black uppercase transition-all"
+                                   >
+                                     VER
+                                   </button>
                                    <button 
                                      onClick={() => setSelectedOrderId(order.id)} 
                                      title="Mudar Entregador" 
@@ -1620,6 +1671,127 @@ const Delivery: React.FC<DeliveryProps> = memo(({
                   {saveStatus === 'saving' ? 'Salvando...' : saveStatus === 'success' ? 'Configurações Salvas!' : 'Salvar Configurações'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Rápido: Alterar Forma de Pagamento da Entrega */}
+      {quickPaymentOrder && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-100 space-y-5 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-base font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
+                  <CreditCard size={18} className="text-indigo-600" />
+                  Alterar Pagamento
+                </h3>
+                <p className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">
+                  Pedido #{quickPaymentOrder.id.slice(-4)} • {quickPaymentOrder.customerName}
+                </p>
+              </div>
+              <button 
+                onClick={() => setQuickPaymentOrder(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-all"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="bg-indigo-50/50 p-3 rounded-2xl border border-indigo-100 flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-600 uppercase">Valor Total do Pedido</span>
+              <span className="text-base font-black text-indigo-700">R$ {quickPaymentOrder.total.toFixed(2)}</span>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">
+                Selecione a Nova Forma de Pagamento
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { id: 'dinheiro', label: 'Dinheiro', icon: Banknote },
+                  { id: 'pix', label: 'PIX', icon: QrCode },
+                  { id: 'cartao_credito', label: 'Cartão Crédito', icon: CreditCard },
+                  { id: 'cartao_debito', label: 'Cartão Débito', icon: CreditCard },
+                  { id: 'vale_refeicao', label: 'Vale Refeição', icon: Wallet },
+                  { id: 'conta_cliente', label: 'Conta Cliente', icon: UserCheck }
+                ].map((method) => {
+                  const Icon = method.icon;
+                  const isSelected = quickPaymentMethod === method.id;
+                  return (
+                    <button
+                      key={method.id}
+                      type="button"
+                      onClick={() => setQuickPaymentMethod(method.id)}
+                      className={`flex items-center gap-2 p-3 rounded-xl border-2 text-left font-black text-xs transition-all ${
+                        isSelected 
+                          ? 'border-indigo-600 bg-indigo-50/50 text-indigo-700 shadow-sm' 
+                          : 'border-slate-100 bg-white text-slate-600 hover:border-slate-200'
+                      }`}
+                    >
+                      <Icon size={16} className={isSelected ? 'text-indigo-600' : 'text-slate-400'} />
+                      <span className="truncate">{method.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {quickPaymentMethod === 'dinheiro' && (
+              <div className="space-y-1.5 bg-amber-50/60 p-3 rounded-2xl border border-amber-200 animate-in fade-in">
+                <label className="text-[10px] font-black text-amber-800 uppercase tracking-wider block">
+                  Troco para Quanto? (Deixe em branco se não precisar)
+                </label>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-black text-amber-700">R$</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="Ex: 50.00"
+                    value={quickChangeFor}
+                    onChange={(e) => setQuickChangeFor(e.target.value)}
+                    className="flex-1 bg-white border border-amber-300 rounded-xl px-3 py-2 text-sm font-black text-slate-800 outline-none focus:border-amber-500"
+                  />
+                </div>
+                {quickChangeFor && parseFloat(quickChangeFor) > quickPaymentOrder.total && (
+                  <p className="text-[9px] font-black text-emerald-700">
+                    Troco a devolver: R$ {(parseFloat(quickChangeFor) - quickPaymentOrder.total).toFixed(2)}
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setQuickPaymentOrder(null)}
+                className="flex-1 py-3 bg-slate-100 text-slate-600 rounded-xl font-black text-xs uppercase tracking-wider hover:bg-slate-200 transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!quickPaymentOrder) return;
+                  const changeVal = quickPaymentMethod === 'dinheiro' && quickChangeFor ? parseFloat(quickChangeFor) : undefined;
+                  const updatedPayments = [{
+                    method: quickPaymentMethod as any,
+                    amount: quickPaymentOrder.total
+                  }];
+                  
+                  await onUpdateOrder(quickPaymentOrder.id, {
+                    paymentMethod: quickPaymentMethod as any,
+                    changeFor: changeVal,
+                    payments: updatedPayments
+                  });
+
+                  setQuickPaymentOrder(null);
+                }}
+                className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-black text-xs uppercase tracking-wider hover:bg-indigo-700 shadow-md shadow-indigo-100 transition-all flex items-center justify-center gap-1.5"
+              >
+                <CheckCircle2 size={16} />
+                Salvar Pagamento
+              </button>
             </div>
           </div>
         </div>
