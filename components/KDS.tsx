@@ -281,17 +281,17 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
           )}
         </div>
 
-        {/* Botões de Ação estilo SAIPOS (SEMPRE VISÍVEIS E INTERATIVOS) */}
-        <div className="flex items-center justify-between gap-1.5 pt-2 border-t border-slate-100">
+        {/* Botões de Ação estilo SAIPOS (SEMPRE VISÍVEIS, INTERATIVOS E RESPONSIVOS) */}
+        <div className="flex flex-wrap items-center justify-between gap-1.5 pt-2 border-t border-slate-100">
           {/* Ações Secundárias: Ver, Cupom, Recibo, Cancelar */}
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1 min-w-0">
             <button 
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 onEditOrderInPDV(order);
               }}
-              className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded-md font-black text-[10px] uppercase transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+              className="px-2 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded-md font-black text-[10px] uppercase transition-all shadow-xs flex items-center gap-1 cursor-pointer shrink-0"
               title="Abrir detalhes no PDV"
             >
               <Search size={12} />
@@ -304,10 +304,10 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
                 e.stopPropagation();
                 handlePrintOrder(order, adminSettings, { isFiscal: true });
               }}
-              className="p-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-600 hover:text-white active:scale-95 border border-emerald-200 rounded-md transition-all shadow-xs cursor-pointer"
+              className="p-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-600 hover:text-white active:scale-95 border border-emerald-200 rounded-md transition-all shadow-xs cursor-pointer shrink-0"
               title="Imprimir Cupom Fiscal"
             >
-              <Receipt size={14} />
+              <Receipt size={13} />
             </button>
 
             <button 
@@ -316,10 +316,10 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
                 e.stopPropagation();
                 handlePrintOrder(order, adminSettings, { isFiscal: false });
               }}
-              className="p-1.5 bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900 active:scale-95 border border-slate-200 rounded-md transition-all shadow-xs cursor-pointer"
+              className="p-1.5 bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900 active:scale-95 border border-slate-200 rounded-md transition-all shadow-xs cursor-pointer shrink-0"
               title="Imprimir Recibo"
             >
-              <Printer size={14} />
+              <Printer size={13} />
             </button>
             
             {order.status !== 'cancelled' && (
@@ -329,10 +329,10 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
                   e.stopPropagation();
                   onUpdateStatus(order.id, 'cancelled');
                 }}
-                className="p-1.5 bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white active:scale-95 border border-rose-200 rounded-md transition-all shadow-xs cursor-pointer"
+                className="p-1.5 bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white active:scale-95 border border-rose-200 rounded-md transition-all shadow-xs cursor-pointer shrink-0"
                 title="Cancelar Pedido"
               >
-                <XCircle size={14} />
+                <XCircle size={13} />
               </button>
             )}
 
@@ -343,16 +343,16 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
                   e.stopPropagation();
                   onUpdateStatus(order.id, 'pending');
                 }}
-                className="p-1.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white active:scale-95 border border-emerald-200 rounded-md transition-all shadow-xs cursor-pointer"
+                className="p-1.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white active:scale-95 border border-emerald-200 rounded-md transition-all shadow-xs cursor-pointer shrink-0"
                 title="Restaurar Pedido"
               >
-                <CheckCircle2 size={14} />
+                <CheckCircle2 size={13} />
               </button>
             )}
           </div>
 
           {/* Botões de Navegação de Etapa (Voltar e Avançar) */}
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center gap-1 shrink-0 ml-auto">
             {canGoBack && (
               <button 
                 type="button"
@@ -360,10 +360,10 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
                   e.stopPropagation();
                   onBack(order);
                 }}
-                className="p-1.5 bg-amber-50 text-amber-700 hover:bg-amber-100 active:scale-95 border border-amber-200 rounded-md transition-all cursor-pointer flex items-center justify-center"
+                className="p-1.5 bg-amber-50 text-amber-700 hover:bg-amber-100 active:scale-95 border border-amber-200 rounded-md transition-all cursor-pointer flex items-center justify-center shrink-0"
                 title="Voltar Etapa"
               >
-                <ArrowLeft size={14} />
+                <ArrowLeft size={13} />
               </button>
             )}
             
@@ -378,11 +378,11 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
                     onAdvance(order);
                   }
                 }}
-                className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-black text-[10px] uppercase rounded-md transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-black text-[10px] uppercase rounded-md transition-all shadow-xs flex items-center gap-1 cursor-pointer shrink-0 whitespace-nowrap"
                 title="Avançar para a próxima etapa"
               >
                 <span>Avançar</span>
-                <ArrowRight size={13} />
+                <ArrowRight size={12} />
               </button>
             )}
           </div>
@@ -434,7 +434,7 @@ const KanbanColumn: React.FC<KanbanColumnProps> = memo(({
   const isSomeSelected = orders.length > 0 && orders.some(o => selectedOrderIds.includes(o.id));
 
   return (
-    <div className={`flex flex-col flex-1 min-w-[300px] md:min-w-0 self-stretch ${config.bg} ${
+    <div className={`flex flex-col flex-1 min-w-[270px] sm:min-w-[290px] md:min-w-0 self-stretch ${config.bg} ${
       isDeliveredColumn ? 'border-2 border-emerald-400 bg-emerald-50/15 rounded-2xl m-2 shadow-xs ring-4 ring-emerald-50/40' : 'border-r border-slate-200 last:border-r-0'
     } overflow-hidden`}>
       {/* Column Header */}

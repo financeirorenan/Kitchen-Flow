@@ -457,6 +457,7 @@ const Tables: React.FC<TablesProps> = memo(
           paymentMethod: method,
           payments: computedPayments,
           isSettled: true,
+          paymentStatus: 'paid',
           customerName: customerName || undefined,
           customerPhone: customerPhone || undefined,
           customerAddress: deliveryAddress || undefined,
@@ -472,6 +473,16 @@ const Tables: React.FC<TablesProps> = memo(
         });
         if (onCancelPdvEdit) onCancelPdvEdit();
       } else {
+        if (selectedTable?.currentOrderId && onUpdateOrder) {
+          onUpdateOrder(String(selectedTable.currentOrderId), {
+            isSettled: true,
+            paymentStatus: 'paid',
+            paymentMethod: method,
+            payments: computedPayments,
+            total: computedTotal,
+            items: selectedTable.items,
+          });
+        }
         onCloseTable(
           selectedTable!.id,
           method,
@@ -989,28 +1000,40 @@ const Tables: React.FC<TablesProps> = memo(
 
     // Helper para verificar se o pedido possui forma de pagamento registrada e quitada
     const isOrderSettledWithPayment = useCallback((ord: Order): boolean => {
-      if (ord.isSettled === true && ord.paymentMethod && ord.paymentMethod !== 'pending' && ord.paymentMethod !== 'a_definir') {
-        return true;
-      }
-      if (ord.paymentStatus === 'paid') {
-        return true;
-      }
-      if (ord.payments && ord.payments.length > 0) {
-        const totalPaid = ord.payments.reduce((acc, p) => acc + (p.amount || 0), 0);
-        if (totalPaid >= (ord.total || 0) && (ord.total || 0) > 0) {
+      if (!ord) return false;
+      if (ord.status === 'cancelled') return true;
+      if (ord.status === 'finished') return true;
+      if (ord.isSettled === true) return true;
+      if (ord.paymentStatus === 'paid' || ord.paymentStatus === 'completed') return true;
+
+      // Se possui forma de pagamento preenchida e válida (diferente de pendente/a definir)
+      if (ord.paymentMethod) {
+        const pm = String(ord.paymentMethod).toLowerCase().trim();
+        if (pm && !['pending', 'a_definir', 'pendente', 'unpaid', 'none', '', 'null', 'undefined'].includes(pm)) {
           return true;
         }
       }
+
+      // Se possui pagamentos parciais/totais que cobrem o valor
+      if (ord.payments && ord.payments.length > 0) {
+        const totalPaid = ord.payments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+        const ordTotal = Number(ord.total) || 0;
+        if (totalPaid >= ordTotal - 0.05 && totalPaid > 0) {
+          return true;
+        }
+      }
+
       return false;
     }, []);
 
-    // Comandas de Balcão, Delivery e Retirada que estão ABERTAS e SEM FORMA DE PAGAMENTO
+    // Comandas de Balcão, Delivery e Retirada que estão ABERTAS e SEM FORMA DE PAGAMENTO (100% sem duplicidade)
     const openUnpaidComandas = useMemo(() => {
-      const list: Array<{
+      type ComandaCard = {
         id: string | number;
         source: 'counter' | 'order';
         type: 'balcao' | 'delivery' | 'takeout';
         displayNumber: string | number;
+        dailyNumber?: number;
         customerName?: string;
         customerPhone?: string;
         customerAddress?: string;
@@ -1018,47 +1041,68 @@ const Tables: React.FC<TablesProps> = memo(
         total: number;
         itemsCount: number;
         status: string;
-        createdAt?: Date;
+        createdAt: Date;
         rawCounter?: Table;
         rawOrder?: Order;
-      }> = [];
+        isPaid: boolean;
+      };
 
-      const processedOrderIds = new Set<string>();
+      const groupMap = new Map<string, ComandaCard>();
+      const aliasToKey = new Map<string, string>();
 
-      // 1. Processar comandas locais de counterOrders (Balcão/Delivery)
-      counterOrders.forEach((counter) => {
-        if (counter.currentOrderId) {
-          processedOrderIds.add(String(counter.currentOrderId));
+      const getCanonicalKey = (params: {
+        dailyNumber?: number;
+        orderId?: string | number;
+        counterId?: string | number;
+        docId?: string;
+        type?: string;
+        phone?: string;
+        name?: string;
+      }): string => {
+        if (params.dailyNumber && aliasToKey.has(`daily_${params.dailyNumber}`)) {
+          return aliasToKey.get(`daily_${params.dailyNumber}`)!;
         }
-        processedOrderIds.add(String(counter.id));
-
-        if ((counter.items && counter.items.length > 0) || (counter.total && counter.total > 0) || counter.customerName) {
-          const isDel = !!counter.isDelivery || !!counter.customerAddress || !!(counter.deliveryFee && counter.deliveryFee > 0);
-          const isRet = !isDel && !!counter.customerName && !counter.isDelivery;
-          const orderType: 'balcao' | 'delivery' | 'takeout' = isDel ? 'delivery' : (isRet ? 'takeout' : 'balcao');
-
-          const totalAmount = (counter.total || 0) + (counter.deliveryFee || 0);
-          const totalItems = counter.items ? counter.items.reduce((acc, i) => acc + (i.quantity || 1), 0) : 0;
-
-          list.push({
-            id: counter.id,
-            source: 'counter',
-            type: orderType,
-            displayNumber: counter.number ? `Comanda #${counter.number}` : `Balcão #${String(counter.id).slice(-4)}`,
-            customerName: counter.customerName,
-            customerPhone: counter.customerPhone,
-            customerAddress: counter.customerAddress,
-            deliveryFee: counter.deliveryFee,
-            total: totalAmount,
-            itemsCount: totalItems,
-            status: counter.status || 'occupied',
-            createdAt: counter.openedAt || new Date(),
-            rawCounter: counter,
-          });
+        if (params.orderId && aliasToKey.has(`ord_${params.orderId}`)) {
+          return aliasToKey.get(`ord_${params.orderId}`)!;
         }
-      });
+        if (params.counterId && aliasToKey.has(`counter_${params.counterId}`)) {
+          return aliasToKey.get(`counter_${params.counterId}`)!;
+        }
+        if (params.docId && aliasToKey.has(`doc_${params.docId}`)) {
+          return aliasToKey.get(`doc_${params.docId}`)!;
+        }
+        if (params.phone && params.phone.replace(/\D/g, '').length >= 8 && aliasToKey.has(`phone_${params.phone.replace(/\D/g, '')}`)) {
+          return aliasToKey.get(`phone_${params.phone.replace(/\D/g, '')}`)!;
+        }
 
-      // 2. Processar pedidos de balcão / delivery / retirada em 'orders' que NÃO POSSUEM PAGAMENTO
+        const primaryKey = params.dailyNumber
+          ? `daily_${params.dailyNumber}`
+          : params.orderId
+            ? `ord_${params.orderId}`
+            : params.counterId
+              ? `counter_${params.counterId}`
+              : `group_${Math.random().toString(36).substr(2, 9)}`;
+
+        return primaryKey;
+      };
+
+      const registerAliases = (canonicalKey: string, params: {
+        dailyNumber?: number;
+        orderId?: string | number;
+        counterId?: string | number;
+        docId?: string;
+        phone?: string;
+      }) => {
+        if (params.dailyNumber) aliasToKey.set(`daily_${params.dailyNumber}`, canonicalKey);
+        if (params.orderId) aliasToKey.set(`ord_${params.orderId}`, canonicalKey);
+        if (params.counterId) aliasToKey.set(`counter_${params.counterId}`, canonicalKey);
+        if (params.docId) aliasToKey.set(`doc_${params.docId}`, canonicalKey);
+        if (params.phone && params.phone.replace(/\D/g, '').length >= 8) {
+          aliasToKey.set(`phone_${params.phone.replace(/\D/g, '')}`, canonicalKey);
+        }
+      };
+
+      // 1. Processar pedidos não finalizados e não cancelados de 'orders'
       orders.forEach((ord) => {
         if (ord.status === 'cancelled') return;
 
@@ -1066,11 +1110,7 @@ const Tables: React.FC<TablesProps> = memo(
         const isNonTable = ord.type === 'delivery' || ord.type === 'takeout' || (ord.type as any) === 'balcao' || !ord.tableNumber;
         if (!isNonTable) return;
 
-        // Evitar duplicidade se já capturado em counterOrders
-        if (processedOrderIds.has(String(ord.id)) || (ord.docId && processedOrderIds.has(String(ord.docId)))) return;
-
-        // Se já tiver pagamento inserido e quitado, não exibir
-        if (isOrderSettledWithPayment(ord)) return;
+        const paid = isOrderSettledWithPayment(ord);
 
         const isDel = ord.type === 'delivery';
         const isRet = ord.type === 'takeout' && (ord.deliveryMethod === 'retirada' || (!ord.tableNumber && !isDel));
@@ -1078,25 +1118,136 @@ const Tables: React.FC<TablesProps> = memo(
 
         const totalAmount = Number(ord.total || 0);
         const totalItems = ord.items ? ord.items.reduce((acc, i) => acc + (i.quantity || 1), 0) : 0;
+        const createdAt = ord.createdAt
+          ? (ord.createdAt instanceof Date ? ord.createdAt : new Date(ord.createdAt))
+          : new Date();
 
-        list.push({
-          id: ord.id,
-          source: 'order',
+        const canonicalKey = getCanonicalKey({
+          dailyNumber: ord.dailyNumber,
+          orderId: ord.id,
+          docId: ord.docId,
           type: orderType,
-          displayNumber: ord.dailyNumber ? `Pedido #${ord.dailyNumber}` : `Comanda #${ord.id.slice(-4)}`,
-          customerName: ord.customerName,
-          customerPhone: ord.customerPhone,
-          customerAddress: ord.customerAddress,
-          deliveryFee: ord.deliveryFee,
-          total: totalAmount,
-          itemsCount: totalItems,
-          status: ord.status,
-          createdAt: ord.createdAt ? new Date(ord.createdAt) : new Date(),
-          rawOrder: ord,
+          phone: ord.customerPhone,
+          name: ord.customerName,
         });
+
+        registerAliases(canonicalKey, {
+          dailyNumber: ord.dailyNumber,
+          orderId: ord.id,
+          docId: ord.docId,
+          phone: ord.customerPhone,
+        });
+
+        if (groupMap.has(canonicalKey)) {
+          const existing = groupMap.get(canonicalKey)!;
+          if (paid) existing.isPaid = true;
+          if (!existing.customerName && ord.customerName) existing.customerName = ord.customerName;
+          if (!existing.customerPhone && ord.customerPhone) existing.customerPhone = ord.customerPhone;
+          if (!existing.customerAddress && ord.customerAddress) existing.customerAddress = ord.customerAddress;
+          if (!existing.deliveryFee && ord.deliveryFee) existing.deliveryFee = ord.deliveryFee;
+          if (totalAmount > existing.total) existing.total = totalAmount;
+          if (totalItems > existing.itemsCount) existing.itemsCount = totalItems;
+          if (!existing.rawOrder) existing.rawOrder = ord;
+        } else {
+          groupMap.set(canonicalKey, {
+            id: ord.id,
+            source: 'order',
+            type: orderType,
+            displayNumber: ord.dailyNumber ? `Pedido #${ord.dailyNumber}` : `Comanda #${String(ord.id).slice(-4)}`,
+            dailyNumber: ord.dailyNumber,
+            customerName: ord.customerName,
+            customerPhone: ord.customerPhone,
+            customerAddress: ord.customerAddress,
+            deliveryFee: ord.deliveryFee,
+            total: totalAmount,
+            itemsCount: totalItems,
+            status: ord.status,
+            createdAt: createdAt,
+            rawOrder: ord,
+            isPaid: paid,
+          });
+        }
       });
 
-      return list;
+      // 2. Processar comandas locais de counterOrders (Balcão/Delivery)
+      counterOrders.forEach((counter) => {
+        if (counter.status === 'available') return;
+
+        let isCounterSettled = false;
+        if (counter.partialPayments && counter.partialPayments.length > 0) {
+          const totalPaid = counter.partialPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+          const counterTotal = (Number(counter.total) || 0) + (Number(counter.deliveryFee) || 0);
+          if (totalPaid >= counterTotal - 0.05 && totalPaid > 0) {
+            isCounterSettled = true;
+          }
+        }
+
+        const hasContent = (counter.items && counter.items.length > 0) || (counter.total && counter.total > 0) || counter.customerName;
+        if (!hasContent) return;
+
+        const isDel = !!counter.isDelivery || !!counter.customerAddress || !!(counter.deliveryFee && counter.deliveryFee > 0);
+        const isRet = !isDel && !!counter.customerName && !counter.isDelivery;
+        const orderType: 'balcao' | 'delivery' | 'takeout' = isDel ? 'delivery' : (isRet ? 'takeout' : 'balcao');
+
+        const totalAmount = (counter.total || 0) + (counter.deliveryFee || 0);
+        const totalItems = counter.items ? counter.items.reduce((acc, i) => acc + (i.quantity || 1), 0) : 0;
+        const createdAt = counter.openedAt
+          ? (counter.openedAt instanceof Date ? counter.openedAt : new Date(counter.openedAt))
+          : new Date();
+
+        const canonicalKey = getCanonicalKey({
+          dailyNumber: counter.number,
+          orderId: counter.currentOrderId,
+          counterId: counter.id,
+          docId: (counter as any).docId,
+          type: orderType,
+          phone: counter.customerPhone,
+          name: counter.customerName,
+        });
+
+        registerAliases(canonicalKey, {
+          dailyNumber: counter.number,
+          orderId: counter.currentOrderId,
+          counterId: counter.id,
+          docId: (counter as any).docId,
+          phone: counter.customerPhone,
+        });
+
+        if (groupMap.has(canonicalKey)) {
+          const existing = groupMap.get(canonicalKey)!;
+          if (isCounterSettled) existing.isPaid = true;
+          existing.rawCounter = counter;
+          if (!existing.customerName && counter.customerName) existing.customerName = counter.customerName;
+          if (!existing.customerPhone && counter.customerPhone) existing.customerPhone = counter.customerPhone;
+          if (!existing.customerAddress && counter.customerAddress) existing.customerAddress = counter.customerAddress;
+          if (!existing.deliveryFee && counter.deliveryFee) existing.deliveryFee = counter.deliveryFee;
+          if (totalAmount > existing.total) existing.total = totalAmount;
+          if (totalItems > existing.itemsCount) existing.itemsCount = totalItems;
+        } else {
+          groupMap.set(canonicalKey, {
+            id: counter.id,
+            source: 'counter',
+            type: orderType,
+            displayNumber: counter.number ? `Comanda #${counter.number}` : `Balcão #${String(counter.id).slice(-4)}`,
+            dailyNumber: counter.number,
+            customerName: counter.customerName,
+            customerPhone: counter.customerPhone,
+            customerAddress: counter.customerAddress,
+            deliveryFee: counter.deliveryFee,
+            total: totalAmount,
+            itemsCount: totalItems,
+            status: counter.status || 'occupied',
+            createdAt: createdAt,
+            rawCounter: counter,
+            isPaid: isCounterSettled,
+          });
+        }
+      });
+
+      // Retornar apenas comandas não pagas, ordenadas por mais recentes
+      return Array.from(groupMap.values())
+        .filter((c) => !c.isPaid && c.total >= 0)
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     }, [counterOrders, orders, isOrderSettledWithPayment]);
 
     const handleOpenUnpaidComanda = (comanda: typeof openUnpaidComandas[0]) => {
