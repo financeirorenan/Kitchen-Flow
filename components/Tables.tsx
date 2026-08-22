@@ -987,6 +987,157 @@ const Tables: React.FC<TablesProps> = memo(
       setActiveSeat("Geral");
     };
 
+    // Helper para verificar se o pedido possui forma de pagamento registrada e quitada
+    const isOrderSettledWithPayment = useCallback((ord: Order): boolean => {
+      if (ord.isSettled === true && ord.paymentMethod && ord.paymentMethod !== 'pending' && ord.paymentMethod !== 'a_definir') {
+        return true;
+      }
+      if (ord.paymentStatus === 'paid') {
+        return true;
+      }
+      if (ord.payments && ord.payments.length > 0) {
+        const totalPaid = ord.payments.reduce((acc, p) => acc + (p.amount || 0), 0);
+        if (totalPaid >= (ord.total || 0) && (ord.total || 0) > 0) {
+          return true;
+        }
+      }
+      return false;
+    }, []);
+
+    // Comandas de Balcão, Delivery e Retirada que estão ABERTAS e SEM FORMA DE PAGAMENTO
+    const openUnpaidComandas = useMemo(() => {
+      const list: Array<{
+        id: string | number;
+        source: 'counter' | 'order';
+        type: 'balcao' | 'delivery' | 'takeout';
+        displayNumber: string | number;
+        customerName?: string;
+        customerPhone?: string;
+        customerAddress?: string;
+        deliveryFee?: number;
+        total: number;
+        itemsCount: number;
+        status: string;
+        createdAt?: Date;
+        rawCounter?: Table;
+        rawOrder?: Order;
+      }> = [];
+
+      const processedOrderIds = new Set<string>();
+
+      // 1. Processar comandas locais de counterOrders (Balcão/Delivery)
+      counterOrders.forEach((counter) => {
+        if (counter.currentOrderId) {
+          processedOrderIds.add(String(counter.currentOrderId));
+        }
+        processedOrderIds.add(String(counter.id));
+
+        if ((counter.items && counter.items.length > 0) || (counter.total && counter.total > 0) || counter.customerName) {
+          const isDel = !!counter.isDelivery || !!counter.customerAddress || !!(counter.deliveryFee && counter.deliveryFee > 0);
+          const isRet = !isDel && !!counter.customerName && !counter.isDelivery;
+          const orderType: 'balcao' | 'delivery' | 'takeout' = isDel ? 'delivery' : (isRet ? 'takeout' : 'balcao');
+
+          const totalAmount = (counter.total || 0) + (counter.deliveryFee || 0);
+          const totalItems = counter.items ? counter.items.reduce((acc, i) => acc + (i.quantity || 1), 0) : 0;
+
+          list.push({
+            id: counter.id,
+            source: 'counter',
+            type: orderType,
+            displayNumber: counter.number ? `Comanda #${counter.number}` : `Balcão #${String(counter.id).slice(-4)}`,
+            customerName: counter.customerName,
+            customerPhone: counter.customerPhone,
+            customerAddress: counter.customerAddress,
+            deliveryFee: counter.deliveryFee,
+            total: totalAmount,
+            itemsCount: totalItems,
+            status: counter.status || 'occupied',
+            createdAt: counter.openedAt || new Date(),
+            rawCounter: counter,
+          });
+        }
+      });
+
+      // 2. Processar pedidos de balcão / delivery / retirada em 'orders' que NÃO POSSUEM PAGAMENTO
+      orders.forEach((ord) => {
+        if (ord.status === 'cancelled') return;
+
+        // Apenas pedidos que não são de mesa física (balcão, delivery, retirada ou sem mesa associada)
+        const isNonTable = ord.type === 'delivery' || ord.type === 'takeout' || (ord.type as any) === 'balcao' || !ord.tableNumber;
+        if (!isNonTable) return;
+
+        // Evitar duplicidade se já capturado em counterOrders
+        if (processedOrderIds.has(String(ord.id)) || (ord.docId && processedOrderIds.has(String(ord.docId)))) return;
+
+        // Se já tiver pagamento inserido e quitado, não exibir
+        if (isOrderSettledWithPayment(ord)) return;
+
+        const isDel = ord.type === 'delivery';
+        const isRet = ord.type === 'takeout' && (ord.deliveryMethod === 'retirada' || (!ord.tableNumber && !isDel));
+        const orderType: 'balcao' | 'delivery' | 'takeout' = isDel ? 'delivery' : (isRet ? 'takeout' : 'balcao');
+
+        const totalAmount = Number(ord.total || 0);
+        const totalItems = ord.items ? ord.items.reduce((acc, i) => acc + (i.quantity || 1), 0) : 0;
+
+        list.push({
+          id: ord.id,
+          source: 'order',
+          type: orderType,
+          displayNumber: ord.dailyNumber ? `Pedido #${ord.dailyNumber}` : `Comanda #${ord.id.slice(-4)}`,
+          customerName: ord.customerName,
+          customerPhone: ord.customerPhone,
+          customerAddress: ord.customerAddress,
+          deliveryFee: ord.deliveryFee,
+          total: totalAmount,
+          itemsCount: totalItems,
+          status: ord.status,
+          createdAt: ord.createdAt ? new Date(ord.createdAt) : new Date(),
+          rawOrder: ord,
+        });
+      });
+
+      return list;
+    }, [counterOrders, orders, isOrderSettledWithPayment]);
+
+    const handleOpenUnpaidComanda = (comanda: typeof openUnpaidComandas[0]) => {
+      if (comanda.source === 'counter' && comanda.rawCounter) {
+        openCounterOrder(comanda.rawCounter);
+      } else if (comanda.rawOrder) {
+        const ord = comanda.rawOrder;
+        resetCustomerFields();
+        setIsCounterContext(true);
+        setIsDeliveryOrder(ord.type === 'delivery');
+        if (ord.customerName) setCustomerName(ord.customerName);
+        if (ord.customerPhone) setCustomerPhone(ord.customerPhone);
+        if (ord.customerAddress) setDeliveryAddress(ord.customerAddress);
+        if (ord.deliveryFee) setDeliveryFeeInput(String(ord.deliveryFee).replace('.', ','));
+        if (ord.customerId) setSelectedCustomerId(ord.customerId);
+        if (ord.additionalFee) setAdditionalFee(ord.additionalFee);
+        if (ord.additionalFeeReason) setAdditionalFeeReason(ord.additionalFeeReason);
+        if (ord.discount) setDiscount(ord.discount);
+
+        const itemsTotal = ord.items ? ord.items.reduce((acc, i) => acc + (i.price * i.quantity), 0) : ord.total;
+
+        const mockTable: Table = {
+          id: ord.id,
+          number: ord.dailyNumber || Number(String(ord.id).replace(/\D/g, '')) || 0,
+          items: ord.items || [],
+          total: itemsTotal,
+          status: 'occupied',
+          tenantId: ord.tenantId,
+          currentOrderId: ord.id,
+          customerName: ord.customerName,
+          customerPhone: ord.customerPhone,
+          customerAddress: ord.customerAddress,
+          deliveryFee: ord.deliveryFee,
+          isDelivery: ord.type === 'delivery',
+          customerId: ord.customerId,
+        };
+        setSelectedTable(mockTable);
+        setActiveSeat('Geral');
+      }
+    };
+
     const handleNewCounter = async () => {
       if (!cashSession.isOpen) {
         alert("Abra o caixa primeiro.");
@@ -2292,36 +2443,98 @@ const Tables: React.FC<TablesProps> = memo(
             </div>
           </div>
 
-          {counterOrders.length > 0 && (
-            <div>
-              <h3 className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1.5 flex items-center gap-1.5">
-                <Store size={10} /> Comandas de Balcão Ativas
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-1.5">
-                {counterOrders.map((order) => (
-                  <button
-                    key={order.id}
-                    onClick={() => openCounterOrder(order)}
-                    className="flex items-center justify-between p-1.5 bg-white rounded-lg border-2 border-slate-100 hover:border-indigo-600 transition-all shadow-sm group"
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <div className="p-1 bg-indigo-50 text-indigo-600 rounded-md group-hover:bg-indigo-600 group-hover:text-white transition-all">
-                        <ShoppingBag size={14} />
+          {openUnpaidComandas.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-slate-200/80">
+              <div className="flex flex-wrap items-center justify-between gap-1.5 mb-2 px-1">
+                <h3 className="text-[9px] font-black text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                  <div className="p-1 bg-amber-500 text-white rounded shadow-xs">
+                    <Receipt size={11} />
+                  </div>
+                  Comandas Abertas (Sem Pagamento)
+                  <span className="text-[8px] font-black bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded-full border border-amber-200">
+                    {openUnpaidComandas.length} {openUnpaidComandas.length === 1 ? 'aberta' : 'abertas'}
+                  </span>
+                </h3>
+                <span className="text-[8px] font-bold text-slate-400">
+                  Balcão, Delivery e Retirada aguardando inserção de pagamento • Clique para abrir no PDV
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
+                {openUnpaidComandas.map((comanda) => {
+                  const isDel = comanda.type === 'delivery';
+                  const isRet = comanda.type === 'takeout';
+
+                  return (
+                    <button
+                      key={String(comanda.id)}
+                      onClick={() => handleOpenUnpaidComanda(comanda)}
+                      className={`flex flex-col p-2 rounded-xl border-2 transition-all shadow-xs group text-left cursor-pointer relative overflow-hidden ${
+                        isDel
+                          ? 'bg-amber-50/50 border-amber-200 hover:border-amber-500 hover:bg-amber-50'
+                          : isRet
+                            ? 'bg-emerald-50/50 border-emerald-200 hover:border-emerald-500 hover:bg-emerald-50'
+                            : 'bg-indigo-50/50 border-indigo-200 hover:border-indigo-500 hover:bg-indigo-50'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-1.5 mb-1">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <div
+                            className={`p-1.5 rounded-lg text-white shrink-0 shadow-xs ${
+                              isDel ? 'bg-amber-500' : isRet ? 'bg-emerald-600' : 'bg-indigo-600'
+                            }`}
+                          >
+                            {isDel ? <Bike size={13} /> : isRet ? <Package size={13} /> : <ShoppingBag size={13} />}
+                          </div>
+                          <div className="min-w-0">
+                            <span
+                              className={`text-[7px] font-black uppercase px-1.5 py-0.2 rounded tracking-wider ${
+                                isDel
+                                  ? 'bg-amber-100 text-amber-900 border border-amber-200'
+                                  : isRet
+                                    ? 'bg-emerald-100 text-emerald-900 border border-emerald-200'
+                                    : 'bg-indigo-100 text-indigo-900 border border-indigo-200'
+                              }`}
+                            >
+                              {isDel ? 'Delivery' : isRet ? 'Retirada' : 'Balcão'}
+                            </span>
+                            <p className="font-black text-slate-800 text-[11px] truncate mt-0.5">
+                              {comanda.displayNumber}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="text-right shrink-0">
+                          <p className="font-black text-slate-900 text-xs">
+                            R$ {comanda.total.toFixed(2).replace('.', ',')}
+                          </p>
+                          <span className="text-[7px] font-black text-rose-700 bg-rose-50 px-1 py-0.2 rounded border border-rose-200 uppercase tracking-tighter block mt-0.5">
+                            Sem Pgto
+                          </span>
+                        </div>
                       </div>
-                      <div className="text-left">
-                        <p className="font-black text-slate-800 text-[10px]">
-                          Balcão #{order.id.toString().slice(-4)}
+
+                      {comanda.customerName && (
+                        <p className="text-[9px] font-bold text-slate-700 truncate flex items-center gap-1 mt-0.5">
+                          <UserIcon size={9} className="text-slate-400 shrink-0" />
+                          <span className="truncate">{comanda.customerName}</span>
                         </p>
-                        <p className="text-[6px] font-bold text-slate-400 uppercase">
-                          {order.items.length} itens
+                      )}
+
+                      {isDel && comanda.customerAddress && (
+                        <p className="text-[8px] text-slate-500 truncate mt-0.5">
+                          📍 {comanda.customerAddress}
                         </p>
+                      )}
+
+                      <div className="flex items-center justify-between text-[8px] font-bold text-slate-400 pt-1 mt-1 border-t border-slate-200/60">
+                        <span>{comanda.itemsCount} {comanda.itemsCount === 1 ? 'item' : 'itens'}</span>
+                        <span className="text-indigo-600 group-hover:translate-x-0.5 transition-transform flex items-center gap-0.5 font-black uppercase text-[8px] tracking-wider">
+                          Abrir PDV <ChevronRight size={9} />
+                        </span>
                       </div>
-                    </div>
-                    <p className="font-black text-indigo-600 text-[10px]">
-                      R$ {order.total.toFixed(2)}
-                    </p>
-                  </button>
-                ))}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}

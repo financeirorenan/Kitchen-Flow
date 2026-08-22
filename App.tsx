@@ -3336,13 +3336,14 @@ const App: React.FC = () => {
     const order = orders.find(o => o.id === id);
     if (!order) return;
 
-    // Prevent backwards transitions and modification of terminal statuses
-    const terminalStatuses: OrderStatus[] = ['delivered', 'finished', 'cancelled'];
-    const currentStatus = order.status;
+    // Se o status já é o mesmo, nada a fazer
+    if (order.status === status) return;
 
-    if (terminalStatuses.includes(currentStatus) && status !== 'cancelled') {
-        console.warn(`Attempted to modify a terminal order ${id} (${currentStatus}). State preserved.`);
-        return;
+    // Permitir restauração de pedidos cancelados (para pending ou preparing)
+    // Para pedidos finalizados/entregues, apenas bloquear alterações acidentais a menos que seja cancelamento ou restauração explícita
+    if ((order.status === 'delivered' || order.status === 'finished') && status !== 'cancelled' && status !== 'preparing' && status !== 'ready') {
+      console.warn(`Attempted to modify a completed order ${id} (${order.status}). State preserved.`);
+      return;
     }
 
     // Transição permitida para qualquer status em pedidos não-terminais (ex: retornar pedido 'ready' ou 'delivering' para a cozinha 'preparing')

@@ -130,8 +130,8 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
     }, {});
   }, [order.items, products]);
 
-  const canGoBack = order.status !== 'pending' && order.status !== 'cancelled' && order.status !== 'delivered' && order.status !== 'finished';
-  const canAdvance = order.status !== 'delivered' && order.status !== 'finished' && order.status !== 'cancelled';
+  const canGoBack = order.status === 'ready' || order.status === 'delivering';
+  const canAdvance = order.status === 'pending' || order.status === 'preparing' || order.status === 'ready' || order.status === 'delivering';
 
   return (
     <div 
@@ -266,22 +266,19 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
         )}
 
         {/* Badge da Forma de Pagamento */}
-        <div className="flex justify-between items-center bg-slate-50 p-2 rounded-lg border border-slate-200 mt-2">
+        <div className="flex items-center justify-between bg-slate-50 p-2 rounded-lg border border-slate-200 mt-2">
           <div className="flex items-center gap-1.5 text-[9px] min-w-0">
             <CreditCard size={12} className="text-slate-400 shrink-0" />
             <span className="font-black text-slate-500 uppercase tracking-tighter shrink-0">PAGAMENTO:</span>
-            <span className="font-black text-indigo-700 uppercase bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 text-[9px] tracking-wide truncate">
+            <span className="font-black text-indigo-700 uppercase bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 text-[9px] tracking-wide truncate">
               {order.paymentMethod ? order.paymentMethod.replace('_', ' ') : 'dinheiro'}
             </span>
           </div>
-          <button
-            type="button"
-            onClick={() => onEditOrderInPDV(order)}
-            className="text-[9px] font-black text-indigo-600 hover:text-indigo-800 underline uppercase tracking-wider shrink-0 pl-2 cursor-pointer"
-            title="Alterar forma de pagamento e lançamentos do pedido"
-          >
-            Alterar
-          </button>
+          {order.total !== undefined && (
+            <span className="font-black text-slate-800 text-xs shrink-0">
+              R$ {Number(order.total || 0).toFixed(2).replace('.', ',')}
+            </span>
+          )}
         </div>
 
         {/* Botões de Ação estilo SAIPOS (SEMPRE VISÍVEIS E INTERATIVOS) */}
@@ -290,7 +287,10 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
           <div className="flex items-center gap-1">
             <button 
               type="button"
-              onClick={() => onEditOrderInPDV(order)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onEditOrderInPDV(order);
+              }}
               className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded-md font-black text-[10px] uppercase transition-all shadow-xs flex items-center gap-1 cursor-pointer"
               title="Abrir detalhes no PDV"
             >
@@ -300,7 +300,10 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
 
             <button 
               type="button"
-              onClick={() => handlePrintOrder(order, adminSettings, { isFiscal: true })}
+              onClick={(e) => {
+                e.stopPropagation();
+                handlePrintOrder(order, adminSettings, { isFiscal: true });
+              }}
               className="p-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-600 hover:text-white active:scale-95 border border-emerald-200 rounded-md transition-all shadow-xs cursor-pointer"
               title="Imprimir Cupom Fiscal"
             >
@@ -309,7 +312,10 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
 
             <button 
               type="button"
-              onClick={() => handlePrintOrder(order, adminSettings, { isFiscal: false })}
+              onClick={(e) => {
+                e.stopPropagation();
+                handlePrintOrder(order, adminSettings, { isFiscal: false });
+              }}
               className="p-1.5 bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900 active:scale-95 border border-slate-200 rounded-md transition-all shadow-xs cursor-pointer"
               title="Imprimir Recibo"
             >
@@ -319,7 +325,10 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
             {order.status !== 'cancelled' && (
               <button 
                 type="button"
-                onClick={() => onUpdateStatus(order.id, 'cancelled')}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onUpdateStatus(order.id, 'cancelled');
+                }}
                 className="p-1.5 bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white active:scale-95 border border-rose-200 rounded-md transition-all shadow-xs cursor-pointer"
                 title="Cancelar Pedido"
               >
@@ -330,7 +339,10 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
             {order.status === 'cancelled' && (
               <button 
                 type="button"
-                onClick={() => onUpdateStatus(order.id, 'pending')}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onUpdateStatus(order.id, 'pending');
+                }}
                 className="p-1.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white active:scale-95 border border-emerald-200 rounded-md transition-all shadow-xs cursor-pointer"
                 title="Restaurar Pedido"
               >
@@ -344,9 +356,12 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
             {canGoBack && (
               <button 
                 type="button"
-                onClick={() => onBack(order)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onBack(order);
+                }}
                 className="p-1.5 bg-amber-50 text-amber-700 hover:bg-amber-100 active:scale-95 border border-amber-200 rounded-md transition-all cursor-pointer flex items-center justify-center"
-                title="Voltar Etapa (Retornar para Cozinha/Preparo)"
+                title="Voltar Etapa"
               >
                 <ArrowLeft size={14} />
               </button>
@@ -355,7 +370,8 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
             {canAdvance && (
               <button 
                 type="button"
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   if (order.status === 'ready' && order.type === 'delivery' && !order.courierId) {
                     onOpenDispatchModal(order);
                   } else {
@@ -572,27 +588,20 @@ const KDS: React.FC<KDSProps> = memo(({
   }, [selectedOrderIds, onUpdateStatus]);
 
   const handleAdvance = useCallback((order: Order) => {
-    const statusFlow: OrderStatus[] = ['pending', 'preparing', 'ready', 'delivering', 'delivered', 'finished'];
-    const currentIndex = statusFlow.indexOf(order.status);
-    
-    if (currentIndex < statusFlow.length - 1) {
-      const nextStatus = statusFlow[currentIndex + 1];
-      onUpdateStatus(order.id, nextStatus);
+    if (order.status === 'pending' || order.status === 'preparing') {
+      onUpdateStatus(order.id, 'ready');
+    } else if (order.status === 'ready') {
+      onUpdateStatus(order.id, 'delivering');
+    } else if (order.status === 'delivering') {
+      onUpdateStatus(order.id, 'delivered');
     }
   }, [onUpdateStatus]);
 
   const handleBack = useCallback((order: Order) => {
-    const terminalStatuses: OrderStatus[] = ['delivered', 'finished', 'cancelled'];
-    if (terminalStatuses.includes(order.status)) {
-      return;
-    }
-
-    const statusFlow: OrderStatus[] = ['pending', 'preparing', 'ready', 'delivering'];
-    const currentIndex = statusFlow.indexOf(order.status);
-    
-    if (currentIndex > 0) {
-      const prevStatus = statusFlow[currentIndex - 1];
-      onUpdateStatus(order.id, prevStatus);
+    if (order.status === 'delivering') {
+      onUpdateStatus(order.id, 'ready');
+    } else if (order.status === 'ready') {
+      onUpdateStatus(order.id, 'preparing');
     }
   }, [onUpdateStatus]);
 
