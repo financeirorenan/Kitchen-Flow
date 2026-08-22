@@ -3567,6 +3567,7 @@ const App: React.FC = () => {
     const exactOrder = orders.find(o => o.id === order.id || o.docId === order.id) || order;
     setReturnToTab(activeTab);
     setPdvEditOrder({ ...exactOrder });
+    setActiveTab('tables');
   };
 
   const handleUpdateOrder = async (id: string, updates: Partial<Order>) => {

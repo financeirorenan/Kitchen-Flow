@@ -938,8 +938,17 @@ const Tables: React.FC<TablesProps> = memo(
         return;
       }
 
-      const source = isCounterContext ? counterOrders : tables;
-      const updatedTable = source.find((t) => t.id === selectedTable.id);
+      // Procurar tabela ou comanda correspondente nas listas ativas
+      let updatedTable: Table | undefined = undefined;
+      if (isCounterContext) {
+        updatedTable = (counterOrders || []).find(
+          (t) => t && (t.id === selectedTable.id || String(t.id) === String(selectedTable.id) || (t as any).docId === selectedTable.id || (selectedTable.currentOrderId && (t.id === selectedTable.currentOrderId || t.currentOrderId === selectedTable.currentOrderId)))
+        );
+      } else {
+        updatedTable = (tables || []).find(
+          (t) => t && (t.id === selectedTable.id || String(t.id) === String(selectedTable.id) || (t as any).docId === selectedTable.id || (selectedTable.number && t.number === selectedTable.number))
+        );
+      }
 
       if (updatedTable) {
         // Só atualiza se houver mudança real para evitar loops
@@ -949,12 +958,14 @@ const Tables: React.FC<TablesProps> = memo(
           updatedTable.status !== selectedTable.status ||
           updatedTable.total !== selectedTable.total
         ) {
-          setSelectedTable(updatedTable);
+          // Preservar itens não enviados adicionados localmente pelo usuário
+          const localUnsentItems = (selectedTable.items || []).filter(i => !i.sentToKitchen);
+          if (localUnsentItems.length === 0) {
+            setSelectedTable(updatedTable);
+          }
         }
-      } else if (isCounterContext) {
-        // Se for balcão e não estiver mais na lista, fecha o modal
-        setSelectedTable(null);
       }
+      // NUNCA forçar setSelectedTable(null) automaticamente para evitar fechar o PDV ao abrir novas comandas/pedidos
     }, [
       tables,
       counterOrders,
@@ -1156,12 +1167,42 @@ const Tables: React.FC<TablesProps> = memo(
     }, [counterOrders, orders, isOrderSettledWithPayment]);
 
     const handleOpenUnpaidComanda = (comanda: typeof openUnpaidComandas[0]) => {
+      resetCustomerFields();
+      setIsCounterContext(true);
+
       if (comanda.source === 'counter' && comanda.rawCounter) {
-        openCounterOrder(comanda.rawCounter);
+        const counter = comanda.rawCounter;
+        const ord = comanda.rawOrder;
+        const finalItems = (counter.items && counter.items.length > 0)
+          ? counter.items
+          : (ord?.items || []);
+        const itemsSum = finalItems.reduce((acc, i) => acc + (i.price * i.quantity), 0);
+        const finalTotal = itemsSum > 0 ? itemsSum : (Number(counter.total) || Number(ord?.total) || 0);
+
+        const mergedCounter: Table = {
+          ...counter,
+          items: finalItems,
+          total: finalTotal,
+          currentOrderId: counter.currentOrderId || ord?.id,
+          customerName: counter.customerName || ord?.customerName,
+          customerPhone: counter.customerPhone || ord?.customerPhone,
+          customerAddress: counter.customerAddress || ord?.customerAddress,
+          deliveryFee: counter.deliveryFee !== undefined ? counter.deliveryFee : ord?.deliveryFee,
+          isDelivery: counter.isDelivery !== undefined ? counter.isDelivery : ord?.type === 'delivery',
+          customerId: counter.customerId || ord?.customerId,
+        };
+
+        if (mergedCounter.customerName) setCustomerName(mergedCounter.customerName);
+        if (mergedCounter.customerPhone) setCustomerPhone(mergedCounter.customerPhone);
+        if (mergedCounter.customerAddress) setDeliveryAddress(mergedCounter.customerAddress);
+        if (mergedCounter.deliveryFee) setDeliveryFeeInput(String(mergedCounter.deliveryFee).replace(".", ","));
+        setIsDeliveryOrder(!!mergedCounter.isDelivery);
+        if (mergedCounter.customerId) setSelectedCustomerId(mergedCounter.customerId);
+
+        setSelectedTable(mergedCounter);
+        setActiveSeat("Geral");
       } else if (comanda.rawOrder) {
         const ord = comanda.rawOrder;
-        resetCustomerFields();
-        setIsCounterContext(true);
         setIsDeliveryOrder(ord.type === 'delivery');
         if (ord.customerName) setCustomerName(ord.customerName);
         if (ord.customerPhone) setCustomerPhone(ord.customerPhone);

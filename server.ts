@@ -2234,7 +2234,10 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
       res.status(404).json({ error: "Rota API não encontrada" });
     });
   } else {
-    const distPath = path.resolve("dist");
+    const cwdDist = path.join(process.cwd(), "dist");
+    const distPath = fs.existsSync(cwdDist)
+      ? cwdDist
+      : (typeof __dirname !== "undefined" ? __dirname : path.resolve("dist"));
 
     if (fs.existsSync(distPath)) {
       app.use(express.static(distPath, {
