@@ -6,6 +6,7 @@ import {
   Sparkles, Coffee, Flame, Utensils, Award, RefreshCw, Volume2, VolumeX, Grid, Smartphone, ShoppingBag, Bike, LogOut,
   Maximize2, Minimize2, Sun, Moon
 } from 'lucide-react';
+import { formatOrderNumber, getOrderNumericId } from '../utils/deduplicate';
 
 interface KDSKitchenOnlyProps {
   orders: Order[];
@@ -25,7 +26,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
   showLogoutButton = false
 }) => {
   const [selectedStation, setSelectedStation] = useState<string>('all');
-  const [activeFilter, setActiveFilter] = useState<'all' | 'delivery' | 'takeout' | 'table'>('all');
+  const [selectedTypes, setSelectedTypes] = useState<('delivery' | 'takeout' | 'table')[]>(['delivery', 'takeout', 'table']);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(() => typeof document !== 'undefined' && Boolean(document.fullscreenElement));
   const [themeMode, setThemeMode] = useState<'light' | 'dark'>(() => {
@@ -90,14 +91,17 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
 
   // Filter orders to only pending/preparing (to-be-produced)
   const kitchenOrders = useMemo(() => {
-    // Keep only recent pending/preparing orders (from last 12 hours) to avoid clutter
-    const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000);
+    // Filtro estrito: apenas pedidos pendentes/preparando criados hoje e sem sub-comandas
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     return orders.filter(o => {
+      if (!o) return false;
+      if (o.isSubTicket || o.mergedIntoOrderId) return false;
       const isKitchenStatus = o.status === 'pending' || o.status === 'preparing';
       if (!isKitchenStatus) return false;
       const createdDate = safeParseDate(o.createdAt);
-      if (!createdDate) return true;
-      return createdDate > twelveHoursAgo;
+      if (!createdDate) return false;
+      return createdDate >= today;
     });
   }, [orders]);
 
@@ -112,16 +116,32 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
     return ['all', ...Array.from(categories)];
   }, [products]);
 
+  // Alternador com suporte a seleção múltipla para Delivery, Balcão e Mesa
+  const toggleTypeFilter = (type: 'delivery' | 'takeout' | 'table') => {
+    setSelectedTypes(prev => {
+      if (prev.length === 3) {
+        return [type];
+      }
+      if (prev.includes(type)) {
+        const next = prev.filter(t => t !== type);
+        return next.length === 0 ? ['delivery', 'takeout', 'table'] : next;
+      } else {
+        return [...prev, type];
+      }
+    });
+  };
+
   // Filter orders based on active filters (type) and selected station (category), sorted by FIFO launch order
   const filteredKitchenOrders = useMemo(() => {
     const list = kitchenOrders.filter(order => {
-      // 1. Filter by order type
-      if (activeFilter !== 'all') {
-        if (activeFilter === 'takeout' && order.type !== 'takeout' && order.type !== 'counter') {
-          return false;
-        } else if (activeFilter !== 'takeout' && order.type !== activeFilter) {
-          return false;
-        }
+      // 1. Filter by order type (Multi-select)
+      if (selectedTypes.length < 3) {
+        const matches = (
+          (selectedTypes.includes('delivery') && order.type === 'delivery') ||
+          (selectedTypes.includes('takeout') && (order.type === 'takeout' || order.type === 'counter')) ||
+          (selectedTypes.includes('table') && (order.type === 'table' || (!order.type && !['delivery', 'takeout', 'counter'].includes(order.type))))
+        );
+        if (!matches) return false;
       }
 
       // 2. Filter by station (category)
@@ -146,7 +166,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
       if (dailyA !== dailyB) return dailyA - dailyB;
       return String(a.id).localeCompare(String(b.id));
     });
-  }, [kitchenOrders, activeFilter, selectedStation, products]);
+  }, [kitchenOrders, selectedTypes, selectedStation, products]);
 
   // Trigger sound alert when a new kitchen order arrives
   useEffect(() => {
@@ -235,8 +255,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
   const getOrderIdentifier = (order: Order) => {
     if (order.type === 'table') return getTableLabel(order);
     if (order.customerName) return order.customerName.toUpperCase().slice(0, 15);
-    const shortId = order.id.replace('KDS-', '').toUpperCase().slice(-4);
-    return `SENHA ${shortId}`;
+    return `PEDIDO ${formatOrderNumber(order)}`;
   };
 
   // Custom component for the elapsed timer (live updates)
@@ -376,31 +395,53 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
           </span>
         </div>
 
-        {/* Order Type Filters */}
+        {/* Order Type Filters com Seleção Múltipla */}
         <div className={`flex gap-1.5 p-1 rounded-xl border ${
           isLight ? 'bg-white border-slate-200' : 'bg-slate-950/80 border-slate-800'
         }`}>
+          <button
+            type="button"
+            onClick={() => setSelectedTypes(['table', 'takeout', 'delivery'])}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
+              selectedTypes.length === 3
+                ? 'bg-rose-600 text-white font-black shadow-md' 
+                : isLight
+                  ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+            }`}
+            title="Exibir todos os pedidos"
+          >
+            <Grid size={13} />
+            Todos os Pedidos
+          </button>
           {[
-            { id: 'all', label: 'Todos os Pedidos', icon: Grid },
-            { id: 'table', label: 'Mesa / Salão', icon: Smartphone },
-            { id: 'takeout', label: 'Balcão', icon: ShoppingBag },
-            { id: 'delivery', label: 'Delivery', icon: Bike }
-          ].map(item => (
-            <button
-              key={item.id}
-              onClick={() => setActiveFilter(item.id as any)}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${
-                activeFilter === item.id 
-                  ? 'bg-rose-600 text-white font-black shadow-md' 
-                  : isLight
-                    ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
-              }`}
-            >
-              <item.icon size={13} />
-              {item.label}
-            </button>
-          ))}
+            { id: 'table' as const, label: 'Mesa / Salão', icon: Smartphone },
+            { id: 'takeout' as const, label: 'Balcão', icon: ShoppingBag },
+            { id: 'delivery' as const, label: 'Delivery', icon: Bike }
+          ].map(item => {
+            const isSelected = selectedTypes.includes(item.id);
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => toggleTypeFilter(item.id)}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
+                  isSelected
+                    ? 'bg-rose-600 text-white font-black shadow-md ring-2 ring-rose-300/30' 
+                    : isLight
+                      ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                }`}
+                title={isSelected && selectedTypes.length < 3 ? `${item.label} (Ativo - clique para remover)` : `Filtrar ${item.label}`}
+              >
+                <item.icon size={13} />
+                {item.label}
+                {isSelected && selectedTypes.length < 3 && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                )}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -450,7 +491,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                         }`}>
                           {order.type === 'table' ? '🍽️ SALÃO' : order.type === 'takeout' ? '🛍️ BALCÃO' : '🛵 DELIVERY'}
                           <span className={isLight ? 'text-slate-300' : 'text-slate-700'}>•</span>
-                          #{order.dailyNumber || order.id.slice(-4).toUpperCase()}
+                          {formatOrderNumber(order)}
                           {order.isSettled ? (
                             <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-600 border border-emerald-500/30">
                               ✓ PAGO

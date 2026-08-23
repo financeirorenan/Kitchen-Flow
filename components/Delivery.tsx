@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { generateReceiptHtml, handlePrintOrder } from '../services/printService';
 import { maskPhone } from '../utils/masks';
+import { formatOrderNumber, getOrderNumericId } from '../utils/deduplicate';
 import EditOrderModal from './EditOrderModal';
 import { LiveTrackingMap } from './LiveTrackingMap';
 
@@ -616,7 +617,7 @@ const Delivery: React.FC<DeliveryProps> = memo(({
                     <div className="flex items-center gap-2">
                       <div>
                         <div className="flex items-center gap-1">
-                           <h4 className="text-sm font-black text-slate-800">#{order.id.slice(-4)}</h4>
+                           <h4 className="text-sm font-black text-slate-800">{formatOrderNumber(order)}</h4>
                            <span className={`px-1 py-0.5 rounded-full text-[6px] font-black uppercase ${order.status === 'ready' ? 'bg-amber-100 text-amber-600' : 'bg-indigo-50 text-indigo-500'}`}>
                               {order.status === 'ready' ? 'Pronto' : 'Cozinha'}
                            </span>
@@ -798,7 +799,7 @@ const Delivery: React.FC<DeliveryProps> = memo(({
                              <div key={order.id} className="flex items-center justify-between p-2 bg-white border border-indigo-100 rounded-lg shadow-sm">
                                 <div className="flex items-center gap-1.5">
                                    <div className="w-6 h-6 bg-indigo-600 text-white rounded-md flex items-center justify-center text-[8px] font-black relative">
-                                      #{order.id.slice(-4)}
+                                      {formatOrderNumber(order)}
                                       {order.routePosition && (
                                         <span className="absolute -top-1.5 -left-1.5 w-4 h-4 bg-amber-500 text-white rounded-full flex items-center justify-center text-[8px] border border-white">
                                           {order.routePosition}
@@ -1244,7 +1245,7 @@ const Delivery: React.FC<DeliveryProps> = memo(({
       {selectedOrderId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md animate-in fade-in duration-300">
           <div className="bg-white w-full max-w-xs rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95">
-            <div className="p-4 border-b bg-indigo-50/30 flex justify-between items-center"><div><h2 className="text-sm font-black text-slate-800">Despachar Pedido</h2><p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Pedido #{selectedOrderId.slice(-4)}</p></div><button onClick={() => setSelectedOrderId(null)} className="p-1.5 hover:bg-white rounded-full"><X size={16} /></button></div>
+            <div className="p-4 border-b bg-indigo-50/30 flex justify-between items-center"><div><h2 className="text-sm font-black text-slate-800">Despachar Pedido</h2><p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Pedido {formatOrderNumber(orders.find(o => o.id === selectedOrderId))}</p></div><button onClick={() => setSelectedOrderId(null)} className="p-1.5 hover:bg-white rounded-full"><X size={16} /></button></div>
             <div className="p-3 space-y-2">
               {couriers.filter(c => c.active).map(courier => {
                 const activeOrdersCount = orders.filter(o => o.courierId === courier.id && o.status === 'delivering').length;
@@ -1687,7 +1688,7 @@ const Delivery: React.FC<DeliveryProps> = memo(({
                   Alterar Pagamento
                 </h3>
                 <p className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">
-                  Pedido #{quickPaymentOrder.id.slice(-4)} • {quickPaymentOrder.customerName}
+                  Pedido {formatOrderNumber(quickPaymentOrder)} • {quickPaymentOrder.customerName}
                 </p>
               </div>
               <button 

@@ -5,6 +5,7 @@ import {
   Volume2, VolumeX, Maximize2, Minimize2, 
   Tv, Clock, CheckCircle2, Flame, AlertCircle, Sparkles
 } from 'lucide-react';
+import { formatOrderNumber, getOrderNumericId } from '../utils/deduplicate';
 
 interface MonitorPedidosProps {
   orders: Order[];
@@ -26,21 +27,25 @@ export const MonitorPedidos: React.FC<MonitorPedidosProps> = ({ orders }) => {
     return () => clearInterval(timer);
   }, []);
 
-  // Filter orders
+  // Filter orders - estritamente do dia de hoje e sem sub-comandas
   const preparingOrders = useMemo(() => {
-    // Keep only recent pending/preparing orders (from last 12 hours) to avoid clutter
-    const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
     return orders
-      .filter(o => 
-        (o.status === 'preparing' || o.status === 'pending') && 
-        new Date(o.createdAt) > twelveHoursAgo
-      )
+      .filter(o => {
+        if (!o || o.isSubTicket || o.mergedIntoOrderId) return false;
+        const isPreparing = o.status === 'preparing' || o.status === 'pending';
+        if (!isPreparing) return false;
+        const created = o.createdAt instanceof Date ? o.createdAt : new Date(o.createdAt);
+        return created >= today;
+      })
       .sort((a, b) => {
         const timeA = new Date(a.createdAt).getTime() || 0;
         const timeB = new Date(b.createdAt).getTime() || 0;
         if (timeA !== timeB) return timeA - timeB;
-        const dailyA = a.dailyNumber || 0;
-        const dailyB = b.dailyNumber || 0;
+        const dailyA = a.dailyNumber || getOrderNumericId(a);
+        const dailyB = b.dailyNumber || getOrderNumericId(b);
         if (dailyA !== dailyB) return dailyA - dailyB;
         return String(a.id).localeCompare(String(b.id));
       })
@@ -48,19 +53,22 @@ export const MonitorPedidos: React.FC<MonitorPedidosProps> = ({ orders }) => {
   }, [orders]);
 
   const readyOrders = useMemo(() => {
-    // Keep ready orders from the current active session
-    const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
     return orders
-      .filter(o => 
-        o.status === 'ready' && 
-        new Date(o.createdAt) > twelveHoursAgo
-      )
+      .filter(o => {
+        if (!o || o.isSubTicket || o.mergedIntoOrderId) return false;
+        if (o.status !== 'ready') return false;
+        const created = o.createdAt instanceof Date ? o.createdAt : new Date(o.createdAt);
+        return created >= today;
+      })
       .sort((a, b) => {
         const timeA = new Date(a.createdAt).getTime() || 0;
         const timeB = new Date(b.createdAt).getTime() || 0;
         if (timeA !== timeB) return timeA - timeB;
-        const dailyA = a.dailyNumber || 0;
-        const dailyB = b.dailyNumber || 0;
+        const dailyA = a.dailyNumber || getOrderNumericId(a);
+        const dailyB = b.dailyNumber || getOrderNumericId(b);
         if (dailyA !== dailyB) return dailyA - dailyB;
         return String(a.id).localeCompare(String(b.id));
       })
@@ -135,8 +143,8 @@ export const MonitorPedidos: React.FC<MonitorPedidosProps> = ({ orders }) => {
       } else if (order.customerName) {
         identifier = `Cliente ${order.customerName}`;
       } else {
-        const shortId = order.id.replace('KDS-', '').slice(-3);
-        identifier = `Senha ${shortId}`;
+        const num = getOrderNumericId(order);
+        identifier = `Pedido número ${num}`;
       }
 
       const text = `Pedido para ${identifier} está pronto! Por favor, retire no balcão.`;
@@ -175,7 +183,7 @@ export const MonitorPedidos: React.FC<MonitorPedidosProps> = ({ orders }) => {
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
-  // Format order label for display
+  // Format order label for display - Estritamente número sequencial do pedido ou mesa/cliente
   const getOrderLabel = (order: Order) => {
     if (order.tableNumber) {
       return `MESA ${order.tableNumber}`;
@@ -183,8 +191,7 @@ export const MonitorPedidos: React.FC<MonitorPedidosProps> = ({ orders }) => {
     if (order.customerName) {
       return order.customerName.toUpperCase().slice(0, 15);
     }
-    const shortId = order.id.replace('KDS-', '').toUpperCase().slice(-4);
-    return `SENHA ${shortId}`;
+    return `PEDIDO ${formatOrderNumber(order)}`;
   };
 
   return (

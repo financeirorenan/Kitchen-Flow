@@ -5,9 +5,11 @@ import {
   User, Truck, Package, Flag, ChevronRight, 
   ChefHat, Timer, Bike, AlertCircle, X,
   Edit, Plus, Minus, Trash2, Search, CreditCard, Printer, Share2, ShoppingBag, MapPin, Phone,
-  Store, XCircle, Receipt, Maximize2, Minimize2, ArrowLeft, ArrowRight
+  Store, XCircle, Receipt, Maximize2, Minimize2, ArrowLeft, ArrowRight,
+  Grid
 } from 'lucide-react';
 import { generateReceiptHtml, handlePrintOrder } from '../services/printService';
+import { getOrderNumericId, formatOrderNumber } from '../utils/deduplicate';
 import EditOrderModal from './EditOrderModal';
 
 interface KDSProps {
@@ -151,7 +153,7 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
             />
             <div className="flex flex-col min-w-0">
               <span className="font-black text-slate-800 text-sm truncate">
-                #{order.dailyNumber || String(order?.id || '').slice(-4).toUpperCase()} - {order.customerName || 'Consumidor não identificado'}
+                {formatOrderNumber(order)} - {order.customerName || 'Consumidor não identificado'}
               </span>
               <span className="text-[10px] text-slate-500 font-semibold">
                 Desde {createdDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} ({timeElapsed >= 0 ? timeElapsed : 0}m)
@@ -529,7 +531,9 @@ const KDS: React.FC<KDSProps> = memo(({
 }) => {
   const [dispatchModalOrder, setDispatchModalOrder] = useState<Order | null>(null);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
-  const [activeFilter, setActiveFilter] = useState<'all' | 'delivery' | 'takeout' | 'table' | 'cancelled'>('all');
+  // Filtros múltiplos de tipo (Mesa, Balcão, Delivery) e modo Cancelados
+  const [selectedTypes, setSelectedTypes] = useState<('delivery' | 'takeout' | 'table')[]>(['delivery', 'takeout', 'table']);
+  const [showCancelled, setShowCancelled] = useState(false);
   const [fiscalPrintDefault, setFiscalPrintDefault] = useState(false);
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
   const [isMudarParaOpen, setIsMudarParaOpen] = useState(false);
@@ -555,6 +559,31 @@ const KDS: React.FC<KDSProps> = memo(({
         });
       }
     }
+  }, []);
+
+  // Alternador com suporte a seleção múltipla para Delivery, Balcão e Mesa
+  const toggleTypeFilter = useCallback((type: 'delivery' | 'takeout' | 'table') => {
+    setShowCancelled(false);
+    setSelectedTypes(prev => {
+      // Se todos os 3 estavam ativos por padrão, ao clicar em um tipo, isola o selecionado
+      if (prev.length === 3) {
+        return [type];
+      }
+      // Se já estava selecionado, desmarca
+      if (prev.includes(type)) {
+        const next = prev.filter(t => t !== type);
+        // Se desmarcar o último restante, reseta para exibir todos
+        return next.length === 0 ? ['delivery', 'takeout', 'table'] : next;
+      } else {
+        // Se não estava selecionado, adiciona à seleção (ex: Delivery + Balcão)
+        return [...prev, type];
+      }
+    });
+  }, []);
+
+  const selectAllTypes = useCallback(() => {
+    setShowCancelled(false);
+    setSelectedTypes(['delivery', 'takeout', 'table']);
   }, []);
 
   const toggleSelectOrder = useCallback((orderId: string) => {
@@ -605,42 +634,43 @@ const KDS: React.FC<KDSProps> = memo(({
     }
   }, [onUpdateStatus]);
 
+  // Função utilitária para correspondência de tipo do pedido
+  const isTypeMatched = useCallback((order: Order, types: ('delivery' | 'takeout' | 'table')[]) => {
+    if (types.length === 3) return true;
+    if (types.includes('delivery') && order.type === 'delivery') return true;
+    if (types.includes('takeout') && (order.type === 'takeout' || order.type === 'counter')) return true;
+    if (types.includes('table') && (order.type === 'table' || (!order.type && !['delivery', 'takeout', 'counter'].includes(order.type)))) return true;
+    return false;
+  }, []);
+
   const filteredOrders = useMemo(() => {
-    if (activeFilter === 'all') {
-      return orders.filter(o => o.status !== 'cancelled');
-    }
-    if (activeFilter === 'cancelled') {
-      return orders.filter(o => o.status === 'cancelled');
-    }
-    return orders.filter(o => o.type === activeFilter && o.status !== 'cancelled');
-  }, [orders, activeFilter]);
+    return orders.filter(o => {
+      if (!o) return false;
+      // Sub-comandas e pedidos mesclados NUNCA devem aparecer no KDS principal
+      if (o.isSubTicket || o.mergedIntoOrderId) return false;
+
+      if (showCancelled) {
+        return o.status === 'cancelled';
+      }
+      if (o.status === 'cancelled') return false;
+      return isTypeMatched(o, selectedTypes);
+    });
+  }, [orders, showCancelled, selectedTypes, isTypeMatched]);
 
   const columns = useMemo(() => {
-    if (activeFilter === 'cancelled') {
-      return {
-        cancelled: filteredOrders
-      };
-    }
-
-    const today = new Date();
-
-    const isRecent = (date: any, status: string) => {
-      const d = safeParseDate(date);
-      if (!d) return true;
-      
-      if (status === 'preparing' || status === 'pending') {
-         const threshold = new Date(today.getTime() - (12 * 60 * 60 * 1000));
-         return d > threshold || isToday(d);
-      }
-
-      const twentyFourHoursAgo = new Date(today.getTime() - (24 * 60 * 60 * 1000));
-      return d > twentyFourHoursAgo;
-    };
-
     const openedDate = (() => {
       if (!cashSession || !cashSession.isOpen || !cashSession.openedAt) return null;
       return safeParseDate(cashSession.openedAt);
     })();
+
+    // Validação estrita: O pedido deve ter sido criado no turno atual ou hoje
+    const isOrderFromCurrentShiftOrToday = (o: Order): boolean => {
+      const created = safeParseDate(o.createdAt);
+      if (!created) return false;
+      if (isToday(created)) return true;
+      if (openedDate && created >= openedDate) return true;
+      return false;
+    };
 
     const sortByLaunchOrder = (a: Order, b: Order) => {
       const dateA = safeParseDate(a.createdAt);
@@ -648,8 +678,8 @@ const KDS: React.FC<KDSProps> = memo(({
       const timeA = dateA ? dateA.getTime() : 0;
       const timeB = dateB ? dateB.getTime() : 0;
       if (timeA !== timeB) return timeA - timeB;
-      const dailyA = a.dailyNumber || 0;
-      const dailyB = b.dailyNumber || 0;
+      const dailyA = a.dailyNumber || getOrderNumericId(a);
+      const dailyB = b.dailyNumber || getOrderNumericId(b);
       if (dailyA !== dailyB) return dailyA - dailyB;
       return String(a.id).localeCompare(String(b.id));
     };
@@ -660,52 +690,41 @@ const KDS: React.FC<KDSProps> = memo(({
       const timeA = dateA ? dateA.getTime() : 0;
       const timeB = dateB ? dateB.getTime() : 0;
       if (timeA !== timeB) return timeB - timeA;
-      const dailyA = a.dailyNumber || 0;
-      const dailyB = b.dailyNumber || 0;
+      const dailyA = a.dailyNumber || getOrderNumericId(a);
+      const dailyB = b.dailyNumber || getOrderNumericId(b);
       if (dailyA !== dailyB) return dailyB - dailyA;
       return String(b.id).localeCompare(String(a.id));
     };
 
-    if (activeFilter === 'cancelled') {
+    if (showCancelled) {
       return {
-        cancelled: [...filteredOrders].sort(sortByLaunchOrder)
+        cancelled: filteredOrders.filter(isOrderFromCurrentShiftOrToday).sort(sortByLaunchOrder)
       };
     }
 
     return {
       preparing: filteredOrders.filter(o => 
-        (o.status === 'preparing' || o.status === 'pending') && isRecent(o.createdAt, 'preparing')
+        (o.status === 'preparing' || o.status === 'pending') && isOrderFromCurrentShiftOrToday(o)
       ).sort(sortByLaunchOrder),
       ready: filteredOrders.filter(o => 
-        o.status === 'ready' && isRecent(o.createdAt, 'ready')
+        o.status === 'ready' && isOrderFromCurrentShiftOrToday(o)
       ).sort(sortByLaunchOrder),
       delivering: filteredOrders.filter(o => 
-        o.status === 'delivering' && isRecent(o.createdAt, o.status)
+        o.status === 'delivering' && isOrderFromCurrentShiftOrToday(o)
       ).sort(sortByLaunchOrder),
       delivered: filteredOrders.filter(o => {
         const isDeliveredOrFinished = o.status === 'delivered' || o.status === 'finished';
         if (!isDeliveredOrFinished) return false;
+        if (!isOrderFromCurrentShiftOrToday(o)) return false;
 
-        const createdDate = safeParseDate(o.createdAt);
         const completionDate = safeParseDate(o.completedAt || o.finishedAt || o.deliveredAt || o.createdAt);
-
         if (openedDate) {
-          const now = new Date();
-          const twentyFourHoursAgo = new Date(now.getTime() - (24 * 60 * 60 * 1000));
-          
-          if (openedDate >= twentyFourHoursAgo) {
-            const createdInTurn = createdDate ? createdDate >= openedDate : false;
-            const completedInTurn = completionDate ? completionDate >= openedDate : false;
-            return createdInTurn || completedInTurn;
-          }
+          return completionDate ? completionDate >= openedDate : true;
         }
-
-        const isCreatedToday = createdDate ? isToday(createdDate) : false;
-        const isCompletedToday = completionDate ? isToday(completionDate) : false;
-        return isCreatedToday || isCompletedToday;
+        return completionDate ? isToday(completionDate) : true;
       }).sort(sortByNewestCompleted).slice(0, 40),
     };
-  }, [filteredOrders, activeFilter, cashSession]);
+  }, [filteredOrders, showCancelled, cashSession]);
 
   return (
     <div className="flex flex-col flex-1 bg-white rounded-2xl border border-slate-200 shadow-lg overflow-hidden text-slate-800 h-full min-h-0">
@@ -730,41 +749,74 @@ const KDS: React.FC<KDSProps> = memo(({
       
       {/* Header Estilo SAIPOS */}
       <div className="bg-slate-900 p-2.5 sm:p-3 flex flex-wrap items-center gap-3 text-white border-b-4 border-amber-500">
-        {/* Filtros de Tipo */}
-        <div className="flex gap-1.5">
+        {/* Filtros de Tipo com Seleção Múltipla */}
+        <div className="flex items-center gap-1.5 flex-wrap">
           <button 
             type="button"
-            onClick={() => setActiveFilter(activeFilter === 'delivery' ? 'all' : 'delivery')}
+            onClick={selectAllTypes}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black uppercase transition-all cursor-pointer ${
-              activeFilter === 'delivery' ? 'bg-amber-500 text-white shadow-sm' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              !showCancelled && selectedTypes.length === 3
+                ? 'bg-amber-500 text-white shadow-sm ring-2 ring-white/20' 
+                : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
             }`}
+            title="Exibir todos os tipos (Mesa, Balcão e Delivery)"
+          >
+            <Grid size={14} /> Todos
+          </button>
+          <button 
+            type="button"
+            onClick={() => toggleTypeFilter('delivery')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black uppercase transition-all cursor-pointer ${
+              !showCancelled && selectedTypes.includes('delivery') 
+                ? 'bg-amber-500 text-white shadow-sm ring-2 ring-white/20' 
+                : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
+            }`}
+            title={selectedTypes.includes('delivery') && selectedTypes.length < 3 ? 'Delivery (Ativo - clique para desmarcar)' : 'Filtrar Delivery'}
           >
             <Bike size={14} /> Delivery
+            {!showCancelled && selectedTypes.includes('delivery') && selectedTypes.length < 3 && (
+              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+            )}
           </button>
           <button 
             type="button"
-            onClick={() => setActiveFilter(activeFilter === 'takeout' ? 'all' : 'takeout')}
+            onClick={() => toggleTypeFilter('takeout')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black uppercase transition-all cursor-pointer ${
-              activeFilter === 'takeout' ? 'bg-amber-500 text-white shadow-sm' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              !showCancelled && selectedTypes.includes('takeout') 
+                ? 'bg-amber-500 text-white shadow-sm ring-2 ring-white/20' 
+                : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
             }`}
+            title={selectedTypes.includes('takeout') && selectedTypes.length < 3 ? 'Balcão (Ativo - clique para desmarcar)' : 'Filtrar Balcão'}
           >
             <ShoppingBag size={14} /> Balcão
+            {!showCancelled && selectedTypes.includes('takeout') && selectedTypes.length < 3 && (
+              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+            )}
           </button>
           <button 
             type="button"
-            onClick={() => setActiveFilter(activeFilter === 'table' ? 'all' : 'table')}
+            onClick={() => toggleTypeFilter('table')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black uppercase transition-all cursor-pointer ${
-              activeFilter === 'table' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              !showCancelled && selectedTypes.includes('table') 
+                ? 'bg-indigo-600 text-white shadow-sm ring-2 ring-white/20' 
+                : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
             }`}
+            title={selectedTypes.includes('table') && selectedTypes.length < 3 ? 'Mesa (Ativo - clique para desmarcar)' : 'Filtrar Mesa'}
           >
             <Smartphone size={14} /> Mesa
+            {!showCancelled && selectedTypes.includes('table') && selectedTypes.length < 3 && (
+              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+            )}
           </button>
           <button 
             type="button"
-            onClick={() => setActiveFilter(activeFilter === 'cancelled' ? 'all' : 'cancelled')}
+            onClick={() => setShowCancelled(prev => !prev)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black uppercase transition-all cursor-pointer ${
-              activeFilter === 'cancelled' ? 'bg-rose-600 text-white shadow-sm' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+              showCancelled 
+                ? 'bg-rose-600 text-white shadow-sm ring-2 ring-white/20' 
+                : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
             }`}
+            title="Exibir pedidos cancelados"
           >
             <XCircle size={14} /> Cancelados
           </button>
@@ -922,7 +974,7 @@ const KDS: React.FC<KDSProps> = memo(({
             <div className="p-4 border-b border-slate-100 bg-amber-500/10 flex justify-between items-center text-slate-900">
               <div>
                 <h2 className="text-sm font-black uppercase tracking-widest">Despachar Pedido</h2>
-                <p className="text-[10px] font-bold text-slate-500">ID #{String(dispatchModalOrder?.id || '').slice(-4)}</p>
+                <p className="text-[10px] font-bold text-slate-500">Pedido {formatOrderNumber(dispatchModalOrder)}</p>
               </div>
               <button 
                 type="button"

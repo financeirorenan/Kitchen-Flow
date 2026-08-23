@@ -2,6 +2,7 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { APIProvider, Map, AdvancedMarker, Pin, InfoWindow, useMap } from '@vis.gl/react-google-maps';
 import { Courier, Order, AdminSettings } from '../types';
+import { formatOrderNumber } from '../utils/deduplicate';
 import { Bike, MapPin, ShoppingBag, Navigation, Settings, X, Info, Compass, Radio } from 'lucide-react';
 
 const API_KEY =
@@ -276,7 +277,7 @@ const MapContent: React.FC<MapContentProps> = ({
                   <MapPin size={14} />
                 </div>
                 <span className="bg-slate-800 text-white text-[7px] font-black px-1 py-0.5 rounded shadow-xs mt-1">
-                  #{order.id.slice(-4)}
+                  {formatOrderNumber(order)}
                 </span>
               </div>
             </AdvancedMarker>
@@ -378,7 +379,7 @@ const MapContent: React.FC<MapContentProps> = ({
                     .filter(o => o.courierId === activeCourier.id && o.status === 'delivering')
                     .map(order => (
                       <div key={order.id} className="text-[8px] leading-tight flex justify-between">
-                        <span className="font-bold">#{order.id.slice(-4)}</span>
+                        <span className="font-bold">{formatOrderNumber(order)}</span>
                         <span className="truncate max-w-[80px]">{order.customerAddress}</span>
                       </div>
                     ))}
@@ -401,7 +402,7 @@ const MapContent: React.FC<MapContentProps> = ({
             <div className="border-b pb-1">
               <div className="flex justify-between items-center">
                 <span className="text-[8px] font-black bg-rose-100 text-rose-700 px-1 py-0.5 rounded">
-                  Pedido #{activeOrder.id.slice(-4)}
+                  Pedido {formatOrderNumber(activeOrder)}
                 </span>
                 <span className="text-xs font-black text-slate-800">R$ {activeOrder.total.toFixed(2)}</span>
               </div>
@@ -684,7 +685,7 @@ const LeafletMap: React.FC<MapContentProps> = ({
               <svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
             </div>
             <span class="bg-slate-850 border border-white/5 text-white text-[7px] font-black px-1 py-0.5 rounded shadow mt-0.5 whitespace-nowrap">
-              #${order.id.slice(-4)}
+              ${formatOrderNumber(order)}
             </span>
           </div>
         `;
@@ -1070,7 +1071,7 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
                         <div>
                           <p className="text-[10px] font-black text-slate-200 leading-none">{c.name}</p>
                           <span className="text-[7px] text-slate-400 font-bold uppercase mt-0.5 inline-block">
-                            {c.vehicleType} {deliversActive ? `• Pedido #${deliversActive.id.slice(-4)}` : ''}
+                            {c.vehicleType} {deliversActive ? `• Pedido ${formatOrderNumber(deliversActive)}` : ''}
                           </span>
                         </div>
                       </div>

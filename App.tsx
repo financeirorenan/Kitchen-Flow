@@ -2004,7 +2004,32 @@ const App: React.FC = () => {
             setProducts(p);
             setTables(t);
             setCouriers(c);
-            setOrders(o.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()));
+            const todayMidnight = new Date();
+            todayMidnight.setHours(0, 0, 0, 0);
+            let maxDailyLoaded = 0;
+            const todayOrdersAsc = o
+              .filter(item => {
+                const d = item.createdAt instanceof Date ? item.createdAt : new Date(item.createdAt);
+                return !isNaN(d.getTime()) && d >= todayMidnight;
+              })
+              .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+            todayOrdersAsc.forEach(item => {
+              if (item.dailyNumber && item.dailyNumber > maxDailyLoaded) {
+                maxDailyLoaded = item.dailyNumber;
+              }
+            });
+
+            const sanitizedOrders = o.map(item => {
+              const d = item.createdAt instanceof Date ? item.createdAt : new Date(item.createdAt);
+              if (!isNaN(d.getTime()) && d >= todayMidnight && (!item.dailyNumber || item.dailyNumber <= 0)) {
+                maxDailyLoaded += 1;
+                return { ...item, dailyNumber: maxDailyLoaded };
+              }
+              return item;
+            });
+
+            setOrders(sanitizedOrders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
             setUsers(u);
             setAuditLogs(l.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()));
             setFinancialRecords(f.sort((a, b) => b.date.getTime() - a.date.getTime()));
@@ -3070,7 +3095,19 @@ const App: React.FC = () => {
     addLog('u1', 'FINANCEIRO', `Recebido R$ ${amount.toFixed(2)} de ${courier.name}. Saldo em mãos atualizado.`);
   };
 
-  const handleSendToKitchen = async (tableId: number | string, items: OrderItem[], isCounter?: boolean) => {
+  const handleSendToKitchen = async (
+    tableId: number | string, 
+    items: OrderItem[], 
+    isCounter?: boolean,
+    customerData?: {
+      customerName?: string;
+      customerPhone?: string;
+      customerAddress?: string;
+      deliveryFee?: number;
+      customerId?: string;
+      isDelivery?: boolean;
+    }
+  ) => {
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || (user?.uid ? user.uid : 't1');
     
     // Encontrar o número da mesa/comanda ou balcão
@@ -3080,6 +3117,13 @@ const App: React.FC = () => {
     
     const displayTableNumber = tableInfo ? tableInfo.number : (typeof tableId === 'number' ? tableId : (Number(String(tableId).replace(/\D/g, '')) || tableId));
     const now = new Date();
+
+    const effectiveCustomerName = (customerData?.customerName && customerData.customerName.trim()) || tableInfo?.customerName || undefined;
+    const effectiveCustomerPhone = (customerData?.customerPhone && customerData.customerPhone.trim()) || tableInfo?.customerPhone || undefined;
+    const effectiveCustomerAddress = (customerData?.customerAddress && customerData.customerAddress.trim()) || tableInfo?.customerAddress || undefined;
+    const effectiveCustomerId = customerData?.customerId || tableInfo?.customerId || undefined;
+    const effectiveDeliveryFee = customerData?.deliveryFee !== undefined ? customerData.deliveryFee : (tableInfo?.deliveryFee || 0);
+    const effectiveIsDelivery = customerData?.isDelivery !== undefined ? customerData.isDelivery : (isCounter && !!tableInfo?.isDelivery);
 
     if (!isCounter) {
       // ==========================================
@@ -3110,6 +3154,8 @@ const App: React.FC = () => {
           id: `KDS-${Math.random().toString(36).substr(2, 4).toUpperCase()}`,
           tableNumber: displayTableNumber,
           type: 'table',
+          customerName: effectiveCustomerName,
+          customerPhone: effectiveCustomerPhone,
           status: 'preparing',
           items: newTicketItems,
           total: newTicketItems.reduce((acc, i) => acc + (i.price * i.quantity), 0),
@@ -3125,21 +3171,8 @@ const App: React.FC = () => {
 
         const assignedKdsOrder = assignDailyNumberToOrder(newKdsOrder);
 
-        if (effectiveTenantId) {
-          try {
-            await setDoc(doc(db, 'orders', assignedKdsOrder.id), cleanObject({
-              ...assignedKdsOrder,
-              createdAt: now
-            }));
-          } catch (e) {
-            console.error("Error creating sub-ticket KDS order in cloud:", e);
-          }
-        }
-
-        await localDb.orders.put(assignedKdsOrder);
+        // 1. Instant optimistic state updates
         setOrders(prev => deduplicateOrders([assignedKdsOrder, ...prev]));
-
-        // Atualizar conta acumulada da Mesa para manter o extrato/extrato do cliente completo
         setTables(prev => prev.map(t => {
           if (t.id === tableId || (t as any).docId === tableId || t.number === displayTableNumber) {
             const updatedItems = [...t.items];
@@ -3155,11 +3188,22 @@ const App: React.FC = () => {
               ...t,
               items: updatedItems,
               total: updatedItems.reduce((acc, i) => acc + (i.price * i.quantity), 0),
-              currentOrderId: assignedKdsOrder.id
+              currentOrderId: assignedKdsOrder.id,
+              customerName: effectiveCustomerName || t.customerName,
+              customerPhone: effectiveCustomerPhone || t.customerPhone
             };
           }
           return t;
         }));
+
+        // 2. Local persistence and non-blocking cloud sync
+        localDb.orders.put(assignedKdsOrder).catch(e => console.warn("LocalDb order put error:", e));
+        if (effectiveTenantId) {
+          setDoc(doc(db, 'orders', assignedKdsOrder.id), cleanObject({
+            ...assignedKdsOrder,
+            createdAt: now
+          })).catch(e => console.error("Error creating sub-ticket KDS order in cloud:", e));
+        }
 
         addLog('u1', 'COZINHA', `Novo lote enviado à cozinha para Mesa ${displayTableNumber} (Pedido #${assignedKdsOrder.id})`);
         return;
@@ -3168,12 +3212,6 @@ const App: React.FC = () => {
       // ==========================================
       // REGRA DE BALCÃO / DELIVERY:
       // ==========================================
-      // Se o pedido já existe no KDS:
-      // - Caso NÃO tenha sido marcado como pronto pelo KDS (status 'preparing' ou 'pending'):
-      //   Atualiza os itens do pedido existente no KDS.
-      // - Caso JÁ tenha sido marcado como pronto (status 'ready', 'delivering', 'delivered', 'finished'):
-      //   Lança como NOVO PEDIDO no KDS com a MESMA referência de número de pedido (dailyNumber).
-
       let activeCounterOrder: Order | undefined = undefined;
 
       if (pdvEditOrder) {
@@ -3202,23 +3240,37 @@ const App: React.FC = () => {
 
           const updates: Partial<Order> = {
             items: existingItems,
-            total: existingItems.reduce((acc, i) => acc + (i.price * i.quantity), 0),
+            total: existingItems.reduce((acc, i) => acc + (i.price * i.quantity), 0) + (effectiveDeliveryFee || activeCounterOrder.deliveryFee || 0),
             status: 'preparing',
-            updatedAt: now
+            updatedAt: now,
+            customerName: effectiveCustomerName || activeCounterOrder.customerName,
+            customerPhone: effectiveCustomerPhone || activeCounterOrder.customerPhone,
+            customerAddress: effectiveCustomerAddress || activeCounterOrder.customerAddress,
+            customerId: effectiveCustomerId || activeCounterOrder.customerId,
+            deliveryFee: effectiveDeliveryFee !== undefined ? effectiveDeliveryFee : activeCounterOrder.deliveryFee,
+            deliveryMethod: effectiveIsDelivery ? 'entrega' : (activeCounterOrder.deliveryMethod || 'retirada')
           };
 
+          // 1. Instant optimistic state updates
+          setOrders(prev => prev.map(o => o.id === activeCounterOrder!.id ? { ...o, ...updates } as Order : o));
+          setCounterOrders(prev => prev.map(t => (t.id === tableId || String(t.id) === String(tableId)) ? { 
+            ...t, 
+            currentOrderId: activeCounterOrder!.id,
+            customerName: effectiveCustomerName || t.customerName,
+            customerPhone: effectiveCustomerPhone || t.customerPhone,
+            customerAddress: effectiveCustomerAddress || t.customerAddress,
+            customerId: effectiveCustomerId || t.customerId,
+            deliveryFee: effectiveDeliveryFee,
+            isDelivery: effectiveIsDelivery
+          } : t));
+
+          // 2. Local persistence and non-blocking cloud sync
+          localDb.orders.update(activeCounterOrder.id, cleanObject(updates)).catch(e => console.warn("LocalDb order update error:", e));
           if (effectiveTenantId) {
-            try {
-              await setDoc(doc(db, 'orders', activeCounterOrder.docId || activeCounterOrder.id), updates, { merge: true });
-            } catch (e) {
-              console.error("Error updating counter order in cloud:", e);
-            }
+            setDoc(doc(db, 'orders', activeCounterOrder.docId || activeCounterOrder.id), cleanObject(updates), { merge: true })
+              .catch(e => console.error("Error updating counter order in cloud:", e));
           }
 
-          await localDb.orders.update(activeCounterOrder.id, updates);
-          setOrders(prev => prev.map(o => o.id === activeCounterOrder!.id ? { ...o, ...updates } as Order : o));
-
-          setCounterOrders(prev => prev.map(t => (t.id === tableId || String(t.id) === String(tableId)) ? { ...t, currentOrderId: activeCounterOrder!.id } : t));
           addLog('u1', 'COZINHA', `Pedido Balcão #${activeCounterOrder.dailyNumber || activeCounterOrder.id} atualizado no KDS com novos itens`);
           return;
         } else {
@@ -3226,9 +3278,10 @@ const App: React.FC = () => {
           const newOrderWithSameRef: Order = {
             id: `KDS-${Math.random().toString(36).substr(2, 4).toUpperCase()}`,
             dailyNumber: activeCounterOrder.dailyNumber, // Mesma referência de número do pedido!
-            customerName: activeCounterOrder.customerName,
-            customerPhone: activeCounterOrder.customerPhone,
-            customerAddress: activeCounterOrder.customerAddress,
+            customerName: effectiveCustomerName || activeCounterOrder.customerName,
+            customerPhone: effectiveCustomerPhone || activeCounterOrder.customerPhone,
+            customerAddress: effectiveCustomerAddress || activeCounterOrder.customerAddress,
+            customerId: effectiveCustomerId || activeCounterOrder.customerId,
             type: activeCounterOrder.type,
             status: 'preparing',
             items: items.map(i => ({ ...i, sentToKitchen: true, isNew: true })),
@@ -3240,20 +3293,28 @@ const App: React.FC = () => {
             source: 'pos'
           };
 
+          // 1. Instant optimistic state updates
+          setOrders(prev => deduplicateOrders([newOrderWithSameRef, ...prev]));
+          setCounterOrders(prev => prev.map(t => (t.id === tableId || String(t.id) === String(tableId)) ? { 
+            ...t, 
+            currentOrderId: newOrderWithSameRef.id,
+            customerName: effectiveCustomerName || t.customerName,
+            customerPhone: effectiveCustomerPhone || t.customerPhone,
+            customerAddress: effectiveCustomerAddress || t.customerAddress,
+            customerId: effectiveCustomerId || t.customerId,
+            deliveryFee: effectiveDeliveryFee,
+            isDelivery: effectiveIsDelivery
+          } : t));
+
+          // 2. Local persistence and non-blocking cloud sync
+          localDb.orders.put(newOrderWithSameRef).catch(e => console.warn("LocalDb order put error:", e));
           if (effectiveTenantId) {
-            try {
-              await setDoc(doc(db, 'orders', newOrderWithSameRef.id), cleanObject({
-                ...newOrderWithSameRef,
-                createdAt: now
-              }));
-            } catch (e) {
-              console.error("Error creating secondary counter ticket:", e);
-            }
+            setDoc(doc(db, 'orders', newOrderWithSameRef.id), cleanObject({
+              ...newOrderWithSameRef,
+              createdAt: now
+            })).catch(e => console.error("Error creating secondary counter ticket:", e));
           }
 
-          await localDb.orders.put(newOrderWithSameRef);
-          setOrders(prev => deduplicateOrders([newOrderWithSameRef, ...prev]));
-          setCounterOrders(prev => prev.map(t => (t.id === tableId || String(t.id) === String(tableId)) ? { ...t, currentOrderId: newOrderWithSameRef.id } : t));
           addLog('u1', 'COZINHA', `Novo item lançado para Balcão/Delivery (Ref #${activeCounterOrder.dailyNumber}) - Novo pedido KDS criado`);
           return;
         }
@@ -3261,21 +3322,20 @@ const App: React.FC = () => {
     }
 
     // Criar pedido KDS inicial se não houver nenhum pedido ativo
-    const isDeliveryCounter = isCounter && !!tableInfo?.isDelivery;
     const rawKitchenOrder: Order = {
       id: `KDS-${Math.random().toString(36).substr(2, 4).toUpperCase()}`,
       tableNumber: isCounter ? undefined : displayTableNumber,
-      type: isCounter ? (isDeliveryCounter ? 'delivery' : 'takeout') : 'table',
-      deliveryMethod: isDeliveryCounter ? 'entrega' : (isCounter ? 'retirada' : undefined),
-      customerName: tableInfo?.customerName,
-      customerPhone: tableInfo?.customerPhone,
-      customerAddress: tableInfo?.customerAddress,
-      deliveryFee: tableInfo?.deliveryFee,
-      customerId: tableInfo?.customerId,
-      counterId: isCounter ? tableInfo?.id : undefined,
+      type: isCounter ? (effectiveIsDelivery ? 'delivery' : 'takeout') : 'table',
+      deliveryMethod: effectiveIsDelivery ? 'entrega' : (isCounter ? 'retirada' : undefined),
+      customerName: effectiveCustomerName,
+      customerPhone: effectiveCustomerPhone,
+      customerAddress: effectiveCustomerAddress,
+      deliveryFee: effectiveDeliveryFee,
+      customerId: effectiveCustomerId,
+      counterId: isCounter ? (tableInfo?.id || tableId) : undefined,
       status: 'preparing',
       items: items.map(i => ({ ...i, sentToKitchen: true, isNew: false })),
-      total: items.reduce((acc, i) => acc + (i.price * i.quantity), 0) + (tableInfo?.deliveryFee || 0),
+      total: items.reduce((acc, i) => acc + (i.price * i.quantity), 0) + (effectiveDeliveryFee || 0),
       createdAt: now,
       updatedAt: now,
       tenantId: effectiveTenantId,
@@ -3287,30 +3347,40 @@ const App: React.FC = () => {
     };
     const kitchenOrder = assignDailyNumberToOrder(rawKitchenOrder);
 
-    if (effectiveTenantId) {
-      try {
-        await setDoc(doc(db, 'orders', kitchenOrder.id), cleanObject({
-          ...kitchenOrder,
-          createdAt: now
-        }));
-      } catch (err) {
-        console.error("Error creating KDS order in Firestore:", err);
-      }
-    }
-
+    // 1. Instant optimistic state updates
     if (isCounter) {
       setCounterOrders(prev => prev.map(t => (t.id === tableId || String(t.id) === String(tableId)) ? { 
         ...t, 
         currentOrderId: kitchenOrder.id,
+        customerName: effectiveCustomerName || t.customerName,
+        customerPhone: effectiveCustomerPhone || t.customerPhone,
+        customerAddress: effectiveCustomerAddress || t.customerAddress,
+        customerId: effectiveCustomerId || t.customerId,
+        deliveryFee: effectiveDeliveryFee,
+        isDelivery: effectiveIsDelivery,
         items: t.items.map(i => ({ ...i, sentToKitchen: true }))
       } : t));
     } else {
-      setTables(prev => prev.map(t => (t.id === tableId || (t as any).docId === tableId || t.number === displayTableNumber) ? { ...t, currentOrderId: kitchenOrder.id } : t));
+      setTables(prev => prev.map(t => (t.id === tableId || (t as any).docId === tableId || t.number === displayTableNumber) ? { 
+        ...t, 
+        currentOrderId: kitchenOrder.id,
+        customerName: effectiveCustomerName || t.customerName,
+        customerPhone: effectiveCustomerPhone || t.customerPhone
+      } : t));
     }
 
-    await localDb.orders.put(kitchenOrder);
     setOrders(prev => deduplicateOrders([kitchenOrder, ...prev]));
-    addLog('u1', 'COZINHA', `Pedido enviado para cozinha: ${isCounter ? 'Balcão' : `Mesa ${displayTableNumber}`}`);
+
+    // 2. Local persistence and non-blocking cloud sync
+    localDb.orders.put(kitchenOrder).catch(e => console.warn("LocalDb order put error:", e));
+    if (effectiveTenantId) {
+      setDoc(doc(db, 'orders', kitchenOrder.id), cleanObject({
+        ...kitchenOrder,
+        createdAt: now
+      })).catch(err => console.error("Error creating KDS order in Firestore:", err));
+    }
+
+    addLog('u1', 'COZINHA', `Pedido enviado para cozinha: ${isCounter ? `Balcão (${effectiveCustomerName || 'Identificado'})` : `Mesa ${displayTableNumber}`}`);
   };
 
   const handleUpdateLogisticsSettings = async (updates: Partial<AdminSettings>) => {
@@ -3375,123 +3445,126 @@ const App: React.FC = () => {
     if (status === 'ready') updates.readyAt = now;
     if (status === 'delivering') updates.dispatchedAt = now;
     if (status === 'delivered') updates.deliveredAt = now;
-    if (status === 'finished') {
-      updates.finishedAt = now;
-      
+    // 1. Instant optimistic state update (0ms latency for UI response)
+    setOrders(prev => prev.map(o => o.id === id ? { ...o, ...updates } as Order : o));
+
+    // 2. Persist to local IndexedDB immediately
+    localDb.orders.update(id, updates).catch(e => console.warn("LocalDb order update error:", e));
+
+    // 3. Side effects and cloud sync asynchronously in background
+    (async () => {
       // Ciclo Final para pedidos de Marketplace/Delivery (Igual às Mesas)
-      // Se estiver finalizando, registra no financeiro se não foi registrado antes
-      const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
-      if (effectiveTenantId && !order.isSettled) {
-        try {
-          // Registrar Receita
-          let recordCategory = 'Vendas Mesa';
-          let recordDesc = `Pedido #${order.id.slice(-4)} (${order.type.toUpperCase()}) - Finalizado`;
+      if (status === 'finished') {
+        const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+        if (effectiveTenantId && !order.isSettled) {
+          try {
+            // Registrar Receita
+            let recordCategory = 'Vendas Mesa';
+            let recordDesc = `Pedido #${order.id.slice(-4)} (${order.type.toUpperCase()}) - Finalizado`;
+            
+            if (order.source === 'marketplace' || order.source === 'iFood') {
+              recordCategory = 'Vendas Marketplace';
+              recordDesc = `Pedido #${order.id.slice(-4)} (Marketplace) - Finalizado`;
+            } else if (order.source === 'whatsapp' || order.source === 'partner_app' || (order.source as string) === 'digital_menu' || order.tableNumber !== undefined) {
+              recordCategory = 'Vendas Cardápio Digital';
+              recordDesc = `Pedido #${order.id.slice(-4)} (Cardápio Digital) - Finalizado`;
+            } else {
+              recordCategory = order.type === 'delivery' ? 'Vendas Entrega' : (order.type === 'takeout' ? 'Vendas Balcão' : 'Vendas Mesa');
+              recordDesc = `Pedido #${order.id.slice(-4)} (${order.type === 'delivery' ? 'DELIVERY' : (order.type === 'takeout' ? 'BALCÃO' : 'MESA')}) - Finalizado`;
+            }
+
+            await handleAddFinancialRecord({
+              type: 'income',
+              amount: order.total,
+              category: recordCategory,
+              description: `${recordDesc} - Pagamento: ${order.paymentMethod || 'dinheiro'}`,
+              date: new Date(),
+              paymentMethod: order.paymentMethod || 'dinheiro',
+              orderId: order.id
+            });
+
+            // Se for do Marketplace, acumular taxa de R$ 1,50
+            if (order.source === 'marketplace') {
+              const currentSettings = adminSettings;
+              const appFee = currentSettings.saasIntegration?.appFeePerOrder || 1.50;
+              const newBillingAccumulated = (currentSettings.saasIntegration?.billingAccumulated || 0) + appFee;
+              
+              const updatedSaas = {
+                ...currentSettings.saasIntegration,
+                billingAccumulated: newBillingAccumulated
+              };
+              
+              await handleUpdateLogisticsSettings({ saasIntegration: updatedSaas });
+              addLog('u1', 'SISTEMA', `Taxa de marketplace registrada: R$ ${appFee.toFixed(2)}`);
+            }
+
+            updates.isSettled = true;
+          } catch (e) {
+            console.error("Erro ao processar ciclo final do pedido:", e);
+          }
+        }
+      }
+
+      // Se o pedido foi entregue, processar ganhos e liberar o motoboy
+      if (status === 'delivered' && order?.courierId) {
+        const courier = couriers.find(c => c.id === order.courierId);
+        if (courier) {
+          const today = new Date();
+          const lastDaily = courier.lastDailyFeeDate ? new Date(courier.lastDailyFeeDate) : null;
+          const isNewDay = !lastDaily || 
+                          lastDaily.getDate() !== today.getDate() || 
+                          lastDaily.getMonth() !== today.getMonth() || 
+                          lastDaily.getFullYear() !== today.getFullYear();
+
+          const courierUpdates: Partial<Courier> = {};
           
-          if (order.source === 'marketplace' || order.source === 'iFood') {
-            recordCategory = 'Vendas Marketplace';
-            recordDesc = `Pedido #${order.id.slice(-4)} (Marketplace) - Finalizado`;
-          } else if (order.source === 'whatsapp' || order.source === 'partner_app' || (order.source as string) === 'digital_menu' || order.tableNumber !== undefined) {
-            recordCategory = 'Vendas Cardápio Digital';
-            recordDesc = `Pedido #${order.id.slice(-4)} (Cardápio Digital) - Finalizado`;
-          } else {
-            recordCategory = order.type === 'delivery' ? 'Vendas Entrega' : (order.type === 'takeout' ? 'Vendas Balcão' : 'Vendas Mesa');
-            recordDesc = `Pedido #${order.id.slice(-4)} (${order.type === 'delivery' ? 'DELIVERY' : (order.type === 'takeout' ? 'BALCÃO' : 'MESA')}) - Finalizado`;
+          // Se for a primeira entrega do dia, adiciona diária aos ganhos
+          if (isNewDay && courier.dailyFee && courier.dailyFee > 0) {
+            courierUpdates.lastDailyFeeDate = today;
+            courierUpdates.earnings = (courier.earnings || 0) + courier.dailyFee;
+            addLog('u1', 'ENTREGAS', `Diária de R$ ${courier.dailyFee.toFixed(2)} creditada para ${courier.name} na 1ª entrega.`);
           }
 
-          await handleAddFinancialRecord({
-            type: 'income',
-            amount: order.total,
-            category: recordCategory,
-            description: `${recordDesc} - Pagamento: ${order.paymentMethod || 'dinheiro'}`,
-            date: new Date(),
-            paymentMethod: order.paymentMethod || 'dinheiro',
-            orderId: order.id
-          });
-
-          // Se for do Marketplace, acumular taxa de R$ 1,50
-          if (order.source === 'marketplace') {
-            const currentSettings = adminSettings;
-            const appFee = currentSettings.saasIntegration?.appFeePerOrder || 1.50;
-            const newBillingAccumulated = (currentSettings.saasIntegration?.billingAccumulated || 0) + appFee;
-            
-            const updatedSaas = {
-              ...currentSettings.saasIntegration,
-              billingAccumulated: newBillingAccumulated
-            };
-            
-            await handleUpdateLogisticsSettings({ saasIntegration: updatedSaas });
-            addLog('u1', 'SISTEMA', `Taxa de marketplace registrada: R$ ${appFee.toFixed(2)}`);
+          // Adiciona taxa de entrega aos ganhos (courierEarnings ou deliveryFee)
+          const deliveryEarning = order.courierEarnings || order.deliveryFee || 0;
+          courierUpdates.earnings = (courierUpdates.earnings || courier.earnings || 0) + deliveryEarning;
+          
+          // Se pagou em dinheiro, acumula no cashHeld do motoboy
+          if (order.paymentMethod === 'dinheiro') {
+            courierUpdates.cashHeld = (courier.cashHeld || 0) + order.total;
           }
 
-          updates.isSettled = true;
+          // Só libera se não tiver mais NENHUM pedido em rota
+          const otherActiveOrders = orders.filter(o => o.id !== id && o.courierId === courier.id && o.status === 'delivering');
+          if (otherActiveOrders.length === 0) {
+            courierUpdates.status = 'available';
+          }
+
+          setCouriers(prev => prev.map(c => c.id === courier.id ? { ...c, ...courierUpdates } : c));
+          await localDb.couriers.update(courier.id, courierUpdates).catch(e => console.warn("LocalDb courier update error:", e));
+
+          if (effectiveTenantId) {
+            await setDoc(doc(db, 'couriers', courier.id), courierUpdates, { merge: true }).catch(e => console.error("Error updating courier in cloud:", e));
+          }
+        }
+      }
+
+      // Sync status to cloud if we are in a tenant context
+      if (effectiveTenantId) {
+        try {
+          const targetDocId = order.docId || order.id || id;
+          await setDoc(doc(db, 'orders', targetDocId), cleanObject({
+            ...updates,
+            // Se for concluído, registrar horário legível para relatórios simples
+            ...(status === 'delivered' || status === 'finished' ? { completedAt: now } : {})
+          }), { merge: true });
         } catch (e) {
-          console.error("Erro ao processar ciclo final do pedido:", e);
+          console.error(`Error syncing status check for cloud order ${id}:`, e);
         }
       }
-    }
+    })();
 
-    await localDb.orders.update(id, updates);
-    setOrders(prev => prev.map(o => o.id === id ? { ...o, ...updates } : o));
-    
-    // Se o pedido foi entregue, processar ganhos e liberar o motoboy
-    if (status === 'delivered' && order?.courierId) {
-      const courier = couriers.find(c => c.id === order.courierId);
-      if (courier) {
-        const today = new Date();
-        const lastDaily = courier.lastDailyFeeDate ? new Date(courier.lastDailyFeeDate) : null;
-        const isNewDay = !lastDaily || 
-                        lastDaily.getDate() !== today.getDate() || 
-                        lastDaily.getMonth() !== today.getMonth() || 
-                        lastDaily.getFullYear() !== today.getFullYear();
-
-        const courierUpdates: Partial<Courier> = {};
-        
-        // Se for a primeira entrega do dia, adiciona diária aos ganhos
-        if (isNewDay && courier.dailyFee && courier.dailyFee > 0) {
-          courierUpdates.lastDailyFeeDate = today;
-          courierUpdates.earnings = (courier.earnings || 0) + courier.dailyFee;
-          addLog('u1', 'ENTREGAS', `Diária de R$ ${courier.dailyFee.toFixed(2)} creditada para ${courier.name} na 1ª entrega.`);
-        }
-
-        // Adiciona taxa de entrega aos ganhos (courierEarnings ou deliveryFee)
-        const deliveryEarning = order.courierEarnings || order.deliveryFee || 0;
-        courierUpdates.earnings = (courierUpdates.earnings || courier.earnings || 0) + deliveryEarning;
-        
-        // Se pagou em dinheiro, acumula no cashHeld do motoboy
-        if (order.paymentMethod === 'dinheiro') {
-          courierUpdates.cashHeld = (courier.cashHeld || 0) + order.total;
-        }
-
-        // Só libera se não tiver mais NENHUM pedido em rota
-        const otherActiveOrders = orders.filter(o => o.id !== id && o.courierId === courier.id && o.status === 'delivering');
-        if (otherActiveOrders.length === 0) {
-          courierUpdates.status = 'available';
-        }
-
-        await localDb.couriers.update(courier.id, courierUpdates);
-        setCouriers(prev => prev.map(c => c.id === courier.id ? { ...c, ...courierUpdates } : c));
-
-        if (effectiveTenantId) {
-           await setDoc(doc(db, 'couriers', courier.id), courierUpdates, { merge: true });
-        }
-      }
-    }
-    
     addLog('u1', 'PEDIDO', `Pedido ${id} alterado para ${status}`);
-
-    // Sync status to cloud if we are in a tenant context
-    if (effectiveTenantId) {
-      try {
-        const targetDocId = order.docId || order.id || id;
-        await setDoc(doc(db, 'orders', targetDocId), cleanObject({
-          ...updates,
-          // Se for concluído, registrar horário legível para relatórios simples
-          ...(status === 'delivered' || status === 'finished' ? { completedAt: now } : {})
-        }), { merge: true });
-      } catch (e) {
-        console.error(`Error syncing status check for cloud order ${id}:`, e);
-      }
-    }
   };
 
   const handleAddCourier = async (courier: Partial<Courier>) => {
@@ -3939,7 +4012,21 @@ const App: React.FC = () => {
     }
   };
 
-  const handleUpdateTable = async (id: number | string, items: OrderItem[], status: Table['status'], isCounter?: boolean, partialPayments?: Table['partialPayments']) => {
+  const handleUpdateTable = async (
+    id: number | string, 
+    items: OrderItem[], 
+    status: Table['status'], 
+    isCounter?: boolean, 
+    partialPayments?: Table['partialPayments'],
+    customerData?: {
+      customerName?: string;
+      customerPhone?: string;
+      customerAddress?: string;
+      deliveryFee?: number;
+      customerId?: string;
+      isDelivery?: boolean;
+    }
+  ) => {
     const total = items.reduce((a, b) => a + (b.price * b.quantity), 0);
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || (isSuperAdmin ? `saas-admin-${user?.uid}` : null);
     const numericId = typeof id === 'string' ? Number(id) : id;
@@ -3947,6 +4034,14 @@ const App: React.FC = () => {
     const tableUpdates: Record<string, any> = { items, status, total };
     if (partialPayments !== undefined) {
       tableUpdates.partialPayments = partialPayments;
+    }
+    if (customerData) {
+      if (customerData.customerName !== undefined) tableUpdates.customerName = customerData.customerName;
+      if (customerData.customerPhone !== undefined) tableUpdates.customerPhone = customerData.customerPhone;
+      if (customerData.customerAddress !== undefined) tableUpdates.customerAddress = customerData.customerAddress;
+      if (customerData.deliveryFee !== undefined) tableUpdates.deliveryFee = customerData.deliveryFee;
+      if (customerData.customerId !== undefined) tableUpdates.customerId = customerData.customerId;
+      if (customerData.isDelivery !== undefined) tableUpdates.isDelivery = customerData.isDelivery;
     }
 
     if (isCounter) {
@@ -3958,35 +4053,37 @@ const App: React.FC = () => {
       }
     } else {
       // Local update
-      if (!isNaN(numericId)) {
-        await localDb.diningTables.update(numericId, tableUpdates);
-      }
       setTables(prev => prev.map(t => t.id === id || t.id === numericId || (t as any).docId === id ? { ...t, ...tableUpdates } : t));
+      if (!isNaN(numericId)) {
+        localDb.diningTables.update(numericId, tableUpdates).catch(e => console.warn("LocalDb table update error:", e));
+      }
 
-      // Cloud Sync
+      // Cloud Sync (asynchronous and non-blocking)
       if (effectiveTenantId) {
-        try {
-          const table = tables.find(t => t.id === id || t.id === numericId || (t as any).docId === id);
-          const docId = (table as any).docId || (typeof id === 'string' && isNaN(numericId) ? id : null);
+        (async () => {
+          try {
+            const table = tables.find(t => t.id === id || t.id === numericId || (t as any).docId === id);
+            const docId = (table as any).docId || (typeof id === 'string' && isNaN(numericId) ? id : null);
 
-          if (docId) {
-            await setDoc(doc(db, 'diningTables', docId), cleanObject({ ...tableUpdates, updatedAt: new Date() }), { merge: true });
-          } else {
-            const q = query(
-              collection(db, 'diningTables'), 
-              where('id', '==', numericId), 
-              where('tenantId', '==', effectiveTenantId)
-            );
-            const snapshot = await getDocs(q);
-            if (!snapshot.empty) {
-              const batch = writeBatch(db);
-              snapshot.docs.forEach(d => batch.update(d.ref, cleanObject({ ...tableUpdates, updatedAt: new Date() })));
-              await batch.commit();
+            if (docId) {
+              await setDoc(doc(db, 'diningTables', docId), cleanObject({ ...tableUpdates, updatedAt: new Date() }), { merge: true });
+            } else {
+              const q = query(
+                collection(db, 'diningTables'), 
+                where('id', '==', numericId), 
+                where('tenantId', '==', effectiveTenantId)
+              );
+              const snapshot = await getDocs(q);
+              if (!snapshot.empty) {
+                const batch = writeBatch(db);
+                snapshot.docs.forEach(d => batch.update(d.ref, cleanObject({ ...tableUpdates, updatedAt: new Date() })));
+                await batch.commit();
+              }
             }
+          } catch (error) {
+            console.error("Error syncing table update to cloud:", error);
           }
-        } catch (error) {
-          console.error("Error syncing table update to cloud:", error);
-        }
+        })();
       }
     }
   };
@@ -4330,122 +4427,29 @@ const App: React.FC = () => {
     };
     const newOrder = assignDailyNumberToOrder(rawOrder);
 
-    // NFC-e Emission Logic
-    if (fiscal) {
-      try {
-        const currentNfceNum = Number(adminSettings.fiscal?.nextNfceNumber) || 1;
-        const currentSeries = Number(adminSettings.fiscal?.series) || 1;
-        const targetTenantId = viewingTenantId || currentUserData?.tenantId || 't1';
-
-        const response = await fetch('/api/fiscal/issue', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            order: newOrder,
-            tenantId: targetTenantId,
-            settings: adminSettings.fiscal,
-            customerDocument: customerDocument,
-            nfceNumber: currentNfceNum,
-            series: currentSeries,
-            certificate: adminSettings.fiscal?.certificate,
-            config: {
-              environment: adminSettings.fiscal?.environment || 'homologation',
-              cnpj: adminSettings.fiscal?.cnpj,
-              cscId: adminSettings.fiscal?.cscId,
-              cscToken: adminSettings.fiscal?.cscToken
-            }
-          })
-        });
-
-        if (response.ok) {
-          const result = await response.json();
-          if (result.success) {
-            const issuedKey = result.nfeKey || result.accessKey;
-            const actualNfceNum = result.nfceNumber || currentNfceNum;
-            const nextNum = result.nextNfceNumber || (actualNfceNum + 1);
-
-            newOrder.fiscalKey = issuedKey;
-            newOrder.isFiscalIssued = true;
-            newOrder.metadata = {
-              ...(newOrder.metadata || {}),
-              nfceNumber: actualNfceNum,
-              series: currentSeries,
-              protocol: result.protocol || '135260000000001'
-            };
-            addLog('u1', 'FISCAL', `NFC-e #${actualNfceNum} emitida com sucesso (Protocolo: ${result.protocol || 'OK'}): ${issuedKey}`);
-            
-            // Incrementar a sequência do próximo número de NFC-e no estado e banco
-            await handleUpdateLogisticsSettings({
-              fiscal: {
-                ...adminSettings.fiscal,
-                nextNfceNumber: nextNum
-              }
-            });
-          } else {
-            console.error('Erro SEFAZ:', result.error);
-            addLog('u1', 'FISCAL', `Erro ao emitir NFC-e #${currentNfceNum}: ${result.error}`);
-            showToast(`Erro SEFAZ: ${result.error}`, 'error');
-          }
-        } else {
-          const errorData = await response.json();
-          console.error('Erro API Fiscal:', errorData.error);
-          showToast(`Erro na emissão fiscal: ${errorData.error}`, 'error');
-        }
-      } catch (error) {
-        console.error('Erro de conexão fiscal:', error);
-        showToast('Erro de conexão com o serviço fiscal.', 'error');
-      }
+    // 1. UPDATE LOCAL REACT STATE INSTANTLY FOR OPTIMISTIC FEEDBACK
+    setOrders(prev => deduplicateOrders([newOrder, ...prev.filter(o => o.id !== newOrder.id && o.docId !== newOrder.id)]));
+    if (!isCounter) {
+      setTables(prev => prev.map(t => (String(t.id) === String(tableId) || String(t.number) === String(tableNumber) || (t as any).docId === docId) ? { ...t, ...resetData } : t));
+    } else {
+      setCounterOrders(prev => prev.filter(t => t.id !== tableId));
     }
 
-    // Atualizar pedidos relacionados a esta mesa/balcão para encerrá-los ao fechar o caixa
-    const relatedOrdersToUpdate = orders.filter(o => 
-      o.id !== newOrder.id &&
-      o.status !== 'cancelled' &&
-      (
-        (existingOrderId && o.id === existingOrderId) ||
-        (tableNumber !== undefined && tableNumber !== null && String(o.tableNumber) === String(tableNumber) && !isCounter)
-      )
-    );
-    
-    if (relatedOrdersToUpdate.length > 0) {
-      const now = new Date();
-      for (const ro of relatedOrdersToUpdate) {
-        const targetStatus = isCounterOrDelivery ? (ro.status && ro.status !== 'finished' && ro.status !== 'cancelled' ? ro.status : 'pending') : 'finished';
-        const updates: Partial<Order> = {
-          status: targetStatus,
-          isSettled: true,
-          isSubTicket: true,
-          mergedIntoOrderId: newOrder.id,
-          paymentMethod: method,
-          payments: payments?.map(p => ({ ...p, timestamp: now })),
-          updatedAt: now,
-          ...(targetStatus === 'finished' ? { finishedAt: now, completedAt: now } : {})
-        };
-
-        setOrders(prev => prev.map(o => o.id === ro.id ? { ...o, ...updates } : o));
-        await localDb.orders.update(ro.id, updates);
-
-        if (viewingTenantId || currentUserData?.tenantId) {
-          try {
-            const targetDocId = ro.docId || ro.id;
-            await updateDoc(doc(db, 'orders', targetDocId), cleanObject(updates));
-          } catch (e) {
-            console.error("Error syncing payment update to related order:", e);
-          }
-        }
-      }
+    if (pdvEditOrder) {
+      setPdvEditOrder(null);
     }
 
-    // Redução de Estoque com suporte a Ficha Técnica Inteligente por Canal (Mesa, Balcão, Delivery)
+    // 2. BATCH REDUCTION OF STOCK & TECHNICAL SHEET (Single state and localDb pass)
     const orderChannel = isRealDelivery ? 'delivery' : (isCounter ? 'takeout' : 'dine_in');
+    const productStockReductions = new Map<string, number>();
+    const rawMaterialReductions = new Map<string, number>();
 
     for (const item of table.items) {
       const product = products.find(p => p.id === item.productId);
       if (product) {
         // Reduz estoque do produto (se controlado)
         if (product.trackStock) {
-          const newStock = Math.max(0, (product.stock || 0) - item.quantity);
-          await handleUpdateProduct({ ...product, stock: newStock });
+          productStockReductions.set(product.id, (productStockReductions.get(product.id) || 0) + item.quantity);
         }
 
         // Reduz estoque de insumos (Ficha Técnica)
@@ -4463,10 +4467,7 @@ const App: React.FC = () => {
 
               if (isMatch) {
                 const reduction = tsItem.quantity * item.quantity;
-                await handleUpdateRawMaterial({
-                  ...rawMaterial,
-                  currentStock: Math.max(0, rawMaterial.currentStock - reduction)
-                });
+                rawMaterialReductions.set(rawMaterial.id, (rawMaterialReductions.get(rawMaterial.id) || 0) + reduction);
               }
             }
           }
@@ -4474,261 +4475,349 @@ const App: React.FC = () => {
       }
     }
 
-    // CRM: Salvar ou atualizar cliente se for delivery manual com nome/telefone
-    if (deliveryInfo?.name && deliveryInfo?.phone) {
-      const normalizePhone = (p?: string) => p ? p.replace(/\D/g, '') : '';
-      const targetPhoneNorm = normalizePhone(deliveryInfo.phone);
-      const existingCustomer = customers.find(c => normalizePhone(c.phone) === targetPhoneNorm);
-      if (existingCustomer) {
-        const updatedAddresses = [...(existingCustomer.addresses || [])];
-        if (deliveryInfo.address && !updatedAddresses.includes(deliveryInfo.address)) {
-          updatedAddresses.push(deliveryInfo.address);
+    const updatedProductsList: Product[] = [];
+    if (productStockReductions.size > 0) {
+      setProducts(prev => prev.map(p => {
+        const red = productStockReductions.get(p.id);
+        if (red) {
+          const updated = { ...p, stock: Math.max(0, (p.stock || 0) - red) };
+          updatedProductsList.push(updated);
+          return updated;
         }
-        await handleUpdateCustomer(existingCustomer.id, {
-          name: deliveryInfo.name,
-          address: deliveryInfo.address || existingCustomer.address,
-          addresses: updatedAddresses
-        });
-      } else {
-        await handleAddCustomer({
-          name: deliveryInfo.name,
-          phone: deliveryInfo.phone,
-          address: deliveryInfo.address,
-          balance: 0
-        });
-      }
+        return p;
+      }));
     }
 
-    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
-    const resetData = { 
-      items: [], 
-      status: 'available' as const, 
-      total: 0, 
-      currentOrderId: null, 
-      partialPayments: [],
-      updatedAt: new Date() 
-    };
-
-    // 1. UPDATE LOCAL REACT STATE INSTANTLY FOR OPTIMISTIC FEEDBACK
-    setOrders(prev => deduplicateOrders([newOrder, ...prev.filter(o => o.id !== newOrder.id && o.docId !== newOrder.id)]));
-    if (!isCounter) {
-      setTables(prev => prev.map(t => (String(t.id) === String(tableId) || String(t.number) === String(tableNumber) || (t as any).docId === docId) ? { ...t, ...resetData } : t));
+    const updatedRawMaterialsList: RawMaterial[] = [];
+    if (rawMaterialReductions.size > 0) {
+      setRawMaterials(prev => prev.map(rm => {
+        const red = rawMaterialReductions.get(rm.id);
+        if (red) {
+          const updated = { ...rm, currentStock: Math.max(0, rm.currentStock - red) };
+          updatedRawMaterialsList.push(updated);
+          return updated;
+        }
+        return rm;
+      }));
     }
 
-    // 2. ALWAYS PERSIST TO LOCAL INDEXEDDB IMMEDIATELY
-    try {
-      await localDb.orders.put(newOrder);
-      if (!isCounter) {
-        await localDb.diningTables.toCollection().modify(t => {
-          if (String(t.id) === String(tableId) || String(t.number) === String(tableNumber)) {
-            t.items = [];
-            t.status = 'available';
-            t.total = 0;
-            t.currentOrderId = undefined;
-            t.partialPayments = [];
-          }
-        });
-      }
-    } catch (e) {
-      console.warn("Error updating localDb on close table:", e);
-    }
-
-    // 3. ASYNCHRONOUS NON-BLOCKING FIRESTORE PERSISTENCE
-    if (effectiveTenantId) {
+    // 3. ASYNC PERSISTENCE, CLOUD SYNC, FISCAL, CRM, AND FINANCIAL LOGGING
+    (async () => {
+      // Local IndexedDB persistence
       try {
-        await setDoc(doc(db, 'orders', newOrder.id), cleanObject({ ...newOrder }));
+        await localDb.orders.put(newOrder);
+        if (!isCounter) {
+          await localDb.diningTables.toCollection().modify(t => {
+            if (String(t.id) === String(tableId) || String(t.number) === String(tableNumber)) {
+              t.items = [];
+              t.status = 'available';
+              t.total = 0;
+              t.currentOrderId = undefined;
+              t.partialPayments = [];
+            }
+          });
+        }
+        if (updatedProductsList.length > 0) {
+          await localDb.products.bulkPut(updatedProductsList);
+        }
+        if (updatedRawMaterialsList.length > 0) {
+          await localDb.rawMaterials.bulkPut(updatedRawMaterialsList);
+        }
       } catch (e) {
-        console.warn("Error syncing order to Firestore on close table:", e);
+        console.warn("Error updating localDb on close table:", e);
       }
 
-      if (!isCounter) {
-        if (docId) {
-          try {
-            await updateDoc(doc(db, 'diningTables', docId), resetData);
-          } catch (e) {
-            console.warn("Error updating diningTable by docId:", e);
-          }
-        } else {
-          try {
-            const q = query(
-              collection(db, 'diningTables'), 
-              where('tenantId', '==', effectiveTenantId),
-              where('number', '==', Number(tableNumber))
-            );
-            const snapshot = await getDocs(q);
-            for (const d of snapshot.docs) {
-              await updateDoc(d.ref, resetData);
+      // NFC-e Emission Logic
+      if (fiscal) {
+        try {
+          const currentNfceNum = Number(adminSettings.fiscal?.nextNfceNumber) || 1;
+          const currentSeries = Number(adminSettings.fiscal?.series) || 1;
+          const targetTenantId = viewingTenantId || currentUserData?.tenantId || 't1';
+
+          const response = await fetch('/api/fiscal/issue', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              order: newOrder,
+              tenantId: targetTenantId,
+              settings: adminSettings.fiscal,
+              customerDocument: customerDocument,
+              nfceNumber: currentNfceNum,
+              series: currentSeries,
+              certificate: adminSettings.fiscal?.certificate,
+              config: {
+                environment: adminSettings.fiscal?.environment || 'homologation',
+                cnpj: adminSettings.fiscal?.cnpj,
+                cscId: adminSettings.fiscal?.cscId,
+                cscToken: adminSettings.fiscal?.cscToken
+              }
+            })
+          });
+
+          if (response.ok) {
+            const result = await response.json();
+            if (result.success) {
+              const issuedKey = result.nfeKey || result.accessKey;
+              const actualNfceNum = result.nfceNumber || currentNfceNum;
+              const nextNum = result.nextNfceNumber || (actualNfceNum + 1);
+
+              newOrder.fiscalKey = issuedKey;
+              newOrder.isFiscalIssued = true;
+              newOrder.metadata = {
+                ...(newOrder.metadata || {}),
+                nfceNumber: actualNfceNum,
+                series: currentSeries,
+                protocol: result.protocol || '135260000000001'
+              };
+              addLog('u1', 'FISCAL', `NFC-e #${actualNfceNum} emitida com sucesso (Protocolo: ${result.protocol || 'OK'}): ${issuedKey}`);
+              
+              await handleUpdateLogisticsSettings({
+                fiscal: {
+                  ...adminSettings.fiscal,
+                  nextNfceNumber: nextNum
+                }
+              });
+            } else {
+              console.error('Erro SEFAZ:', result.error);
+              addLog('u1', 'FISCAL', `Erro ao emitir NFC-e #${currentNfceNum}: ${result.error}`);
+              showToast(`Erro SEFAZ: ${result.error}`, 'error');
             }
-          } catch (e) {
-            console.warn("Error querying and updating diningTables:", e);
+          } else {
+            const errorData = await response.json();
+            console.error('Erro API Fiscal:', errorData.error);
+            showToast(`Erro na emissão fiscal: ${errorData.error}`, 'error');
           }
+        } catch (error) {
+          console.error('Erro de conexão fiscal:', error);
+          showToast('Erro de conexão com o serviço fiscal.', 'error');
         }
       }
-    }
 
-    // Always update local counter state
-    if (isCounter) {
-      setCounterOrders(prev => prev.filter(t => t.id !== tableId));
-    }
-
-    // Sincronizar quitação de pagamento em pedidos desta mesma mesa sem sobrescrever status de cozinha
-    if (!isCounter && tableNumber) {
-      const duplicateOpenOrders = orders.filter(o => 
-        o.id !== newOrder.id && 
-        String(o.tableNumber) === String(tableNumber) && 
-        (o.type === 'table' || o.type === 'dine_in') && 
-        o.status !== 'cancelled'
+      // Atualizar pedidos relacionados a esta mesa/balcão para encerrá-los
+      const relatedOrdersToUpdate = orders.filter(o => 
+        o.id !== newOrder.id &&
+        o.status !== 'cancelled' &&
+        (
+          (existingOrderId && o.id === existingOrderId) ||
+          (tableNumber !== undefined && tableNumber !== null && String(o.tableNumber) === String(tableNumber) && !isCounter)
+        )
       );
-      for (const dup of duplicateOpenOrders) {
-        try {
-          const updates = { 
-            status: 'finished', 
-            isSettled: true, 
+      
+      if (relatedOrdersToUpdate.length > 0) {
+        const now = new Date();
+        for (const ro of relatedOrdersToUpdate) {
+          const targetStatus = isCounterOrDelivery ? (ro.status && ro.status !== 'finished' && ro.status !== 'cancelled' ? ro.status : 'pending') : 'finished';
+          const updates: Partial<Order> = {
+            status: targetStatus,
+            isSettled: true,
             isSubTicket: true,
             mergedIntoOrderId: newOrder.id,
             paymentMethod: method,
-            updatedAt: new Date(),
-            finishedAt: new Date(),
-            completedAt: new Date()
+            payments: payments?.map(p => ({ ...p, timestamp: now })),
+            updatedAt: now,
+            ...(targetStatus === 'finished' ? { finishedAt: now, completedAt: now } : {})
           };
+
+          setOrders(prev => prev.map(o => o.id === ro.id ? { ...o, ...updates } : o));
+          await localDb.orders.update(ro.id, updates).catch(e => console.warn(e));
+
           if (effectiveTenantId) {
-            await setDoc(doc(db, 'orders', dup.id), updates, { merge: true });
+            try {
+              const targetDocId = ro.docId || ro.id;
+              await updateDoc(doc(db, 'orders', targetDocId), cleanObject(updates));
+            } catch (e) {
+              console.error("Error syncing payment update to related order:", e);
+            }
           }
-          await localDb.orders.update(dup.id, updates);
-          setOrders(prev => prev.map(o => o.id === dup.id ? { ...o, ...updates } as Order : o));
-        } catch (e) {}
+        }
       }
-    }
 
-
-    addLog('u1', 'PEDIDO', `Pedido ${newOrder.id} finalizado e mesa liberada.`);
-
-    if (pdvEditOrder) {
-      setPdvEditOrder(null);
-    }
-
-    // Se for do Marketplace, acumular taxa de R$ 1,50
-    if (newOrder.source === 'marketplace') {
-      const appFee = adminSettings.saasIntegration?.appFeePerOrder || 1.50;
-      const newBillingAccumulated = (adminSettings.saasIntegration?.billingAccumulated || 0) + appFee;
-      const updatedSaas = {
-        ...adminSettings.saasIntegration,
-        billingAccumulated: newBillingAccumulated
-      };
-      await handleUpdateLogisticsSettings({ saasIntegration: updatedSaas });
-    }
-
-    // IMPRESSÃO FINAL (Normal ou Fiscal)
-    if (adminSettings.printing?.autoPrintOrder || fiscal) {
-      handlePrintOrder(newOrder, adminSettings, { isFiscal: fiscal });
-    }
-
-    addLog('u1', 'VENDA', `${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} encerrada. Total: R$ ${finalTotal.toFixed(2)}`);
-
-    if (payments && payments.length > 0) {
-      const customerUpdates: Record<string, { totalDebit: number, transactions: CustomerTransaction[] }> = {};
-      
-      for (let i = 0; i < payments.length; i++) {
-        const p = payments[i];
-        const currentCustomerId = p.customerId || customerId;
-        const paymentRecordId = (p as any).id || `fin-${newOrder.id}-${p.method}-${p.amount}-${i}-${Date.now()}`;
-
-        if (p.method === 'conta_cliente' && currentCustomerId) {
-          if (!customerUpdates[currentCustomerId]) {
-            customerUpdates[currentCustomerId] = { totalDebit: 0, transactions: [] };
+      // CRM: Salvar ou atualizar cliente se for delivery manual com nome/telefone
+      if (deliveryInfo?.name && deliveryInfo?.phone) {
+        const normalizePhone = (p?: string) => p ? p.replace(/\D/g, '') : '';
+        const targetPhoneNorm = normalizePhone(deliveryInfo.phone);
+        const existingCustomer = customers.find(c => normalizePhone(c.phone) === targetPhoneNorm);
+        if (existingCustomer) {
+          const updatedAddresses = [...(existingCustomer.addresses || [])];
+          if (deliveryInfo.address && !updatedAddresses.includes(deliveryInfo.address)) {
+            updatedAddresses.push(deliveryInfo.address);
           }
-          customerUpdates[currentCustomerId].totalDebit += p.amount;
-          customerUpdates[currentCustomerId].transactions.push({
-            id: `tr-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 5)}`,
-            type: 'debit',
-            amount: p.amount,
-            description: `Consumo Parcial ${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} (Pedido #${newOrder.id})`,
-            date: new Date(),
-            items: newOrder.items?.map(it => ({ name: it.name, quantity: it.quantity, price: it.price }))
+          await handleUpdateCustomer(existingCustomer.id, {
+            name: deliveryInfo.name,
+            address: deliveryInfo.address || existingCustomer.address,
+            addresses: updatedAddresses
           });
+        } else {
+          await handleAddCustomer({
+            name: deliveryInfo.name,
+            phone: deliveryInfo.phone,
+            address: deliveryInfo.address,
+            balance: 0
+          });
+        }
+      }
 
-          if (!(p as any).alreadyRecorded) {
+      // Cloud Persistence via Batch Write
+      if (effectiveTenantId) {
+        try {
+          const batch = writeBatch(db);
+          batch.set(doc(db, 'orders', newOrder.id), cleanObject({ ...newOrder }));
+
+          if (!isCounter) {
+            if (docId) {
+              batch.update(doc(db, 'diningTables', docId), resetData);
+            } else {
+              const q = query(
+                collection(db, 'diningTables'), 
+                where('tenantId', '==', effectiveTenantId),
+                where('number', '==', Number(tableNumber))
+              );
+              const snapshot = await getDocs(q);
+              for (const d of snapshot.docs) {
+                batch.update(d.ref, resetData);
+              }
+            }
+          }
+
+          // Batch products in cloud
+          for (const p of updatedProductsList) {
+            batch.set(doc(db, 'products', p.id), cleanObject(p), { merge: true });
+          }
+
+          // Batch raw materials in cloud
+          for (const rm of updatedRawMaterialsList) {
+            batch.set(doc(db, 'rawMaterials', rm.id), cleanObject(rm), { merge: true });
+          }
+
+          await batch.commit();
+        } catch (e) {
+          console.warn("Error syncing order batch to Firestore on close table:", e);
+        }
+      }
+
+      // Financial Records
+      if (payments && payments.length > 0) {
+        const customerUpdates: Record<string, { totalDebit: number, transactions: CustomerTransaction[] }> = {};
+        
+        for (let i = 0; i < payments.length; i++) {
+          const p = payments[i];
+          const currentCustomerId = p.customerId || customerId;
+          const paymentRecordId = (p as any).id || `fin-${newOrder.id}-${p.method}-${p.amount}-${i}-${Date.now()}`;
+
+          if (p.method === 'conta_cliente' && currentCustomerId) {
+            if (!customerUpdates[currentCustomerId]) {
+              customerUpdates[currentCustomerId] = { totalDebit: 0, transactions: [] };
+            }
+            customerUpdates[currentCustomerId].totalDebit += p.amount;
+            customerUpdates[currentCustomerId].transactions.push({
+              id: `tr-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 5)}`,
+              type: 'debit',
+              amount: p.amount,
+              description: `Consumo Parcial ${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} (Pedido #${newOrder.id})`,
+              date: new Date(),
+              items: newOrder.items?.map(it => ({ name: it.name, quantity: it.quantity, price: it.price }))
+            });
+
+            if (!(p as any).alreadyRecorded) {
+              await handleAddFinancialRecord({
+                id: paymentRecordId,
+                type: 'income',
+                amount: p.amount,
+                category: isRealDelivery ? 'Vendas Entrega' : (isCounter ? 'Vendas Balcão' : 'Vendas Mesa'),
+                description: `${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} - Conta Cliente / Fiado (Pedido #${newOrder.id})`,
+                date: new Date(),
+                paymentMethod: 'conta_cliente',
+                orderId: newOrder.id,
+                status: 'pending'
+              });
+            }
+          } else if (!(p as any).alreadyRecorded) {
             await handleAddFinancialRecord({
               id: paymentRecordId,
               type: 'income',
               amount: p.amount,
               category: isRealDelivery ? 'Vendas Entrega' : (isCounter ? 'Vendas Balcão' : 'Vendas Mesa'),
-              description: `${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} - Conta Cliente / Fiado (Pedido #${newOrder.id})`,
+              description: `${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} - Pagamento: ${p.method}`,
               date: new Date(),
-              paymentMethod: 'conta_cliente',
+              paymentMethod: p.method,
               orderId: newOrder.id,
-              status: 'pending'
+              status: 'paid'
             });
           }
-        } else if (!(p as any).alreadyRecorded) {
+        }
+
+        for (const [cId, update] of Object.entries(customerUpdates)) {
+          const customer = customers.find(c => c.id === cId);
+          if (customer) {
+            await handleUpdateCustomer(cId, {
+              balance: customer.balance + update.totalDebit,
+              history: [...update.transactions, ...customer.history]
+            });
+          }
+        }
+      } else {
+        // Pagamento único (legado/simples)
+        const paymentRecordId = `fin-${newOrder.id}-${method}-${finalTotal}-${Date.now()}`;
+        if (method === 'conta_cliente' && customerId) {
+          const customer = customers.find(c => c.id === customerId);
+          if (customer) {
+            const transaction: CustomerTransaction = {
+              id: `tr-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+              type: 'debit',
+              amount: finalTotal,
+              description: `Consumo ${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} (Pedido #${newOrder.id})`,
+              date: new Date(),
+              items: newOrder.items?.map(it => ({ name: it.name, quantity: it.quantity, price: it.price }))
+            };
+            await handleUpdateCustomer(customerId, {
+              balance: customer.balance + finalTotal,
+              history: [transaction, ...customer.history]
+            });
+          }
           await handleAddFinancialRecord({
             id: paymentRecordId,
             type: 'income',
-            amount: p.amount,
+            amount: finalTotal,
             category: isRealDelivery ? 'Vendas Entrega' : (isCounter ? 'Vendas Balcão' : 'Vendas Mesa'),
-            description: `${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} - Pagamento: ${p.method}`,
+            description: `${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} - Conta Cliente / Fiado (Pedido #${newOrder.id})`,
             date: new Date(),
-            paymentMethod: p.method,
+            paymentMethod: 'conta_cliente',
+            orderId: newOrder.id,
+            status: 'pending'
+          });
+        } else {
+          await handleAddFinancialRecord({
+            id: paymentRecordId,
+            type: 'income',
+            amount: finalTotal,
+            category: isRealDelivery ? 'Vendas Entrega' : (isCounter ? 'Vendas Balcão' : 'Vendas Mesa'),
+            description: `${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} - Pagamento: ${method}`,
+            date: new Date(),
+            paymentMethod: method,
             orderId: newOrder.id,
             status: 'paid'
           });
         }
       }
 
-      for (const [cId, update] of Object.entries(customerUpdates)) {
-        const customer = customers.find(c => c.id === cId);
-        if (customer) {
-          await handleUpdateCustomer(cId, {
-            balance: customer.balance + update.totalDebit,
-            history: [...update.transactions, ...customer.history]
-          });
-        }
+      // Se for do Marketplace, acumular taxa de R$ 1,50
+      if (newOrder.source === 'marketplace') {
+        const appFee = adminSettings.saasIntegration?.appFeePerOrder || 1.50;
+        const newBillingAccumulated = (adminSettings.saasIntegration?.billingAccumulated || 0) + appFee;
+        const updatedSaas = {
+          ...adminSettings.saasIntegration,
+          billingAccumulated: newBillingAccumulated
+        };
+        await handleUpdateLogisticsSettings({ saasIntegration: updatedSaas });
       }
-    } else {
-      // Pagamento único (legado/simples)
-      const paymentRecordId = `fin-${newOrder.id}-${method}-${finalTotal}-${Date.now()}`;
-      if (method === 'conta_cliente' && customerId) {
-        const customer = customers.find(c => c.id === customerId);
-        if (customer) {
-          const transaction: CustomerTransaction = {
-            id: `tr-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-            type: 'debit',
-            amount: finalTotal,
-            description: `Consumo ${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} (Pedido #${newOrder.id})`,
-            date: new Date(),
-            items: newOrder.items?.map(it => ({ name: it.name, quantity: it.quantity, price: it.price }))
-          };
-          await handleUpdateCustomer(customerId, {
-            balance: customer.balance + finalTotal,
-            history: [transaction, ...customer.history]
-          });
-        }
-        await handleAddFinancialRecord({
-          id: paymentRecordId,
-          type: 'income',
-          amount: finalTotal,
-          category: isRealDelivery ? 'Vendas Entrega' : (isCounter ? 'Vendas Balcão' : 'Vendas Mesa'),
-          description: `${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} - Conta Cliente / Fiado (Pedido #${newOrder.id})`,
-          date: new Date(),
-          paymentMethod: 'conta_cliente',
-          orderId: newOrder.id,
-          status: 'pending'
-        });
-      } else {
-        await handleAddFinancialRecord({
-          id: paymentRecordId,
-          type: 'income',
-          amount: finalTotal,
-          category: isRealDelivery ? 'Vendas Entrega' : (isCounter ? 'Vendas Balcão' : 'Vendas Mesa'),
-          description: `${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} - Pagamento: ${method}`,
-          date: new Date(),
-          paymentMethod: method,
-          orderId: newOrder.id,
-          status: 'paid'
-        });
-      }
+    })();
+
+    // IMPRESSÃO FINAL (Normal ou Fiscal)
+    if (adminSettings.printing?.autoPrintOrder || fiscal) {
+      handlePrintOrder(newOrder, adminSettings, { isFiscal: fiscal });
     }
 
+    addLog('u1', 'PEDIDO', `Pedido ${newOrder.id} finalizado e mesa liberada.`);
     addLog('u1', 'VENDA', `${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} encerrada. Total: R$ ${finalTotal.toFixed(2)}`);
   };
 
@@ -5221,28 +5310,30 @@ const App: React.FC = () => {
     
     // Atualização otimista imediata no estado de produtos e no banco local Dexie
     setProducts(prev => prev.map(p => p.id === id ? finalProduct : p));
-    await localDb.products.put(finalProduct).catch(e => console.warn("Local DB product put error:", e));
+    localDb.products.put(finalProduct).catch(e => console.warn("Local DB product put error:", e));
 
     if (effectiveTenantId) {
-      try {
-        await setDoc(doc(db, 'products', id), cleanObject({
-          ...finalProduct,
-          updatedAt: new Date()
-        }), { merge: true });
-      } catch (err) {
-        console.error("Erro ao atualizar produto na nuvem:", err);
-        if (err instanceof Error && err.message.includes("exceeds the maximum allowed size")) {
-          try {
-            const sizeReducedProduct = { ...finalProduct, image: '' };
-            await setDoc(doc(db, 'products', id), {
-               ...sizeReducedProduct,
-               updatedAt: new Date()
-            }, { merge: true });
-          } catch (retryErr) {
-            console.error("Retry without image failed:", retryErr);
+      (async () => {
+        try {
+          await setDoc(doc(db, 'products', id), cleanObject({
+            ...finalProduct,
+            updatedAt: new Date()
+          }), { merge: true });
+        } catch (err) {
+          console.error("Erro ao atualizar produto na nuvem:", err);
+          if (err instanceof Error && err.message.includes("exceeds the maximum allowed size")) {
+            try {
+              const sizeReducedProduct = { ...finalProduct, image: '' };
+              await setDoc(doc(db, 'products', id), {
+                 ...sizeReducedProduct,
+                 updatedAt: new Date()
+              }, { merge: true });
+            } catch (retryErr) {
+              console.error("Retry without image failed:", retryErr);
+            }
           }
         }
-      }
+      })();
     }
 
     addLog('u1', 'ESTOQUE', `Produto atualizado: ${finalProduct.name}`);
@@ -5553,11 +5644,16 @@ const App: React.FC = () => {
         if (o.status === 'cancelled' || o.isSubTicket || o.mergedIntoOrderId) return false;
         const isPaid = o.isSettled || o.paymentStatus === 'paid' || (o.payments && o.payments.length > 0) || o.status === 'finished' || o.status === 'delivered';
         if (!isPaid) return false;
-        const activityDate = parseToDate(o.paidAt || o.completedAt || o.finishedAt || o.updatedAt || o.createdAt);
-        if (activityDate >= openedDate) return true;
-        if (o.payments && o.payments.some(p => p.timestamp && parseToDate(p.timestamp) >= openedDate)) return true;
+
         const createdAt = parseToDate(o.createdAt);
-        return createdAt >= openedDate;
+        if (createdAt >= openedDate) return true;
+
+        if (o.paidAt && parseToDate(o.paidAt) >= openedDate) return true;
+        if (o.completedAt && parseToDate(o.completedAt) >= openedDate) return true;
+        if (o.finishedAt && parseToDate(o.finishedAt) >= openedDate) return true;
+        if (o.payments && o.payments.some((p: any) => p.timestamp && parseToDate(p.timestamp) >= openedDate)) return true;
+
+        return false;
       };
 
       // ROBUST CALCULATION: Fetch ALL orders during the session

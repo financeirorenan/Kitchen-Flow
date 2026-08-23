@@ -1,6 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { Order, OrderItem, Product, PaymentMethod, ProductOption } from '../types';
+import { formatOrderNumber } from '../utils/deduplicate';
 import { 
   X, Package, Plus, Minus, Trash2, Search, CreditCard, Check 
 } from 'lucide-react';
@@ -139,7 +140,7 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
         <div className="p-4 border-b flex justify-between items-center bg-indigo-50/50">
           <div>
             <h2 className="text-xl font-black text-slate-800">Editar Pedido</h2>
-            <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest mt-1">Pedido #{order.id.slice(-4)} - {order.customerName || 'Cliente'}</p>
+            <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest mt-1">Pedido {formatOrderNumber(order)} - {order.customerName || 'Cliente'}</p>
           </div>
           <button onClick={onClose} className="p-1.5 hover:bg-white rounded-full text-slate-400 transition-colors"><X size={24} /></button>
         </div>

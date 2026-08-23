@@ -33,7 +33,7 @@ export const PrintPreviewModal: React.FC<PrintPreviewModalProps> = ({ isOpen, on
   if (!printJob) return null;
 
   const { order, settings, html, rawText, isFiscal } = printJob;
-  const orderIdShort = order.dailyNumber ? String(order.dailyNumber) : (order.id ? order.id.slice(-6).toUpperCase() : 'NOVO');
+  const orderIdShort = order.dailyNumber ? String(order.dailyNumber) : '1';
 
   const handleCopyText = async () => {
     try {

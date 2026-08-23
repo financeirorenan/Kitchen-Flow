@@ -20,6 +20,7 @@ import {
   syncCourierOfflineData
 } from '../utils/courierDB';
 import { Order, Courier, User, AdminSettings } from '../types';
+import { formatOrderNumber } from '../utils/deduplicate';
 import { 
   Bike, 
   MapPin, 
@@ -494,7 +495,7 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout }) => {
     if (newOrders.length > 0) {
       playNotificationSound();
 
-      const orderIdsStr = newOrders.map(o => `#${String(o?.id || '').slice(-4)}`).join(', ');
+      const orderIdsStr = newOrders.map(o => `${formatOrderNumber(o)}`).join(', ');
       setToast({
         message: `Novo pedido atribuído! ${newOrders.length === 1 ? 'Pedido' : 'Pedidos'}: ${orderIdsStr}`,
         type: 'success'
@@ -504,11 +505,11 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout }) => {
         if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
           navigator.serviceWorker.controller.postMessage({
             type: 'SEND_NOTIFICATION',
-            title: `Novo pedido atribuído! (#${String(newOrders[0]?.id || '').slice(-4)})`,
+            title: `Novo pedido atribuído! (${formatOrderNumber(newOrders[0])})`,
             body: `Você recebeu um novo pedido para entrega. Clique para abrir!`
           });
         } else if ('Notification' in window && Notification.permission === 'granted') {
-          new Notification(`Novo pedido atribuído! (#${String(newOrders[0]?.id || '').slice(-4)})`, {
+          new Notification(`Novo pedido atribuído! (${formatOrderNumber(newOrders[0])})`, {
             body: `Você recebeu um novo pedido para entrega. Clique para abrir!`,
             icon: '/icon-192.png'
           });
@@ -791,7 +792,7 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout }) => {
              type: 'expense',
              amount: order.courierEarnings || 0,
              category: 'Entregas',
-             description: `Comissão entrega pedido #${String(order?.id || '').slice(-4)} - ${currentUser.name}`,
+             description: `Comissão entrega pedido ${formatOrderNumber(order)} - ${currentUser.name}`,
              date: new Date(),
              status: 'pending' 
            });
@@ -1348,7 +1349,7 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout }) => {
                          <div key={order.id} className="bg-slate-900 p-4.5 rounded-2xl border border-rose-950/50 flex flex-col md:flex-row justify-between gap-4 shadow-sm">
                             <div className="min-w-0 flex-1">
                                <div className="flex items-center gap-2 mb-1.5">
-                                 <span className="text-[8px] font-black text-rose-400 uppercase tracking-widest bg-rose-950/30 px-2 py-0.5 rounded border border-rose-900/20">Pedido #{String(order.id).slice(-4)}</span>
+                                 <span className="text-[8px] font-black text-rose-400 uppercase tracking-widest bg-rose-950/30 px-2 py-0.5 rounded border border-rose-900/20">Pedido {formatOrderNumber(order)}</span>
                                  <span className="text-[9px] font-semibold text-slate-400 font-mono italic">({order.paymentMethod === 'dinheiro' ? 'Dinheiro' : 'Digital'})</span>
                                </div>
                                <p className="text-xs font-bold text-slate-300 leading-normal mb-1">{order.customerAddress}</p>
@@ -1540,7 +1541,7 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout }) => {
                               <span className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black ${order.status === 'delivering' ? 'bg-brand-primary text-white font-black' : 'bg-orange-950/20 text-brand-primary'}`}>
                                  {index + 1}
                               </span>
-                              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Pedido #{String(order?.id || '').slice(-4)}</span>
+                              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Pedido {formatOrderNumber(order)}</span>
                            </div>
                            <h3 className="text-lg font-black text-slate-100 tracking-tighter mt-1">{order.customerName}</h3>
                         </div>
@@ -2072,7 +2073,7 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout }) => {
                                       <div className="min-w-0 flex-1">
                                         <div className="flex items-center gap-2">
                                           <span className="text-[10px] font-black text-slate-200">
-                                            #{String(order.id).slice(-4).toUpperCase()}
+                                            {formatOrderNumber(order)}
                                           </span>
                                           <span className="text-[8px] font-bold text-slate-500 italic">
                                             ({order.deliveredAt ? new Date(order.deliveredAt).toLocaleTimeString([], { hour: '2-digit', minute:'2-digit' }) : '--:--'})
@@ -2173,7 +2174,7 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout }) => {
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-2.5">
                                 <div className="w-9 h-9 bg-slate-950 rounded-xl flex items-center justify-center border border-slate-800 text-brand-primary font-mono text-xs font-black">
-                                  #{String(order.id).slice(-4).toUpperCase()}
+                                  {formatOrderNumber(order)}
                                 </div>
                                 <div>
                                   <h4 className="text-xs font-black text-slate-200 group-hover:text-brand-primary transition-colors">

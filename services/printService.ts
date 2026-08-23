@@ -277,7 +277,7 @@ export const generateRawTextReceipt = (order: Partial<Order>, settings: AdminSet
   out += center(orderTypeLabel, lineCharLimit) + '\n';
   
   const createdAt = parseOrderDate(order.createdAt);
-  const orderNumStr = order.dailyNumber ? String(order.dailyNumber) : (order.id ? order.id.slice(-6).toUpperCase() : 'NOVO');
+  const orderNumStr = order.dailyNumber ? String(order.dailyNumber) : '1';
   out += `PEDIDO: #${orderNumStr}\n`;
   out += `DATA  : ${createdAt.toLocaleDateString('pt-BR')} ${createdAt.toLocaleTimeString('pt-BR')}\n`;
   if (order.tableNumber) {
@@ -293,6 +293,12 @@ export const generateRawTextReceipt = (order: Partial<Order>, settings: AdminSet
     if (order.changeFor) {
       out += `TROCO P/: R$ ${order.changeFor.toFixed(2).replace('.', ',')}\n`;
     }
+  } else if (order.customerName || order.customerPhone) {
+    out += divider + '\n';
+    out += center('IDENTIFICACAO DO CLIENTE', lineCharLimit) + '\n';
+    if (order.customerName) out += `CLIENTE: ${order.customerName.toUpperCase()}\n`;
+    if (order.customerPhone) out += `FONE   : ${order.customerPhone}\n`;
+    if (order.customerAddress) out += `END.   : ${order.customerAddress.toUpperCase()}\n`;
   }
 
   out += divider + '\n';
@@ -759,6 +765,12 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
     <div style="font-size: ${fontSizeSmall}; margin-bottom: 2px; font-weight: 700; word-break: break-word;"><strong>TELEFONE:</strong> ${order.customerPhone || 'NÃO INFORMADO'}</div>
     <div style="font-size: ${fontSizeSmall}; margin-bottom: 2px; font-weight: 700; word-break: break-word;"><strong>ENDEREÇO:</strong> ${order.customerAddress?.toUpperCase() || 'NÃO INFORMADO'}</div>
     ${order.changeFor ? `<div style="font-size: ${fontSizeSmall}; font-weight: 700;"><strong>TROCO PARA:</strong> R$ ${order.changeFor.toFixed(2).replace('.', ',')}</div>` : ''}
+  ` : (order.customerName || order.customerPhone) ? `
+    <div class="divider"></div>
+    <div style="font-size: ${fontSizeBase}; font-weight: 900; text-align: center; margin-bottom: 6px; border: 1.5px solid #000; padding: 3px; text-transform: uppercase; color: #000000 !important; width: 100%; box-sizing: border-box;">IDENTIFICAÇÃO DO CLIENTE</div>
+    ${order.customerName ? `<div style="font-size: ${fontSizeSmall}; margin-bottom: 2px; font-weight: 700; word-break: break-word;"><strong>CLIENTE:</strong> ${order.customerName.toUpperCase()}</div>` : ''}
+    ${order.customerPhone ? `<div style="font-size: ${fontSizeSmall}; margin-bottom: 2px; font-weight: 700; word-break: break-word;"><strong>TELEFONE:</strong> ${order.customerPhone}</div>` : ''}
+    ${order.customerAddress ? `<div style="font-size: ${fontSizeSmall}; margin-bottom: 2px; font-weight: 700; word-break: break-word;"><strong>ENDEREÇO:</strong> ${order.customerAddress.toUpperCase()}</div>` : ''}
   ` : '';
 
   return `
@@ -786,7 +798,7 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
 
       <div style="font-size: ${fontSizeSmall}; margin-top: 4px; line-height: 1.35; font-weight: 700; width: 100%;">
         ${order.tableNumber ? `<div><strong>Mesa/Comanda:</strong> ${order.tableNumber}</div>` : ''}
-        <div><strong>Pedido:</strong> #${order.dailyNumber ? order.dailyNumber : (order.id ? order.id.slice(-6).toUpperCase() : 'NOVO')}</div>
+        <div><strong>Pedido:</strong> #${order.dailyNumber ? order.dailyNumber : '1'}</div>
         <div><strong>Data/Hora:</strong> ${createdAt.toLocaleDateString('pt-BR')} ${createdAt.toLocaleTimeString('pt-BR')}</div>
         <div><strong>Tempo de Casa:</strong> ${timeStr}</div>
       </div>

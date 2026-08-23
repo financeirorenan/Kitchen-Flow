@@ -98,7 +98,7 @@ export const FiscalCoupons: React.FC<FiscalCouponsProps> = ({
             id: `doc_nfce_${ord.id}`,
             tenantId: ord.tenantId || currentTenant,
             orderId: ord.id,
-            orderDisplayId: ord.id ? ord.id.slice(-4) : '',
+            orderDisplayId: ord.dailyNumber ? String(ord.dailyNumber) : '',
             tableNumber: ord.tableNumber,
             orderType: ord.type || 'takeout',
             nfceNumber: ord.metadata?.nfceNumber || adminSettings.fiscal?.nextNfceNumber || 1,

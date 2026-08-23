@@ -26,7 +26,7 @@ import {
 } from "../services/printService";
 import { maskCurrency, parseCurrency, maskPhone } from "../utils/masks";
 import { normalizePaymentMethod } from "../utils/paymentUtils";
-import { deduplicateOrders, deduplicateFinancialRecords } from "../utils/deduplicate";
+import { deduplicateOrders, deduplicateFinancialRecords, getOrderNumericId, formatOrderNumber } from "../utils/deduplicate";
 import {
   Users,
   CreditCard,
@@ -97,7 +97,15 @@ interface TablesProps {
     items: OrderItem[],
     status: Table["status"],
     isCounter?: boolean,
-    partialPayments?: SplitPart[]
+    partialPayments?: SplitPart[],
+    customerData?: {
+      customerName?: string;
+      customerPhone?: string;
+      customerAddress?: string;
+      deliveryFee?: number;
+      customerId?: string;
+      isDelivery?: boolean;
+    }
   ) => void;
   onAddTable: () => Promise<void>;
   onDeleteTable: (tableId: number | string) => Promise<void>;
@@ -131,6 +139,14 @@ interface TablesProps {
     tableId: number | string,
     items: OrderItem[],
     isCounter?: boolean,
+    customerData?: {
+      customerName?: string;
+      customerPhone?: string;
+      customerAddress?: string;
+      deliveryFee?: number;
+      customerId?: string;
+      isDelivery?: boolean;
+    }
   ) => void;
   onOpenCash: (value: number) => void;
   onCloseCash: (actualValue: number, observations?: string) => Promise<any>;
@@ -737,11 +753,16 @@ const Tables: React.FC<TablesProps> = memo(
         if (o.status === "cancelled" || o.isSubTicket || o.mergedIntoOrderId) return false;
         const isPaid = o.isSettled || o.paymentStatus === "paid" || (o.payments && o.payments.length > 0) || o.status === "finished" || o.status === "delivered";
         if (!isPaid) return false;
-        const activityDate = parseToDate(o.paidAt || o.completedAt || o.finishedAt || o.updatedAt || o.createdAt);
-        if (activityDate >= sessionOpenedAt) return true;
-        if (o.payments && o.payments.some(p => p.timestamp && parseToDate(p.timestamp) >= sessionOpenedAt)) return true;
+        
         const createdAt = parseToDate(o.createdAt);
-        return createdAt >= sessionOpenedAt;
+        if (createdAt >= sessionOpenedAt) return true;
+
+        if (o.paidAt && parseToDate(o.paidAt) >= sessionOpenedAt) return true;
+        if (o.completedAt && parseToDate(o.completedAt) >= sessionOpenedAt) return true;
+        if (o.finishedAt && parseToDate(o.finishedAt) >= sessionOpenedAt) return true;
+        if (o.payments && o.payments.some((p: any) => p.timestamp && parseToDate(p.timestamp) >= sessionOpenedAt)) return true;
+
+        return false;
       }));
 
       // Monetary sums should exclude automated sale records (which already exist in sessionOrders)
@@ -859,17 +880,47 @@ const Tables: React.FC<TablesProps> = memo(
         const openedAt = new Date(lastClosingReport.openedAt);
         const closedAt = new Date(lastClosingReport.closedAt);
         sourceOrders = orders.filter((o) => {
-          const act = new Date(o.paidAt || o.completedAt || o.finishedAt || o.updatedAt || o.createdAt);
-          return act >= openedAt && act <= closedAt && o.status !== "cancelled" && !o.isSubTicket && !o.mergedIntoOrderId;
+          if (o.status === "cancelled" || o.isSubTicket || o.mergedIntoOrderId) return false;
+          const isPaid = o.isSettled || o.paymentStatus === "paid" || (o.payments && o.payments.length > 0) || o.status === "finished" || o.status === "delivered";
+          if (!isPaid) return false;
+          const created = new Date(o.createdAt);
+          const paid = o.paidAt ? new Date(o.paidAt) : null;
+          const completed = o.completedAt ? new Date(o.completedAt) : null;
+          const finished = o.finishedAt ? new Date(o.finishedAt) : null;
+          const hasPaymentInWindow = o.payments && o.payments.some((p: any) => {
+            const pt = p.timestamp ? (p.timestamp.toDate ? p.timestamp.toDate() : new Date(p.timestamp)) : null;
+            return pt && pt >= openedAt && pt <= closedAt;
+          });
+
+          return (created >= openedAt && created <= closedAt) ||
+                 (paid && paid >= openedAt && paid <= closedAt) ||
+                 (completed && completed >= openedAt && completed <= closedAt) ||
+                 (finished && finished >= openedAt && finished <= closedAt) ||
+                 hasPaymentInWindow;
         });
       } else if (cashSession.openedAt) {
         const openedAt = new Date(cashSession.openedAt);
         sourceOrders = orders.filter((o) => {
-          const act = new Date(o.paidAt || o.completedAt || o.finishedAt || o.updatedAt || o.createdAt);
-          return act >= openedAt && o.status !== "cancelled" && !o.isSubTicket && !o.mergedIntoOrderId;
+          if (o.status === "cancelled" || o.isSubTicket || o.mergedIntoOrderId) return false;
+          const isPaid = o.isSettled || o.paymentStatus === "paid" || (o.payments && o.payments.length > 0) || o.status === "finished" || o.status === "delivered";
+          if (!isPaid) return false;
+          const created = new Date(o.createdAt);
+          const paid = o.paidAt ? new Date(o.paidAt) : null;
+          const completed = o.completedAt ? new Date(o.completedAt) : null;
+          const finished = o.finishedAt ? new Date(o.finishedAt) : null;
+          const hasPaymentInWindow = o.payments && o.payments.some((p: any) => {
+            const pt = p.timestamp ? (p.timestamp.toDate ? p.timestamp.toDate() : new Date(p.timestamp)) : null;
+            return pt && pt >= openedAt;
+          });
+
+          return (created >= openedAt) ||
+                 (paid && paid >= openedAt) ||
+                 (completed && completed >= openedAt) ||
+                 (finished && finished >= openedAt) ||
+                 hasPaymentInWindow;
         });
       } else {
-        sourceOrders = orders.filter((o) => o.status !== "cancelled" && !o.isSubTicket && !o.mergedIntoOrderId);
+        sourceOrders = [];
       }
 
       sourceOrders = deduplicateOrders(sourceOrders);
@@ -1145,7 +1196,7 @@ const Tables: React.FC<TablesProps> = memo(
           id: ord.id,
           source: 'order',
           type: orderType,
-          displayNumber: ord.dailyNumber ? `Pedido #${ord.dailyNumber}` : `Comanda #${String(ord.id).slice(-4)}`,
+          displayNumber: `Pedido ${formatOrderNumber(ord)}`,
           dailyNumber: ord.dailyNumber,
           customerName: ord.customerName,
           customerPhone: ord.customerPhone,
@@ -1570,45 +1621,64 @@ const Tables: React.FC<TablesProps> = memo(
         return;
       }
 
+      const deliveryFeeVal = isDeliveryOrder && isCounterContext ? parseCurrency(deliveryFeeInput) : 0;
+      const customerData = {
+        customerName: customerName ? customerName.trim() : undefined,
+        customerPhone: customerPhone ? customerPhone.trim() : undefined,
+        customerAddress: deliveryAddress ? deliveryAddress.trim() : undefined,
+        deliveryFee: isDeliveryOrder ? deliveryFeeVal : undefined,
+        customerId: selectedCustomerId || undefined,
+        isDelivery: isDeliveryOrder,
+      };
+
       setIsSendingToKitchen(true);
-      setTimeout(() => {
-        // Se estivermos em modo de edição de pedido (pdvEditOrder), usar o ID do pedido diretamente
-        const targetId = pdvEditOrder ? pdvEditOrder.id : selectedTable.id;
-        onSendToKitchen(targetId, unsentItems, isCounterContext);
+      // Se estivermos em modo de edição de pedido (pdvEditOrder), usar o ID do pedido diretamente
+      const targetId = pdvEditOrder ? pdvEditOrder.id : selectedTable.id;
+      onSendToKitchen(targetId, unsentItems, isCounterContext, customerData);
 
-        // Marcar itens como enviados no estado local
-        const updatedItems = selectedTable.items.map((item) => ({
-          ...item,
-          sentToKitchen: true,
-        }));
+      // Marcar itens como enviados no estado local
+      const updatedItems = selectedTable.items.map((item) => ({
+        ...item,
+        sentToKitchen: true,
+      }));
 
-        onUpdateTable(
-          selectedTable.id,
-          updatedItems,
-          "occupied",
-          isCounterContext,
-        );
-        setSelectedTable((prev) =>
-          prev ? { ...prev, items: updatedItems } : null,
-        );
+      onUpdateTable(
+        selectedTable.id,
+        updatedItems,
+        "occupied",
+        isCounterContext,
+        undefined,
+        customerData
+      );
+      setSelectedTable((prev) =>
+        prev ? { 
+          ...prev, 
+          items: updatedItems,
+          customerName: customerData.customerName,
+          customerPhone: customerData.customerPhone,
+          customerAddress: customerData.customerAddress,
+          deliveryFee: customerData.deliveryFee,
+          customerId: customerData.customerId,
+          isDelivery: customerData.isDelivery,
+        } : null,
+      );
 
-        // Se estiver editando um pedido vindo de KDS/Delivery, sincronizar as alterações do pedido
-        if (pdvEditOrder && onUpdateOrder) {
-          const deliveryFeeVal = isDeliveryOrder && isCounterContext ? parseCurrency(deliveryFeeInput) : 0;
-          onUpdateOrder(pdvEditOrder.id, {
-            items: updatedItems,
-            total: selectedTable.total + deliveryFeeVal + (additionalFee || 0) - (discount || 0),
-            customerName: customerName || undefined,
-            customerPhone: customerPhone || undefined,
-            customerAddress: deliveryAddress || undefined,
-            deliveryFee: isDeliveryOrder ? deliveryFeeVal : undefined,
-          });
-        }
+      // Se estiver editando um pedido vindo de KDS/Delivery, sincronizar as alterações do pedido
+      if (pdvEditOrder && onUpdateOrder) {
+        onUpdateOrder(pdvEditOrder.id, {
+          items: updatedItems,
+          total: selectedTable.total + deliveryFeeVal + (additionalFee || 0) - (discount || 0),
+          customerName: customerName ? customerName.trim() : undefined,
+          customerPhone: customerPhone ? customerPhone.trim() : undefined,
+          customerAddress: deliveryAddress ? deliveryAddress.trim() : undefined,
+          deliveryFee: isDeliveryOrder ? deliveryFeeVal : undefined,
+          customerId: selectedCustomerId || undefined,
+        });
+      }
 
-        setIsSendingToKitchen(false);
-        setShowKitchenSuccess(true);
-        setTimeout(() => setShowKitchenSuccess(false), 3000);
-      }, 1000);
+      setIsSendingToKitchen(false);
+      setShowKitchenSuccess(true);
+      setTimeout(() => setShowKitchenSuccess(false), 2000);
     }, [
       selectedTable,
       isCounterContext,
@@ -1623,6 +1693,7 @@ const Tables: React.FC<TablesProps> = memo(
       customerName,
       customerPhone,
       deliveryAddress,
+      selectedCustomerId,
     ]);
 
     const handleSavePdvEditOrder = useCallback(() => {
@@ -1661,7 +1732,7 @@ const Tables: React.FC<TablesProps> = memo(
 
       if (showToast) {
         showToast(
-          `Pedido #${pdvEditOrder.dailyNumber || pdvEditOrder.id.slice(-4)} atualizado com sucesso!`,
+          `Pedido ${formatOrderNumber(pdvEditOrder)} atualizado com sucesso!`,
           "success",
         );
       }
@@ -1891,50 +1962,48 @@ const Tables: React.FC<TablesProps> = memo(
           }
         : undefined;
 
-      setTimeout(() => {
-        const finalPayments = isSplitting
-          ? [
-              ...splitParts.map((p) => ({
-                id: p.id,
-                method: p.method,
-                amount: p.amount,
-                customerId: p.customerId,
-                alreadyRecorded: p.alreadyRecorded,
-              })),
-              { method, amount: amountToPay, alreadyRecorded: false },
-            ]
-          : [
-              {
-                method,
-                amount:
-                  selectedTable.total +
-                  (isDeliveryOrder && isCounterContext
-                    ? parseCurrency(deliveryFeeInput)
-                    : 0) +
-                  additionalFee -
-                  discount,
-                alreadyRecorded: false,
-              },
-            ];
+      const finalPayments = isSplitting
+        ? [
+            ...splitParts.map((p) => ({
+              id: p.id,
+              method: p.method,
+              amount: p.amount,
+              customerId: p.customerId,
+              alreadyRecorded: p.alreadyRecorded,
+            })),
+            { method, amount: amountToPay, alreadyRecorded: false },
+          ]
+        : [
+            {
+              method,
+              amount:
+                selectedTable.total +
+                (isDeliveryOrder && isCounterContext
+                  ? parseCurrency(deliveryFeeInput)
+                  : 0) +
+                additionalFee -
+                discount,
+              alreadyRecorded: false,
+            },
+          ];
 
-        handleOrderCompletion(
-          method,
-          isFiscalEmission,
-          undefined,
-          isCounterContext,
-          deliveryInfo,
-          isFiscalEmission ? customerDocumentInput : undefined,
-          finalPayments,
-        );
-        setIsProcessing(false);
-        setShowPaymentModal(false);
-        setSelectedTable(null);
-        setIsCounterContext(false);
-        setIsDeliveryOrder(false);
-        resetCustomerFields();
-        setIsSplitting(false);
-        setSplitParts([]);
-      }, 0);
+      handleOrderCompletion(
+        method,
+        isFiscalEmission,
+        undefined,
+        isCounterContext,
+        deliveryInfo,
+        isFiscalEmission ? customerDocumentInput : undefined,
+        finalPayments,
+      );
+      setIsProcessing(false);
+      setShowPaymentModal(false);
+      setSelectedTable(null);
+      setIsCounterContext(false);
+      setIsDeliveryOrder(false);
+      resetCustomerFields();
+      setIsSplitting(false);
+      setSplitParts([]);
     };
 
     const finishCashPayment = () => {
@@ -2020,25 +2089,24 @@ const Tables: React.FC<TablesProps> = memo(
             phone: customerPhone,
           }
         : undefined;
-      setTimeout(() => {
-        handleOrderCompletion(
-          "dinheiro",
-          isFiscalEmission,
-          undefined,
-          isCounterContext,
-          deliveryInfo,
-          isFiscalEmission ? customerDocumentInput : undefined,
-          undefined,
-          received,
-        );
-        setIsProcessing(false);
-        setShowChangeModal(false);
-        setShowPaymentModal(false);
-        setSelectedTable(null);
-        setIsCounterContext(false);
-        setIsDeliveryOrder(false);
-        resetCustomerFields();
-      }, 0);
+
+      handleOrderCompletion(
+        "dinheiro",
+        isFiscalEmission,
+        undefined,
+        isCounterContext,
+        deliveryInfo,
+        isFiscalEmission ? customerDocumentInput : undefined,
+        undefined,
+        received,
+      );
+      setIsProcessing(false);
+      setShowChangeModal(false);
+      setShowPaymentModal(false);
+      setSelectedTable(null);
+      setIsCounterContext(false);
+      setIsDeliveryOrder(false);
+      resetCustomerFields();
     };
 
     const finishSplitPayment = (finalParts?: SplitPart[]) => {
@@ -2057,34 +2125,33 @@ const Tables: React.FC<TablesProps> = memo(
             phone: customerPhone,
           }
         : undefined;
-      setTimeout(() => {
-        handleOrderCompletion(
-          mainMethod,
-          isFiscalEmission,
-          selectedCustomerId || undefined,
-          isCounterContext,
-          deliveryInfo,
-          isFiscalEmission ? customerDocumentInput : undefined,
-          partsToUse.map((p) => ({
-            id: p.id,
-            method: p.method,
-            amount: p.amount,
-            customerId: p.customerId,
-            isFiscalIssued: p.isFiscalIssued,
-            fiscalKey: p.fiscalKey,
-            customerDocument: p.customerDocument,
-            alreadyRecorded: p.alreadyRecorded,
-          })),
-        );
-        setIsProcessing(false);
-        setShowPaymentModal(false);
-        setSelectedTable(null);
-        setIsSplitting(false);
-        setSplitParts([]);
-        setIsCounterContext(false);
-        setIsDeliveryOrder(false);
-        resetCustomerFields();
-      }, 0);
+
+      handleOrderCompletion(
+        mainMethod,
+        isFiscalEmission,
+        selectedCustomerId || undefined,
+        isCounterContext,
+        deliveryInfo,
+        isFiscalEmission ? customerDocumentInput : undefined,
+        partsToUse.map((p) => ({
+          id: p.id,
+          method: p.method,
+          amount: p.amount,
+          customerId: p.customerId,
+          isFiscalIssued: p.isFiscalIssued,
+          fiscalKey: p.fiscalKey,
+          customerDocument: p.customerDocument,
+          alreadyRecorded: p.alreadyRecorded,
+        })),
+      );
+      setIsProcessing(false);
+      setShowPaymentModal(false);
+      setSelectedTable(null);
+      setIsSplitting(false);
+      setSplitParts([]);
+      setIsCounterContext(false);
+      setIsDeliveryOrder(false);
+      resetCustomerFields();
     };
 
     const handleEmitPartialFiscal = async (partId: string) => {
@@ -2253,42 +2320,41 @@ const Tables: React.FC<TablesProps> = memo(
             phone: customerPhone,
           }
         : undefined;
-      setTimeout(() => {
-        const finalPayments = isSplitting
-          ? [
-              ...splitParts.map((p) => ({
-                method: p.method,
-                amount: p.amount,
-                customerId: p.customerId,
-              })),
-              {
-                method: "conta_cliente" as PaymentMethod,
-                amount: amountToPay,
-                customerId: selectedCustomerId,
-              },
-            ]
-          : undefined;
 
-        handleOrderCompletion(
-          "conta_cliente",
-          isFiscalEmission,
-          selectedCustomerId,
-          isCounterContext,
-          deliveryInfo,
-          isFiscalEmission ? customerDocumentInput : undefined,
-          finalPayments,
-        );
-        setIsProcessing(false);
-        setShowCustomerSelection(false);
-        setShowPaymentModal(false);
-        setSelectedTable(null);
-        setIsCounterContext(false);
-        setIsDeliveryOrder(false);
-        resetCustomerFields();
-        setCustomerSearch("");
-        setIsSplitting(false);
-        setSplitParts([]);
-      }, 0);
+      const finalPayments = isSplitting
+        ? [
+            ...splitParts.map((p) => ({
+              method: p.method,
+              amount: p.amount,
+              customerId: p.customerId,
+            })),
+            {
+              method: "conta_cliente" as PaymentMethod,
+              amount: amountToPay,
+              customerId: selectedCustomerId,
+            },
+          ]
+        : undefined;
+
+      handleOrderCompletion(
+        "conta_cliente",
+        isFiscalEmission,
+        selectedCustomerId,
+        isCounterContext,
+        deliveryInfo,
+        isFiscalEmission ? customerDocumentInput : undefined,
+        finalPayments,
+      );
+      setIsProcessing(false);
+      setShowCustomerSelection(false);
+      setShowPaymentModal(false);
+      setSelectedTable(null);
+      setIsCounterContext(false);
+      setIsDeliveryOrder(false);
+      resetCustomerFields();
+      setCustomerSearch("");
+      setIsSplitting(false);
+      setSplitParts([]);
     };
 
     const getPaidQtyForItem = useCallback((idx: number) => {
@@ -3926,10 +3992,10 @@ const Tables: React.FC<TablesProps> = memo(
                       {pdvEditOrder ? "Atualizar" : "Vender"}{" "}
                       <span className={`${pdvEditOrder ? 'bg-amber-100 text-amber-800' : 'bg-indigo-100 text-indigo-700'} px-2 lg:px-3 py-0.5 rounded-full text-[8px] lg:text-xs uppercase tracking-widest font-black`}>
                         {pdvEditOrder
-                          ? `PEDIDO #${pdvEditOrder.dailyNumber || pdvEditOrder.id.slice(-4)}`
+                          ? `PEDIDO ${formatOrderNumber(pdvEditOrder)}`
                           : isCounterContext
-                            ? "PDV BALCÃO"
-                            : getTableDisplayNumber(selectedTable).toUpperCase()}
+                          ? "PDV BALCÃO"
+                          : getTableDisplayNumber(selectedTable).toUpperCase()}
                       </span>
                     </h2>
                   </div>

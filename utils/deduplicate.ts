@@ -77,3 +77,38 @@ export function deduplicateFinancialRecords(recordsList: FinancialRecord[]): Fin
     return true;
   });
 }
+
+/**
+ * Retorna o número numérico sequencial diário do pedido (ex: 1, 2, 3...).
+ * Nunca retorna hashes alfanuméricos ou senhas.
+ */
+export function getOrderNumericId(order?: Partial<Order> | null): number {
+  if (!order) return 1;
+  if (typeof order.dailyNumber === 'number' && order.dailyNumber > 0) {
+    return order.dailyNumber;
+  }
+  const rawNum = (order as any)?.dailyNumber;
+  if (rawNum && !isNaN(Number(rawNum)) && Number(rawNum) > 0) {
+    return Number(rawNum);
+  }
+  if (order.id) {
+    const digits = String(order.id).replace(/\D/g, '');
+    if (digits.length > 0) {
+      const parsed = parseInt(digits.slice(-4), 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        return parsed;
+      }
+    }
+  }
+  return 1;
+}
+
+/**
+ * Formata o número de pedido estritamente como número diário sequencial (ex: #1, #2, #3...).
+ * Elimina completamente senhas e códigos aleatórios.
+ */
+export function formatOrderNumber(order?: Partial<Order> | null): string {
+  const num = getOrderNumericId(order);
+  return `#${num}`;
+}
+
