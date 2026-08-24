@@ -4714,6 +4714,9 @@ const App: React.FC = () => {
           const currentCustomerId = p.customerId || customerId;
           const paymentRecordId = (p as any).id || `fin-${newOrder.id}-${p.method}-${p.amount}-${i}-${Date.now()}`;
 
+          const targetCustomer = currentCustomerId ? customers.find(c => c.id === currentCustomerId) : null;
+          const originLabel = isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableNumber || tableId}`);
+
           if (p.method === 'conta_cliente' && currentCustomerId) {
             if (!customerUpdates[currentCustomerId]) {
               customerUpdates[currentCustomerId] = { totalDebit: 0, transactions: [] };
@@ -4723,7 +4726,7 @@ const App: React.FC = () => {
               id: `tr-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 5)}`,
               type: 'debit',
               amount: p.amount,
-              description: `Consumo Parcial ${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} (Pedido #${newOrder.id})`,
+              description: `Consumo Parcial ${originLabel} ${targetCustomer?.name ? `(${targetCustomer.name})` : ''} - Pedido #${newOrder.id}`,
               date: new Date(),
               items: newOrder.items?.map(it => ({ name: it.name, quantity: it.quantity, price: it.price }))
             });
@@ -4734,7 +4737,7 @@ const App: React.FC = () => {
                 type: 'income',
                 amount: p.amount,
                 category: isRealDelivery ? 'Vendas Entrega' : (isCounter ? 'Vendas Balcão' : 'Vendas Mesa'),
-                description: `${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} - Conta Cliente / Fiado (Pedido #${newOrder.id})`,
+                description: `${originLabel} - ${targetCustomer?.name ? `Cliente: ${targetCustomer.name}` : 'Conta Cliente / Fiado'} (Pedido #${newOrder.id})`,
                 date: new Date(),
                 paymentMethod: 'conta_cliente',
                 orderId: newOrder.id,
@@ -4747,7 +4750,7 @@ const App: React.FC = () => {
               type: 'income',
               amount: p.amount,
               category: isRealDelivery ? 'Vendas Entrega' : (isCounter ? 'Vendas Balcão' : 'Vendas Mesa'),
-              description: `${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} - Pagamento: ${p.method}`,
+              description: `${originLabel} - Pagamento: ${p.method}`,
               date: new Date(),
               paymentMethod: p.method,
               orderId: newOrder.id,
@@ -4768,20 +4771,22 @@ const App: React.FC = () => {
       } else {
         // Pagamento único (legado/simples)
         const paymentRecordId = `fin-${newOrder.id}-${method}-${finalTotal}-${Date.now()}`;
+        const singleCustomer = customerId ? customers.find(c => c.id === customerId) : null;
+        const originLabel = isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableNumber || tableId}`);
+
         if (method === 'conta_cliente' && customerId) {
-          const customer = customers.find(c => c.id === customerId);
-          if (customer) {
+          if (singleCustomer) {
             const transaction: CustomerTransaction = {
               id: `tr-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
               type: 'debit',
               amount: finalTotal,
-              description: `Consumo ${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} (Pedido #${newOrder.id})`,
+              description: `Consumo ${originLabel} ${singleCustomer?.name ? `(${singleCustomer.name})` : ''} - Pedido #${newOrder.id}`,
               date: new Date(),
               items: newOrder.items?.map(it => ({ name: it.name, quantity: it.quantity, price: it.price }))
             };
             await handleUpdateCustomer(customerId, {
-              balance: customer.balance + finalTotal,
-              history: [transaction, ...customer.history]
+              balance: singleCustomer.balance + finalTotal,
+              history: [transaction, ...singleCustomer.history]
             });
           }
           await handleAddFinancialRecord({
@@ -4789,7 +4794,7 @@ const App: React.FC = () => {
             type: 'income',
             amount: finalTotal,
             category: isRealDelivery ? 'Vendas Entrega' : (isCounter ? 'Vendas Balcão' : 'Vendas Mesa'),
-            description: `${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} - Conta Cliente / Fiado (Pedido #${newOrder.id})`,
+            description: `${originLabel} - ${singleCustomer?.name ? `Cliente: ${singleCustomer.name}` : 'Conta Cliente / Fiado'} (Pedido #${newOrder.id})`,
             date: new Date(),
             paymentMethod: 'conta_cliente',
             orderId: newOrder.id,
@@ -4801,7 +4806,7 @@ const App: React.FC = () => {
             type: 'income',
             amount: finalTotal,
             category: isRealDelivery ? 'Vendas Entrega' : (isCounter ? 'Vendas Balcão' : 'Vendas Mesa'),
-            description: `${isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableId}`)} - Pagamento: ${method}`,
+            description: `${originLabel} - Pagamento: ${method}`,
             date: new Date(),
             paymentMethod: method,
             orderId: newOrder.id,

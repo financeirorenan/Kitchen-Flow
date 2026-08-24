@@ -2549,9 +2549,18 @@ const Finance: React.FC<FinanceProps> = memo(
 
               // --- Dynamic Totals & Overdue Calculations ---
               
-              // 1. Manual pending income/expense records
-              const manualPendingIncomes = manualRecords.filter(r => r.type === "income" && r.status === "pending");
-              const manualPendingExpenses = manualRecords.filter(r => r.type === "expense" && r.status === "pending");
+              // 1. Manual pending income/expense records (unify Fiados under Customers list)
+              const manualPendingIncomes = manualRecords.filter(
+                (r) =>
+                  r.type === "income" &&
+                  r.status === "pending" &&
+                  r.paymentMethod !== "conta_cliente" &&
+                  !(r.description || "").toLowerCase().includes("conta cliente") &&
+                  !(r.description || "").toLowerCase().includes("fiado"),
+              );
+              const manualPendingExpenses = manualRecords.filter(
+                (r) => r.type === "expense" && r.status === "pending",
+              );
 
               // 2. Customers with outstanding balances (Fiados)
               const outstandingCustomers = customers.filter(c => c.balance > 0);
