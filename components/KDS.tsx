@@ -673,27 +673,15 @@ const KDS: React.FC<KDSProps> = memo(({
     };
 
     const sortByLaunchOrder = (a: Order, b: Order) => {
+      const dailyA = a.dailyNumber || getOrderNumericId(a);
+      const dailyB = b.dailyNumber || getOrderNumericId(b);
+      if (dailyA !== dailyB) return dailyA - dailyB;
       const dateA = safeParseDate(a.createdAt);
       const dateB = safeParseDate(b.createdAt);
       const timeA = dateA ? dateA.getTime() : 0;
       const timeB = dateB ? dateB.getTime() : 0;
       if (timeA !== timeB) return timeA - timeB;
-      const dailyA = a.dailyNumber || getOrderNumericId(a);
-      const dailyB = b.dailyNumber || getOrderNumericId(b);
-      if (dailyA !== dailyB) return dailyA - dailyB;
       return String(a.id).localeCompare(String(b.id));
-    };
-
-    const sortByNewestCompleted = (a: Order, b: Order) => {
-      const dateA = safeParseDate(a.completedAt || a.finishedAt || a.deliveredAt || a.createdAt);
-      const dateB = safeParseDate(b.completedAt || b.finishedAt || b.deliveredAt || b.createdAt);
-      const timeA = dateA ? dateA.getTime() : 0;
-      const timeB = dateB ? dateB.getTime() : 0;
-      if (timeA !== timeB) return timeB - timeA;
-      const dailyA = a.dailyNumber || getOrderNumericId(a);
-      const dailyB = b.dailyNumber || getOrderNumericId(b);
-      if (dailyA !== dailyB) return dailyB - dailyA;
-      return String(b.id).localeCompare(String(a.id));
     };
 
     if (showCancelled) {
@@ -722,7 +710,7 @@ const KDS: React.FC<KDSProps> = memo(({
           return completionDate ? completionDate >= openedDate : true;
         }
         return completionDate ? isToday(completionDate) : true;
-      }).sort(sortByNewestCompleted).slice(0, 40),
+      }).sort(sortByLaunchOrder),
     };
   }, [filteredOrders, showCancelled, cashSession]);
 
