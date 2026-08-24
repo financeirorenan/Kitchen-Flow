@@ -8,7 +8,7 @@ try {
   console.warn('[SW] Could not import external Firebase scripts in SW:', e);
 }
 
-const CACHE_NAME = 'kitchenflow-courier-cache-v4';
+const CACHE_NAME = 'kitchenflow-courier-cache-v5';
 let firebaseApp = null;
 let firestoreDb = null;
 let ordersListener = null;
@@ -22,7 +22,6 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       return cache.addAll([
-        '/',
         '/manifest.json',
         '/icon-192.png',
         '/icon-512.png',
@@ -47,7 +46,7 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch handler for PWA caching and offline fallback (Network First for navigation)
+// Fetch handler: Network-first for navigation and dynamic requests, so updates are always live
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
@@ -59,25 +58,13 @@ self.addEventListener('fetch', (event) => {
                        (event.request.headers.get('accept') && event.request.headers.get('accept').includes('text/html'));
 
   if (isNavigation) {
+    // Navigation requests ALWAYS hit the network to get latest deployment immediately
     event.respondWith(
-      fetch(event.request)
-        .then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200) {
-            const responseToCache = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              // Always update the root index.html cache so offline mode has latest assets
-              cache.put('/', responseToCache);
-            }).catch(() => {});
-            return networkResponse;
-          } else if (!networkResponse || networkResponse.status === 404 || networkResponse.status >= 500) {
-            return caches.match('/').then((cached) => cached || networkResponse);
-          }
-          return networkResponse;
-        })
+      fetch(event.request, { cache: 'no-cache' })
         .catch(async () => {
           const cached = await caches.match('/');
           if (cached) return cached;
-          return fetch(event.request);
+          return new Response('Offline', { status: 503, statusText: 'Offline' });
         })
     );
     return;

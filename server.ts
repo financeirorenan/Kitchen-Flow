@@ -2223,6 +2223,9 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
         try {
           const indexPath = path.resolve("index.html");
           if (fs.existsSync(indexPath)) {
+            res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+            res.setHeader("Pragma", "no-cache");
+            res.setHeader("Expires", "0");
             let template = fs.readFileSync(indexPath, "utf8");
             template = await vite.transformIndexHtml(req.originalUrl, template);
             return res.status(200).set({ "Content-Type": "text/html" }).end(template);
@@ -2241,11 +2244,17 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
 
     if (fs.existsSync(distPath)) {
       app.use(express.static(distPath, {
-        maxAge: '1d',
+        maxAge: 0,
         etag: true,
         setHeaders: (res, filePath) => {
           if (filePath.includes('/assets/')) {
             res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          } else if (filePath.endsWith('.html') || filePath.endsWith('sw.js') || filePath.endsWith('manifest.json')) {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+          } else {
+            res.setHeader('Cache-Control', 'no-cache');
           }
         }
       }));
@@ -2259,6 +2268,9 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
           }
           const indexPath = path.join(distPath, "index.html");
           if (fs.existsSync(indexPath)) {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
             return res.sendFile(indexPath);
           }
         }
