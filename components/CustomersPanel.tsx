@@ -108,11 +108,27 @@ const CustomersPanel: React.FC<CustomersPanelProps> = memo(({
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'movimentos' | 'itens'>('movimentos');
+  const [onlyDebit, setOnlyDebit] = useState<boolean>(false);
 
-  const filteredCustomers = customers.filter(c => 
-    (c.name || '').toLowerCase().includes((searchTerm || '').toLowerCase()) || 
-    (c.document || '').includes(searchTerm || '')
-  );
+  const debtorsCount = useMemo(() => {
+    return customers.filter(c => (c.balance ?? 0) > 0).length;
+  }, [customers]);
+
+  const filteredCustomers = useMemo(() => {
+    const term = (searchTerm || '').toLowerCase().trim();
+    return customers.filter(c => {
+      const matchesSearch = !term ||
+        (c.name || '').toLowerCase().includes(term) || 
+        (c.document || '').includes(term) ||
+        (c.phone || '').includes(term);
+
+      if (!matchesSearch) return false;
+      if (onlyDebit) {
+        return (c.balance ?? 0) > 0;
+      }
+      return true;
+    });
+  }, [customers, searchTerm, onlyDebit]);
 
   const handleEditClick = (customer: Customer) => {
     setEditingCustomer(customer);
@@ -384,20 +400,46 @@ const CustomersPanel: React.FC<CustomersPanelProps> = memo(({
 
   return (
     <div className="space-y-4 animate-in fade-in duration-500">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
-        <div className="relative w-full md:w-80">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-          <input 
-            type="text" 
-            placeholder="Buscar por nome ou CPF/CNPJ..." 
-            className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all font-medium text-xs"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
+      <div className="flex flex-col md:flex-row justify-between items-stretch md:items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3 flex-1">
+          <div className="relative w-full sm:w-80">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+            <input 
+              type="text" 
+              placeholder="Buscar por nome ou CPF/CNPJ..." 
+              className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all font-medium text-xs shadow-sm"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+
+          <label 
+            htmlFor="filter-only-debit"
+            className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl border text-xs font-black cursor-pointer transition-all select-none shadow-sm ${
+              onlyDebit 
+                ? 'bg-rose-50 border-rose-300 text-rose-700 ring-2 ring-rose-500/20' 
+                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300'
+            }`}
+          >
+            <input 
+              id="filter-only-debit"
+              type="checkbox" 
+              checked={onlyDebit}
+              onChange={(e) => setOnlyDebit(e.target.checked)}
+              className="w-4 h-4 rounded border-slate-300 text-rose-600 focus:ring-rose-500 cursor-pointer accent-rose-600"
+            />
+            <span>Apenas com Saldo Devedor</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+              onlyDebit ? 'bg-rose-200 text-rose-900' : 'bg-slate-100 text-slate-600'
+            }`}>
+              {debtorsCount}
+            </span>
+          </label>
         </div>
+
         <button 
           onClick={() => { resetForm(); setShowAddModal(true); }}
-          className="bg-indigo-600 text-white px-5 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100"
+          className="bg-indigo-600 text-white px-5 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 shrink-0"
         >
           <UserPlus size={16} /> Novo Cliente
         </button>
@@ -406,12 +448,34 @@ const CustomersPanel: React.FC<CustomersPanelProps> = memo(({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Lista de Clientes */}
         <div className="lg:col-span-2 space-y-2 max-h-[70vh] overflow-y-auto pr-2 custom-scrollbar">
-          {filteredCustomers.map(customer => (
-            <div 
-              key={customer.id} 
-              className={`bg-white p-3 rounded-[1.5rem] border-2 transition-all cursor-pointer group ${selectedCustomer?.id === customer.id ? 'border-indigo-600 shadow-xl' : 'border-transparent hover:border-slate-200 shadow-sm'}`}
-              onClick={() => setSelectedCustomer(customer)}
-            >
+          {filteredCustomers.length === 0 ? (
+            <div className="bg-white p-8 rounded-[2rem] border border-dashed border-slate-200 text-center flex flex-col items-center justify-center">
+              <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-3">
+                <Search size={20} />
+              </div>
+              <p className="text-sm font-bold text-slate-700">Nenhum cliente encontrado</p>
+              <p className="text-xs text-slate-400 mt-1 max-w-xs">
+                {onlyDebit 
+                  ? 'Não há clientes cadastrados com saldo devedor pendente no momento.'
+                  : 'Tente ajustar os termos da busca.'}
+              </p>
+              {onlyDebit && (
+                <button
+                  type="button"
+                  onClick={() => setOnlyDebit(false)}
+                  className="mt-4 text-xs font-bold text-indigo-600 hover:text-indigo-700 underline"
+                >
+                  Ver todos os clientes
+                </button>
+              )}
+            </div>
+          ) : (
+            filteredCustomers.map(customer => (
+              <div 
+                key={customer.id} 
+                className={`bg-white p-3 rounded-[1.5rem] border-2 transition-all cursor-pointer group ${selectedCustomer?.id === customer.id ? 'border-indigo-600 shadow-xl' : 'border-transparent hover:border-slate-200 shadow-sm'}`}
+                onClick={() => setSelectedCustomer(customer)}
+              >
               <div className="flex justify-between items-start">
                 <div className="flex items-center gap-3">
                   <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-black text-lg ${(customer.balance ?? 0) > 0 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
@@ -503,7 +567,7 @@ const CustomersPanel: React.FC<CustomersPanelProps> = memo(({
                 </div>
               </div>
             </div>
-          ))}
+          )))}
         </div>
 
         {/* Detalhes e Histórico */}

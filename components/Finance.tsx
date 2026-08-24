@@ -470,8 +470,9 @@ const Finance: React.FC<FinanceProps> = memo(
         new Date(currentYear, currentMonth + 1, 0).getDate() || 30;
 
       const currentMonthOrders = orders.filter((o) => {
-        const d = new Date(o.createdAt);
+        const d = safeParseDate(o.createdAt);
         return (
+          d !== null &&
           !o.isSubTicket &&
           !o.mergedIntoOrderId &&
           d.getMonth() === currentMonth &&
@@ -4229,11 +4230,11 @@ const Finance: React.FC<FinanceProps> = memo(
                         </tr>
                       </thead>
                       <tbody className="divide-y">
-                        {cashClosings
+                        {[...cashClosings]
                           .sort(
                             (a, b) =>
-                              new Date(b.closedAt).getTime() -
-                              new Date(a.closedAt).getTime(),
+                              (safeParseDate(b.closedAt)?.getTime() || 0) -
+                              (safeParseDate(a.closedAt)?.getTime() || 0),
                           )
                           .map((closing) => {
                             const digitalSales =
@@ -5483,7 +5484,8 @@ const Finance: React.FC<FinanceProps> = memo(
                     ) : (
                       orders
                         .filter((o) => {
-                          const d = new Date(o.createdAt);
+                          const d = safeParseDate(o.createdAt);
+                          if (!d) return false;
                           return (
                             o.customerId === selectedFiado.id &&
                             d >= new Date(statementStartDate + "T00:00:00") &&
@@ -5492,8 +5494,8 @@ const Finance: React.FC<FinanceProps> = memo(
                         })
                         .sort(
                           (a, b) =>
-                            new Date(b.createdAt).getTime() -
-                            new Date(a.createdAt).getTime(),
+                            (safeParseDate(b.createdAt)?.getTime() || 0) -
+                            (safeParseDate(a.createdAt)?.getTime() || 0),
                         )
                         .map((o) => (
                           <div

@@ -79,7 +79,8 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
     const now = new Date();
     const currentMonthOrders = orders.filter(o => {
       if (!o.createdAt) return false;
-      const oDate = o.createdAt instanceof Date ? o.createdAt : (o.createdAt.toDate ? o.createdAt.toDate() : new Date(o.createdAt));
+      const oDate = o.createdAt instanceof Date ? o.createdAt : (typeof (o.createdAt as any)?.toDate === 'function' ? (o.createdAt as any).toDate() : new Date(o.createdAt));
+      if (!oDate || isNaN(oDate.getTime())) return false;
       return oDate.getMonth() === now.getMonth() && oDate.getFullYear() === now.getFullYear();
     });
     const ordersUsed = currentMonthOrders.length;

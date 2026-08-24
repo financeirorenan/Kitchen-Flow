@@ -603,7 +603,9 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout }) => {
         const posB = b.routePosition ?? 999;
         if (posA !== posB) return posA - posB;
         
-        return b.createdAt.getTime() - a.createdAt.getTime();
+        const timeA = a.createdAt instanceof Date ? a.createdAt.getTime() : (new Date(a.createdAt).getTime() || 0);
+        const timeB = b.createdAt instanceof Date ? b.createdAt.getTime() : (new Date(b.createdAt).getTime() || 0);
+        return (isNaN(timeB) ? 0 : timeB) - (isNaN(timeA) ? 0 : timeA);
       });
       
       setAssignedOrders(sorted);
@@ -890,7 +892,11 @@ const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout }) => {
       daysMap[dateKey].orders.push(order);
     });
 
-    return Object.values(daysMap).sort((a, b) => b.date.getTime() - a.date.getTime());
+    return Object.values(daysMap).sort((a, b) => {
+      const timeA = a.date instanceof Date ? a.date.getTime() : (new Date(a.date).getTime() || 0);
+      const timeB = b.date instanceof Date ? b.date.getTime() : (new Date(b.date).getTime() || 0);
+      return (isNaN(timeB) ? 0 : timeB) - (isNaN(timeA) ? 0 : timeA);
+    });
   }, [assignedOrders]);
 
   const chartData = useMemo(() => {

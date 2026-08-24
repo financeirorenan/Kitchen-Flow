@@ -1102,7 +1102,14 @@ const Tables: React.FC<TablesProps> = memo(
 
       const toSafeDate = (d: any): Date => {
         if (!d) return new Date();
-        const parsed = d instanceof Date ? d : new Date(d);
+        if (d instanceof Date) return isNaN(d.getTime()) ? new Date() : d;
+        if (typeof d?.toDate === 'function') {
+          try {
+            const converted = d.toDate();
+            if (converted instanceof Date && !isNaN(converted.getTime())) return converted;
+          } catch {}
+        }
+        const parsed = new Date(d);
         return isNaN(parsed.getTime()) ? new Date() : parsed;
       };
 

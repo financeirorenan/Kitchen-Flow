@@ -567,7 +567,8 @@ const App: React.FC = () => {
     const now = new Date();
     const currentMonthOrders = orders.filter(o => {
       if (!o.createdAt) return false;
-      const oDate = o.createdAt instanceof Date ? o.createdAt : (o.createdAt.toDate ? o.createdAt.toDate() : new Date(o.createdAt));
+      const oDate = o.createdAt instanceof Date ? o.createdAt : (typeof (o.createdAt as any)?.toDate === 'function' ? (o.createdAt as any).toDate() : new Date(o.createdAt));
+      if (!oDate || isNaN(oDate.getTime())) return false;
       return oDate.getMonth() === now.getMonth() && oDate.getFullYear() === now.getFullYear();
     });
     const ordersUsed = currentMonthOrders.length;
@@ -2029,12 +2030,28 @@ const App: React.FC = () => {
               return item;
             });
 
-            setOrders(sanitizedOrders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+            setOrders(sanitizedOrders.sort((a, b) => {
+              const tA = a.createdAt instanceof Date ? a.createdAt.getTime() : new Date(a.createdAt).getTime();
+              const tB = b.createdAt instanceof Date ? b.createdAt.getTime() : new Date(b.createdAt).getTime();
+              return (isNaN(tB) ? 0 : tB) - (isNaN(tA) ? 0 : tA);
+            }));
             setUsers(u);
-            setAuditLogs(l.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()));
-            setFinancialRecords(f.sort((a, b) => b.date.getTime() - a.date.getTime()));
+            setAuditLogs(l.sort((a, b) => {
+              const tA = a.timestamp instanceof Date ? a.timestamp.getTime() : new Date(a.timestamp).getTime();
+              const tB = b.timestamp instanceof Date ? b.timestamp.getTime() : new Date(b.timestamp).getTime();
+              return (isNaN(tB) ? 0 : tB) - (isNaN(tA) ? 0 : tA);
+            }));
+            setFinancialRecords(f.sort((a, b) => {
+              const tA = a.date instanceof Date ? a.date.getTime() : new Date(a.date).getTime();
+              const tB = b.date instanceof Date ? b.date.getTime() : new Date(b.date).getTime();
+              return (isNaN(tB) ? 0 : tB) - (isNaN(tA) ? 0 : tA);
+            }));
             setRawMaterials(rm);
-            setCashClosings(cc.sort((a, b) => b.closedAt.getTime() - a.closedAt.getTime()));
+            setCashClosings(cc.sort((a, b) => {
+              const tA = a.closedAt instanceof Date ? a.closedAt.getTime() : new Date(a.closedAt).getTime();
+              const tB = b.closedAt instanceof Date ? b.closedAt.getTime() : new Date(b.closedAt).getTime();
+              return (isNaN(tB) ? 0 : tB) - (isNaN(tA) ? 0 : tA);
+            }));
             setBankAccounts(ba);
             
             if (s) {
