@@ -69,6 +69,17 @@ import {
   Pie,
 } from "recharts";
 
+const safeParseDate = (d: any): Date | null => {
+  if (!d) return null;
+  if (d instanceof Date) return isNaN(d.getTime()) ? null : d;
+  if (typeof d?.toDate === "function") {
+    const converted = d.toDate();
+    return isNaN(converted.getTime()) ? null : converted;
+  }
+  const parsed = new Date(d);
+  return isNaN(parsed.getTime()) ? null : parsed;
+};
+
 interface FinanceProps {
   tenantId?: string;
   orders: Order[];
@@ -293,9 +304,11 @@ const Finance: React.FC<FinanceProps> = memo(
             ),
           ] as FinancialRecord[]
         ).sort((a, b) => {
-          const dateA = (a as any).dueDate || a.date;
-          const dateB = (b as any).dueDate || b.date;
-          return dateB.getTime() - dateA.getTime();
+          const dateA = safeParseDate((a as any).dueDate || a.date);
+          const dateB = safeParseDate((b as any).dueDate || b.date);
+          const timeA = dateA ? dateA.getTime() : 0;
+          const timeB = dateB ? dateB.getTime() : 0;
+          return timeB - timeA;
         }),
       [incomeFromOrders, manualRecords],
     );
@@ -641,11 +654,11 @@ const Finance: React.FC<FinanceProps> = memo(
 
         const dayIncome = allRecords
           .filter((r) => {
-            const rDate = r.dueDate || r.date;
-            const convertedDate = new Date(rDate);
+            const convertedDate = safeParseDate(r.dueDate || r.date);
             return (
               r.type === "income" &&
               r.status === "paid" &&
+              convertedDate !== null &&
               convertedDate >= dayStart &&
               convertedDate <= dayEnd
             );
@@ -654,11 +667,11 @@ const Finance: React.FC<FinanceProps> = memo(
 
         const dayExpense = allRecords
           .filter((r) => {
-            const rDate = r.dueDate || r.date;
-            const convertedDate = new Date(rDate);
+            const convertedDate = safeParseDate(r.dueDate || r.date);
             return (
               r.type === "expense" &&
               r.status === "paid" &&
+              convertedDate !== null &&
               convertedDate >= dayStart &&
               convertedDate <= dayEnd
             );
@@ -688,8 +701,8 @@ const Finance: React.FC<FinanceProps> = memo(
 
       const getMonthData = (month: number, year: number) => {
         const records = allRecords.filter((r) => {
-          const rDate = r.dueDate || r.date;
-          return rDate.getMonth() === month && rDate.getFullYear() === year;
+          const rDate = safeParseDate(r.dueDate || r.date);
+          return rDate ? rDate.getMonth() === month && rDate.getFullYear() === year : false;
         });
 
         // Adicionar previsões de Fiado baseadas na data esperada
@@ -697,8 +710,8 @@ const Finance: React.FC<FinanceProps> = memo(
           if (c.balance <= 0) return acc;
           const latestDebit = c.history?.find((t) => t.type === "debit");
           if (latestDebit?.expectedPaymentDate) {
-            const d = latestDebit.expectedPaymentDate;
-            if (d.getMonth() === month && d.getFullYear() === year) {
+            const d = safeParseDate(latestDebit.expectedPaymentDate);
+            if (d && d.getMonth() === month && d.getFullYear() === year) {
               return acc + c.balance;
             }
           }
@@ -747,9 +760,10 @@ const Finance: React.FC<FinanceProps> = memo(
       const year = now.getFullYear();
 
       const currentMonthExpenses = allRecords.filter((r) => {
-        const rDate = r.dueDate || r.date;
+        const rDate = safeParseDate(r.dueDate || r.date);
         return (
           r.type === "expense" &&
+          rDate !== null &&
           rDate.getMonth() === month &&
           rDate.getFullYear() === year
         );
@@ -1723,12 +1737,10 @@ const Finance: React.FC<FinanceProps> = memo(
                           <div className="space-y-1">
                             <p className="text-[8px] font-black text-emerald-600 uppercase tracking-widest">
                               Desde{" "}
-                              {new Date(
-                                cashSession.openedAt!,
-                              ).toLocaleTimeString([], {
+                              {safeParseDate(cashSession.openedAt)?.toLocaleTimeString([], {
                                 hour: "2-digit",
                                 minute: "2-digit",
-                              })}
+                              }) || "--:--"}
                             </p>
                             <p className="text-sm font-black text-emerald-900 leading-none">
                               R$ {cashSession.openingValue.toFixed(2)} Inicial
@@ -2181,10 +2193,11 @@ const Finance: React.FC<FinanceProps> = memo(
 
                       <div className="space-y-4">
                         {manualRecords.filter(
-                          (r) =>
-                            r.status === "pending" &&
-                            r.dueDate &&
-                            new Date(r.dueDate) < new Date(),
+                          (r) => {
+                            if (r.status !== "pending") return false;
+                            const d = safeParseDate(r.dueDate);
+                            return d !== null && d < new Date();
+                          }
                         ).length > 0 ? (
                           <motion.button
                             whileHover={{ scale: 1.02 }}
@@ -2204,10 +2217,11 @@ const Finance: React.FC<FinanceProps> = memo(
                               {formatCurrency(
                                 manualRecords
                                   .filter(
-                                    (r) =>
-                                      r.status === "pending" &&
-                                      r.dueDate &&
-                                      new Date(r.dueDate) < new Date(),
+                                    (r) => {
+                                      if (r.status !== "pending") return false;
+                                      const d = safeParseDate(r.dueDate);
+                                      return d !== null && d < new Date();
+                                    }
                                   )
                                   .reduce((acc, r) => acc + r.amount, 0),
                               )}
@@ -2234,11 +2248,15 @@ const Finance: React.FC<FinanceProps> = memo(
                               </h5>
                             </div>
                             {(() => {
-                              const last = cashClosings.sort(
-                                (a, b) =>
-                                  new Date(b.closedAt).getTime() -
-                                  new Date(a.closedAt).getTime(),
-                              )[0];
+                              const sortedClosings = [...cashClosings].sort(
+                                (a, b) => {
+                                  const dateA = safeParseDate(a.closedAt)?.getTime() || 0;
+                                  const dateB = safeParseDate(b.closedAt)?.getTime() || 0;
+                                  return dateB - dateA;
+                                }
+                              );
+                              const last = sortedClosings[0];
+                              if (!last) return null;
                               return (
                                 <button
                                   onClick={() => {
@@ -2249,9 +2267,7 @@ const Finance: React.FC<FinanceProps> = memo(
                                 >
                                   <div className="flex justify-between mb-1">
                                     <p className="text-[9px] font-black text-slate-400 uppercase">
-                                      {new Date(
-                                        last.closedAt,
-                                      ).toLocaleDateString()}
+                                      {safeParseDate(last.closedAt)?.toLocaleDateString() || "Data indisponível"}
                                     </p>
                                     <span
                                       className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-lg ${last.difference >= 0 ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}
@@ -2381,9 +2397,11 @@ const Finance: React.FC<FinanceProps> = memo(
 
                       <div className="space-y-6">
                         {products.slice(0, 3).map((product, i) => {
-                          const marginPercent =
-                            ((product.price - product.cost) / product.price) *
-                            100;
+                          const price = Number(product.price) || 0;
+                          const cost = Number(product.cost) || 0;
+                          const marginPercent = price > 0
+                            ? Math.max(0, Math.min(100, ((price - cost) / price) * 100))
+                            : 0;
                           return (
                             <div key={i} className="space-y-2">
                               <div className="flex justify-between items-center">

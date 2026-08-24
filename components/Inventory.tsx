@@ -1242,10 +1242,10 @@ const Inventory: React.FC<InventoryProps> = memo(({
     );
   }, [rawMaterials, searchTerm, categoryFilter, selectedRawCategory, digitalMenuSettings.hiddenRawCategories]);
 
-  const lowStockCount = products.filter(p => p.stock < (p.minStock || 0)).length;
-  const lowRawStockCount = rawMaterials.filter(m => m.currentStock < m.minStock).length;
-  const totalStockValue = products.reduce((acc, p) => acc + (p.stock * p.cost), 0);
-  const totalRawValue = rawMaterials.reduce((acc, m) => acc + (m.currentStock * m.costPerUnit), 0);
+  const lowStockCount = products.filter(p => Number(p.stock || 0) < Number(p.minStock || 0)).length;
+  const lowRawStockCount = rawMaterials.filter(m => Number(m.currentStock || 0) < Number(m.minStock || 0)).length;
+  const totalStockValue = products.reduce((acc, p) => acc + (Number(p.stock || 0) * Number(p.cost || 0)), 0);
+  const totalRawValue = rawMaterials.reduce((acc, m) => acc + (Number(m.currentStock || 0) * Number(m.costPerUnit || 0)), 0);
 
   const chartData = editingProduct?.priceHistory?.map(h => ({
     ...h,

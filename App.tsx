@@ -4445,7 +4445,14 @@ const App: React.FC = () => {
     const rawMaterialReductions = new Map<string, number>();
 
     for (const item of table.items) {
-      const product = products.find(p => p.id === item.productId);
+      // Robust product matching: check productId, exact id, and name fallback
+      const cleanItemName = (item.name || '').replace(/\s*\([^)]*\)/g, '').trim().toLowerCase();
+      const product = products.find(p => 
+        (item.productId && p.id === item.productId) ||
+        (p.id === (item as any).id) ||
+        (cleanItemName && p.name.trim().toLowerCase() === cleanItemName)
+      );
+
       if (product) {
         // Reduz estoque do produto (se controlado)
         if (product.trackStock) {
@@ -4455,7 +4462,10 @@ const App: React.FC = () => {
         // Reduz estoque de insumos (Ficha Técnica)
         if (product.technicalSheet && product.technicalSheet.length > 0) {
           for (const tsItem of product.technicalSheet) {
-            const rawMaterial = rawMaterials.find(rm => rm.id === tsItem.rawMaterialId);
+            const rawMaterial = rawMaterials.find(rm => 
+              rm.id === tsItem.rawMaterialId || 
+              (tsItem.rawMaterialName && rm.name.trim().toLowerCase() === tsItem.rawMaterialName.trim().toLowerCase())
+            );
             if (rawMaterial) {
               const ch = tsItem.channel || 'all';
               const isMatch = 
@@ -4466,7 +4476,7 @@ const App: React.FC = () => {
                 (ch === 'takeout' && orderChannel === 'takeout');
 
               if (isMatch) {
-                const reduction = tsItem.quantity * item.quantity;
+                const reduction = Number(tsItem.quantity) * Number(item.quantity);
                 rawMaterialReductions.set(rawMaterial.id, (rawMaterialReductions.get(rawMaterial.id) || 0) + reduction);
               }
             }
