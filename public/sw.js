@@ -8,7 +8,7 @@ try {
   console.warn('[SW] Could not import external Firebase scripts in SW:', e);
 }
 
-const CACHE_NAME = 'kitchenflow-courier-cache-v5';
+const CACHE_NAME = 'kitchenflow-courier-cache-v6';
 let firebaseApp = null;
 let firestoreDb = null;
 let ordersListener = null;
@@ -46,48 +46,10 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch handler: Network-first for navigation and dynamic requests, so updates are always live
+// Fetch handler: purely network passthrough for app scripts and assets to prevent stale code across deploys
 self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET') return;
-  const url = new URL(event.request.url);
-  
-  // Ignore API requests and non-http schemes
-  if (url.pathname.startsWith('/api/') || !url.protocol.startsWith('http')) return;
-
-  const isNavigation = event.request.mode === 'navigate' || 
-                       (event.request.headers.get('accept') && event.request.headers.get('accept').includes('text/html'));
-
-  if (isNavigation) {
-    // Navigation requests ALWAYS hit the network to get latest deployment immediately
-    event.respondWith(
-      fetch(event.request, { cache: 'no-cache' })
-        .catch(async () => {
-          const cached = await caches.match('/');
-          if (cached) return cached;
-          return new Response('Offline', { status: 503, statusText: 'Offline' });
-        })
-    );
-    return;
-  }
-
-  // Static assets (js, css, images, fonts)
-  event.respondWith(
-    fetch(event.request)
-      .then((networkResponse) => {
-        if (networkResponse && networkResponse.status === 200 && (networkResponse.type === 'basic' || networkResponse.type === 'cors')) {
-          const responseToCache = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseToCache);
-          }).catch(() => {});
-        }
-        return networkResponse;
-      })
-      .catch(async () => {
-        const cached = await caches.match(event.request);
-        if (cached) return cached;
-        return new Response('', { status: 404, statusText: 'Not Found' });
-      })
-  );
+  // Let the browser handle standard HTTP caching and network requests directly
+  return;
 });
 
 // Cache Storage helper to persist credentials and states
