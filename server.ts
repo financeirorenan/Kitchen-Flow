@@ -131,8 +131,8 @@ import {
   deleteDoc as clientDeleteDoc
 } from "firebase/firestore";
 
-import { FiscalService } from "./server/fiscalService";
-import { marketplaceApiRouter } from "./server/marketplaceApi";
+import { FiscalService } from "./services/fiscalService";
+import { marketplaceApiRouter } from "./services/marketplaceApi";
 
 // Admin Firebase
 if (!getApps().length) {
