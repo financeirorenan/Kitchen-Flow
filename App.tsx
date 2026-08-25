@@ -4335,7 +4335,7 @@ const App: React.FC = () => {
   };
 
   const handleCloseTable = async (
-    tableId: number, 
+    tableId: number | string, 
     method: PaymentMethod, 
     fiscal: boolean, 
     customerId?: string, 
@@ -4348,13 +4348,70 @@ const App: React.FC = () => {
     additionalFeeReason?: string,
     discount?: number
   ) => {
-    // 1. Identificar a mesa e seu docId para sincronização precisa
+    // 1. Identificar a mesa/comanda/pedido e seu docId para sincronização precisa
+    const strTableId = String(tableId);
+    const numTableId = Number(strTableId.replace(/\D/g, ''));
     const source = isCounter ? counterOrders : tables;
-    const table = source.find(t => t.id === tableId);
-    if (!table || table.items.length === 0) {
+    
+    let table = source.find(t => 
+      String(t.id) === strTableId || 
+      (!isNaN(numTableId) && t.id === numTableId) || 
+      String(t.number) === strTableId || 
+      (t as any).docId === strTableId
+    );
+
+    // Fallback se não encontrado no source principal
+    if (!table) {
+      table = (!isCounter ? counterOrders : tables).find(t => 
+        String(t.id) === strTableId || 
+        (!isNaN(numTableId) && t.id === numTableId) || 
+        String(t.number) === strTableId || 
+        (t as any).docId === strTableId
+      );
+    }
+
+    // Fallback: se for pdvEditOrder
+    if (!table && pdvEditOrder) {
+      table = {
+        id: pdvEditOrder.tableNumber ? Number(pdvEditOrder.tableNumber) : (typeof tableId === 'number' ? tableId : Date.now()),
+        number: Number(pdvEditOrder.tableNumber) || 0,
+        items: pdvEditOrder.items || [],
+        total: (pdvEditOrder.total || 0) - (pdvEditOrder.deliveryFee || 0),
+        status: 'occupied',
+        tenantId: pdvEditOrder.tenantId,
+        currentOrderId: pdvEditOrder.id
+      } as Table;
+    }
+
+    // Fallback: se estiver registrado em orders
+    if (!table) {
+      const matchedOrder = orders.find(o => o.id === strTableId || o.docId === strTableId);
+      if (matchedOrder) {
+        table = {
+          id: typeof tableId === 'number' ? tableId : Date.now(),
+          number: Number(matchedOrder.tableNumber) || 0,
+          items: matchedOrder.items || [],
+          total: (matchedOrder.total || 0) - (matchedOrder.deliveryFee || 0),
+          status: 'occupied',
+          tenantId: matchedOrder.tenantId,
+          currentOrderId: matchedOrder.id
+        } as Table;
+      }
+    }
+
+    if (!table || !table.items || table.items.length === 0) {
       showToast("Não é possível fechar um pedido sem itens.", 'error');
       return;
     }
+
+    const resetData = {
+      items: [],
+      status: 'available' as const,
+      total: 0,
+      currentOrderId: null,
+      partialPayments: [],
+      updatedAt: new Date()
+    };
 
     const docId = (table as any).docId || (typeof tableId === 'string' ? tableId : null);
     const finalTotal = table.total + (deliveryInfo?.fee || 0) + (additionalFee || 0) - (discount || 0);
@@ -4449,7 +4506,7 @@ const App: React.FC = () => {
     if (!isCounter) {
       setTables(prev => prev.map(t => (String(t.id) === String(tableId) || String(t.number) === String(tableNumber) || (t as any).docId === docId) ? { ...t, ...resetData } : t));
     } else {
-      setCounterOrders(prev => prev.filter(t => t.id !== tableId));
+      setCounterOrders(prev => prev.filter(t => String(t.id) !== strTableId && (!isNaN(numTableId) ? t.id !== numTableId : true)));
     }
 
     if (pdvEditOrder) {

@@ -487,7 +487,6 @@ const Tables: React.FC<TablesProps> = memo(
               : "table",
           customerId: customerId || undefined,
         });
-        if (onCancelPdvEdit) onCancelPdvEdit();
       } else {
         if (selectedTable?.currentOrderId && onUpdateOrder) {
           onUpdateOrder(String(selectedTable.currentOrderId), {
@@ -499,20 +498,25 @@ const Tables: React.FC<TablesProps> = memo(
             items: selectedTable.items,
           });
         }
-        onCloseTable(
-          selectedTable!.id,
-          method,
-          isFiscal,
-          customerId,
-          isCounter,
-          deliveryInfo,
-          customerDocument,
-          payments,
-          receivedAmount,
-          additionalFee,
-          additionalFeeReason,
-          discount,
-        );
+      }
+
+      onCloseTable(
+        selectedTable!.id as any,
+        method,
+        isFiscal,
+        customerId,
+        isCounter,
+        deliveryInfo,
+        customerDocument,
+        payments,
+        receivedAmount,
+        additionalFee,
+        additionalFeeReason,
+        discount,
+      );
+
+      if (pdvEditOrder && onCancelPdvEdit) {
+        onCancelPdvEdit();
       }
     };
 
