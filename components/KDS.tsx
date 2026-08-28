@@ -9,7 +9,7 @@ import {
   Grid
 } from 'lucide-react';
 import { generateReceiptHtml, handlePrintOrder } from '../services/printService';
-import { getOrderNumericId, formatOrderNumber } from '../utils/deduplicate';
+import { getOrderNumericId, formatOrderNumber, deduplicateOrders } from '../utils/deduplicate';
 import EditOrderModal from './EditOrderModal';
 
 interface KDSProps {
@@ -644,7 +644,7 @@ const KDS: React.FC<KDSProps> = memo(({
   }, []);
 
   const filteredOrders = useMemo(() => {
-    return orders.filter(o => {
+    const valid = deduplicateOrders(orders).filter(o => {
       if (!o) return false;
       // Sub-comandas e pedidos mesclados NUNCA devem aparecer no KDS principal
       if (o.isSubTicket || o.mergedIntoOrderId) return false;
@@ -655,6 +655,42 @@ const KDS: React.FC<KDSProps> = memo(({
       if (o.status === 'cancelled') return false;
       return isTypeMatched(o, selectedTypes);
     });
+
+    if (showCancelled) return valid;
+
+    // Consolidar múltiplos pedidos abertos/preparando para a MESMA mesa para evitar cartões duplicados
+    const tableOrdersMap = new Map<string, Order>();
+    const result: Order[] = [];
+
+    for (const order of valid) {
+      const isPendingOrPreparing = order.status === 'pending' || order.status === 'preparing';
+      if (order.type === 'table' && order.tableNumber && isPendingOrPreparing) {
+        const tableKey = String(order.tableNumber);
+        if (tableOrdersMap.has(tableKey)) {
+          const existing = tableOrdersMap.get(tableKey)!;
+          const mergedItems = [...existing.items];
+          for (const item of order.items) {
+            const idx = mergedItems.findIndex(i => i.id === item.id || (i.productId === item.productId && i.name === item.name && (i.observation || '') === (item.observation || '')));
+            if (idx !== -1) {
+              mergedItems[idx] = { ...mergedItems[idx], ...item };
+            } else {
+              mergedItems.push({ ...item, isNew: true });
+            }
+          }
+          existing.items = mergedItems;
+          existing.total = mergedItems.reduce((acc, i) => acc + (i.price * i.quantity), 0);
+          continue;
+        } else {
+          const clone = { ...order, items: [...order.items] };
+          tableOrdersMap.set(tableKey, clone);
+          result.push(clone);
+        }
+      } else {
+        result.push(order);
+      }
+    }
+
+    return result;
   }, [orders, showCancelled, selectedTypes, isTypeMatched]);
 
   const columns = useMemo(() => {

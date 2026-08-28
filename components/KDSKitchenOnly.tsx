@@ -6,7 +6,7 @@ import {
   Sparkles, Coffee, Flame, Utensils, Award, RefreshCw, Volume2, VolumeX, Grid, Smartphone, ShoppingBag, Bike, LogOut,
   Maximize2, Minimize2, Sun, Moon
 } from 'lucide-react';
-import { formatOrderNumber, getOrderNumericId } from '../utils/deduplicate';
+import { formatOrderNumber, getOrderNumericId, deduplicateOrders } from '../utils/deduplicate';
 
 interface KDSKitchenOnlyProps {
   orders: Order[];
@@ -94,7 +94,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
     // Filtro estrito: apenas pedidos pendentes/preparando criados hoje e sem sub-comandas
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    return orders.filter(o => {
+    const validOrders = deduplicateOrders(orders).filter(o => {
       if (!o) return false;
       if (o.isSubTicket || o.mergedIntoOrderId) return false;
       const isKitchenStatus = o.status === 'pending' || o.status === 'preparing';
@@ -103,6 +103,40 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
       if (!createdDate) return false;
       return createdDate >= today;
     });
+
+    // Se houver múltiplos registros de pedidos abertos para a mesma mesa no mesmo dia,
+    // consolidamos em um único cartão na cozinha para visualização unificada e sem duplicidade!
+    const tableOrdersMap = new Map<string, Order>();
+    const result: Order[] = [];
+
+    for (const order of validOrders) {
+      if (order.type === 'table' && order.tableNumber) {
+        const tableKey = String(order.tableNumber);
+        if (tableOrdersMap.has(tableKey)) {
+          const existing = tableOrdersMap.get(tableKey)!;
+          const mergedItems = [...existing.items];
+          for (const item of order.items) {
+            const idx = mergedItems.findIndex(i => i.id === item.id || (i.productId === item.productId && i.name === item.name && (i.observation || '') === (item.observation || '')));
+            if (idx !== -1) {
+              mergedItems[idx] = { ...mergedItems[idx], ...item };
+            } else {
+              mergedItems.push({ ...item, isNew: true });
+            }
+          }
+          existing.items = mergedItems;
+          existing.total = mergedItems.reduce((acc, i) => acc + (i.price * i.quantity), 0);
+          continue;
+        } else {
+          const clone = { ...order, items: [...order.items] };
+          tableOrdersMap.set(tableKey, clone);
+          result.push(clone);
+        }
+      } else {
+        result.push(order);
+      }
+    }
+
+    return result;
   }, [orders]);
 
   // Extract all available product categories to serve as Kitchen Stations

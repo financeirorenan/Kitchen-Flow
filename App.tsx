@@ -3152,16 +3152,41 @@ const App: React.FC = () => {
     const effectiveIsDelivery = customerData?.isDelivery !== undefined ? customerData.isDelivery : (isCounter && !!tableInfo?.isDelivery);
 
     // =========================================================================
-    // 0. VERIFICAÇÃO EXPLÍCITA DE EDIÇÃO DE PEDIDO (pdvEditOrder ou ID de pedido existente)
-    // Se o usuário está editando um pedido previamente lançado, NÃO criamos novo ticket/pedido!
-    // Atualizamos o pedido existente diretamente com os novos/alterados itens.
+    // 0. LOCALIZAR PEDIDO ATIVO EXISTENTE (Mesa, Balcão, Delivery ou pdvEditOrder)
+    // Se o pedido já estiver ativo na cozinha ou aberto na mesa/balcão,
+    // atualizamos diretamente o pedido existente com os novos itens (marcando como ⚡ NOVO ITEM)
+    // SEM criar nenhum pedido ou ticket duplicado!
     // =========================================================================
-    const existingOrderBeingEdited = pdvEditOrder 
-      ? (orders.find(o => o.id === pdvEditOrder.id || o.docId === pdvEditOrder.id) || pdvEditOrder)
-      : orders.find(o => o.id === tableId || o.docId === tableId);
+    let activeExistingOrder: Order | undefined = undefined;
 
-    if (existingOrderBeingEdited) {
-      const existingItems = [...(existingOrderBeingEdited.items || [])];
+    if (pdvEditOrder) {
+      activeExistingOrder = orders.find(o => o.id === pdvEditOrder.id || o.docId === pdvEditOrder.id) || pdvEditOrder;
+    } else if (tableInfo?.currentOrderId) {
+      activeExistingOrder = orders.find(o => (o.id === tableInfo.currentOrderId || o.docId === tableInfo.currentOrderId) && o.status !== 'cancelled' && o.status !== 'finished');
+    }
+
+    if (!activeExistingOrder) {
+      if (!isCounter) {
+        // Para mesas: procurar pedido de mesa aberto correspondente
+        activeExistingOrder = orders.find(o => 
+          String(o.tableNumber) === String(displayTableNumber) && 
+          (o.type === 'table' || !o.type) && 
+          o.status !== 'cancelled' && 
+          o.status !== 'finished'
+        );
+      } else {
+        // Para balcão/delivery
+        activeExistingOrder = orders.find(o => 
+          (o.id === tableId || o.docId === tableId || o.counterId === tableId || (tableInfo && o.counterId === tableInfo.id)) &&
+          o.status !== 'cancelled' && 
+          o.status !== 'finished'
+        );
+      }
+    }
+
+    if (activeExistingOrder) {
+      const existingItems = [...(activeExistingOrder.items || [])];
+      const nextBatchNumber = ((activeExistingOrder as any)?.currentBatch || 1) + 1;
       
       // Incorporar novos itens ou atualizar existentes
       items.forEach(newItem => {
@@ -3172,38 +3197,46 @@ const App: React.FC = () => {
         if (existingIndex !== -1) {
           existingItems[existingIndex] = { ...existingItems[existingIndex], ...newItem, sentToKitchen: true };
         } else {
-          existingItems.push({ ...newItem, sentToKitchen: true });
+          existingItems.push({
+            ...newItem,
+            sentToKitchen: true,
+            isNew: true,
+            batchNumber: nextBatchNumber,
+            sentAt: now.toISOString()
+          });
         }
       });
 
-      const updatedDeliveryFee = effectiveDeliveryFee !== undefined ? effectiveDeliveryFee : (existingOrderBeingEdited.deliveryFee || 0);
+      const updatedDeliveryFee = effectiveDeliveryFee !== undefined ? effectiveDeliveryFee : (activeExistingOrder.deliveryFee || 0);
       const newItemsTotal = existingItems.reduce((acc, i) => acc + (i.price * i.quantity), 0);
-      const finalOrderTotal = newItemsTotal + updatedDeliveryFee + (existingOrderBeingEdited.additionalFee || 0) - (existingOrderBeingEdited.discount || 0);
+      const finalOrderTotal = newItemsTotal + updatedDeliveryFee + (activeExistingOrder.additionalFee || 0) - (activeExistingOrder.discount || 0);
 
       const updates: Partial<Order> = {
         items: existingItems,
         total: finalOrderTotal,
+        status: activeExistingOrder.status === 'ready' ? 'preparing' : activeExistingOrder.status,
         updatedAt: now,
-        customerName: effectiveCustomerName || existingOrderBeingEdited.customerName,
-        customerPhone: effectiveCustomerPhone || existingOrderBeingEdited.customerPhone,
-        customerAddress: effectiveCustomerAddress || existingOrderBeingEdited.customerAddress,
-        customerId: effectiveCustomerId || existingOrderBeingEdited.customerId,
+        customerName: effectiveCustomerName || activeExistingOrder.customerName,
+        customerPhone: effectiveCustomerPhone || activeExistingOrder.customerPhone,
+        customerAddress: effectiveCustomerAddress || activeExistingOrder.customerAddress,
+        customerId: effectiveCustomerId || activeExistingOrder.customerId,
         deliveryFee: updatedDeliveryFee,
-        deliveryMethod: effectiveIsDelivery ? 'entrega' : (existingOrderBeingEdited.deliveryMethod || (isCounter ? 'retirada' : undefined))
+        deliveryMethod: effectiveIsDelivery ? 'entrega' : (activeExistingOrder.deliveryMethod || (isCounter ? 'retirada' : undefined)),
+        currentBatch: nextBatchNumber
       };
 
-      const updatedOrder = { ...existingOrderBeingEdited, ...updates };
+      const updatedOrder = { ...activeExistingOrder, ...updates };
 
       // 1. Atualizar pedidos no React State instantaneamente
-      setOrders(prev => prev.map(o => (o.id === existingOrderBeingEdited.id || o.docId === existingOrderBeingEdited.id || (existingOrderBeingEdited.docId && o.id === existingOrderBeingEdited.docId)) ? { ...o, ...updates } : o));
+      setOrders(prev => prev.map(o => (o.id === activeExistingOrder!.id || o.docId === activeExistingOrder!.id || (activeExistingOrder!.docId && o.id === activeExistingOrder!.docId)) ? { ...o, ...updates } : o));
 
       // 2. Se for mesa, manter mesa sincronizada
-      if (!isCounter || existingOrderBeingEdited.type === 'table') {
-        setTables(prev => prev.map(t => (t.id === tableId || t.number === displayTableNumber || t.currentOrderId === existingOrderBeingEdited.id) ? {
+      if (!isCounter || activeExistingOrder.type === 'table') {
+        setTables(prev => prev.map(t => (t.id === tableId || t.number === displayTableNumber || t.currentOrderId === activeExistingOrder!.id) ? {
           ...t,
           items: existingItems,
           total: newItemsTotal,
-          currentOrderId: existingOrderBeingEdited.id,
+          currentOrderId: activeExistingOrder!.id,
           customerName: effectiveCustomerName || t.customerName,
           customerPhone: effectiveCustomerPhone || t.customerPhone
         } : t));
@@ -3212,7 +3245,7 @@ const App: React.FC = () => {
           ...t,
           items: existingItems,
           total: newItemsTotal,
-          currentOrderId: existingOrderBeingEdited.id,
+          currentOrderId: activeExistingOrder!.id,
           customerName: effectiveCustomerName || t.customerName,
           customerPhone: effectiveCustomerPhone || t.customerPhone,
           customerAddress: effectiveCustomerAddress || t.customerAddress,
@@ -3225,208 +3258,12 @@ const App: React.FC = () => {
       // 3. Persistência local e na nuvem
       localDb.orders.put(updatedOrder as Order).catch(e => console.warn("LocalDb order update error:", e));
       if (effectiveTenantId) {
-        setDoc(doc(db, 'orders', existingOrderBeingEdited.docId || existingOrderBeingEdited.id), cleanObject(updates), { merge: true })
+        setDoc(doc(db, 'orders', activeExistingOrder.docId || activeExistingOrder.id), cleanObject(updates), { merge: true })
           .catch(e => console.error("Error updating order in cloud:", e));
       }
 
-      addLog('u1', 'COZINHA', `Pedido #${existingOrderBeingEdited.dailyNumber || existingOrderBeingEdited.id.slice(-4)} atualizado com novos itens na cozinha.`);
+      addLog('u1', 'COZINHA', `Pedido #${activeExistingOrder.dailyNumber || activeExistingOrder.id.slice(-4)} atualizado com novos itens na cozinha.`);
       return;
-    }
-
-    if (!isCounter) {
-      // ==========================================
-      // REGRA DE MESAS:
-      // ==========================================
-      // Se a mesa já possui itens enviados anteriormente para a cozinha:
-      // O novo lançamento NÃO volta o que foi pedido anteriormente nem altera o status do pedido antigo na cozinha.
-      // É gerado um NOVO PEDIDO/TICKET no KDS contendo APENAS o novo produto lançado.
-      const hasSentItems = tableInfo?.items && tableInfo.items.some(i => i.sentToKitchen);
-      const existingTableOrder = orders.find(o => 
-        String(o.tableNumber) === String(displayTableNumber) && 
-        o.type === 'table' &&
-        o.status !== 'cancelled' &&
-        o.status !== 'finished'
-      );
-
-      if (hasSentItems || existingTableOrder) {
-        // Criar um novo ticket isolado de cozinha no KDS contendo APENAS os novos itens lançados
-        const newTicketItems = items.map(i => ({
-          ...i,
-          sentToKitchen: true,
-          batchNumber: ((existingTableOrder as any)?.currentBatch || 1) + 1,
-          isNew: true,
-          sentAt: now.toISOString()
-        }));
-
-        const newKdsOrder: Order = {
-          id: `KDS-${Math.random().toString(36).substr(2, 4).toUpperCase()}`,
-          tableNumber: displayTableNumber,
-          type: 'table',
-          customerName: effectiveCustomerName,
-          customerPhone: effectiveCustomerPhone,
-          status: 'preparing',
-          items: newTicketItems,
-          total: newTicketItems.reduce((acc, i) => acc + (i.price * i.quantity), 0),
-          createdAt: now,
-          updatedAt: now,
-          tenantId: effectiveTenantId,
-          version: 1,
-          isManual: true,
-          source: 'pos',
-          lastEventId: `evt_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-          currentBatch: ((existingTableOrder as any)?.currentBatch || 1) + 1
-        };
-
-        const assignedKdsOrder = assignDailyNumberToOrder(newKdsOrder);
-
-        // 1. Instant optimistic state updates
-        setOrders(prev => deduplicateOrders([assignedKdsOrder, ...prev]));
-        setTables(prev => prev.map(t => {
-          if (t.id === tableId || (t as any).docId === tableId || t.number === displayTableNumber) {
-            const updatedItems = [...t.items];
-            items.forEach(newItem => {
-              const idx = updatedItems.findIndex(it => !it.sentToKitchen && (it.id === newItem.id || (it.productId === newItem.productId && it.name === newItem.name)));
-              if (idx !== -1) {
-                updatedItems[idx] = { ...updatedItems[idx], sentToKitchen: true };
-              } else if (!updatedItems.some(it => it.id === newItem.id)) {
-                updatedItems.push({ ...newItem, sentToKitchen: true });
-              }
-            });
-            return {
-              ...t,
-              items: updatedItems,
-              total: updatedItems.reduce((acc, i) => acc + (i.price * i.quantity), 0),
-              currentOrderId: assignedKdsOrder.id,
-              customerName: effectiveCustomerName || t.customerName,
-              customerPhone: effectiveCustomerPhone || t.customerPhone
-            };
-          }
-          return t;
-        }));
-
-        // 2. Local persistence and non-blocking cloud sync
-        localDb.orders.put(assignedKdsOrder).catch(e => console.warn("LocalDb order put error:", e));
-        if (effectiveTenantId) {
-          setDoc(doc(db, 'orders', assignedKdsOrder.id), cleanObject({
-            ...assignedKdsOrder,
-            createdAt: now
-          })).catch(e => console.error("Error creating sub-ticket KDS order in cloud:", e));
-        }
-
-        addLog('u1', 'COZINHA', `Novo lote enviado à cozinha para Mesa ${displayTableNumber} (Pedido #${assignedKdsOrder.id})`);
-        return;
-      }
-    } else {
-      // ==========================================
-      // REGRA DE BALCÃO / DELIVERY:
-      // ==========================================
-      let activeCounterOrder: Order | undefined = undefined;
-
-      if (pdvEditOrder) {
-        activeCounterOrder = orders.find(o => o.id === pdvEditOrder.id) || pdvEditOrder;
-      } else if (tableInfo?.currentOrderId) {
-        activeCounterOrder = orders.find(o => o.id === tableInfo.currentOrderId && o.status !== 'cancelled' && o.status !== 'finished');
-      }
-
-      if (activeCounterOrder) {
-        const isAlreadyReady = ['ready', 'delivering', 'delivered', 'finished'].includes(activeCounterOrder.status);
-
-        if (!isAlreadyReady) {
-          // NÃO marcado como pronto: Atualiza os itens do pedido existente no KDS
-          const existingItems = activeCounterOrder.items.map(i => ({ ...i, isNew: false }));
-          items.forEach(newItem => {
-            const existingIndex = existingItems.findIndex(i => 
-              i.id === newItem.id || 
-              (i.productId === newItem.productId && i.name === newItem.name && (i.observation || '') === (newItem.observation || '') && !i.sentToKitchen)
-            );
-            if (existingIndex !== -1) {
-              existingItems[existingIndex] = { ...existingItems[existingIndex], ...newItem, sentToKitchen: true };
-            } else {
-              existingItems.push({ ...newItem, sentToKitchen: true, isNew: true });
-            }
-          });
-
-          const updates: Partial<Order> = {
-            items: existingItems,
-            total: existingItems.reduce((acc, i) => acc + (i.price * i.quantity), 0) + (effectiveDeliveryFee || activeCounterOrder.deliveryFee || 0),
-            status: 'preparing',
-            updatedAt: now,
-            customerName: effectiveCustomerName || activeCounterOrder.customerName,
-            customerPhone: effectiveCustomerPhone || activeCounterOrder.customerPhone,
-            customerAddress: effectiveCustomerAddress || activeCounterOrder.customerAddress,
-            customerId: effectiveCustomerId || activeCounterOrder.customerId,
-            deliveryFee: effectiveDeliveryFee !== undefined ? effectiveDeliveryFee : activeCounterOrder.deliveryFee,
-            deliveryMethod: effectiveIsDelivery ? 'entrega' : (activeCounterOrder.deliveryMethod || 'retirada')
-          };
-
-          // 1. Instant optimistic state updates
-          setOrders(prev => prev.map(o => o.id === activeCounterOrder!.id ? { ...o, ...updates } as Order : o));
-          setCounterOrders(prev => prev.map(t => (t.id === tableId || String(t.id) === String(tableId)) ? { 
-            ...t, 
-            currentOrderId: activeCounterOrder!.id,
-            customerName: effectiveCustomerName || t.customerName,
-            customerPhone: effectiveCustomerPhone || t.customerPhone,
-            customerAddress: effectiveCustomerAddress || t.customerAddress,
-            customerId: effectiveCustomerId || t.customerId,
-            deliveryFee: effectiveDeliveryFee,
-            isDelivery: effectiveIsDelivery
-          } : t));
-
-          // 2. Local persistence and non-blocking cloud sync
-          localDb.orders.update(activeCounterOrder.id, cleanObject(updates)).catch(e => console.warn("LocalDb order update error:", e));
-          if (effectiveTenantId) {
-            setDoc(doc(db, 'orders', activeCounterOrder.docId || activeCounterOrder.id), cleanObject(updates), { merge: true })
-              .catch(e => console.error("Error updating counter order in cloud:", e));
-          }
-
-          addLog('u1', 'COZINHA', `Pedido Balcão #${activeCounterOrder.dailyNumber || activeCounterOrder.id} atualizado no KDS com novos itens`);
-          return;
-        } else {
-          // JÁ marcado como pronto pelo KDS: Lança como NOVO PEDIDO no KDS com a MESMA referência de número de pedido
-          const newOrderWithSameRef: Order = {
-            id: `KDS-${Math.random().toString(36).substr(2, 4).toUpperCase()}`,
-            dailyNumber: activeCounterOrder.dailyNumber, // Mesma referência de número do pedido!
-            customerName: effectiveCustomerName || activeCounterOrder.customerName,
-            customerPhone: effectiveCustomerPhone || activeCounterOrder.customerPhone,
-            customerAddress: effectiveCustomerAddress || activeCounterOrder.customerAddress,
-            customerId: effectiveCustomerId || activeCounterOrder.customerId,
-            type: activeCounterOrder.type,
-            status: 'preparing',
-            items: items.map(i => ({ ...i, sentToKitchen: true, isNew: true })),
-            total: items.reduce((acc, i) => acc + (i.price * i.quantity), 0),
-            createdAt: now,
-            updatedAt: now,
-            tenantId: effectiveTenantId,
-            isManual: true,
-            source: 'pos'
-          };
-
-          // 1. Instant optimistic state updates
-          setOrders(prev => deduplicateOrders([newOrderWithSameRef, ...prev]));
-          setCounterOrders(prev => prev.map(t => (t.id === tableId || String(t.id) === String(tableId)) ? { 
-            ...t, 
-            currentOrderId: newOrderWithSameRef.id,
-            customerName: effectiveCustomerName || t.customerName,
-            customerPhone: effectiveCustomerPhone || t.customerPhone,
-            customerAddress: effectiveCustomerAddress || t.customerAddress,
-            customerId: effectiveCustomerId || t.customerId,
-            deliveryFee: effectiveDeliveryFee,
-            isDelivery: effectiveIsDelivery
-          } : t));
-
-          // 2. Local persistence and non-blocking cloud sync
-          localDb.orders.put(newOrderWithSameRef).catch(e => console.warn("LocalDb order put error:", e));
-          if (effectiveTenantId) {
-            setDoc(doc(db, 'orders', newOrderWithSameRef.id), cleanObject({
-              ...newOrderWithSameRef,
-              createdAt: now
-            })).catch(e => console.error("Error creating secondary counter ticket:", e));
-          }
-
-          addLog('u1', 'COZINHA', `Novo item lançado para Balcão/Delivery (Ref #${activeCounterOrder.dailyNumber}) - Novo pedido KDS criado`);
-          return;
-        }
-      }
     }
 
     // Criar pedido KDS inicial se não houver nenhum pedido ativo
