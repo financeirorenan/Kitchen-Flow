@@ -3,7 +3,7 @@ import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { APIProvider, Map, AdvancedMarker, Pin, InfoWindow, useMap } from '@vis.gl/react-google-maps';
 import { Courier, Order, AdminSettings } from '../types';
 import { formatOrderNumber } from '../utils/deduplicate';
-import { Bike, MapPin, ShoppingBag, Navigation, Settings, X, Info, Compass, Radio } from 'lucide-react';
+import { Bike, MapPin, ShoppingBag, Navigation, Settings, X, Info, Compass, Radio, ExternalLink } from 'lucide-react';
 
 const API_KEY =
   process.env.GOOGLE_MAPS_PLATFORM_KEY ||
@@ -427,6 +427,31 @@ const MapContent: React.FC<MapContentProps> = ({
                   </span>
                 </p>
               )}
+            </div>
+
+            <div className="pt-2 border-t flex gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  const coords = getOrderCoords(activeOrder);
+                  const dest = coords?.lat ? `${coords.lat},${coords.lng}` : encodeURIComponent(activeOrder.customerAddress || '');
+                  window.open(`https://www.google.com/maps/dir/?api=1&destination=${dest}`, '_blank');
+                }}
+                className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[8px] font-black uppercase py-1 px-1.5 rounded flex items-center justify-center gap-1 shadow-sm transition-all"
+              >
+                <Navigation size={9} /> Maps
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const coords = getOrderCoords(activeOrder);
+                  const dest = coords?.lat ? `https://waze.com/ul?ll=${coords.lat},${coords.lng}&navigate=yes` : `https://waze.com/ul?q=${encodeURIComponent(activeOrder.customerAddress || '')}&navigate=yes`;
+                  window.open(dest, '_blank');
+                }}
+                className="flex-1 bg-cyan-600 hover:bg-cyan-700 text-white text-[8px] font-black uppercase py-1 px-1.5 rounded flex items-center justify-center gap-1 shadow-sm transition-all"
+              >
+                <ExternalLink size={9} /> Waze
+              </button>
             </div>
           </div>
         </InfoWindow>
@@ -1103,7 +1128,7 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
       </div>
 
       {/* Google Maps or Free Leaflet Viewport Container */}
-      <div className="flex-1 min-h-0 relative select-none">
+      <div id="map-container" className="flex-1 min-h-0 relative select-none">
         {hasValidKey ? (
           <APIProvider apiKey={API_KEY} version="weekly">
             <Map

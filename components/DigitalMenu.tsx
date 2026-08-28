@@ -38,6 +38,7 @@ interface DigitalMenuProps {
   isOpen?: boolean;
   openStatusMessage?: string;
   promotions?: MarketplacePromotion[];
+  isLoading?: boolean;
 }
 
 interface CartItem {
@@ -55,7 +56,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
   initialTable,
   isDeliveryEnabled = true,
   isPickupEnabled = true,
-   deliveryFee = 0,
+  deliveryFee = 0,
   minOrderValue = 0,
   estimatedDeliveryTime = '30-45 min',
   estimatedPickupTime = '15-20 min',
@@ -71,6 +72,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
   isOpen = true,
   openStatusMessage,
   promotions = [],
+  isLoading = false,
 }) => {
   const [activeCategory, setActiveCategory] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -1088,148 +1090,187 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
         </div>
 
         <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">
-          {categories.map(cat => (
-            <button 
-              key={cat}
-              onClick={() => setActiveCategory(cat)}
-              className={`px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-[0.1em] transition-all whitespace-nowrap ${
-                activeCategory === cat 
-                ? 'text-white shadow-xl shadow-brand-primary/20' 
-                : 'bg-white text-slate-400 border border-slate-100'
-              }`}
-              style={{ backgroundColor: activeCategory === cat ? effectivePrimaryColor : undefined }}
-            >
-              {cat}
-            </button>
-          ))}
+          {isLoading && categories.length === 0 ? (
+            <>
+              <div className="w-24 h-10 rounded-2xl bg-slate-200/80 shimmer-effect shrink-0" />
+              <div className="w-28 h-10 rounded-2xl bg-slate-100 shimmer-effect shrink-0" />
+              <div className="w-20 h-10 rounded-2xl bg-slate-100 shimmer-effect shrink-0" />
+              <div className="w-32 h-10 rounded-2xl bg-slate-100 shimmer-effect shrink-0" />
+            </>
+          ) : (
+            categories.map(cat => (
+              <button 
+                key={cat}
+                onClick={() => setActiveCategory(cat)}
+                className={`px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-[0.1em] transition-all whitespace-nowrap ${
+                  activeCategory === cat 
+                  ? 'text-white shadow-xl shadow-brand-primary/20' 
+                  : 'bg-white text-slate-400 border border-slate-100'
+                }`}
+                style={{ backgroundColor: activeCategory === cat ? effectivePrimaryColor : undefined }}
+              >
+                {cat}
+              </button>
+            ))
+          )}
         </div>
       </div>
 
       {/* SECTION TITLE */}
       <div className="px-6 mt-8 mb-6">
         <h3 className="text-xl font-extrabold text-slate-800 tracking-tight uppercase flex items-center gap-3">
-          {activeCategory}
+          {isLoading && categories.length === 0 ? (
+            <div className="w-36 h-6 bg-slate-200 rounded-lg shimmer-effect" />
+          ) : (
+            activeCategory || 'Destaques'
+          )}
           <div className="h-0.5 flex-1 bg-slate-100/60 rounded-full" />
           <Filter size={18} className="text-slate-300" />
         </h3>
       </div>
 
-      {/* PRODUCT LIST - UPDATED CARD DESIGN */}
+      {/* PRODUCT LIST - UPDATED CARD DESIGN & SKELETON */}
       <div className="px-6 space-y-5">
-        {filteredProducts.map(product => (
-          <motion.div 
-            layout
-            key={product.id} 
-            onClick={() => {
-              setModalQuantity(1);
-              setSelectedProductForModal(product);
-              setShowProductModal(true);
-            }}
-            className="bg-white rounded-[2.5rem] p-3 flex gap-4 shadow-[0_8px_30px_rgb(0,0,0,0.02)] border border-slate-50 relative group active:scale-[0.98] transition-all hover:shadow-xl hover:shadow-slate-100/50 cursor-pointer"
-          >
-            <div className="w-32 h-32 sm:w-40 sm:h-40 rounded-[2rem] overflow-hidden shrink-0 border border-slate-100/50 relative flex items-center justify-center bg-slate-50">
-              {product.image ? (
-                <img 
-                  src={product.image} 
-                  alt={product.name}
-                  loading="lazy"
-                  decoding="async"
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" 
-                  referrerPolicy="no-referrer" 
-                />
-              ) : (
-                <div className="flex flex-col items-center gap-1 opacity-20">
-                   <Package size={32} className="text-slate-500" />
-                   <span className="text-[10px] font-black uppercase text-slate-500">Sem Foto</span>
+        {isLoading && (!products || products.length === 0) ? (
+          Array.from({ length: 5 }).map((_, idx) => (
+            <div 
+              key={`menu-skel-${idx}`}
+              className="bg-white rounded-[2.5rem] p-3 flex gap-4 shadow-[0_8px_30px_rgb(0,0,0,0.02)] border border-slate-100/70"
+            >
+              <div className="w-32 h-32 sm:w-40 sm:h-40 rounded-[2rem] shrink-0 bg-slate-100 shimmer-effect" />
+              <div className="flex-1 min-w-0 flex flex-col justify-between py-1.5 pr-2">
+                <div>
+                  <div className="h-5 bg-slate-200/80 rounded-lg w-3/4 shimmer-effect mb-2" />
+                  <div className="h-3 bg-emerald-50 rounded-full w-20 shimmer-effect mb-3" />
+                  <div className="h-3 bg-slate-100 rounded w-full shimmer-effect mb-1.5" />
+                  <div className="h-3 bg-slate-100 rounded w-2/3 shimmer-effect" />
                 </div>
-              )}
-              {product.isPromotional && (
-                <div 
-                  className="absolute top-3 left-3 text-white p-2 rounded-full z-20 shadow-md backdrop-blur-md"
-                  style={{ backgroundColor: `${effectivePrimaryColor}cc` }}
-                >
-                  <Zap size={12} fill="currentColor" />
-                </div>
-              )}
-            </div>
-
-            <div className="flex-1 min-w-0 flex flex-col justify-between py-1.5 pr-2">
-              <div className="max-h-[85px] overflow-hidden">
-                <div className="flex justify-between items-start">
-                  <div className="flex-1 min-w-0">
-                    <h4 className="font-extrabold text-slate-800 text-base leading-tight pr-4 group-hover:text-emerald-600 transition-colors uppercase italic truncate">{product.name}</h4>
-                    {((product.optionCategories && product.optionCategories.length > 0) || (product.options && product.options.length > 0)) && (
-                      <span className="text-[7px] font-black uppercase tracking-widest bg-emerald-50 text-emerald-500 px-2 py-0.5 rounded-full border border-emerald-100 mt-1 inline-block">
-                        Customizável
-                      </span>
-                    )}
+                <div className="flex items-end justify-between mt-4">
+                  <div className="space-y-1">
+                    <div className="h-2.5 bg-slate-100 rounded w-12 shimmer-effect" />
+                    <div className="h-6 bg-slate-200/80 rounded-lg w-20 shimmer-effect" />
                   </div>
+                  <div className="w-12 h-12 rounded-[1.3rem] bg-slate-100 shimmer-effect" />
                 </div>
-                <p className="text-[11px] text-slate-400 font-bold mt-1.5 line-clamp-2 leading-relaxed opacity-70">
-                  {product.description || 'Ingredientes selecionados com o toque especial da casa.'}
-                </p>
               </div>
-              
-              <div className="flex items-end justify-between mt-auto">
-                <div className="flex flex-col font-sans">
-                  <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest mb-0.5">Preço base</span>
-                  <span className="text-lg font-black tracking-tighter" style={{ color: effectivePrimaryColor }}>
-                    R$ {product.price.toFixed(2)}
-                  </span>
+            </div>
+          ))
+        ) : (
+          filteredProducts.map(product => (
+            <motion.div 
+              layout
+              key={product.id} 
+              onClick={() => {
+                setModalQuantity(1);
+                setSelectedProductForModal(product);
+                setShowProductModal(true);
+              }}
+              className="bg-white rounded-[2.5rem] p-3 flex gap-4 shadow-[0_8px_30px_rgb(0,0,0,0.02)] border border-slate-50 relative group active:scale-[0.98] transition-all hover:shadow-xl hover:shadow-slate-100/50 cursor-pointer"
+            >
+              <div className="w-32 h-32 sm:w-40 sm:h-40 rounded-[2rem] overflow-hidden shrink-0 border border-slate-100/50 relative flex items-center justify-center bg-slate-50">
+                {product.image ? (
+                  <img 
+                    src={product.image} 
+                    alt={product.name}
+                    loading="lazy"
+                    decoding="async"
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" 
+                    referrerPolicy="no-referrer" 
+                  />
+                ) : (
+                  <div className="flex flex-col items-center gap-1 opacity-20">
+                     <Package size={32} className="text-slate-500" />
+                     <span className="text-[10px] font-black uppercase text-slate-500">Sem Foto</span>
+                  </div>
+                )}
+                {product.isPromotional && (
+                  <div 
+                    className="absolute top-3 left-3 text-white p-2 rounded-full z-20 shadow-md backdrop-blur-md"
+                    style={{ backgroundColor: `${effectivePrimaryColor}cc` }}
+                  >
+                    <Zap size={12} fill="currentColor" />
+                  </div>
+                )}
+              </div>
+
+              <div className="flex-1 min-w-0 flex flex-col justify-between py-1.5 pr-2">
+                <div className="max-h-[85px] overflow-hidden">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-extrabold text-slate-800 text-base leading-tight pr-4 group-hover:text-emerald-600 transition-colors uppercase italic truncate">{product.name}</h4>
+                      {((product.optionCategories && product.optionCategories.length > 0) || (product.options && product.options.length > 0)) && (
+                        <span className="text-[7px] font-black uppercase tracking-widest bg-emerald-50 text-emerald-500 px-2 py-0.5 rounded-full border border-emerald-100 mt-1 inline-block">
+                          Customizável
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-400 font-bold mt-1.5 line-clamp-2 leading-relaxed opacity-70">
+                    {product.description || 'Ingredientes selecionados com o toque especial da casa.'}
+                  </p>
                 </div>
                 
-                {(() => {
-                  const hasOptions = (product.optionCategories && product.optionCategories.length > 0) || (product.options && product.options.length > 0);
-                  const itemInCartNoOptions = !hasOptions && cart.find(item => item.product.id === product.id && (!item.selectedOptions || item.selectedOptions.length === 0));
+                <div className="flex items-end justify-between mt-auto">
+                  <div className="flex flex-col font-sans">
+                    <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest mb-0.5">Preço base</span>
+                    <span className="text-lg font-black tracking-tighter" style={{ color: effectivePrimaryColor }}>
+                      R$ {product.price.toFixed(2)}
+                    </span>
+                  </div>
+                  
+                  {(() => {
+                    const hasOptions = (product.optionCategories && product.optionCategories.length > 0) || (product.options && product.options.length > 0);
+                    const itemInCartNoOptions = !hasOptions && cart.find(item => item.product.id === product.id && (!item.selectedOptions || item.selectedOptions.length === 0));
 
-                  if (itemInCartNoOptions) {
+                    if (itemInCartNoOptions) {
+                      return (
+                        <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-2xl border border-slate-100/60 shadow-inner" onClick={(e) => e.stopPropagation()}>
+                          <button 
+                            onClick={() => removeFromCart(product.id)}
+                            className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-slate-400 hover:text-rose-500 hover:border-rose-100 border border-slate-100/60 transition-all shadow-sm"
+                          >
+                            <Minus size={14} strokeWidth={2.5} />
+                          </button>
+                          <span className="font-black text-sm w-5 text-center text-slate-800">{itemInCartNoOptions.quantity}</span>
+                          <button 
+                            onClick={() => addToCart(product)}
+                            className="w-10 h-10 bg-white rounded-xl flex items-center justify-center border border-slate-100/60 hover:scale-105 transition-all shadow-sm"
+                            style={{ color: effectivePrimaryColor }}
+                          >
+                            <Plus size={14} strokeWidth={2.5} />
+                          </button>
+                        </div>
+                      );
+                    }
+
                     return (
-                      <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-2xl border border-slate-100/60 shadow-inner" onClick={(e) => e.stopPropagation()}>
-                        <button 
-                          onClick={() => removeFromCart(product.id)}
-                          className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-slate-400 hover:text-rose-500 hover:border-rose-100 border border-slate-100/60 transition-all shadow-sm"
-                        >
-                          <Minus size={14} strokeWidth={2.5} />
-                        </button>
-                        <span className="font-black text-sm w-5 text-center text-slate-800">{itemInCartNoOptions.quantity}</span>
-                        <button 
-                          onClick={() => addToCart(product)}
-                          className="w-10 h-10 bg-white rounded-xl flex items-center justify-center border border-slate-100/60 hover:scale-105 transition-all shadow-sm"
-                          style={{ color: effectivePrimaryColor }}
-                        >
-                          <Plus size={14} strokeWidth={2.5} />
-                        </button>
-                      </div>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (hasOptions) {
+                            setModalQuantity(1);
+                            setSelectedProductForModal(product);
+                            setShowProductModal(true);
+                          } else {
+                            addToCart(product);
+                          }
+                        }}
+                        className="w-12 h-12 rounded-[1.3rem] flex items-center justify-center shadow-[0_8px_20px_rgba(0,0,0,0.08)] active:scale-95 transition-all border-none"
+                        style={{ backgroundColor: effectivePrimaryColor }}
+                      >
+                        <Plus size={24} className="text-white" strokeWidth={3} />
+                      </button>
                     );
-                  }
-
-                  return (
-                    <button 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (hasOptions) {
-                          setModalQuantity(1);
-                          setSelectedProductForModal(product);
-                          setShowProductModal(true);
-                        } else {
-                          addToCart(product);
-                        }
-                      }}
-                      className="w-12 h-12 rounded-[1.3rem] flex items-center justify-center shadow-[0_8px_20px_rgba(0,0,0,0.08)] active:scale-95 transition-all border-none"
-                      style={{ backgroundColor: effectivePrimaryColor }}
-                    >
-                      <Plus size={24} className="text-white" strokeWidth={3} />
-                    </button>
-                  );
-                })()}
+                  })()}
+                </div>
               </div>
-            </div>
-          </motion.div>
-        ))}
+            </motion.div>
+          ))
+        )}
       </div>
 
       {/* EMPTY STATE */}
-      {filteredProducts.length === 0 && (
+      {!isLoading && filteredProducts.length === 0 && (
         <div className="flex flex-col items-center justify-center py-20 text-center px-8">
           <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center text-slate-300 mb-4">
             <Search size={32} />

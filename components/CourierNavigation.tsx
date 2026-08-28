@@ -64,8 +64,64 @@ export const CourierNavigation: React.FC<CourierNavigationProps> = ({
   // Fallback coords
   const originLat = courierLatitude || -30.033;
   const originLng = courierLongitude || -51.23;
-  const [destLat, setDestLat] = useState<number>(-30.035);
-  const [destLng, setDestLng] = useState<number>(-51.235);
+  const [destLat, setDestLat] = useState<number>(() => {
+    if (order.latitude && !isNaN(order.latitude)) return order.latitude;
+    return -30.035;
+  });
+  const [destLng, setDestLng] = useState<number>(() => {
+    if (order.longitude && !isNaN(order.longitude)) return order.longitude;
+    return -51.235;
+  });
+
+  // Sync if order coordinates arrive
+  useEffect(() => {
+    if (order.latitude && order.longitude && !isNaN(order.latitude) && !isNaN(order.longitude)) {
+      setDestLat(order.latitude);
+      setDestLng(order.longitude);
+    }
+  }, [order.latitude, order.longitude]);
+
+  // Deep-link to user's installed navigation apps (Google Maps, Waze, or Native Geo)
+  const openNavigationApp = (app: 'google' | 'waze' | 'geo' | 'apple' = 'google') => {
+    const targetLatitude = order.latitude || destLat;
+    const targetLongitude = order.longitude || destLng;
+    const hasCoordinates = Boolean(
+      targetLatitude && 
+      targetLongitude && 
+      (Math.abs(targetLatitude) > 0.001 || Math.abs(targetLongitude) > 0.001)
+    );
+
+    const destQuery = hasCoordinates 
+      ? `${targetLatitude},${targetLongitude}` 
+      : encodeURIComponent(order.customerAddress || '');
+
+    let url = '';
+    switch (app) {
+      case 'google':
+        url = `https://www.google.com/maps/dir/?api=1&destination=${destQuery}`;
+        break;
+      case 'waze':
+        url = hasCoordinates
+          ? `https://waze.com/ul?ll=${targetLatitude},${targetLongitude}&navigate=yes`
+          : `https://waze.com/ul?q=${encodeURIComponent(order.customerAddress || '')}&navigate=yes`;
+        break;
+      case 'apple':
+        url = `https://maps.apple.com/?daddr=${destQuery}&dirflg=d`;
+        break;
+      case 'geo':
+      default:
+        url = hasCoordinates
+          ? `geo:${targetLatitude},${targetLongitude}?q=${targetLatitude},${targetLongitude}(${encodeURIComponent(order.customerName || 'Cliente')})`
+          : `geo:0,0?q=${encodeURIComponent(order.customerAddress || '')}`;
+        break;
+    }
+
+    try {
+      window.open(url, '_blank');
+    } catch (e) {
+      console.warn("Could not open navigation link:", e);
+    }
+  };
 
   const API_KEY =
     process.env.GOOGLE_MAPS_PLATFORM_KEY ||
@@ -393,21 +449,55 @@ export const CourierNavigation: React.FC<CourierNavigationProps> = ({
       const destColor = '#f43f5e'; // rose
 
       const startIcon = L.divIcon({
-        html: `<div style="background:${pinColor}; width:14px; height:14px; border:2px solid white; border-radius:50%; box-shadow:0 0 8px rgba(20,184,166,0.6);" class="animate-pulse"></div>`,
-        className: 'gps-pin',
-        iconSize: [14, 14],
-        iconAnchor: [7, 7]
+        html: `
+          <div style="position:relative; width:20px; height:20px; display:flex; align-items:center; justify-content:center;">
+            <div style="position:absolute; width:28px; height:28px; border-radius:50%; background:rgba(20,184,166,0.35); animation:ping 2s cubic-bezier(0,0,0.2,1) infinite;"></div>
+            <div style="background:${pinColor}; width:16px; height:16px; border:2.5px solid white; border-radius:50%; box-shadow:0 0 12px rgba(20,184,166,0.8); z-index:2;"></div>
+          </div>
+        `,
+        className: 'gps-pin-container',
+        iconSize: [20, 20],
+        iconAnchor: [10, 10]
       });
 
       const endIcon = L.divIcon({
-        html: `<div style="background:${destColor}; width:14px; height:14px; border:2px solid white; border-radius:50%; box-shadow:0 0 8px rgba(244,63,94,0.6);"></div>`,
-        className: 'dest-pin',
-        iconSize: [14, 14],
-        iconAnchor: [7, 7]
+        html: `
+          <div style="position:relative; display:flex; flex-direction:column; align-items:center; transform:translate(-50%, -100%);">
+            <!-- Pulsing radar ring -->
+            <div style="position:absolute; bottom:0; left:50%; transform:translate(-50%, 50%); width:36px; height:36px; border-radius:50%; background:rgba(244,63,94,0.3); animation:ping 2s cubic-bezier(0,0,0.2,1) infinite;"></div>
+            
+            <!-- Pin Header Badge -->
+            <div style="background:#090d16; color:#ffffff; padding:2px 7px; border-radius:6px; font-size:8.5px; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; border:1px solid #f43f5e; box-shadow:0 4px 14px rgba(0,0,0,0.8); white-space:nowrap; display:flex; align-items:center; gap:4px; margin-bottom:3px;">
+              <span style="display:inline-block; width:5px; height:5px; border-radius:50%; background:#f43f5e;"></span>
+              <span>${order.customerName ? order.customerName.slice(0, 16) : 'Destino Cliente'}</span>
+            </div>
+
+            <!-- Centered Teardrop Pin Marker -->
+            <div style="width:28px; height:28px; background:linear-gradient(135deg, #f43f5e 0%, #be123c 100%); border-radius:50% 50% 50% 0; transform:rotate(-45deg); border:2px solid #ffffff; box-shadow:0 6px 18px rgba(225,29,72,0.7); display:flex; align-items:center; justify-content:center;">
+              <div style="transform:rotate(45deg); color:white; font-size:11px; font-weight:900;">📍</div>
+            </div>
+          </div>
+        `,
+        className: 'dest-pin-container',
+        iconSize: [0, 0],
+        iconAnchor: [0, 0]
       });
 
       const startMarker = L.marker([originLat, originLng], { icon: startIcon }).addTo(mapInstance);
       const endMarker = L.marker([destLat, destLng], { icon: endIcon }).addTo(mapInstance);
+
+      // Bind detailed coordinate popup
+      endMarker.bindPopup(`
+        <div style="font-family:sans-serif; color:#0f172a; padding:4px; font-size:11px; line-height:1.4;">
+          <div style="font-weight:800; color:#e11d48; text-transform:uppercase; font-size:10px; margin-bottom:2px;">📍 Destino do Cliente</div>
+          <div style="font-weight:700;">${order.customerName || 'Cliente'}</div>
+          <div style="font-size:10px; color:#64748b; margin-top:2px;">${order.customerAddress || 'Endereço registrado'}</div>
+          <div style="margin-top:4px; font-family:monospace; font-size:9px; background:#f1f5f9; padding:2px 4px; border-radius:4px; color:#0284c7;">
+            ${destLat.toFixed(6)}, ${destLng.toFixed(6)}
+          </div>
+        </div>
+      `);
+
       routeMarkersRef.current.push(startMarker, endMarker);
 
       // Create a polyline connecting them
@@ -418,13 +508,14 @@ export const CourierNavigation: React.FC<CourierNavigationProps> = ({
       const poly = L.polyline(points, {
         color: '#14b8a6',
         weight: 4,
-        opacity: 0.8
+        opacity: 0.85,
+        dashArray: '8, 8'
       }).addTo(mapInstance);
       routePolylineRef.current = poly;
 
       // Set view boundaries
       const group = new L.featureGroup(routeMarkersRef.current);
-      mapInstance.fitBounds(group.getBounds().pad(0.2));
+      mapInstance.fitBounds(group.getBounds().pad(0.25));
 
     } catch (e) {
       console.error("Leaflet submap error:", e);
@@ -670,10 +761,34 @@ export const CourierNavigation: React.FC<CourierNavigationProps> = ({
                     </div>
                   ) : (
                     /* Embedded Route SubMap View */
-                    <div className="w-full h-48 relative border-b border-slate-800 overflow-hidden">
+                    <div id="map-container" className="w-full h-56 relative border-b border-slate-800 overflow-hidden group">
                       <div ref={mapContainerRef} className="w-full h-full" style={{ background: '#0c0f18' }} />
-                      <div className="absolute bottom-2.5 right-2.5 z-[1000] bg-slate-950/80 backdrop-blur-md px-2.5 py-1 rounded-lg border border-slate-800 text-[8px] font-black uppercase text-slate-400 tracking-wider">
-                        Satélite GPS Ativo
+                      
+                      {/* GPS Satelite badge */}
+                      <div className="absolute top-2.5 left-2.5 z-[1000] bg-slate-950/85 backdrop-blur-md px-2.5 py-1 rounded-lg border border-slate-800 text-[8px] font-black uppercase text-slate-300 tracking-wider flex items-center gap-1.5 shadow-lg">
+                        <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-ping" />
+                        <span>GPS Satélite</span>
+                      </div>
+
+                      {/* Top-Right Quick Navigation Button (Deep-link to Google Maps / Waze) */}
+                      <div className="absolute top-2.5 right-2.5 z-[1000] flex items-center gap-1.5">
+                        <button
+                          id="btn-navigation-action"
+                          type="button"
+                          onClick={() => openNavigationApp('google')}
+                          title="Iniciar navegação curva a curva no seu app de GPS"
+                          className="bg-teal-500 hover:bg-teal-400 active:scale-95 text-slate-950 px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center gap-1.5 shadow-xl shadow-teal-500/25 transition-all cursor-pointer border border-teal-300/40"
+                        >
+                          <Navigation size={12} className="fill-slate-950" />
+                          <span>Navegação</span>
+                        </button>
+                      </div>
+
+                      {/* Bottom-Left Destination Pin Coordinate Tag */}
+                      <div className="absolute bottom-2.5 left-2.5 z-[1000] bg-slate-950/85 backdrop-blur-md px-2.5 py-1 rounded-lg border border-slate-800 text-[8px] font-mono text-slate-300 shadow-lg flex items-center gap-1.5 pointer-events-none">
+                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" />
+                        <span className="text-slate-400 font-bold uppercase text-[7px] font-sans">Destino:</span>
+                        <span className="text-rose-400 font-bold">{destLat.toFixed(5)}, {destLng.toFixed(5)}</span>
                       </div>
                     </div>
                   )}

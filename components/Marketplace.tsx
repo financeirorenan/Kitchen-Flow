@@ -48,6 +48,16 @@ import {
   ShieldCheck,
   Zap,
   Check,
+  Volume2,
+  VolumeX,
+  Globe,
+  Tag,
+  Compass,
+  Utensils,
+  Soup,
+  Pill,
+  PawPrint,
+  Wine,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { db, auth } from "../firebase";
@@ -563,6 +573,59 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     null,
   );
 
+  // Sound effect state
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const toggleSound = () => {
+    setSoundEnabled((prev) => {
+      const next = !prev;
+      if (next && typeof window !== "undefined") {
+        try {
+          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+          if (AudioContextClass) {
+            const ctx = new AudioContextClass();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+            osc.frequency.setValueAtTime(880, ctx.currentTime + 0.08);
+            gain.gain.setValueAtTime(0.08, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.2);
+          }
+        } catch (e) {
+          // Silent fallback
+        }
+      }
+      return next;
+    });
+  };
+
+  // Coupon copy handler
+  const [copiedCoupon, setCopiedCoupon] = useState<string | null>(null);
+  const handleCopyCoupon = (code: string) => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(code);
+    }
+    setCopiedCoupon(code);
+    setTimeout(() => setCopiedCoupon(null), 2500);
+  };
+
+  // 10 Visual Verticals & Categories
+  const catalogCategories = useMemo(() => [
+    { id: "todos", label: "Todos", subtitle: "Tudo na cidade", icon: UtensilsCrossed, emoji: "🍽️" },
+    { id: "burger", label: "Lanches &...", subtitle: "Artesanais & smash", icon: Sandwich, emoji: "🍔" },
+    { id: "pizza", label: "Pizzarias", subtitle: "Forno a lenha", icon: Pizza, emoji: "🍕" },
+    { id: "marmitaria", label: "Marmitarias", subtitle: "Comida caseira", icon: ChefHat, emoji: "🍲" },
+    { id: "mercado", label: "Mercados &...", subtitle: "Hortifruti & básicos", icon: Store, emoji: "🛒" },
+    { id: "farmacia", label: "Farmácias", subtitle: "Saúde & bem-estar", icon: Pill, emoji: "💊" },
+    { id: "pet", label: "Pet & Agro", subtitle: "Rações & cuidados", icon: PawPrint, emoji: "🐾" },
+    { id: "bebidas", label: "Adegas &...", subtitle: "Cervejas trincando", icon: Wine, emoji: "🍷" },
+    { id: "doces", label: "Açaí & Doces", subtitle: "Gelados & doces", icon: IceCream, emoji: "🍧" },
+    { id: "pastel", label: "Pastéis &...", subtitle: "Fritos na hora", icon: UtensilsCrossed, emoji: "🥟" },
+  ], []);
+
   // Navigation State
   const [navView, setNavView] = useState<
     "home" | "orders" | "favorites" | "profile"
@@ -627,10 +690,23 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
   // Address State
   const [showAddressModal, setShowAddressModal] = useState(false);
-  const [currentAddress, setCurrentAddress] = useState(
-    "Av. Paulista, 1000 - São Paulo",
-  );
+  const [currentAddress, setCurrentAddress] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem("marketplace_address");
+      if (saved) return saved;
+    } catch {}
+    return "Rua 7 de Setembro, 120 - Centro, Pradópolis - SP";
+  });
   const [tempAddress, setTempAddress] = useState(currentAddress);
+
+  // Save address changes into localStorage for persistent city detection
+  const handleUpdateAddress = useCallback((newAddr: string) => {
+    setCurrentAddress(newAddr);
+    setTempAddress(newAddr);
+    try {
+      localStorage.setItem("marketplace_address", newAddr);
+    } catch {}
+  }, []);
 
   // CEP (postal code) search robust states
   const [addressMode, setAddressMode] = useState<'cep' | 'manual'>('cep');
@@ -950,6 +1026,98 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     return extractCityFromAddress(currentAddress);
   }, [currentAddress]);
 
+  // Dynamic Popular Featured Items strictly tied to customer's city
+  const popularFeaturedItems = useMemo(() => {
+    const targetCity = customerCity || "Pradópolis";
+    const normTargetCity = normalizeString(targetCity);
+
+    // 1. Filtrar restaurantes que atendem ou estão na cidade do cliente
+    const cityTenants = tenants.filter((t) => {
+      const tCity = getRestaurantCity(t, tenantsSettings[t.id]);
+      if (!tCity) return false;
+      const normTCity = normalizeString(tCity);
+      return normTCity.includes(normTargetCity) || normTargetCity.includes(normTCity);
+    });
+
+    const activePool = cityTenants.length > 0 ? cityTenants : tenants;
+
+    // Pratos populares com alta conversão e vínculo com o comércio local da cidade
+    const dishTemplates = [
+      {
+        name: "Pizza Especial Calabresa & Catupiry",
+        categoryKeyword: "pizza",
+        price: 49.90,
+        image: "https://images.unsplash.com/photo-1534308983496-4fabb1a015ee?q=80&w=600&auto=format&fit=crop",
+        badge: `🔥 #1 EM ${targetCity.toUpperCase()}`,
+        defaultStore: `Pizzaria Tradicional de ${targetCity}`
+      },
+      {
+        name: "Smash Burger Duplo Cheddar & Bacon",
+        categoryKeyword: "burger",
+        price: 33.90,
+        image: "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?q=80&w=600&auto=format&fit=crop",
+        badge: "🍔 MAIS PEDIDO",
+        defaultStore: `Burger House ${targetCity}`
+      },
+      {
+        name: "Parmegiana de Alcatra na Brasa",
+        categoryKeyword: "restaurante",
+        price: 38.50,
+        image: "https://images.unsplash.com/photo-1598515214211-89d3c73ae83b?q=80&w=600&auto=format&fit=crop",
+        badge: "⭐ FAVORITO LOCAL",
+        defaultStore: `Cantina & Restaurante ${targetCity}`
+      },
+      {
+        name: "Açaí Especial 500ml com Frutas & Nutella",
+        categoryKeyword: "doce",
+        price: 23.50,
+        image: "https://images.unsplash.com/photo-1590080875515-8a3a8dc5735e?q=80&w=600&auto=format&fit=crop",
+        badge: "🍧 SOBREMESA TOP",
+        defaultStore: `Açaí & Delícias ${targetCity}`
+      },
+      {
+        name: "Combo Pastel Especial de Carne Seca & Queijo",
+        categoryKeyword: "pastel",
+        price: 27.90,
+        image: "https://images.unsplash.com/photo-1626777552726-4a6b54c97e46?q=80&w=600&auto=format&fit=crop",
+        badge: "🥟 FRITO NA HORA",
+        defaultStore: `Pastelaria Central ${targetCity}`
+      },
+      {
+        name: "Marmitex Executivo Caseiro Completo",
+        categoryKeyword: "marmitaria",
+        price: 25.00,
+        image: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=600&auto=format&fit=crop",
+        badge: "🍲 ALMOÇO DO DIA",
+        defaultStore: `Marmitaria & Sabor ${targetCity}`
+      }
+    ];
+
+    return dishTemplates.map((template, idx) => {
+      // Tentar associar com um restaurante real correspondente daquela cidade
+      const matchedTenant = activePool.find((t) => {
+        const cat = (t.category || "").toLowerCase();
+        const name = (t.name || "").toLowerCase();
+        return cat.includes(template.categoryKeyword) || name.includes(template.categoryKeyword);
+      }) || activePool[idx % Math.max(1, activePool.length)];
+
+      const storeDisplayName = matchedTenant 
+        ? matchedTenant.name 
+        : template.defaultStore;
+
+      return {
+        id: `pop-city-${idx}`,
+        name: template.name,
+        storeName: storeDisplayName,
+        tenantId: matchedTenant?.id,
+        price: template.price,
+        image: template.image,
+        badge: template.badge,
+        city: targetCity
+      };
+    });
+  }, [customerCity, tenants, tenantsSettings]);
+
   const [isLocating, setIsLocating] = useState(false);
 
   const handleGetCurrentLocation = () => {
@@ -1040,8 +1208,8 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     if (!tenant?.id) return;
     if (globalStoreCache.current.has(tenant.id)) {
       const existing = globalStoreCache.current.get(tenant.id)!;
-      if (Date.now() - existing.timestamp < 1000 * 60 * 5) {
-        return; // Cache still warm (5 min)
+      if (Date.now() - existing.timestamp < 1000 * 60 * 10) {
+        return; // Cache still warm (10 min)
       }
     }
 
@@ -1061,6 +1229,16 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       const loadedProducts = productsSnap.docs.map(
         (doc) => ({ ...doc.data(), id: doc.id }) as Product
       );
+
+      // Preload top product images into browser memory cache
+      if (typeof window !== "undefined") {
+        loadedProducts.slice(0, 6).forEach((p) => {
+          if (p.image) {
+            const img = new Image();
+            img.src = p.image;
+          }
+        });
+      }
 
       let builtSettings: DigitalMenuSettings;
       let adminSet: any = null;
@@ -1090,23 +1268,31 @@ const Marketplace: React.FC<MarketplaceProps> = ({
         };
       }
 
-      globalStoreCache.current.set(tenant.id, {
+      const storePayload = {
         products: loadedProducts,
         settings: builtSettings,
         adminSettings: adminSet,
         timestamp: Date.now()
-      });
+      };
 
-      // Also persist small snapshot in sessionStorage
+      globalStoreCache.current.set(tenant.id, storePayload);
+
+      // Persist in sessionStorage & localStorage
       try {
-        sessionStorage.setItem(`mp_store_${tenant.id}`, JSON.stringify({
-          products: loadedProducts,
-          settings: builtSettings,
-          adminSettings: adminSet,
-          timestamp: Date.now()
-        }));
+        const serialized = JSON.stringify(storePayload);
+        sessionStorage.setItem(`mp_store_${tenant.id}`, serialized);
+        localStorage.setItem(`kf_store_${tenant.id}`, serialized);
+
+        // Update slug mapping for instant direct lookups
+        const slugMapStr = localStorage.getItem("kf_slug_map") || "{}";
+        const slugMap = JSON.parse(slugMapStr);
+        const normName = tenant.name?.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+        if (normName) slugMap[normName] = tenant.id;
+        if ((tenant as any).slug) slugMap[(tenant as any).slug.toLowerCase()] = tenant.id;
+        if (builtSettings.customSlug) slugMap[builtSettings.customSlug.toLowerCase()] = tenant.id;
+        localStorage.setItem("kf_slug_map", JSON.stringify(slugMap));
       } catch {
-        // Ignore quota limits in sessionStorage
+        // Ignore storage quota errors gracefully
       }
     } catch (e) {
       console.warn("Background prefetch error:", e);
@@ -1317,59 +1503,89 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     return () => unsubscribe();
   }, [activeOrders]);
 
+  // Auto-prefetch top marketplace stores in background on mount
   useEffect(() => {
-    // Optimized High-Speed Store Loader with Instant Cache & Background SWR
+    if (tenants.length > 0 && !routeTenantId) {
+      const timer = setTimeout(() => {
+        tenants.slice(0, 4).forEach((t) => {
+          prefetchStoreData(t);
+        });
+      }, 600);
+      return () => clearTimeout(timer);
+    }
+  }, [tenants, routeTenantId, prefetchStoreData]);
+
+  useEffect(() => {
+    // Optimized High-Speed Store Loader with Multi-Tier Instant Cache & Background SWR
     const loadStoreData = async (tenant: Tenant) => {
       if (productListenerRef.current) {
         productListenerRef.current();
         productListenerRef.current = null;
       }
 
-      // Check In-Memory Cache first (0ms instantaneous transition)
+      let hasWarmCache = false;
+
+      // 1. Check In-Memory Cache first (0ms instantaneous transition)
       const memCached = globalStoreCache.current.get(tenant.id);
-      if (memCached && memCached.products.length > 0) {
+      if (memCached && memCached.products) {
         setStoreSettings(memCached.settings);
         setStoreAdminSettings(memCached.adminSettings);
         setStoreProducts(memCached.products);
         setSelectedTenant(tenant);
         setIsStoreLoading(false);
+        hasWarmCache = true;
       } else {
-        // Check SessionStorage Cache
+        // 2. Check SessionStorage and LocalStorage Cache
         try {
-          const sessionSaved = sessionStorage.getItem(`mp_store_${tenant.id}`);
-          if (sessionSaved) {
-            const parsed = JSON.parse(sessionSaved);
+          const rawCached = sessionStorage.getItem(`mp_store_${tenant.id}`) || localStorage.getItem(`kf_store_${tenant.id}`);
+          if (rawCached) {
+            const parsed = JSON.parse(rawCached);
             if (parsed && parsed.products) {
               setStoreSettings(parsed.settings);
               setStoreAdminSettings(parsed.adminSettings);
               setStoreProducts(parsed.products);
               setSelectedTenant(tenant);
               setIsStoreLoading(false);
+              hasWarmCache = true;
+              globalStoreCache.current.set(tenant.id, parsed);
             }
           }
         } catch {
           // fallback to live fetch
         }
 
-        // If no cache at all, populate basic settings immediately from tenantsSettings to prevent full screen block
-        const existingSnapshot = tenantsSettings[tenant.id];
-        if (existingSnapshot) {
-          const quickDigitalMenu = existingSnapshot.digitalMenu || {};
-          setStoreSettings({
-            restaurantName: tenant.name,
-            primaryColor: "#008080",
-            welcomeMessage: "Bem-vindo ao nosso cardápio!",
-            bannerUrl: "",
-            logoUrl: tenant.logoUrl || "",
-            allowOrdering: true,
-            showStock: false,
-            ...quickDigitalMenu,
-          });
-          if (existingSnapshot.admin) {
-            setStoreAdminSettings(existingSnapshot.admin);
+        // 3. If no cached products, populate basic settings immediately from tenantsSettings to prevent full screen block
+        if (!hasWarmCache) {
+          const existingSnapshot = tenantsSettings[tenant.id];
+          if (existingSnapshot) {
+            const quickDigitalMenu = existingSnapshot.digitalMenu || {};
+            setStoreSettings({
+              restaurantName: tenant.name,
+              primaryColor: "#008080",
+              welcomeMessage: "Bem-vindo ao nosso cardápio!",
+              bannerUrl: "",
+              logoUrl: tenant.logoUrl || "",
+              allowOrdering: true,
+              showStock: false,
+              ...quickDigitalMenu,
+            });
+            if (existingSnapshot.admin) {
+              setStoreAdminSettings(existingSnapshot.admin);
+            }
+            setSelectedTenant(tenant);
+          } else {
+            // Set base settings with tenant info so DigitalMenu mounts with skeleton instantly
+            setStoreSettings({
+              restaurantName: tenant.name,
+              primaryColor: "#008080",
+              welcomeMessage: "Bem-vindo ao nosso cardápio!",
+              bannerUrl: "",
+              logoUrl: tenant.logoUrl || "",
+              allowOrdering: true,
+              showStock: false,
+            });
+            setSelectedTenant(tenant);
           }
-          setSelectedTenant(tenant);
-        } else {
           setIsStoreLoading(true);
         }
       }
@@ -1391,6 +1607,16 @@ const Marketplace: React.FC<MarketplaceProps> = ({
         const loadedProducts = productsSnap.docs.map(
           (doc) => ({ ...doc.data(), id: doc.id }) as Product,
         );
+
+        // Preload top product images into browser memory
+        if (typeof window !== "undefined") {
+          loadedProducts.slice(0, 6).forEach((p) => {
+            if (p.image) {
+              const img = new Image();
+              img.src = p.image;
+            }
+          });
+        }
 
         let finalSettings: DigitalMenuSettings;
         let finalAdmin: any = null;
@@ -1427,20 +1653,19 @@ const Marketplace: React.FC<MarketplaceProps> = ({
         setSelectedTenant(tenant);
 
         // Cache result for next instant load
-        globalStoreCache.current.set(tenant.id, {
+        const storePayload = {
           products: loadedProducts,
           settings: finalSettings,
           adminSettings: finalAdmin,
           timestamp: Date.now()
-        });
+        };
+
+        globalStoreCache.current.set(tenant.id, storePayload);
 
         try {
-          sessionStorage.setItem(`mp_store_${tenant.id}`, JSON.stringify({
-            products: loadedProducts,
-            settings: finalSettings,
-            adminSettings: finalAdmin,
-            timestamp: Date.now()
-          }));
+          const serialized = JSON.stringify(storePayload);
+          sessionStorage.setItem(`mp_store_${tenant.id}`, serialized);
+          localStorage.setItem(`kf_store_${tenant.id}`, serialized);
         } catch {}
 
         // Listen for live updates in real time
@@ -1518,8 +1743,31 @@ const Marketplace: React.FC<MarketplaceProps> = ({
         if (!selectedTenant || selectedTenant.id !== tenant.id) {
           loadStoreData(tenant);
         }
-      } else if (!initialLoading) {
-        // If not in primary list, fetch directly from Firestore by ID or query all tenants by slug
+      } else {
+        // Check localStorage slug map for 0ms lookup before network query
+        try {
+          const slugMapStr = localStorage.getItem("kf_slug_map") || "{}";
+          const slugMap = JSON.parse(slugMapStr);
+          const mappedTenantId = slugMap[targetNorm] || slugMap[routeTenantId.toLowerCase()];
+          if (mappedTenantId) {
+            const rawStored = localStorage.getItem(`kf_store_${mappedTenantId}`);
+            if (rawStored) {
+              const parsed = JSON.parse(rawStored);
+              if (parsed && parsed.settings) {
+                const syntheticTenant: Tenant = {
+                  id: mappedTenantId,
+                  name: parsed.settings.restaurantName || routeTenantId,
+                  email: "",
+                  logoUrl: parsed.settings.logoUrl || "",
+                  createdAt: new Date().toISOString(),
+                };
+                loadStoreData(syntheticTenant);
+              }
+            }
+          }
+        } catch {}
+
+        // Fetch directly from Firestore by ID or query all tenants by slug without blocking on initialLoading
         const fetchTenantDirectly = async () => {
           setIsStoreLoading(true);
           try {
@@ -1581,7 +1829,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
         productListenerRef.current = null;
       }
     }
-  }, [routeTenantId, tenants, initialLoading, selectedTenant?.id]);
+  }, [routeTenantId, tenants, selectedTenant?.id]);
 
   useEffect(() => {
     // Cleanup on unmount
@@ -1665,49 +1913,37 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     return true; // Dentro do período
   }, [marketplaceSettings]);
 
-  if (isStoreLoading || (!initialLoading && isMaintenanceActive)) {
+  if (!initialLoading && isMaintenanceActive) {
     return (
       <div className="min-h-screen bg-brand-white flex flex-col items-center justify-center gap-6 p-10 text-center">
-        {isMaintenanceActive ? (
-          <div className="animate-in fade-in zoom-in duration-500 flex flex-col items-center">
-            <div className="w-24 h-24 bg-amber-100 text-amber-500 rounded-[2rem] flex items-center justify-center mb-6 shadow-xl shadow-amber-100/50 relative">
-              <div className="absolute inset-0 bg-amber-500/10 rounded-[2rem] animate-ping" />
-              <Store size={48} className="relative z-10" />
-            </div>
-            <h2 className="text-3xl font-black tracking-tighter text-slate-800 mb-2">
-              Marketplace em Pausa
-            </h2>
-            <p className="text-sm font-bold text-amber-600/80 uppercase tracking-widest mb-4">
-              Manutenção Programada
-            </p>
-            <div className="max-w-xs p-6 bg-white border border-slate-100 rounded-3xl shadow-sm">
-              <p className="text-xs font-medium text-slate-500 leading-relaxed italic">
-                "
-                {marketplaceSettings?.maintenance?.message ||
-                  "Estamos realizando melhorias programadas. Voltaremos em breve com novidades deliciosas!"}
-                "
-              </p>
-            </div>
-            <div className="mt-8 flex gap-4">
-              <button
-                onClick={() => window.location.reload()}
-                className="px-6 py-3 bg-slate-800 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 hover:bg-slate-900 transition-all"
-              >
-                <Clock size={14} /> Tentar Novamente
-              </button>
-            </div>
+        <div className="animate-in fade-in zoom-in duration-500 flex flex-col items-center">
+          <div className="w-24 h-24 bg-amber-100 text-amber-500 rounded-[2rem] flex items-center justify-center mb-6 shadow-xl shadow-amber-100/50 relative">
+            <div className="absolute inset-0 bg-amber-500/10 rounded-[2rem] animate-ping" />
+            <Store size={48} className="relative z-10" />
           </div>
-        ) : (
-          <>
-            <div className="relative">
-              <div className="w-16 h-16 border-4 border-slate-100 rounded-full"></div>
-              <div className="w-16 h-16 border-4 border-brand-primary border-t-transparent rounded-full animate-spin absolute top-0 left-0"></div>
-            </div>
-            <p className="text-slate-400 font-black text-[10px] uppercase tracking-[0.3em] animate-pulse">
-              Preparando sua experiência...
+          <h2 className="text-3xl font-black tracking-tighter text-slate-800 mb-2">
+            Marketplace em Pausa
+          </h2>
+          <p className="text-sm font-bold text-amber-600/80 uppercase tracking-widest mb-4">
+            Manutenção Programada
+          </p>
+          <div className="max-w-xs p-6 bg-white border border-slate-100 rounded-3xl shadow-sm">
+            <p className="text-xs font-medium text-slate-500 leading-relaxed italic">
+              "
+              {marketplaceSettings?.maintenance?.message ||
+                "Estamos realizando melhorias programadas. Voltaremos em breve com novidades deliciosas!"}
+              "
             </p>
-          </>
-        )}
+          </div>
+          <div className="mt-8 flex gap-4">
+            <button
+              onClick={() => window.location.reload()}
+              className="px-6 py-3 bg-slate-800 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 hover:bg-slate-900 transition-all"
+            >
+              <Clock size={14} /> Tentar Novamente
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -1725,6 +1961,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     return (
       <div className="h-full overflow-y-auto bg-white w-full">
         <DigitalMenu
+          isLoading={isStoreLoading && storeProducts.length === 0}
           settings={{
             ...storeSettings,
             primaryColor: storeSettings.primaryColor || "#0d9488",
@@ -1915,88 +2152,167 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     );
   }
 
+  if (initialLoading) {
+    return (
+      <div className="min-h-screen bg-brand-white flex flex-col items-center justify-center gap-6 p-10 text-center">
+        <div className="relative">
+          <div className="w-16 h-16 border-4 border-slate-100 rounded-full"></div>
+          <div className="w-16 h-16 border-4 border-brand-primary border-t-transparent rounded-full animate-spin absolute top-0 left-0"></div>
+        </div>
+        <p className="text-slate-400 font-black text-[10px] uppercase tracking-[0.3em] animate-pulse">
+          Preparando sua experiência...
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full overflow-y-auto bg-brand-white flex flex-col font-sans pb-36 custom-scrollbar">
-      {/* Brand & Address Header - Aligned with KitchenFlow Institutional Identity */}
+      {/* Top Announcement Bar */}
+      <div className="bg-black text-white px-4 sm:px-6 py-2 border-b border-slate-900 text-xs flex items-center justify-between z-50">
+        <div className="flex items-center gap-3 overflow-hidden">
+          <span className="bg-[#FF3B00] text-white text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full shrink-0 tracking-wider shadow-sm">
+            TAXA FIXA R$ 2,00
+          </span>
+          <span className="text-slate-300 text-[11px] sm:text-xs truncate">
+            <strong className="text-white font-black">{marketplaceSettings?.name || "Nova Delivery"}:</strong> O app da sua cidade • Tecnologia que conecta pessoas, comércios e oportunidades locais
+          </span>
+        </div>
+        <div className="flex items-center gap-3.5 sm:gap-4 shrink-0 text-[11px] sm:text-xs text-slate-300 font-medium">
+          <Link to="/" className="hover:text-white flex items-center gap-1.5 transition-colors">
+            <Globe size={13} className="text-slate-400" />
+            <span className="hidden sm:inline">Site Institucional</span>
+          </Link>
+          <span className="text-slate-700 hidden sm:inline">•</span>
+          <div className="flex items-center gap-1.5 hover:text-white transition-colors cursor-pointer">
+            <Smartphone size={13} className="text-[#FF3B00]" />
+            <PwaInstallPrompt compact />
+          </div>
+        </div>
+      </div>
+
+      {/* Brand & Address Header - Clean White High-Contrast */}
       {navView !== "profile" && (
-        <header className="bg-slate-950 text-white sticky top-0 z-[60] border-b border-slate-800/90 shadow-lg backdrop-blur-xl bg-slate-950/95">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-2.5">
+        <header className="bg-white border-b border-slate-100 sticky top-0 z-[60] shadow-sm">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
             {/* Brand Logo & Name */}
             <div className="flex items-center gap-3">
-              <Link to="/" className="flex items-center gap-2.5 group focus:outline-none shrink-0">
-                <div className="group-hover:scale-105 transition-transform duration-300">
-                  <KitchenFlowBrandLogo className="w-8 h-8 sm:w-9 sm:h-9 shadow-lg shadow-orange-500/25" />
+              <Link
+                to="/marketplace"
+                onClick={() => {
+                  setNavView("home");
+                  setActiveCategory("todos");
+                }}
+                className="flex items-center gap-2.5 group cursor-pointer"
+              >
+                <div className="w-10 h-10 rounded-2xl bg-[#FF3B00] text-white flex items-center justify-center font-black text-xl shadow-md shadow-orange-500/20 group-hover:scale-105 transition-transform">
+                  N
                 </div>
                 <div className="flex flex-col text-left">
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-display font-black text-lg sm:text-xl tracking-tight text-white group-hover:text-orange-400 transition-colors">
-                      Kitchen<span className="text-orange-500">Flow</span>
-                    </span>
-                    <span className="hidden sm:inline-flex items-center gap-1 bg-orange-500/15 border border-orange-500/30 text-orange-400 text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full">
-                      <Sparkles size={9} /> Marketplace
+                  <div className="flex items-center gap-1">
+                    <span className="font-display font-black text-xl tracking-tight text-slate-900 leading-none">
+                      Nova <span className="text-[#FF3B00]">Delivery</span>
                     </span>
                   </div>
-                  <span className="text-[9px] font-semibold text-slate-400 -mt-0.5 tracking-wider hidden md:block">
-                    Gastronomia Direto da Cozinha
+                  <span className="text-[11px] font-semibold text-slate-400 mt-0.5">
+                    O app da sua cidade
                   </span>
                 </div>
               </Link>
+
+              {/* City / Address Selector Chip */}
+              <button
+                onClick={() => setShowAddressModal(true)}
+                className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200/80 rounded-full transition-all text-left cursor-pointer group ml-1 sm:ml-3"
+              >
+                <MapPin size={14} className="text-[#FF3B00] shrink-0" strokeWidth={2.5} />
+                <span className="text-xs font-bold text-slate-700 group-hover:text-slate-900 truncate max-w-[120px] sm:max-w-[180px]">
+                  {customerCity || "Pradópolis"}
+                </span>
+                <ChevronDown size={13} className="text-slate-400 shrink-0" strokeWidth={2.5} />
+              </button>
             </div>
 
-            {/* Address Selector Center Pill */}
-            <div
-              className="flex-1 max-w-sm sm:max-w-md mx-1 sm:mx-3 bg-slate-900/90 hover:bg-slate-850 border border-slate-800 hover:border-orange-500/40 rounded-2xl px-3 py-2 cursor-pointer transition-all flex items-center justify-between group shadow-inner"
-              onClick={() => setShowAddressModal(true)}
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-xl bg-orange-500/15 text-orange-400 flex items-center justify-center shrink-0 border border-orange-500/25">
-                  <MapPin size={13} strokeWidth={2.5} className="animate-pulse" />
-                </div>
-                <div className="text-left truncate">
-                  <div className="flex items-center gap-1 text-[8px] sm:text-[9px] font-black text-orange-400 uppercase tracking-widest leading-none">
-                    <span>Entregar em</span>
-                    <ChevronDown size={9} strokeWidth={3} />
-                  </div>
-                  <p className="text-[11px] sm:text-xs font-bold text-slate-200 truncate mt-0.5">
-                    {currentAddress}
-                  </p>
-                </div>
-              </div>
-              <span className="relative flex h-2 w-2 shrink-0 ml-1.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-              </span>
-            </div>
-
-            {/* Quick Actions & Links */}
-            <div className="flex items-center gap-1.5 sm:gap-2">
-              <Link
-                to="/"
-                className="hidden lg:inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold text-slate-300 hover:text-white bg-slate-900 hover:bg-slate-800 border border-slate-800 transition-all"
+            {/* Right Controls */}
+            <div className="flex items-center gap-1.5 sm:gap-2.5">
+              {/* Sound Toggle */}
+              <button
+                onClick={toggleSound}
+                className={`w-9 h-9 rounded-full flex items-center justify-center border transition-all cursor-pointer ${
+                  soundEnabled
+                    ? "bg-slate-50 hover:bg-slate-100 border-slate-200/80 text-slate-700"
+                    : "bg-slate-100 border-slate-200 text-slate-400"
+                }`}
+                title={soundEnabled ? "Sons ativados" : "Sons desativados"}
               >
-                <span>Site Oficial</span>
-                <ArrowUpRight size={13} className="text-slate-400" />
-              </Link>
+                {soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
+              </button>
 
-              <Link
-                to="/login"
-                className="hidden md:inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider text-orange-400 bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/30 transition-all"
-              >
-                <Store size={13} />
-                <span>Sou Lojista</span>
-              </Link>
-
-              <PwaInstallPrompt compact />
-
-              <motion.button 
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={() => alert("Você não possui novas notificações no momento.")}
-                className="w-9 h-9 flex items-center justify-center text-slate-300 relative bg-slate-900 hover:bg-slate-800 rounded-xl transition-all border border-slate-800 shadow-sm"
+              {/* Notification Bell */}
+              <button
+                onClick={() => alert("Você tem 9+ notificações de promoções e cupons disponíveis na sua cidade!")}
+                className="w-9 h-9 rounded-full bg-slate-50 hover:bg-slate-100 border border-slate-200/80 flex items-center justify-center text-slate-700 relative transition-colors cursor-pointer"
+                title="Notificações"
               >
                 <Bell size={16} />
-                <div className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border border-slate-950 shadow-md animate-pulse" />
-              </motion.button>
+                <span className="absolute -top-1 -right-1 bg-[#FF3B00] text-white text-[9px] font-black px-1.5 py-0.2 rounded-full border-2 border-white shadow-sm leading-tight">
+                  9+
+                </span>
+              </button>
+
+              {/* User Profile Chip */}
+              <button
+                onClick={() => {
+                  setNavView("profile");
+                  navigate("/perfil");
+                }}
+                className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-slate-50 hover:bg-slate-100 border border-slate-200/80 transition-colors cursor-pointer"
+              >
+                <div className="w-6 h-6 rounded-full bg-[#FF3B00] text-white font-black text-xs flex items-center justify-center">
+                  {profile?.name?.[0]?.toUpperCase() || currentUser?.displayName?.[0]?.toUpperCase() || "A"}
+                </div>
+                <div className="text-left hidden md:block">
+                  <p className="text-xs font-black text-slate-800 leading-tight">
+                    {profile?.name || currentUser?.displayName || "Ana"}
+                  </p>
+                  <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider block leading-none">
+                    CLIENTE
+                  </span>
+                </div>
+              </button>
+
+              {/* Logout / Exit */}
+              <button
+                onClick={() => {
+                  if (window.confirm("Deseja sair da sua conta?")) {
+                    auth.signOut();
+                  }
+                }}
+                className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded-full transition-colors hidden sm:flex cursor-pointer"
+                title="Sair"
+              >
+                <LogOut size={16} />
+              </button>
+
+              {/* Sacola / Cart Button */}
+              <button
+                onClick={() => {
+                  if (activeOrders.length > 0) {
+                    setNavView("orders");
+                  } else {
+                    alert("Sua sacola está pronta para receber deliciosos pedidos!");
+                  }
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-[#FF3B00] hover:bg-[#E63500] text-white rounded-2xl font-black text-xs uppercase tracking-wider shadow-md shadow-orange-500/25 transition-all hover:scale-102 active:scale-98 cursor-pointer ml-1"
+              >
+                <ShoppingBag size={15} />
+                <span>Sacola</span>
+                {activeOrders.length > 0 && (
+                  <span className="bg-white text-[#FF3B00] text-[10px] font-black px-1.5 py-0.2 rounded-full">
+                    {activeOrders.length}
+                  </span>
+                )}
+              </button>
             </div>
           </div>
         </header>
@@ -2005,338 +2321,249 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       <main className="flex-1 w-full">
         {navView === "home" ? (
           <>
-            {/* Compact Hero Section with Fast Search */}
-            <div className="relative bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-white px-4 sm:px-6 pt-3.5 pb-4.5 sm:pt-4 sm:pb-5 border-b border-slate-800/80 overflow-hidden mb-4 sm:mb-5">
-              {/* Background ambient glow */}
-              <div className="absolute top-0 right-1/4 w-60 h-60 bg-orange-600/10 rounded-full blur-3xl pointer-events-none" />
-              <div className="absolute bottom-0 left-1/4 w-52 h-52 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+            {/* Hero Banner Carousel - Festival da Pizza Tradicional */}
+            <div className="px-4 sm:px-6 pt-4 pb-2">
+              <div className="relative rounded-3xl overflow-hidden shadow-xl border border-slate-800 bg-slate-950 text-white min-h-[220px] sm:min-h-[260px] md:min-h-[280px] flex items-center">
+                <img
+                  src="https://images.unsplash.com/photo-1513104890138-7c749659a591?q=80&w=1600&auto=format&fit=crop"
+                  alt="Festival da Pizza Tradicional"
+                  className="absolute inset-0 w-full h-full object-cover object-center opacity-85"
+                />
+                <div className="absolute inset-0 bg-gradient-to-r from-black/95 via-black/75 to-transparent" />
 
-              <div className="max-w-3xl mx-auto text-center relative z-10 space-y-2.5">
-                <div className="flex items-center justify-center gap-2">
-                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-orange-500/15 border border-orange-500/30 text-orange-400 text-[9px] sm:text-[10px] font-black uppercase tracking-wider">
-                    <Flame size={11} className="text-orange-500 animate-pulse" />
-                    <span>Rede Oficial KitchenFlow</span>
+                <div className="relative z-10 p-6 sm:p-8 max-w-xl text-left space-y-4">
+                  <div className="space-y-1">
+                    <h2 className="text-2xl sm:text-3.5xl font-black tracking-tight text-white leading-tight">
+                      Festival da Pizza Tradicional
+                    </h2>
+                    <p className="text-xs sm:text-sm font-semibold text-slate-300">
+                      2 Pizzas Grandes + Borda Recheada Grátis na Pizzaria do Zé
+                    </p>
                   </div>
-                  <span className="text-[10px] text-slate-400 font-semibold hidden sm:inline">
-                    • 0% taxa abusiva • Entrega direta
-                  </span>
-                </div>
 
-                <h1 className="text-lg sm:text-2xl md:text-2.5xl font-display font-black text-white tracking-tight leading-snug">
-                  Os melhores restaurantes da sua cidade{" "}
-                  <span className="text-transparent bg-clip-text bg-gradient-to-r from-orange-400 via-orange-500 to-amber-400">
-                    direto na sua mesa
-                  </span>
-                </h1>
-
-                {/* Compact Search Bar with Ambient Glow */}
-                <div className="pt-0.5 max-w-xl mx-auto">
-                  <div className="relative group">
-                    <div className="absolute inset-0 bg-orange-500/15 blur-lg rounded-xl opacity-40 group-focus-within:opacity-100 group-focus-within:scale-102 transition-all duration-300 pointer-events-none" />
-                    <Search
-                      className="absolute left-3.5 sm:left-4 top-1/2 -translate-y-1/2 text-orange-400 transition-transform duration-300 group-focus-within:scale-110"
-                      size={17}
-                      strokeWidth={2.5}
-                    />
-                    <input
-                      type="text"
-                      placeholder="Buscar pratos, lanches, pizzas ou restaurantes..."
-                      className="w-full bg-slate-900/95 backdrop-blur-md border border-slate-700/80 rounded-xl py-2.5 sm:py-3 pl-10 sm:pl-11 pr-10 text-xs sm:text-sm font-bold text-white focus:ring-3 focus:ring-orange-500/25 focus:border-orange-500 transition-all outline-none placeholder:text-slate-400 shadow-md"
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                    />
-                    {searchTerm && (
-                      <button
-                        onClick={() => setSearchTerm("")}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-white rounded-md hover:bg-slate-800 transition-colors"
-                      >
-                        <X size={14} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Quick Filters Pill Bar */}
-                <div className="flex items-center justify-center gap-1.5 pt-0.5 overflow-x-auto no-scrollbar pb-0.5">
-                  <span className="text-slate-400 flex items-center gap-1 font-black uppercase tracking-wider text-[9px] shrink-0 mr-0.5">
-                    <Sparkles size={10} className="text-orange-400" /> Populares:
-                  </span>
-                  {["Hambúrguer", "Pizza", "Japonesa", "Doces", "Marmita", "Bebidas"].map((tag) => (
+                  <div className="flex flex-wrap items-center gap-3 pt-1">
                     <button
-                      key={tag}
-                      onClick={() => setSearchTerm(tag)}
-                      className="px-2.5 py-0.5 rounded-full bg-slate-800/90 hover:bg-slate-750 hover:text-orange-300 border border-slate-700/70 text-slate-300 transition-all cursor-pointer text-[10px] font-bold shrink-0 hover:border-orange-500/40"
+                      onClick={() => {
+                        const pizzaTenant =
+                          filteredTenants.find(
+                            (t) =>
+                              t.category?.toLowerCase().includes("pizza") ||
+                              t.name.toLowerCase().includes("pizza")
+                          ) || filteredTenants[0];
+                        if (pizzaTenant) handleStoreClick(pizzaTenant);
+                      }}
+                      className="px-5 py-2.5 bg-[#FF3B00] hover:bg-[#E63500] text-white rounded-2xl font-black text-xs uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-orange-500/30 transition-all cursor-pointer hover:scale-105"
                     >
-                      {tag}
+                      <span>Pedir com Desconto</span>
+                      <ArrowRight size={14} strokeWidth={2.5} />
                     </button>
-                  ))}
-                </div>
-              </div>
-            </div>
 
-            {/* Premium Interactive Banners & Highlights */}
-            <div className="px-4 sm:px-6 mb-8 space-y-2.5">
-              <div className="flex items-center justify-between px-1">
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-orange-500 animate-ping" />
-                  <h3 className="text-[10px] sm:text-[11px] font-black text-slate-700 uppercase tracking-widest flex items-center gap-1.5">
-                    Destaques & Promoções da Rede
-                  </h3>
-                </div>
-                {activePromotionId && (
-                  <button
-                    onClick={() => setActivePromotionId(null)}
-                    className="text-[9px] font-black text-orange-600 bg-orange-50 hover:bg-orange-100 border border-orange-200/80 px-2 py-0.5 rounded-md uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer"
-                  >
-                    Ver Tudo <X size={10} />
-                  </button>
-                )}
-              </div>
-
-              <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2 snap-x snap-mandatory">
-                {/* Main Banner Card */}
-                <div
-                  className={`relative h-36 sm:h-40 md:h-44 min-w-[280px] sm:min-w-[360px] md:min-w-[420px] rounded-2xl sm:rounded-3xl overflow-hidden group shadow-lg hover:shadow-xl flex-shrink-0 transition-all cursor-pointer snap-start border ${
-                    !activePromotionId 
-                      ? "border-orange-500/50 ring-2 ring-orange-500/20" 
-                      : "border-slate-800/80 opacity-95 hover:opacity-100 hover:border-orange-500/40"
-                  }`}
-                  onClick={() => setActivePromotionId(null)}
-                >
-                  <img
-                    src={
-                      marketplaceSettings?.bannerUrl ||
-                      "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?q=80&w=1000&auto=format&fit=crop"
-                    }
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
-                    alt="Restaurantes Oficiais"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t sm:bg-gradient-to-r from-slate-950/95 via-slate-950/70 to-black/30" />
-                  
-                  <div className="absolute inset-0 p-4 sm:p-6 flex flex-col justify-between text-left">
-                    <div className="flex items-center gap-2">
-                      <span className="bg-gradient-to-r from-orange-500 to-amber-500 text-white text-[8px] sm:text-[9px] font-black uppercase tracking-[0.2em] px-2.5 py-1 rounded-full shadow-md">
-                        🔥 Oficial KitchenFlow
+                    <button
+                      onClick={() => handleCopyCoupon("PIZZANOFORNO")}
+                      className="px-4 py-2.5 bg-black/60 hover:bg-black/80 backdrop-blur-md border border-white/20 text-white rounded-2xl font-bold text-xs flex items-center gap-2 transition-all cursor-pointer"
+                    >
+                      <Ticket size={14} className="text-amber-400" />
+                      <span>
+                        Cupom:{" "}
+                        <strong className="text-amber-300 font-mono tracking-wider">
+                          PIZZANOFORNO
+                        </strong>
                       </span>
-                      <span className="bg-black/50 backdrop-blur-md border border-white/20 text-white text-[8px] sm:text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md">
-                        {tenants.length} Restaurantes
-                      </span>
-                    </div>
-
-                    <div>
-                      <h2 className="text-base sm:text-xl md:text-2.5xl font-black text-white tracking-tight leading-tight group-hover:text-orange-300 transition-colors">
-                        Explore Todos os Cardápios
-                      </h2>
-                      <p className="text-slate-300 text-[10px] sm:text-[11px] font-semibold mt-0.5 line-clamp-1">
-                        Pizzas, burgers, gastronomia japonesa e sobremesas com pedido direto
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 text-orange-400 text-[9px] sm:text-[10px] font-black uppercase tracking-wider">
-                      <span>Ver cardápios</span>
-                      <ChevronRight size={12} strokeWidth={3} className="group-hover:translate-x-1 transition-transform" />
-                    </div>
+                      {copiedCoupon === "PIZZANOFORNO" ? (
+                        <Check size={14} className="text-emerald-400 animate-bounce" />
+                      ) : (
+                        <Copy size={13} className="text-slate-300" />
+                      )}
+                    </button>
                   </div>
                 </div>
 
-                {/* Dynamic Promotions or Curated Fallbacks */}
-                {marketplaceSettings?.promotions && marketplaceSettings.promotions.filter((p) => p.active).length > 0 ? (
-                  marketplaceSettings.promotions
-                    .filter((p) => p.active)
-                    .map((promo) => (
-                      <div
-                        key={promo.id}
-                        className={`relative h-36 sm:h-40 md:h-44 min-w-[280px] sm:min-w-[360px] md:min-w-[420px] rounded-2xl sm:rounded-3xl overflow-hidden group shadow-lg hover:shadow-xl flex-shrink-0 cursor-pointer snap-start transition-all border ${
-                          activePromotionId === promo.id
-                            ? "border-orange-500 ring-2 ring-orange-500/30"
-                            : "border-slate-800/80 opacity-95 hover:opacity-100 hover:border-orange-500/40"
-                        }`}
-                        onClick={() => setActivePromotionId(promo.id)}
-                      >
-                        <img
-                          src={
-                            promo.bannerUrl ||
-                            marketplaceSettings?.bannerUrl ||
-                            "https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?q=80&w=1000&auto=format&fit=crop"
-                          }
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
-                          alt={promo.title}
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t sm:bg-gradient-to-r from-slate-950/95 via-slate-950/70 to-black/30" />
-                        
-                        <div className="absolute inset-0 p-4 sm:p-6 flex flex-col justify-between text-left">
-                          <div className="flex items-center gap-2">
-                            <span className="bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[8px] sm:text-[9px] font-black uppercase tracking-[0.2em] px-2.5 py-1 rounded-full shadow-md">
-                              ⚡ Imperdível
-                            </span>
-                            <span className="bg-black/50 backdrop-blur-md border border-white/20 text-white text-[8px] sm:text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md">
-                              {promo.participatingTenantIds?.length || 0} Lojas
-                            </span>
-                          </div>
-
-                          <div>
-                            <h2 className="text-base sm:text-xl md:text-2.5xl font-black text-white tracking-tight leading-tight group-hover:text-orange-300 transition-colors">
-                              {promo.title}
-                            </h2>
-                            <p className="text-slate-300 text-[10px] sm:text-[11px] font-semibold mt-0.5 line-clamp-1">
-                              Toque para filtrar estabelecimentos participantes
-                            </p>
-                          </div>
-
-                          <div className="flex items-center gap-1.5 text-amber-400 text-[9px] sm:text-[10px] font-black uppercase tracking-wider">
-                            <span>{activePromotionId === promo.id ? "Filtro Ativo" : "Filtrar por esta oferta"}</span>
-                            <ChevronRight size={12} strokeWidth={3} className="group-hover:translate-x-1 transition-transform" />
-                          </div>
-                        </div>
-
-                        {activePromotionId === promo.id && (
-                          <div className="absolute top-3.5 right-3.5 bg-orange-500 text-white p-1.5 rounded-full shadow-lg border border-white/30">
-                            <CheckCircle2 size={16} strokeWidth={3} />
-                          </div>
-                        )}
-                      </div>
-                    ))
-                ) : (
-                  <>
-                    {/* Curated Promo 1: Combos & Ofertas */}
-                    <div
-                      className="relative h-36 sm:h-40 md:h-44 min-w-[280px] sm:min-w-[360px] md:min-w-[420px] rounded-2xl sm:rounded-3xl overflow-hidden group shadow-lg hover:shadow-xl flex-shrink-0 cursor-pointer snap-start transition-all border border-slate-800/80 hover:border-orange-500/40"
-                      onClick={() => setSearchTerm("Combo")}
-                    >
-                      <img
-                        src="https://images.unsplash.com/photo-1568901346375-23c9450c58cd?q=80&w=1000&auto=format&fit=crop"
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
-                        alt="Combos Especiais"
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t sm:bg-gradient-to-r from-slate-950/95 via-slate-950/70 to-black/30" />
-                      <div className="absolute inset-0 p-4 sm:p-6 flex flex-col justify-between text-left">
-                        <div className="flex items-center gap-2">
-                          <span className="bg-gradient-to-r from-rose-500 to-orange-500 text-white text-[8px] sm:text-[9px] font-black uppercase tracking-[0.2em] px-2.5 py-1 rounded-full shadow-md">
-                            🍔 Combos do Dia
-                          </span>
-                          <span className="bg-black/50 backdrop-blur-md border border-white/20 text-white text-[8px] sm:text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md">
-                            Desconto Especial
-                          </span>
-                        </div>
-                        <div>
-                          <h2 className="text-base sm:text-xl md:text-2.5xl font-black text-white tracking-tight leading-tight group-hover:text-orange-300 transition-colors">
-                            Combos com Acompanhamentos
-                          </h2>
-                          <p className="text-slate-300 text-[10px] sm:text-[11px] font-semibold mt-0.5">
-                            Hamburguerias e pizzarias artesanais da sua região
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-1.5 text-orange-400 text-[9px] sm:text-[10px] font-black uppercase tracking-wider">
-                          <span>Explorar combos</span>
-                          <ChevronRight size={12} strokeWidth={3} className="group-hover:translate-x-1 transition-transform" />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Curated Promo 2: Frete Grátis */}
-                    <div
-                      className="relative h-36 sm:h-40 md:h-44 min-w-[280px] sm:min-w-[360px] md:min-w-[420px] rounded-2xl sm:rounded-3xl overflow-hidden group shadow-lg hover:shadow-xl flex-shrink-0 cursor-pointer snap-start transition-all border border-slate-800/80 hover:border-emerald-500/40"
-                      onClick={() => setSearchTerm("")}
-                    >
-                      <img
-                        src="https://images.unsplash.com/photo-1513104890138-7c749659a591?q=80&w=1000&auto=format&fit=crop"
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
-                        alt="Pizzas & Massas"
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t sm:bg-gradient-to-r from-slate-950/95 via-slate-950/70 to-black/30" />
-                      <div className="absolute inset-0 p-4 sm:p-6 flex flex-col justify-between text-left">
-                        <div className="flex items-center gap-2">
-                          <span className="bg-gradient-to-r from-emerald-500 to-teal-500 text-white text-[8px] sm:text-[9px] font-black uppercase tracking-[0.2em] px-2.5 py-1 rounded-full shadow-md">
-                            🛵 Frete Facilitado
-                          </span>
-                          <span className="bg-black/50 backdrop-blur-md border border-white/20 text-white text-[8px] sm:text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md">
-                            Entrega Rápida
-                          </span>
-                        </div>
-                        <div>
-                          <h2 className="text-base sm:text-xl md:text-2.5xl font-black text-white tracking-tight leading-tight group-hover:text-emerald-300 transition-colors">
-                            Pizzas & Fornos a Lenha
-                          </h2>
-                          <p className="text-slate-300 text-[10px] sm:text-[11px] font-semibold mt-0.5">
-                            Receba quentinho direto na sua casa em poucos minutos
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-1.5 text-emerald-400 text-[9px] sm:text-[10px] font-black uppercase tracking-wider">
-                          <span>Ver pizzarias</span>
-                          <ChevronRight size={12} strokeWidth={3} className="group-hover:translate-x-1 transition-transform" />
-                        </div>
-                      </div>
-                    </div>
-                  </>
-                )}
+                {/* Carousel dots */}
+                <div className="absolute bottom-4 right-6 flex items-center gap-1.5 z-10">
+                  <span className="w-4 h-1.5 rounded-full bg-amber-400 shadow-sm" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-white/40" />
+                </div>
               </div>
             </div>
 
-            {/* Categories Section - Highly Visual Squircles */}
-            <div className="px-6 mb-10 overflow-x-auto no-scrollbar">
-              <motion.div
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                className="flex gap-4 sm:gap-6 min-w-full pb-3"
-              >
-                {dynamicCategories.map((cat, index) => {
+            {/* Dual Promo Cards Row */}
+            <div className="px-4 sm:px-6 py-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Card 1: R$ 10 OFF no 1º Pedido */}
+              <div className="rounded-3xl p-5 bg-gradient-to-r from-[#FF3B00] to-[#FF5500] text-white shadow-lg flex items-center justify-between gap-4 text-left relative overflow-hidden">
+                <div className="space-y-1.5 z-10">
+                  <span className="inline-block px-2.5 py-0.5 rounded-full bg-black/25 text-white text-[9px] font-black uppercase tracking-wider">
+                    PRIMEIRO PEDIDO
+                  </span>
+                  <h3 className="text-lg sm:text-xl font-black text-white leading-snug">
+                    R$ 10 OFF no 1º Pedido
+                  </h3>
+                  <p className="text-xs text-white/90 font-medium">
+                    Use o cupom em qualquer restaurante de {customerCity || "Pradópolis"}
+                  </p>
+                </div>
+                <button
+                  onClick={() => handleCopyCoupon("NOVA10")}
+                  className="px-4 py-2.5 bg-white text-[#FF3B00] hover:bg-slate-50 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-md shrink-0 transition-transform active:scale-95 cursor-pointer z-10"
+                >
+                  <span>NOVA10</span>
+                  {copiedCoupon === "NOVA10" ? (
+                    <Check size={13} className="text-emerald-600" />
+                  ) : (
+                    <Copy size={13} />
+                  )}
+                </button>
+              </div>
+
+              {/* Card 2: Entrega Grátis na Sua Região */}
+              <div className="rounded-3xl p-5 bg-[#0F172A] text-white shadow-lg border border-slate-800 flex items-center justify-between gap-4 text-left relative overflow-hidden">
+                <div className="space-y-1.5 z-10">
+                  <span className="inline-block px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[9px] font-black uppercase tracking-wider border border-emerald-500/30">
+                    FRETE GRÁTIS
+                  </span>
+                  <h3 className="text-lg sm:text-xl font-black text-white leading-snug">
+                    Entrega Grátis na Sua Região
+                  </h3>
+                  <p className="text-xs text-slate-400 font-medium">
+                    Lojas participantes com taxa de entrega zerada
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    storeListRef.current?.scrollIntoView({ behavior: "smooth" });
+                  }}
+                  className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-black text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-md shrink-0 transition-transform active:scale-95 cursor-pointer z-10"
+                >
+                  <Leaf size={14} />
+                  <span>Ver Lojas</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Categorias & Verticais (10) */}
+            <div className="px-4 sm:px-6 pt-4 pb-2 text-left">
+              <div className="mb-3">
+                <h2 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900">
+                  Categorias & Verticais{" "}
+                  <span className="text-slate-400 font-bold text-base">
+                    ({catalogCategories.length})
+                  </span>
+                </h2>
+                <p className="text-xs text-slate-500 font-medium mt-0.5">
+                  Encontre tudo o que precisa em poucos toques
+                </p>
+              </div>
+
+              <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">
+                {catalogCategories.map((cat) => {
                   const isSelected = activeCategory === cat.id;
                   return (
-                    <motion.button
+                    <button
                       key={cat.id}
-                      initial={{ opacity: 0, scale: 0.8, y: 20 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      transition={{ delay: index * 0.04 }}
-                      className="flex flex-col items-center gap-2.5 group shrink-0 relative focus:outline-none cursor-pointer"
                       onClick={() => setActiveCategory(cat.id)}
+                      className={`min-w-[110px] sm:min-w-[125px] p-3.5 rounded-2xl border transition-all flex flex-col items-center justify-center text-center cursor-pointer shrink-0 ${
+                        isSelected
+                          ? "bg-[#0F172A] text-white border-slate-900 shadow-md scale-102"
+                          : "bg-white hover:bg-slate-50 text-slate-700 border-slate-200/80 shadow-sm"
+                      }`}
                     >
-                      <div
-                        className={`w-18 h-18 sm:w-20 sm:h-20 rounded-2xl sm:rounded-[1.75rem] transition-all duration-300 flex items-center justify-center relative backdrop-blur-sm active:scale-95 ${
-                          isSelected
-                            ? "bg-gradient-to-tr from-orange-500 to-amber-500 text-white border-2 border-orange-500 shadow-xl shadow-orange-500/30 scale-105"
-                            : `${cat.bg} border border-slate-200/80 hover:border-orange-500/40 hover:scale-105 hover:bg-white shadow-[0_4px_20px_rgb(0,0,0,0.03)]`
+                      <div className="text-2xl sm:text-3xl mb-1.5">{cat.emoji}</div>
+                      <span
+                        className={`text-xs font-black truncate max-w-full ${
+                          isSelected ? "text-white" : "text-slate-800"
                         }`}
                       >
-                        {cat.img ? (
-                          <img
-                            src={cat.img}
-                            alt={cat.label}
-                            className={`w-10 h-10 sm:w-11 sm:h-11 object-contain transition-all duration-300 ${
-                              isSelected
-                                ? "scale-110 rotate-[4deg] brightness-110 filter drop-shadow-[0_4px_10px_rgba(255,255,255,0.2)]"
-                                : "opacity-90 group-hover:opacity-100 group-hover:scale-110"
-                            }`}
-                          />
-                        ) : (
-                          <cat.icon
-                            size={26}
-                            className={`transition-all duration-300 ${isSelected ? `text-white scale-110` : `${cat.color} opacity-90 group-hover:scale-110`}`}
-                            strokeWidth={2.5}
-                          />
-                        )}
-                      </div>
-                      <div className="flex flex-col items-center gap-1">
-                        <span
-                          className={`text-[10px] sm:text-[11px] font-black uppercase tracking-[0.14em] transition-colors duration-200 ${isSelected ? "text-orange-600 font-black" : "text-slate-600 group-hover:text-slate-900 font-bold"}`}
-                        >
-                          {cat.label}
-                        </span>
-                        {isSelected && (
-                          <motion.div
-                            layoutId="activeCategoryDot"
-                            className="w-1.5 h-1.5 bg-orange-500 rounded-full shadow-lg shadow-orange-500/50"
-                            transition={{
-                              type: "spring",
-                              stiffness: 300,
-                              damping: 30,
-                            }}
-                          />
-                        )}
-                      </div>
-                    </motion.button>
+                        {cat.label}
+                      </span>
+                      <span
+                        className={`text-[10px] font-medium truncate max-w-full mt-0.5 ${
+                          isSelected ? "text-slate-300" : "text-slate-400"
+                        }`}
+                      >
+                        {cat.subtitle}
+                      </span>
+                    </button>
                   );
                 })}
-              </motion.div>
+              </div>
+            </div>
+
+            {/* 🔥 Mais Pedidos na Cidade do Cliente */}
+            <div className="px-4 sm:px-6 pt-4 pb-4 text-left">
+              <div className="mb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-2">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-orange-500/10 text-[#FF3B00] text-[10px] font-black uppercase tracking-wider border border-orange-500/20">
+                      🔥 DESTAQUES DA CIDADE
+                    </span>
+                    <span className="text-xs font-bold text-slate-400">
+                      • {customerCity || "Pradópolis"}
+                    </span>
+                  </div>
+                  <h2 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 mt-1">
+                    Mais Pedidos da Cidade de {customerCity || "Pradópolis"}
+                  </h2>
+                  <p className="text-xs text-slate-500 font-medium mt-0.5">
+                    Os pratos, lanches e produtos favoritos dos moradores de {customerCity || "Pradópolis"}
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => setShowAddressModal(true)}
+                  className="text-xs font-bold text-[#FF3B00] hover:underline flex items-center gap-1 self-start sm:self-auto cursor-pointer"
+                >
+                  <MapPin size={13} />
+                  <span>Trocar cidade ({customerCity || "Pradópolis"})</span>
+                </button>
+              </div>
+
+              <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
+                {popularFeaturedItems.map((item, idx) => (
+                  <div
+                    key={idx}
+                    onClick={() => {
+                      const tenant =
+                        (item.tenantId ? tenants.find((t) => t.id === item.tenantId) : null) ||
+                        filteredTenants.find((t) =>
+                          t.name.toLowerCase().includes(item.storeName.toLowerCase())
+                        ) || filteredTenants[0] || tenants[0];
+                      if (tenant) handleStoreClick(tenant);
+                    }}
+                    className="min-w-[210px] sm:min-w-[240px] rounded-3xl overflow-hidden border border-slate-200/80 bg-white shadow-sm hover:shadow-md transition-all cursor-pointer shrink-0 group flex flex-col"
+                  >
+                    <div className="relative h-32 sm:h-36 overflow-hidden">
+                      <img
+                        src={item.image}
+                        alt={item.name}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                      />
+                      <span className="absolute top-2.5 left-2.5 px-2 py-0.5 bg-black/80 backdrop-blur-sm text-white text-[9px] font-black uppercase tracking-wider rounded-md">
+                        {item.badge}
+                      </span>
+                      <span className="absolute bottom-2.5 right-2.5 px-2 py-0.5 bg-white/90 backdrop-blur-sm text-slate-800 text-[9px] font-bold rounded-md shadow-sm">
+                        📍 {customerCity || "Pradópolis"}
+                      </span>
+                    </div>
+                    <div className="p-3.5 flex-1 flex flex-col justify-between text-left">
+                      <div>
+                        <p className="text-[10px] font-bold text-[#FF3B00] uppercase tracking-wider truncate">
+                          {item.storeName}
+                        </p>
+                        <h4 className="text-xs sm:text-sm font-black text-slate-900 line-clamp-1 group-hover:text-[#FF3B00] transition-colors">
+                          {item.name}
+                        </h4>
+                      </div>
+                      <div className="mt-2.5 flex items-center justify-between">
+                        <span className="text-xs sm:text-sm font-black text-slate-900">
+                          R$ {item.price.toFixed(2).replace(".", ",")}
+                        </span>
+                        <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+                          Pedir
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* Real-time Tracking Widget */}
@@ -3042,9 +3269,14 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       </main>
 
       {/* Floating Modern Bottom Navigation Dock */}
-      <nav className="fixed bottom-0 inset-x-0 bg-slate-950/95 backdrop-blur-2xl border-t border-slate-800 px-4 py-3 sm:py-3.5 z-50 flex justify-around items-center max-w-7xl mx-auto shadow-2xl">
+      <nav className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-2xl border-t border-slate-200/90 px-4 py-2.5 sm:py-3 z-50 flex justify-around items-center max-w-7xl mx-auto shadow-2xl">
+        {/* Início */}
         <button
-          className={`flex flex-col items-center gap-1 transition-all relative px-4 py-1.5 rounded-xl cursor-pointer ${navView === "home" ? "text-orange-400 bg-orange-500/10 border border-orange-500/20" : "text-slate-400 hover:text-slate-200"}`}
+          className={`flex flex-col items-center gap-1 transition-all relative px-3 py-1 rounded-xl cursor-pointer ${
+            navView === "home"
+              ? "text-[#FF3B00] font-black"
+              : "text-slate-500 hover:text-slate-800 font-semibold"
+          }`}
           onClick={() => {
             setNavView("home");
             setActiveCategory("todos");
@@ -3052,18 +3284,38 @@ const Marketplace: React.FC<MarketplaceProps> = ({
           }}
         >
           <Home size={20} strokeWidth={navView === "home" ? 2.5 : 2} />
-          <span className="text-[9px] font-black uppercase tracking-tight">
+          <span className="text-[10px] tracking-tight">
             Início
           </span>
           {navView === "home" && (
             <motion.div
               layoutId="nav-pill"
-              className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-orange-500 rounded-full shadow-[0_0_8px_rgba(255,79,24,0.8)]"
+              className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-[#FF3B00] rounded-full shadow-[0_0_8px_rgba(255,59,0,0.8)]"
             />
           )}
         </button>
+
+        {/* Explorar */}
         <button
-          className={`flex flex-col items-center gap-1 transition-all relative px-4 py-1.5 rounded-xl cursor-pointer ${navView === "orders" ? "text-orange-400 bg-orange-500/10 border border-orange-500/20" : "text-slate-400 hover:text-slate-200"}`}
+          className="flex flex-col items-center gap-1 transition-all relative px-3 py-1 rounded-xl cursor-pointer text-slate-500 hover:text-slate-800 font-semibold"
+          onClick={() => {
+            setNavView("home");
+            storeListRef.current?.scrollIntoView({ behavior: "smooth" });
+          }}
+        >
+          <Compass size={20} strokeWidth={2} />
+          <span className="text-[10px] tracking-tight">
+            Explorar
+          </span>
+        </button>
+
+        {/* Pedidos */}
+        <button
+          className={`flex flex-col items-center gap-1 transition-all relative px-3 py-1 rounded-xl cursor-pointer ${
+            navView === "orders"
+              ? "text-[#FF3B00] font-black"
+              : "text-slate-500 hover:text-slate-800 font-semibold"
+          }`}
           onClick={() => {
             setNavView("orders");
             navigate("/marketplace");
@@ -3073,53 +3325,75 @@ const Marketplace: React.FC<MarketplaceProps> = ({
             size={20}
             strokeWidth={navView === "orders" ? 2.5 : 2}
           />
-          <span className="text-[9px] font-black uppercase tracking-tight">
+          <span className="text-[10px] tracking-tight">
             Pedidos
           </span>
+          {activeOrders.length > 0 && (
+            <span className="absolute top-0 right-2 bg-[#FF3B00] text-white text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center border-2 border-white">
+              {activeOrders.length}
+            </span>
+          )}
           {navView === "orders" && (
             <motion.div
               layoutId="nav-pill"
-              className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-orange-500 rounded-full shadow-[0_0_8px_rgba(255,79,24,0.8)]"
+              className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-[#FF3B00] rounded-full shadow-[0_0_8px_rgba(255,59,0,0.8)]"
             />
           )}
         </button>
+
+        {/* Favoritos */}
         <button
-          className={`flex flex-col items-center gap-1 transition-all relative px-4 py-1.5 rounded-xl cursor-pointer ${navView === "favorites" ? "text-orange-400 bg-orange-500/10 border border-orange-500/20" : "text-slate-400 hover:text-slate-200"}`}
+          className={`flex flex-col items-center gap-1 transition-all relative px-3 py-1 rounded-xl cursor-pointer ${
+            navView === "favorites"
+              ? "text-[#FF3B00] font-black"
+              : "text-slate-500 hover:text-slate-800 font-semibold"
+          }`}
           onClick={() => {
             setNavView("favorites");
             navigate("/marketplace");
           }}
         >
-          <Heart
-            size={20}
-            strokeWidth={navView === "favorites" ? 2.5 : 2}
-            fill={navView === "favorites" ? "currentColor" : "none"}
-          />
-          <span className="text-[9px] font-black uppercase tracking-tight">
+          <div className="relative">
+            <Heart
+              size={20}
+              strokeWidth={navView === "favorites" ? 2.5 : 2}
+              fill={navView === "favorites" ? "currentColor" : "none"}
+            />
+            <span className="absolute -top-1.5 -right-2.5 bg-[#FF3B00] text-white text-[9px] font-black px-1 rounded-full border border-white">
+              {favorites.length > 0 ? favorites.length : 2}
+            </span>
+          </div>
+          <span className="text-[10px] tracking-tight">
             Favoritos
           </span>
           {navView === "favorites" && (
             <motion.div
               layoutId="nav-pill"
-              className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-orange-500 rounded-full shadow-[0_0_8px_rgba(255,79,24,0.8)]"
+              className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-[#FF3B00] rounded-full shadow-[0_0_8px_rgba(255,59,0,0.8)]"
             />
           )}
         </button>
+
+        {/* Perfil / Ana */}
         <button
-          className={`flex flex-col items-center gap-1 transition-all relative px-4 py-1.5 rounded-xl cursor-pointer ${navView === "profile" ? "text-orange-400 bg-orange-500/10 border border-orange-500/20" : "text-slate-400 hover:text-slate-200"}`}
+          className={`flex flex-col items-center gap-1 transition-all relative px-3 py-1 rounded-xl cursor-pointer ${
+            navView === "profile"
+              ? "text-[#FF3B00] font-black"
+              : "text-slate-500 hover:text-slate-800 font-semibold"
+          }`}
           onClick={() => {
             setNavView("profile");
             navigate("/perfil");
           }}
         >
           <UserIcon size={20} strokeWidth={navView === "profile" ? 2.5 : 2} />
-          <span className="text-[9px] font-black uppercase tracking-tight">
-            Perfil
+          <span className="text-[10px] tracking-tight">
+            {profile?.name || currentUser?.displayName || "Ana"}
           </span>
           {navView === "profile" && (
             <motion.div
               layoutId="nav-pill"
-              className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-orange-500 rounded-full shadow-[0_0_8px_rgba(255,79,24,0.8)]"
+              className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-[#FF3B00] rounded-full shadow-[0_0_8px_rgba(255,59,0,0.8)]"
             />
           )}
         </button>
@@ -3304,23 +3578,73 @@ const Marketplace: React.FC<MarketplaceProps> = ({
             </div>
 
             <div className="p-6 space-y-5 text-left">
+              {/* Quick Regional Cities Selector */}
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2">
+                  Cidades atendidas na região
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    "Pradópolis - SP",
+                    "Serra Negra - SP",
+                    "Ribeirão Preto - SP",
+                    "Dumont - SP",
+                    "Barrinha - SP",
+                    "Sertãozinho - SP"
+                  ].map((cityOption) => {
+                    const isSelected =
+                      customerCity &&
+                      cityOption.toLowerCase().includes(customerCity.toLowerCase());
+                    return (
+                      <button
+                        key={cityOption}
+                        type="button"
+                        onClick={() => {
+                          const newAddr = `Centro - ${cityOption}`;
+                          handleUpdateAddress(newAddr);
+                          setShowAddressModal(false);
+                        }}
+                        className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                          isSelected
+                            ? "bg-[#FF3B00] text-white shadow-sm"
+                            : "bg-slate-100 hover:bg-slate-200 text-slate-700"
+                        }`}
+                      >
+                        <span>📍</span>
+                        <span>{cityOption.split(" - ")[0]}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div className="space-y-3">
                 {[
                   {
                     icon: Home,
-                    label: "Casa",
-                    address: "Av. Paulista, 1000 - São Paulo",
+                    label: "Casa (Pradópolis)",
+                    address: "Rua 7 de Setembro, 120 - Centro, Pradópolis - SP",
                   },
                   {
                     icon: Store,
-                    label: "Trabalho",
-                    address: "Av. Brigadeiro Faria Lima, 2000",
+                    label: "Trabalho (Pradópolis)",
+                    address: "Av. Monte Castelo, 450 - Pradópolis - SP",
+                  },
+                  {
+                    icon: Home,
+                    label: "Serra Negra",
+                    address: "Rua Cel. Pedro Penteado, 300 - Serra Negra - SP",
+                  },
+                  {
+                    icon: Store,
+                    label: "Ribeirão Preto",
+                    address: "Av. Independência, 1500 - Ribeirão Preto - SP",
                   },
                 ].map((loc, i) => (
                   <button
                     key={i}
                     onClick={() => {
-                      setCurrentAddress(loc.address);
+                      handleUpdateAddress(loc.address);
                       setShowAddressModal(false);
                     }}
                     className={`w-full p-4 rounded-2xl border flex items-center gap-3.5 transition-all active:scale-[0.98] cursor-pointer ${currentAddress === loc.address ? "bg-orange-500/5 border-orange-500" : "bg-slate-50 border-slate-200 hover:bg-slate-100"}`}
@@ -3397,7 +3721,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                     <div className="flex-1">
                       <input
                         type="text"
-                        placeholder="Digite seu CEP (Ex: 01310-100)"
+                        placeholder="Digite seu CEP (Ex: 14850-000)"
                         maxLength={9}
                         value={cepInput}
                         onChange={(e) => {
@@ -3466,7 +3790,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                     <input
                       type="text"
                       className="w-full px-5 py-4.5 bg-slate-100 border border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-brand-primary focus:bg-white transition-all pr-12"
-                      placeholder="Buscar por endereço e número..."
+                      placeholder="Buscar por endereço, cidade e número..."
                       value={tempAddress}
                       onChange={(e) => setTempAddress(e.target.value)}
                     />
@@ -3481,7 +3805,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 <button
                   onClick={() => {
                     if (tempAddress) {
-                      setCurrentAddress(tempAddress);
+                      handleUpdateAddress(tempAddress);
                       setShowAddressModal(false);
                     }
                   }}

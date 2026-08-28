@@ -1691,6 +1691,24 @@ const Tables: React.FC<TablesProps> = memo(
         discount: discount || 0,
       });
 
+      if (pdvEditOrder.tableNumber && !isCounterContext && onUpdateTable) {
+        onUpdateTable(
+          pdvEditOrder.tableNumber,
+          updatedItems,
+          "occupied",
+          false,
+          undefined,
+          {
+            customerName: customerName || undefined,
+            customerPhone: customerPhone || undefined,
+            customerAddress: deliveryAddress || undefined,
+            deliveryFee: isDeliveryOrder ? deliveryFeeVal : undefined,
+            customerId: selectedCustomerId || undefined,
+            isDelivery: isDeliveryOrder,
+          }
+        );
+      }
+
       if (showToast) {
         showToast(
           `Pedido ${formatOrderNumber(pdvEditOrder)} atualizado com sucesso!`,

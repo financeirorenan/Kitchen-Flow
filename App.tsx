@@ -3151,6 +3151,88 @@ const App: React.FC = () => {
     const effectiveDeliveryFee = customerData?.deliveryFee !== undefined ? customerData.deliveryFee : (tableInfo?.deliveryFee || 0);
     const effectiveIsDelivery = customerData?.isDelivery !== undefined ? customerData.isDelivery : (isCounter && !!tableInfo?.isDelivery);
 
+    // =========================================================================
+    // 0. VERIFICAÇÃO EXPLÍCITA DE EDIÇÃO DE PEDIDO (pdvEditOrder ou ID de pedido existente)
+    // Se o usuário está editando um pedido previamente lançado, NÃO criamos novo ticket/pedido!
+    // Atualizamos o pedido existente diretamente com os novos/alterados itens.
+    // =========================================================================
+    const existingOrderBeingEdited = pdvEditOrder 
+      ? (orders.find(o => o.id === pdvEditOrder.id || o.docId === pdvEditOrder.id) || pdvEditOrder)
+      : orders.find(o => o.id === tableId || o.docId === tableId);
+
+    if (existingOrderBeingEdited) {
+      const existingItems = [...(existingOrderBeingEdited.items || [])];
+      
+      // Incorporar novos itens ou atualizar existentes
+      items.forEach(newItem => {
+        const existingIndex = existingItems.findIndex(i => 
+          i.id === newItem.id || 
+          (i.productId === newItem.productId && i.name === newItem.name && (i.observation || '') === (newItem.observation || '') && !i.sentToKitchen)
+        );
+        if (existingIndex !== -1) {
+          existingItems[existingIndex] = { ...existingItems[existingIndex], ...newItem, sentToKitchen: true };
+        } else {
+          existingItems.push({ ...newItem, sentToKitchen: true });
+        }
+      });
+
+      const updatedDeliveryFee = effectiveDeliveryFee !== undefined ? effectiveDeliveryFee : (existingOrderBeingEdited.deliveryFee || 0);
+      const newItemsTotal = existingItems.reduce((acc, i) => acc + (i.price * i.quantity), 0);
+      const finalOrderTotal = newItemsTotal + updatedDeliveryFee + (existingOrderBeingEdited.additionalFee || 0) - (existingOrderBeingEdited.discount || 0);
+
+      const updates: Partial<Order> = {
+        items: existingItems,
+        total: finalOrderTotal,
+        updatedAt: now,
+        customerName: effectiveCustomerName || existingOrderBeingEdited.customerName,
+        customerPhone: effectiveCustomerPhone || existingOrderBeingEdited.customerPhone,
+        customerAddress: effectiveCustomerAddress || existingOrderBeingEdited.customerAddress,
+        customerId: effectiveCustomerId || existingOrderBeingEdited.customerId,
+        deliveryFee: updatedDeliveryFee,
+        deliveryMethod: effectiveIsDelivery ? 'entrega' : (existingOrderBeingEdited.deliveryMethod || (isCounter ? 'retirada' : undefined))
+      };
+
+      const updatedOrder = { ...existingOrderBeingEdited, ...updates };
+
+      // 1. Atualizar pedidos no React State instantaneamente
+      setOrders(prev => prev.map(o => (o.id === existingOrderBeingEdited.id || o.docId === existingOrderBeingEdited.id || (existingOrderBeingEdited.docId && o.id === existingOrderBeingEdited.docId)) ? { ...o, ...updates } : o));
+
+      // 2. Se for mesa, manter mesa sincronizada
+      if (!isCounter || existingOrderBeingEdited.type === 'table') {
+        setTables(prev => prev.map(t => (t.id === tableId || t.number === displayTableNumber || t.currentOrderId === existingOrderBeingEdited.id) ? {
+          ...t,
+          items: existingItems,
+          total: newItemsTotal,
+          currentOrderId: existingOrderBeingEdited.id,
+          customerName: effectiveCustomerName || t.customerName,
+          customerPhone: effectiveCustomerPhone || t.customerPhone
+        } : t));
+      } else {
+        setCounterOrders(prev => prev.map(t => (t.id === tableId || String(t.id) === String(tableId)) ? {
+          ...t,
+          items: existingItems,
+          total: newItemsTotal,
+          currentOrderId: existingOrderBeingEdited.id,
+          customerName: effectiveCustomerName || t.customerName,
+          customerPhone: effectiveCustomerPhone || t.customerPhone,
+          customerAddress: effectiveCustomerAddress || t.customerAddress,
+          customerId: effectiveCustomerId || t.customerId,
+          deliveryFee: updatedDeliveryFee,
+          isDelivery: effectiveIsDelivery
+        } : t));
+      }
+
+      // 3. Persistência local e na nuvem
+      localDb.orders.put(updatedOrder as Order).catch(e => console.warn("LocalDb order update error:", e));
+      if (effectiveTenantId) {
+        setDoc(doc(db, 'orders', existingOrderBeingEdited.docId || existingOrderBeingEdited.id), cleanObject(updates), { merge: true })
+          .catch(e => console.error("Error updating order in cloud:", e));
+      }
+
+      addLog('u1', 'COZINHA', `Pedido #${existingOrderBeingEdited.dailyNumber || existingOrderBeingEdited.id.slice(-4)} atualizado com novos itens na cozinha.`);
+      return;
+    }
+
     if (!isCounter) {
       // ==========================================
       // REGRA DE MESAS:
@@ -3674,6 +3756,8 @@ const App: React.FC = () => {
     
     // Obter versão anterior do pedido para calcular diferenças de valor ou método de pagamento (Fiado)
     const oldOrder = orders.find(o => o.id === id || o.docId === id);
+    const targetId = oldOrder?.id || id;
+    const targetDocId = oldOrder?.docId || oldOrder?.id || id;
     
     // Se a forma de pagamento mudou ou total mudou, atualizar também o array 'payments' do pedido se ele existir,
     // para que relatórios e o fechamento de caixa (que leem o.payments) reflitam a nova forma de pagamento
@@ -3685,13 +3769,27 @@ const App: React.FC = () => {
       }
     }
 
-    await localDb.orders.update(id, updates);
-    setOrders(prev => prev.map(o => (o.id === id || o.docId === id) ? { ...o, ...updates } : o));
+    try {
+      await localDb.orders.update(targetId, cleanObject(updates));
+    } catch (e) {
+      if (oldOrder) {
+        await localDb.orders.put({ ...oldOrder, ...updates });
+      }
+    }
+
+    setOrders(prev => prev.map(o => (o.id === targetId || o.docId === targetDocId || o.id === targetDocId || (o.docId && o.docId === targetId)) ? { ...o, ...updates } : o));
     
+    // Sincronizar mesa se for um pedido de mesa
+    if (updates.items && oldOrder?.tableNumber) {
+      setTables(prev => prev.map(t => (String(t.number) === String(oldOrder.tableNumber) || t.currentOrderId === targetId) ? {
+        ...t,
+        items: updates.items || t.items,
+        total: updates.total !== undefined ? updates.total : t.total
+      } : t));
+    }
+
     if (effectiveTenantId) {
       try {
-        const order = oldOrder || orders.find(o => o.id === id || o.docId === id);
-        const targetDocId = order?.docId || order?.id || id;
         await setDoc(doc(db, 'orders', targetDocId), cleanObject({ ...updates, updatedAt: new Date() }), { merge: true });
       } catch (e) {
         console.error(`Error syncing order update ${id}:`, e);
@@ -4429,7 +4527,13 @@ const App: React.FC = () => {
     const isRealDelivery = !!(deliveryInfo && (deliveryInfo.address || (deliveryInfo.fee && deliveryInfo.fee > 0)));
 
     // Tentar localizar o pedido existente para reaproveitar seu ID e evitar duplicidade
-    let existingOrderId = table.currentOrderId;
+    let existingOrderId = pdvEditOrder ? pdvEditOrder.id : table.currentOrderId;
+    if (!existingOrderId) {
+      const match = orders.find(o => o.id === strTableId || o.docId === strTableId);
+      if (match) {
+        existingOrderId = match.id;
+      }
+    }
     if (!existingOrderId && !isCounter && !isRealDelivery) {
       const activeOrd = orders.find(o => 
         (String(o.tableNumber) === String(tableNumber)) && 
@@ -4459,7 +4563,7 @@ const App: React.FC = () => {
 
     // Tentar localizar pedido ativo correspondente para preservar status da cozinha
     const activeOrderObj = existingOrderId 
-      ? orders.find(o => o.id === existingOrderId)
+      ? orders.find(o => o.id === existingOrderId || o.docId === existingOrderId)
       : orders.find(o => !isCounter && String(o.tableNumber) === String(tableNumber) && o.status !== 'cancelled' && o.status !== 'finished');
 
     const activeStatus = activeOrderObj?.status;
@@ -4477,13 +4581,15 @@ const App: React.FC = () => {
 
     const rawOrder: Order = {
       id: targetOrderId,
+      docId: activeOrderObj?.docId || (pdvEditOrder ? pdvEditOrder.docId : undefined),
+      dailyNumber: activeOrderObj?.dailyNumber || (pdvEditOrder ? pdvEditOrder.dailyNumber : undefined),
       tableNumber: isCounter ? undefined : tableNumber,
       items: preparedItems,
       total: finalTotal,
       type: isRealDelivery ? 'delivery' : (isCounter ? 'takeout' : 'table'),
       status: determinedStatus,
       deliveryMethod: isRealDelivery ? 'entrega' : undefined,
-      createdAt: activeOrderObj?.createdAt || new Date(),
+      createdAt: activeOrderObj?.createdAt || (pdvEditOrder ? pdvEditOrder.createdAt : new Date()),
       paidAt: new Date(),
       paymentStatus: 'paid',
       paymentMethod: method,
@@ -4501,7 +4607,7 @@ const App: React.FC = () => {
       additionalFeeReason: additionalFeeReason || '',
       discount: discount || 0,
       tenantId: viewingTenantId || currentUserData?.tenantId || 't1',
-      source: table.currentOrderId ? (orders.find(o => o.id === table.currentOrderId)?.source || 'pos') : 'pos',
+      source: table.currentOrderId ? (orders.find(o => o.id === table.currentOrderId)?.source || 'pos') : (pdvEditOrder?.source || 'pos'),
       isManual: true,
       isSettled: true,
       finishedAt: determinedStatus === 'finished' ? new Date() : (activeOrderObj?.finishedAt || undefined),
@@ -4511,7 +4617,7 @@ const App: React.FC = () => {
     const newOrder = assignDailyNumberToOrder(rawOrder);
 
     // 1. UPDATE LOCAL REACT STATE INSTANTLY FOR OPTIMISTIC FEEDBACK
-    setOrders(prev => deduplicateOrders([newOrder, ...prev.filter(o => o.id !== newOrder.id && o.docId !== newOrder.id)]));
+    setOrders(prev => deduplicateOrders([newOrder, ...prev.filter(o => o.id !== newOrder.id && o.docId !== newOrder.id && o.id !== targetOrderId && o.docId !== targetOrderId)]));
     if (!isCounter) {
       setTables(prev => prev.map(t => (String(t.id) === String(tableId) || String(t.number) === String(tableNumber) || (t as any).docId === docId) ? { ...t, ...resetData } : t));
     } else {
