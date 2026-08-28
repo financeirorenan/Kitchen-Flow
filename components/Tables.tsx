@@ -25,8 +25,9 @@ import {
   printTestReceipt,
 } from "../services/printService";
 import { maskCurrency, parseCurrency, maskPhone } from "../utils/masks";
-import { normalizePaymentMethod } from "../utils/paymentUtils";
+import { normalizePaymentMethod, getPaymentMethodLabel } from "../utils/paymentUtils";
 import { deduplicateOrders, deduplicateFinancialRecords, getOrderNumericId, formatOrderNumber } from "../utils/deduplicate";
+import { safeParseDate, toSafeDate } from "../utils/dateUtils";
 import {
   Users,
   CreditCard,
@@ -643,90 +644,11 @@ const Tables: React.FC<TablesProps> = memo(
       if (!cashSession.openedAt) return null;
 
       const parseToDate = (val: any): Date => {
-        if (!val) return new Date(0);
-        if (val instanceof Date) return val;
-        if (typeof val.toDate === "function") return val.toDate();
-        if (val.seconds !== undefined) return new Date(val.seconds * 1000);
-        const parsed = new Date(val);
-        return isNaN(parsed.getTime()) ? new Date(0) : parsed;
+        return toSafeDate(val, new Date(0));
       };
 
       const getStandardPaymentMethod = (method: string): string => {
-        if (!method) return "dinheiro";
-        const cleanMethod = String(method).trim().toLowerCase();
-
-        const standardKeys = [
-          "dinheiro",
-          "cartao_credito",
-          "cartao_debito",
-          "pix",
-          "vale_refeicao",
-          "conta_cliente",
-        ];
-        if (standardKeys.includes(cleanMethod)) return cleanMethod;
-
-        if (cleanMethod === "cash") return "dinheiro";
-        if (cleanMethod === "credit") return "cartao_credito";
-        if (cleanMethod === "debit") return "cartao_debito";
-        if (cleanMethod === "voucher") return "vale_refeicao";
-        if (cleanMethod === "account") return "conta_cliente";
-        if (cleanMethod === "fiado") return "conta_cliente";
-
-        if (adminSettings && adminSettings.paymentMethods) {
-          const config = adminSettings.paymentMethods.find(
-            (m) =>
-              m.id === method ||
-              m.name.trim().toLowerCase() === cleanMethod ||
-              m.type.trim().toLowerCase() === cleanMethod,
-          );
-          if (config) {
-            switch (config.type) {
-              case "cash":
-                return "dinheiro";
-              case "credit":
-                return "cartao_credito";
-              case "debit":
-                return "cartao_debito";
-              case "pix":
-                return "pix";
-              case "voucher":
-                return "vale_refeicao";
-              case "account":
-                return "conta_cliente";
-            }
-          }
-        }
-
-        if (
-          cleanMethod.includes("dinheiro") ||
-          cleanMethod.includes("money") ||
-          cleanMethod.includes("efetivo") ||
-          cleanMethod.includes("cedula")
-        )
-          return "dinheiro";
-        if (cleanMethod.includes("credito") || cleanMethod.includes("crédito"))
-          return "cartao_credito";
-        if (cleanMethod.includes("debito") || cleanMethod.includes("débito"))
-          return "cartao_debito";
-        if (cleanMethod.includes("pix")) return "pix";
-        if (
-          cleanMethod.includes("vale") ||
-          cleanMethod.includes("refeicao") ||
-          cleanMethod.includes("refeição") ||
-          cleanMethod.includes("ticket") ||
-          cleanMethod.includes("sodexo") ||
-          cleanMethod.includes("vr")
-        )
-          return "vale_refeicao";
-        if (
-          cleanMethod.includes("fiado") ||
-          cleanMethod.includes("cliente") ||
-          cleanMethod.includes("carteira") ||
-          cleanMethod.includes("conta")
-        )
-          return "conta_cliente";
-
-        return "dinheiro";
+        return normalizePaymentMethod(method, adminSettings);
       };
 
       const sessionOpenedAt = parseToDate(cashSession.openedAt);
@@ -764,7 +686,17 @@ const Tables: React.FC<TablesProps> = memo(
         if (o.paidAt && parseToDate(o.paidAt) >= sessionOpenedAt) return true;
         if (o.completedAt && parseToDate(o.completedAt) >= sessionOpenedAt) return true;
         if (o.finishedAt && parseToDate(o.finishedAt) >= sessionOpenedAt) return true;
+        if (o.updatedAt && parseToDate(o.updatedAt) >= sessionOpenedAt) return true;
         if (o.payments && o.payments.some((p: any) => p.timestamp && parseToDate(p.timestamp) >= sessionOpenedAt)) return true;
+
+        // Fallback to same calendar day if orders occurred today
+        try {
+          const sessionDateStr = sessionOpenedAt.toISOString().slice(0, 10);
+          const orderDateStr = createdAt.toISOString().slice(0, 10);
+          if (sessionDateStr === orderDateStr) return true;
+        } catch {
+          // ignore
+        }
 
         return false;
       }));
@@ -777,15 +709,16 @@ const Tables: React.FC<TablesProps> = memo(
           return r.type === "income" && 
                  getStandardPaymentMethod(r.paymentMethod || "dinheiro") === "dinheiro" &&
                  !cat.includes("abertura") && 
-                 !cat.startsWith("venda");
+                 !cat.startsWith("venda") &&
+                 !r.orderId;
         })
-        .reduce((acc, r) => acc + (r.amount || 0), 0);
+        .reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
 
       const extraExpenses = sessionRecords
         .filter((r) => r.type === "expense" && getStandardPaymentMethod(r.paymentMethod || "dinheiro") === "dinheiro")
-        .reduce((acc, r) => acc + (r.amount || 0), 0);
+        .reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
 
-      const totalsByMethod = {
+      const totalsByMethod: Record<string, number> = {
         dinheiro: 0,
         cartao_credito: 0,
         cartao_debito: 0,
@@ -795,21 +728,38 @@ const Tables: React.FC<TablesProps> = memo(
       };
 
       sessionOrders.forEach((o) => {
+        const orderTotal = Number(o.total) || 0;
         if (o.payments && o.payments.length > 0) {
+          let paymentsSum = 0;
           o.payments.forEach((p) => {
-            const method = getStandardPaymentMethod(p.method);
-            if (totalsByMethod.hasOwnProperty(method)) {
-              (totalsByMethod as any)[method] += (p.amount || 0);
-            } else {
-              totalsByMethod.dinheiro += (p.amount || 0);
+            const pAmount = Number(p.amount) || 0;
+            if (pAmount > 0) {
+              const method = getStandardPaymentMethod(p.method);
+              if (totalsByMethod.hasOwnProperty(method)) {
+                totalsByMethod[method] += pAmount;
+              } else {
+                totalsByMethod.dinheiro += pAmount;
+              }
+              paymentsSum += pAmount;
             }
           });
+
+          // If payment records sum is less than total, allocate difference to primary paymentMethod
+          if (orderTotal > paymentsSum + 0.009) {
+            const diff = orderTotal - paymentsSum;
+            const fallbackMethod = getStandardPaymentMethod(o.paymentMethod || "dinheiro");
+            if (totalsByMethod.hasOwnProperty(fallbackMethod)) {
+              totalsByMethod[fallbackMethod] += diff;
+            } else {
+              totalsByMethod.dinheiro += diff;
+            }
+          }
         } else {
           const method = getStandardPaymentMethod(o.paymentMethod || "dinheiro");
           if (totalsByMethod.hasOwnProperty(method)) {
-            (totalsByMethod as any)[method] += (o.total || 0);
+            totalsByMethod[method] += orderTotal;
           } else {
-            totalsByMethod.dinheiro += (o.total || 0);
+            totalsByMethod.dinheiro += orderTotal;
           }
         }
       });
@@ -834,12 +784,12 @@ const Tables: React.FC<TablesProps> = memo(
         sessionOrders,
         expectedFinalValue:
           totalsByMethod.dinheiro +
-          cashSession.openingValue +
+          (Number(cashSession.openingValue) || 0) +
           extraIncomes -
           extraExpenses,
         count: sessionOrders.length,
       };
-    }, [orders, financialRecords, cashSession]);
+    }, [orders, financialRecords, cashSession, adminSettings]);
 
     const getStandardPaymentMethodKey = (method: string): string => {
       return normalizePaymentMethod(method, adminSettings);
@@ -881,18 +831,18 @@ const Tables: React.FC<TablesProps> = memo(
       if (cashReport && cashReport.sessionOrders && cashReport.sessionOrders.length > 0) {
         sourceOrders = cashReport.sessionOrders.filter((o) => !o.isSubTicket && !o.mergedIntoOrderId);
       } else if (lastClosingReport) {
-        const openedAt = new Date(lastClosingReport.openedAt);
-        const closedAt = new Date(lastClosingReport.closedAt);
+        const openedAt = toSafeDate(lastClosingReport.openedAt);
+        const closedAt = toSafeDate(lastClosingReport.closedAt);
         sourceOrders = orders.filter((o) => {
           if (o.status === "cancelled" || o.isSubTicket || o.mergedIntoOrderId) return false;
           const isPaid = o.isSettled || o.paymentStatus === "paid" || (o.payments && o.payments.length > 0) || o.status === "finished" || o.status === "delivered";
           if (!isPaid) return false;
-          const created = new Date(o.createdAt);
-          const paid = o.paidAt ? new Date(o.paidAt) : null;
-          const completed = o.completedAt ? new Date(o.completedAt) : null;
-          const finished = o.finishedAt ? new Date(o.finishedAt) : null;
+          const created = toSafeDate(o.createdAt);
+          const paid = safeParseDate(o.paidAt);
+          const completed = safeParseDate(o.completedAt);
+          const finished = safeParseDate(o.finishedAt);
           const hasPaymentInWindow = o.payments && o.payments.some((p: any) => {
-            const pt = p.timestamp ? (p.timestamp.toDate ? p.timestamp.toDate() : new Date(p.timestamp)) : null;
+            const pt = safeParseDate(p.timestamp);
             return pt && pt >= openedAt && pt <= closedAt;
           });
 
@@ -903,17 +853,17 @@ const Tables: React.FC<TablesProps> = memo(
                  hasPaymentInWindow;
         });
       } else if (cashSession.openedAt) {
-        const openedAt = new Date(cashSession.openedAt);
+        const openedAt = toSafeDate(cashSession.openedAt);
         sourceOrders = orders.filter((o) => {
           if (o.status === "cancelled" || o.isSubTicket || o.mergedIntoOrderId) return false;
           const isPaid = o.isSettled || o.paymentStatus === "paid" || (o.payments && o.payments.length > 0) || o.status === "finished" || o.status === "delivered";
           if (!isPaid) return false;
-          const created = new Date(o.createdAt);
-          const paid = o.paidAt ? new Date(o.paidAt) : null;
-          const completed = o.completedAt ? new Date(o.completedAt) : null;
-          const finished = o.finishedAt ? new Date(o.finishedAt) : null;
+          const created = toSafeDate(o.createdAt);
+          const paid = safeParseDate(o.paidAt);
+          const completed = safeParseDate(o.completedAt);
+          const finished = safeParseDate(o.finishedAt);
           const hasPaymentInWindow = o.payments && o.payments.some((p: any) => {
-            const pt = p.timestamp ? (p.timestamp.toDate ? p.timestamp.toDate() : new Date(p.timestamp)) : null;
+            const pt = safeParseDate(p.timestamp);
             return pt && pt >= openedAt;
           });
 

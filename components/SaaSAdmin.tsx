@@ -129,6 +129,72 @@ const DEFAULT_COMMERCE_CATEGORIES = [
   { id: 'farmacia', name: 'Farmácia', description: 'Medicamentos, cosméticos e cuidados pessoais' }
 ];
 
+const DEFAULT_SAAS_LEDGER = [
+  {
+    id: 'ledger_default_1',
+    description: 'Servidores Google Cloud (Cloud Run & Firestore)',
+    type: 'pagar',
+    amount: 320.00,
+    dueDate: new Date(new Date().getFullYear(), new Date().getMonth(), 15).toISOString().slice(0, 10),
+    category: 'Infraestrutura',
+    status: 'pending',
+    createdAt: new Date()
+  },
+  {
+    id: 'ledger_default_2',
+    description: 'API de Geolocalização / Google Maps Premium Billing',
+    type: 'pagar',
+    amount: 112.50,
+    dueDate: new Date(new Date().getFullYear(), new Date().getMonth(), 10).toISOString().slice(0, 10),
+    category: 'API / Servidores',
+    status: 'pending',
+    createdAt: new Date()
+  },
+  {
+    id: 'ledger_default_3',
+    description: 'Licença mensal de API WhatsApp Gateway Business',
+    type: 'pagar',
+    amount: 90.00,
+    dueDate: new Date(new Date().getFullYear(), new Date().getMonth(), 5).toISOString().slice(0, 10),
+    category: 'Softwares / Integrações',
+    status: 'paid',
+    createdAt: new Date()
+  },
+  {
+    id: 'ledger_default_4',
+    description: 'Tokens Gemini Pro AI (Smart Classification & Assistant)',
+    type: 'pagar',
+    amount: 55.45,
+    dueDate: new Date(new Date().getFullYear(), new Date().getMonth(), 20).toISOString().slice(0, 10),
+    category: 'Inteligência AI',
+    status: 'pending',
+    createdAt: new Date()
+  },
+  {
+    id: 'ledger_default_5',
+    description: 'Anuidade do Domínio KitchenFlowAI.com.br (Registro.br)',
+    type: 'pagar',
+    amount: 40.00,
+    dueDate: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 2).toISOString().slice(0, 10),
+    category: 'Domínios / Registro',
+    status: 'paid',
+    createdAt: new Date()
+  }
+];
+
+const isFirestoreQuotaError = (err: any): boolean => {
+  if (!err) return false;
+  const msg = err?.message || String(err || '');
+  return (
+    msg.includes('Quota') ||
+    msg.includes('quota') ||
+    msg.includes('resource-exhausted') ||
+    msg.includes('free tier') ||
+    msg.includes('INTERNAL ASSERTION FAILED') ||
+    msg.includes('Quota exceeded')
+  );
+};
+
 const CATEGORY_COLOR_PRESETS = [
   { name: 'Vermelho/Rosa (Pizza/Hambúrguer)', bg: 'bg-rose-50', color: 'text-rose-500' },
   { name: 'Azul (Comida Japonesa/Bebidas)', bg: 'bg-blue-50', color: 'text-blue-500' },
@@ -495,7 +561,10 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         };
       }));
     }, (error) => {
-      console.error("SaaSAdmin saasPayments error:", error);
+      if (isFirestoreQuotaError(error)) {
+        setIsLocalQuotaExceeded(true);
+      }
+      console.warn("SaaSAdmin saasPayments error (handled gracefully):", error?.message || error);
     });
 
     return () => unsubscribePayments();
@@ -521,14 +590,21 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                 description: cat.description
               });
             }
-          } catch (e) {
-            console.error("Error seeding commerce categories:", e);
+          } catch (e: any) {
+            if (isFirestoreQuotaError(e)) {
+              setIsLocalQuotaExceeded(true);
+            }
+            console.warn("Error seeding commerce categories (handled gracefully):", e?.message || e);
           }
         };
         seedCategories();
       }
     }, (error) => {
-      console.error("SaaSAdmin commerceCategories error:", error);
+      if (isFirestoreQuotaError(error)) {
+        setIsLocalQuotaExceeded(true);
+      }
+      setCommerceCategories(DEFAULT_COMMERCE_CATEGORIES);
+      console.warn("SaaSAdmin commerceCategories error (handled gracefully):", error?.message || error);
     });
 
     return () => unsubscribeCategories();
@@ -539,14 +615,20 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     const unsubscribeInvoices = onSnapshot(qInvoices, (snapshot) => {
       setMarketplaceInvoices(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }) as MarketplaceInvoice));
     }, (error) => {
-      console.error("SaaSAdmin marketplaceInvoices error:", error);
+      if (isFirestoreQuotaError(error)) {
+        setIsLocalQuotaExceeded(true);
+      }
+      console.warn("SaaSAdmin marketplaceInvoices error (handled gracefully):", error?.message || error);
     });
 
     const qOrders = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
     const unsubscribeOrders = onSnapshot(qOrders, (snapshot) => {
       setOrders(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })));
     }, (error) => {
-      console.error("SaaSAdmin orders error:", error);
+      if (isFirestoreQuotaError(error)) {
+        setIsLocalQuotaExceeded(true);
+      }
+      console.warn("SaaSAdmin orders error (handled gracefully):", error?.message || error);
     });
 
     return () => {
@@ -570,66 +652,27 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         }));
       } else {
         // Seed initial platform ledger with both PAYABLE (Contas a Pagar) and RECEIVABLE (Contas a Receber)
+        setSaasLedger(DEFAULT_SAAS_LEDGER);
         const seedLedger = async () => {
           try {
-            const initialLedger = [
-              {
-                description: 'Servidores Google Cloud (Cloud Run & Firestore)',
-                type: 'pagar',
-                amount: 320.00,
-                dueDate: new Date(new Date().getFullYear(), new Date().getMonth(), 15).toISOString().slice(0, 10),
-                category: 'Infraestrutura',
-                status: 'pending',
-                createdAt: new Date()
-              },
-              {
-                description: 'API de Geolocalização / Google Maps Premium Billing',
-                type: 'pagar',
-                amount: 112.50,
-                dueDate: new Date(new Date().getFullYear(), new Date().getMonth(), 10).toISOString().slice(0, 10),
-                category: 'API / Servidores',
-                status: 'pending',
-                createdAt: new Date()
-              },
-              {
-                description: 'Licença mensal de API WhatsApp Gateway Business',
-                type: 'pagar',
-                amount: 90.00,
-                dueDate: new Date(new Date().getFullYear(), new Date().getMonth(), 5).toISOString().slice(0, 10),
-                category: 'Softwares / Integrações',
-                status: 'paid',
-                createdAt: new Date()
-              },
-              {
-                description: 'Tokens Gemini Pro AI (Smart Classification & Assistant)',
-                type: 'pagar',
-                amount: 55.45,
-                dueDate: new Date(new Date().getFullYear(), new Date().getMonth(), 20).toISOString().slice(0, 10),
-                category: 'Inteligência AI',
-                status: 'pending',
-                createdAt: new Date()
-              },
-              {
-                description: 'Anuidade do Domínio KitchenFlowAI.com.br (Registro.br)',
-                type: 'pagar',
-                amount: 40.00,
-                dueDate: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 2).toISOString().slice(0, 10),
-                category: 'Domínios / Registro',
-                status: 'paid',
-                createdAt: new Date()
-              }
-            ];
-            for (const item of initialLedger) {
+            for (const item of DEFAULT_SAAS_LEDGER) {
               await addDoc(collection(db, 'saasLedger'), item);
             }
-          } catch (e) {
-            console.error("Error seeding saasLedger:", e);
+          } catch (e: any) {
+            if (isFirestoreQuotaError(e)) {
+              setIsLocalQuotaExceeded(true);
+            }
+            console.warn("Error seeding saasLedger (handled gracefully):", e?.message || e);
           }
         };
         seedLedger();
       }
     }, (error) => {
-      console.error("SaaSAdmin saasLedger error:", error);
+      if (isFirestoreQuotaError(error)) {
+        setIsLocalQuotaExceeded(true);
+      }
+      setSaasLedger(DEFAULT_SAAS_LEDGER);
+      console.warn("SaaSAdmin saasLedger error (handled gracefully):", error?.message || error);
     });
 
     return () => unsubscribeLedger();

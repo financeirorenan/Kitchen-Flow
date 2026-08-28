@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { safeParseDate, toSafeDate } from './utils/dateUtils';
 import { maskPhone, maskCPF, maskCEP } from './utils/masks';
 import { deduplicateOrders, deduplicateFinancialRecords } from './utils/deduplicate';
 import Sidebar from './components/Sidebar';
@@ -1582,7 +1583,7 @@ const App: React.FC = () => {
             const finalCompanyName = activeTenantName || cleanAdmin.companyName || prev.companyName;
             const finalLogoUrl = activeTenantLogo || cleanAdmin.logoUrl || '';
             
-            return {
+            const next = {
               ...prev,
               ...cleanAdmin,
               companyName: finalCompanyName,
@@ -1634,18 +1635,26 @@ const App: React.FC = () => {
           const now = Date.now();
           if (now - lastWriteTimeRef.current > 5000) {
             setCashSession(prev => {
-              const incomingTime = s.cashSession.openedAt instanceof Date ? s.cashSession.openedAt.getTime() : (s.cashSession.openedAt ? new Date(s.cashSession.openedAt).getTime() : 0);
-              const prevTime = prev.openedAt instanceof Date ? prev.openedAt.getTime() : (prev.openedAt ? new Date(prev.openedAt).getTime() : 0);
+              const incomingDate = safeParseDate(s.cashSession.openedAt);
+              const prevDate = safeParseDate(prev.openedAt);
+              const incomingTime = incomingDate ? incomingDate.getTime() : 0;
+              const prevTime = prevDate ? prevDate.getTime() : 0;
               
               if (prev.isOpen !== s.cashSession.isOpen || prevTime !== incomingTime) {
-                return s.cashSession;
+                return {
+                  ...s.cashSession,
+                  openedAt: incomingDate
+                };
               }
               return prev;
             });
           }
         } else {
           // Safeguard: reset cash session if current tenant settings doc contains no open session
-          setCashSession({ isOpen: false, openingValue: 0, openedAt: null });
+          setCashSession(prev => {
+            if (!prev.isOpen && prev.openingValue === 0 && prev.openedAt === null) return prev;
+            return { isOpen: false, openingValue: 0, openedAt: null };
+          });
         }
       }
     }, (error) => {
@@ -5655,19 +5664,10 @@ const App: React.FC = () => {
     try {
       const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
       // Robust parsing of openedAt
-      let openedDate: Date;
-      if (cashSession.openedAt instanceof Date) {
-        openedDate = cashSession.openedAt;
-      } else if (cashSession.openedAt) {
-        openedDate = new Date(cashSession.openedAt);
-      } else {
-        showToast("Houve um problema ao identificar o horário de abertura do caixa.", 'error');
-        return null;
-      }
-
-      if (isNaN(openedDate.getTime())) {
+      const openedDate = safeParseDate(cashSession.openedAt);
+      if (!openedDate || isNaN(openedDate.getTime())) {
         console.error("Invalid opening date detected:", cashSession.openedAt);
-        showToast("Formato de data de abertura inválido. Tente reabrir o caixa.", 'error');
+        showToast("Horário de abertura do caixa inválido ou não identificado.", 'error');
         return null;
       }
       
@@ -5678,58 +5678,16 @@ const App: React.FC = () => {
       showToast("Processando fechamento...", 'info');
 
       const parseToDate = (val: any): Date => {
-        if (!val) return new Date(0);
-        if (val instanceof Date) return val;
-        if (typeof val.toDate === 'function') return val.toDate();
-        if (val.seconds !== undefined) return new Date(val.seconds * 1000);
-        const parsed = new Date(val);
-        return isNaN(parsed.getTime()) ? new Date(0) : parsed;
+        return toSafeDate(val, new Date(0));
       };
 
       const getStandardPaymentMethod = (method: string): string => {
-        if (!method) return 'dinheiro';
-        const cleanMethod = String(method).trim().toLowerCase();
-        
-        const standardKeys = ['dinheiro', 'cartao_credito', 'cartao_debito', 'pix', 'vale_refeicao', 'conta_cliente'];
-        if (standardKeys.includes(cleanMethod)) return cleanMethod;
-        
-        if (cleanMethod === 'cash') return 'dinheiro';
-        if (cleanMethod === 'credit') return 'cartao_credito';
-        if (cleanMethod === 'debit') return 'cartao_debito';
-        if (cleanMethod === 'voucher') return 'vale_refeicao';
-        if (cleanMethod === 'account') return 'conta_cliente';
-        if (cleanMethod === 'fiado') return 'conta_cliente';
-
-        if (adminSettings && adminSettings.paymentMethods) {
-          const config = adminSettings.paymentMethods.find(m => 
-            m.id === method || 
-            m.name.trim().toLowerCase() === cleanMethod ||
-            m.type.trim().toLowerCase() === cleanMethod
-          );
-          if (config) {
-            switch (config.type) {
-              case 'cash': return 'dinheiro';
-              case 'credit': return 'cartao_credito';
-              case 'debit': return 'cartao_debito';
-              case 'pix': return 'pix';
-              case 'voucher': return 'vale_refeicao';
-              case 'account': return 'conta_cliente';
-            }
-          }
-        }
-
-        if (cleanMethod.includes('dinheiro') || cleanMethod.includes('money') || cleanMethod.includes('efetivo') || cleanMethod.includes('cedula')) return 'dinheiro';
-        if (cleanMethod.includes('credito') || cleanMethod.includes('crédito')) return 'cartao_credito';
-        if (cleanMethod.includes('debito') || cleanMethod.includes('débito')) return 'cartao_debito';
-        if (cleanMethod.includes('pix')) return 'pix';
-        if (cleanMethod.includes('vale') || cleanMethod.includes('refeicao') || cleanMethod.includes('refeição') || cleanMethod.includes('ticket') || cleanMethod.includes('sodexo') || cleanMethod.includes('vr')) return 'vale_refeicao';
-        if (cleanMethod.includes('fiado') || cleanMethod.includes('cliente') || cleanMethod.includes('carteira') || cleanMethod.includes('conta')) return 'conta_cliente';
-
-        return 'dinheiro';
+        return normalizePaymentMethod(method, adminSettings);
       };
 
       // Helper to check if an order belongs to this cash session
       const isOrderInSession = (o: Order) => {
+        if (effectiveTenantId && o.tenantId && o.tenantId !== effectiveTenantId) return false;
         if (o.status === 'cancelled' || o.isSubTicket || o.mergedIntoOrderId) return false;
         const isPaid = o.isSettled || o.paymentStatus === 'paid' || (o.payments && o.payments.length > 0) || o.status === 'finished' || o.status === 'delivered';
         if (!isPaid) return false;
@@ -5740,7 +5698,17 @@ const App: React.FC = () => {
         if (o.paidAt && parseToDate(o.paidAt) >= openedDate) return true;
         if (o.completedAt && parseToDate(o.completedAt) >= openedDate) return true;
         if (o.finishedAt && parseToDate(o.finishedAt) >= openedDate) return true;
+        if (o.updatedAt && parseToDate(o.updatedAt) >= openedDate) return true;
         if (o.payments && o.payments.some((p: any) => p.timestamp && parseToDate(p.timestamp) >= openedDate)) return true;
+
+        // Fallback to same calendar day if orders occurred today
+        try {
+          const sessionDateStr = openedDate.toISOString().slice(0, 10);
+          const orderDateStr = createdAt.toISOString().slice(0, 10);
+          if (sessionDateStr === orderDateStr) return true;
+        } catch {
+          // ignore
+        }
 
         return false;
       };
@@ -5749,6 +5717,7 @@ const App: React.FC = () => {
       let salesSinceOpen: Order[] = deduplicateOrders(orders.filter(isOrderInSession));
 
       let recordsDuringSession: FinancialRecord[] = deduplicateFinancialRecords(financialRecords.filter(r => {
+        if (effectiveTenantId && r.tenantId && r.tenantId !== effectiveTenantId) return false;
         const isPaid = r.status === 'paid' || !r.status;
         if (!isPaid) return false;
         if (r.shiftOpenedAt) {
@@ -5795,6 +5764,7 @@ const App: React.FC = () => {
               } as FinancialRecord;
             });
             recordsDuringSession = deduplicateFinancialRecords([...financialRecords, ...fetchedRecords].filter(r => {
+              if (effectiveTenantId && r.tenantId && r.tenantId !== effectiveTenantId) return false;
               const isPaid = r.status === 'paid' || !r.status;
               if (!isPaid) return false;
               if (r.shiftOpenedAt) {
@@ -5820,21 +5790,38 @@ const App: React.FC = () => {
       };
 
       salesSinceOpen.forEach(o => {
+        const orderTotal = Number(o.total) || 0;
         if (o.payments && o.payments.length > 0) {
+          let paymentsSum = 0;
           o.payments.forEach(p => {
-            const method = getStandardPaymentMethod(p.method);
-            if (salesByMethod[method] !== undefined) {
-              salesByMethod[method] += (p.amount || 0);
-            } else {
-              salesByMethod.dinheiro += (p.amount || 0);
+            const pAmount = Number(p.amount) || 0;
+            if (pAmount > 0) {
+              const method = getStandardPaymentMethod(p.method) as PaymentMethod;
+              if (salesByMethod[method] !== undefined) {
+                salesByMethod[method] += pAmount;
+              } else {
+                salesByMethod.dinheiro += pAmount;
+              }
+              paymentsSum += pAmount;
             }
           });
+
+          // If payment records sum is less than total, allocate difference to primary paymentMethod
+          if (orderTotal > paymentsSum + 0.009) {
+            const diff = orderTotal - paymentsSum;
+            const fallbackMethod = getStandardPaymentMethod(o.paymentMethod || 'dinheiro') as PaymentMethod;
+            if (salesByMethod[fallbackMethod] !== undefined) {
+              salesByMethod[fallbackMethod] += diff;
+            } else {
+              salesByMethod.dinheiro += diff;
+            }
+          }
         } else {
-          const method = getStandardPaymentMethod(o.paymentMethod || 'dinheiro');
+          const method = getStandardPaymentMethod(o.paymentMethod || 'dinheiro') as PaymentMethod;
           if (salesByMethod[method] !== undefined) {
-            salesByMethod[method] += (o.total || 0);
+            salesByMethod[method] += orderTotal;
           } else {
-            salesByMethod.dinheiro += (o.total || 0);
+            salesByMethod.dinheiro += orderTotal;
           }
         }
       });
@@ -5847,20 +5834,21 @@ const App: React.FC = () => {
            return r.type === 'income' && 
                   getStandardPaymentMethod(r.paymentMethod || 'dinheiro') === 'dinheiro' && 
                   !cat.includes('abertura') && 
-                  !cat.startsWith('venda');
+                  !cat.startsWith('venda') &&
+                  !r.orderId;
          })
-         .reduce((acc, r) => acc + (r.amount || 0), 0);
+         .reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
        
        const cashExpenses = recordsDuringSession
          .filter(r => r.type === 'expense' && getStandardPaymentMethod(r.paymentMethod || 'dinheiro') === 'dinheiro')
-         .reduce((acc, r) => acc + (r.amount || 0), 0);
+         .reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
 
-      const expectedCash = (cashSession.openingValue || 0) + (salesByMethod.dinheiro || 0) + cashIncomes - cashExpenses;
+      const expectedCash = (Number(cashSession.openingValue) || 0) + (salesByMethod.dinheiro || 0) + cashIncomes - cashExpenses;
 
       const report: CashClosingReport = {
         id: `cc${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
         tenantId: effectiveTenantId || 't1',
-        openedAt: cashSession.openedAt,
+        openedAt: openedDate,
         closedAt: new Date(),
         openingValue: cashSession.openingValue,
         expectedValue: expectedCash,

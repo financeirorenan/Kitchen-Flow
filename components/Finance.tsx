@@ -1,5 +1,6 @@
 import React, { useState, useMemo, memo } from "react";
 import { deduplicateOrders, deduplicateFinancialRecords } from "../utils/deduplicate";
+import { safeParseDate, toSafeDate } from "../utils/dateUtils";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   FinancialRecord,
@@ -55,6 +56,7 @@ import {
 } from "lucide-react";
 import { generateReceiptHtml } from "../services/printService";
 import { maskCurrency, parseCurrency } from "../utils/masks";
+import { normalizePaymentMethod, getPaymentMethodLabel } from "../utils/paymentUtils";
 import {
   AreaChart,
   Area,
@@ -68,17 +70,6 @@ import {
   PieChart as RePieChart,
   Pie,
 } from "recharts";
-
-const safeParseDate = (d: any): Date | null => {
-  if (!d) return null;
-  if (d instanceof Date) return isNaN(d.getTime()) ? null : d;
-  if (typeof d?.toDate === "function") {
-    const converted = d.toDate();
-    return isNaN(converted.getTime()) ? null : converted;
-  }
-  const parsed = new Date(d);
-  return isNaN(parsed.getTime()) ? null : parsed;
-};
 
 interface FinanceProps {
   tenantId?: string;
@@ -541,14 +532,12 @@ const Finance: React.FC<FinanceProps> = memo(
         };
       }
 
-      const openedDate = cashSession.openedAt
-        ? new Date(cashSession.openedAt)
-        : new Date();
+      const openedDate = toSafeDate(cashSession.openedAt, new Date());
 
       const cashSales = orders
         .filter((o) => {
           if (o.status === "cancelled" || o.isSubTicket || o.mergedIntoOrderId) return false;
-          const orderDate = new Date(o.paidAt || o.completedAt || o.finishedAt || o.updatedAt || o.createdAt);
+          const orderDate = toSafeDate(o.paidAt || o.completedAt || o.finishedAt || o.updatedAt || o.createdAt);
           return orderDate >= openedDate;
         })
         .reduce((acc, o) => {
@@ -4492,31 +4481,73 @@ const Finance: React.FC<FinanceProps> = memo(
 
                   {/* Orders filter and list */}
                   {(() => {
-                    const openedAt = new Date(selectedClosing.openedAt);
-                    const closedAt = new Date(selectedClosing.closedAt);
+                    const openedAt = toSafeDate(selectedClosing.openedAt);
+                    const closedAt = toSafeDate(selectedClosing.closedAt);
 
                     const closingOrders = orders.filter((o) => {
-                      const created = new Date(o.createdAt);
-                      return created >= openedAt && created <= closedAt && o.status !== "cancelled" && !o.isSubTicket && !o.mergedIntoOrderId;
+                      if (o.status === "cancelled" || o.isSubTicket || o.mergedIntoOrderId) return false;
+                      const isPaid = o.isSettled || o.paymentStatus === "paid" || (o.payments && o.payments.length > 0) || o.status === "finished" || o.status === "delivered";
+                      if (!isPaid) return false;
+
+                      const created = toSafeDate(o.createdAt);
+                      const paid = safeParseDate(o.paidAt);
+                      const completed = safeParseDate(o.completedAt);
+                      const finished = safeParseDate(o.finishedAt);
+                      const updated = safeParseDate(o.updatedAt);
+                      const hasPaymentInWindow = o.payments && o.payments.some((p: any) => {
+                        const pt = safeParseDate(p.timestamp);
+                        return pt && pt >= openedAt && pt <= closedAt;
+                      });
+
+                      const inWindow = (created >= openedAt && created <= closedAt) ||
+                                       (paid && paid >= openedAt && paid <= closedAt) ||
+                                       (completed && completed >= openedAt && completed <= closedAt) ||
+                                       (finished && finished >= openedAt && finished <= closedAt) ||
+                                       (updated && updated >= openedAt && updated <= closedAt) ||
+                                       hasPaymentInWindow;
+                      if (inWindow) return true;
+
+                      // Also same calendar day check
+                      try {
+                        const closingDay = openedAt.toISOString().slice(0, 10);
+                        const orderDay = created.toISOString().slice(0, 10);
+                        if (closingDay === orderDay) return true;
+                      } catch {
+                        // ignore
+                      }
+
+                      return false;
                     });
 
                     const targetMethod = selectedClosingMethodReport.id;
                     const matching = closingOrders
                       .map((o) => {
                         let contribution = 0;
-                        if (o.payments && o.payments.length > 0) {
-                          contribution = o.payments.reduce((acc, p) => {
-                            const clean = String(p.method).toLowerCase().trim();
-                            return clean === targetMethod || clean.includes(targetMethod) ? acc + p.amount : acc;
-                          }, 0);
-                        } else if (o.paymentMethod) {
-                          const clean = String(o.paymentMethod).toLowerCase().trim();
-                          if (clean === targetMethod || clean.includes(targetMethod)) {
-                            contribution = o.total || 0;
+                        const orderTotal = Number(o.total) || 0;
+                        if (targetMethod === "all") {
+                          contribution = orderTotal;
+                        } else if (o.payments && o.payments.length > 0) {
+                          let pSum = 0;
+                          o.payments.forEach((p: any) => {
+                            const pAmount = Number(p.amount) || 0;
+                            const norm = normalizePaymentMethod(p.method, adminSettings);
+                            if (norm === targetMethod) {
+                              contribution += pAmount;
+                            }
+                            pSum += pAmount;
+                          });
+                          // If there's an unallocated remainder
+                          if (orderTotal > pSum + 0.009) {
+                            const normFallback = normalizePaymentMethod(o.paymentMethod || "dinheiro", adminSettings);
+                            if (normFallback === targetMethod) {
+                              contribution += (orderTotal - pSum);
+                            }
                           }
-                        }
-                        if (contribution === 0 && targetMethod === "all") {
-                          contribution = o.total || 0;
+                        } else if (o.paymentMethod) {
+                          const norm = normalizePaymentMethod(o.paymentMethod, adminSettings);
+                          if (norm === targetMethod) {
+                            contribution = orderTotal;
+                          }
                         }
                         return { order: o, contribution };
                       })

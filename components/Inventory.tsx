@@ -10,7 +10,7 @@ import {
   Minus, Percent, ClipboardList, Info, Beaker, Scale, Trash2, Tag,
   LayoutGrid, ListChecks, GripVertical, Eye, EyeOff, ArrowRightLeft,
   Truck, Utensils, Smartphone, QrCode, Upload, Box, Clock, LayoutDashboard, DollarSign,
-  Pizza, ShoppingCart, Send
+  Pizza, ShoppingCart, Send, Flame, TrendingDown, Award
 } from 'lucide-react';
 import { Reorder, AnimatePresence, motion } from 'framer-motion';
 import { maskCurrency, parseCurrency } from '../utils/masks';
@@ -150,7 +150,7 @@ const Inventory: React.FC<InventoryProps> = memo(({
   // Sync / initialize shopping list items and values
   useEffect(() => {
     const initialSelected: Record<string, boolean> = {};
-    const initialDaily: Record<string, number> = { ...customDailyConsumptions };
+    const initialDaily: Record<string, number> = {};
 
     rawMaterials.forEach(m => {
       // If stock is low, pre-select it
@@ -159,30 +159,33 @@ const Inventory: React.FC<InventoryProps> = memo(({
       }
       
       // Calculate daily average if not already set or customized
-      if (initialDaily[m.id] === undefined || initialDaily[m.id] === 0) {
-        const stats = getRawMaterialConsumptionStats(m.id);
-        // Default to minStock / 7 as fallback if calculated consumption is 0
-        initialDaily[m.id] = stats.avgDaily > 0 ? parseFloat(stats.avgDaily.toFixed(2)) : Math.max(0.1, parseFloat((m.minStock / 7).toFixed(2)));
-      }
+      const stats = getRawMaterialConsumptionStats(m.id);
+      // Default to minStock / 7 as fallback if calculated consumption is 0
+      initialDaily[m.id] = stats.avgDaily > 0 ? parseFloat(stats.avgDaily.toFixed(2)) : Math.max(0.1, parseFloat((m.minStock / 7).toFixed(2)));
     });
 
     setSelectedShoppingMaterials(prev => {
+      let changed = false;
       const next = { ...prev };
       Object.keys(initialSelected).forEach(id => {
         if (next[id] === undefined) {
           next[id] = true;
+          changed = true;
         }
       });
-      return next;
+      return changed ? next : prev;
     });
+
     setCustomDailyConsumptions(prev => {
+      let changed = false;
       const next = { ...prev };
       Object.keys(initialDaily).forEach(id => {
         if (next[id] === undefined) {
           next[id] = initialDaily[id];
+          changed = true;
         }
       });
-      return next;
+      return changed ? next : prev;
     });
   }, [rawMaterials, orders]);
 
@@ -765,21 +768,16 @@ const Inventory: React.FC<InventoryProps> = memo(({
   useEffect(() => {
     if (isPizzaWizardOpen) {
       if (wizardPricingModel === 'variable') {
-        setWizardPrice(0); // Under variable average model, master product price is 0, and each added flavor option costs half its original price
-      } else if (wizardPrice === 0) {
-        setWizardPrice(45.00); // Default flat price if they switch to fixed
+        setWizardPrice(prev => prev === 0 ? prev : 0);
+      } else {
+        setWizardPrice(prev => prev === 0 ? 45.00 : prev);
       }
 
       // Auto-select initial category filter for flavors based on registered categories
       const hasPizzas = allProductCategories.includes('Pizzas');
       const pizzaLikeCat = allProductCategories.find(c => c.toLowerCase().includes('pizza'));
-      if (hasPizzas) {
-        setWizardFlavorCategoryFilter('Pizzas');
-      } else if (pizzaLikeCat) {
-        setWizardFlavorCategoryFilter(pizzaLikeCat);
-      } else {
-        setWizardFlavorCategoryFilter('Todos');
-      }
+      const targetFilter = hasPizzas ? 'Pizzas' : (pizzaLikeCat || 'Todos');
+      setWizardFlavorCategoryFilter(prev => prev === targetFilter ? prev : targetFilter);
     }
   }, [wizardPricingModel, isPizzaWizardOpen, allProductCategories]);
 
@@ -1247,6 +1245,77 @@ const Inventory: React.FC<InventoryProps> = memo(({
   const totalStockValue = products.reduce((acc, p) => acc + (Number(p.stock || 0) * Number(p.cost || 0)), 0);
   const totalRawValue = rawMaterials.reduce((acc, m) => acc + (Number(m.currentStock || 0) * Number(m.costPerUnit || 0)), 0);
 
+  // Top Selling Product based on completed orders
+  const topSellingProductStats = useMemo(() => {
+    const salesMap: Record<string, { qty: number; revenue: number; name: string }> = {};
+    (orders || []).forEach(o => {
+      if (o.status === 'cancelled' || o.isSubTicket || o.mergedIntoOrderId) return;
+      (o.items || []).forEach(item => {
+        const id = item.productId || item.id || item.name;
+        if (!salesMap[id]) {
+          salesMap[id] = { qty: 0, revenue: 0, name: item.name };
+        }
+        salesMap[id].qty += item.quantity || 1;
+        salesMap[id].revenue += (item.price || 0) * (item.quantity || 1);
+      });
+    });
+    const sorted = Object.entries(salesMap).sort((a, b) => b[1].qty - a[1].qty);
+    if (sorted.length > 0 && sorted[0][1].qty > 0) {
+      const topId = sorted[0][0];
+      const info = sorted[0][1];
+      const matched = products.find(p => p.id === topId || p.name.toLowerCase() === info.name.toLowerCase());
+      return {
+        id: matched?.id || topId,
+        name: matched?.name || info.name,
+        qty: info.qty,
+        revenue: info.revenue,
+        price: matched?.price || (info.qty > 0 ? info.revenue / info.qty : 0),
+        image: matched?.image
+      };
+    }
+    if (products.length > 0) {
+      return {
+        id: products[0].id,
+        name: products[0].name,
+        qty: 0,
+        revenue: 0,
+        price: products[0].price || 0,
+        image: products[0].image
+      };
+    }
+    return null;
+  }, [orders, products]);
+
+  // Lowest Margin / Lowest Profit Product for pricing opportunity alerts
+  const lowestMarginProductStats = useMemo(() => {
+    const list = products
+      .filter(p => p.price && p.price > 0)
+      .map(p => {
+        const cost = p.cost && p.cost > 0 
+          ? p.cost 
+          : (p.technicalSheet && p.technicalSheet.length > 0 
+              ? p.technicalSheet.reduce((sum, item) => {
+                  const mat = rawMaterials.find(m => m.id === item.rawMaterialId);
+                  return sum + ((mat?.costPerUnit || 0) * (item.quantity || 0));
+                }, 0)
+              : 0);
+        const profit = p.price - cost;
+        const margin = p.price > 0 ? (profit / p.price) * 100 : 0;
+        return {
+          product: p,
+          cost,
+          profit,
+          margin
+        };
+      })
+      .sort((a, b) => a.margin - b.margin);
+
+    if (list.length > 0) {
+      return list[0];
+    }
+    return null;
+  }, [products, rawMaterials]);
+
   const chartData = editingProduct?.priceHistory?.map(h => ({
     ...h,
     dateFormatted: new Date(h.date).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })
@@ -1312,53 +1381,134 @@ const Inventory: React.FC<InventoryProps> = memo(({
       {/* Stats Header */}
       {true && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-white p-5 rounded-[1.5rem] border border-slate-100 shadow-sm flex items-center gap-4 group hover:shadow-md transition-all">
-            <div className="p-3 bg-teal-50 text-teal-600 rounded-2xl group-hover:scale-110 transition-transform">
-              {activeSubTab === 'products' ? <Package size={24} /> : activeSubTab === 'shopping-list' ? <ShoppingCart size={24} /> : <Beaker size={24} />}
-            </div>
-            <div>
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                {activeSubTab === 'products' ? 'Total de Produtos' : activeSubTab === 'shopping-list' ? 'Insumos Mapeados' : 'Total de Insumos'}
-              </p>
-              <p className="text-2xl font-black text-slate-900 tracking-tighter">
-                {activeSubTab === 'products' ? products.length : rawMaterials.length}
-              </p>
-            </div>
-          </div>
-          <div className="bg-white p-5 rounded-[1.5rem] border border-slate-100 shadow-sm flex items-center gap-4 group hover:shadow-md transition-all">
-            <div className="p-3 bg-rose-50 text-rose-600 rounded-2xl group-hover:scale-110 transition-transform">
-              <AlertCircle size={24} />
-            </div>
-            <div>
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Estoque Crítico</p>
-              <p className="text-2xl font-black text-rose-600 tracking-tighter">
-                {activeSubTab === 'products' ? lowStockCount : lowRawStockCount}
-              </p>
-            </div>
-          </div>
-          <div className="bg-white p-5 rounded-[1.5rem] border border-slate-100 shadow-sm flex items-center gap-4 group hover:shadow-md transition-all">
-            <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl group-hover:scale-110 transition-transform">
-              <TrendingUp size={24} />
-            </div>
-            <div>
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                {activeSubTab === 'shopping-list' ? 'Custo de Reposição Est.' : 'Valor em Estoque'}
-              </p>
-              <p className="text-2xl font-black text-slate-900 tracking-tighter">
-                R$ {(activeSubTab === 'products' ? totalStockValue : activeSubTab === 'shopping-list' ? (
-                  rawMaterials
-                    .filter(m => selectedShoppingMaterials[m.id])
-                    .reduce((sum, m) => {
-                      const daily = customDailyConsumptions[m.id] || 0;
-                      const multiplier = shoppingPeriod === 'day' ? 1 : shoppingPeriod === 'week' ? 7 : 30;
-                      const needed = daily * multiplier;
-                      const suggested = Math.max(0, parseFloat((needed - m.currentStock).toFixed(2)));
-                      return sum + (suggested * m.costPerUnit);
-                    }, 0)
-                ) : totalRawValue).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </p>
-            </div>
-          </div>
+          {activeSubTab === 'products' ? (
+            <>
+              {/* 1. Total de Produtos */}
+              <div className="bg-white p-5 rounded-[1.5rem] border border-slate-100 shadow-sm flex items-center gap-4 group hover:shadow-md transition-all">
+                <div className="p-3 bg-teal-50 text-teal-600 rounded-2xl group-hover:scale-110 transition-transform shrink-0">
+                  <Package size={24} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total no Cardápio</p>
+                  <p className="text-2xl font-black text-slate-900 tracking-tighter">
+                    {products.length} <span className="text-xs font-bold text-slate-400">itens</span>
+                  </p>
+                  <p className="text-[11px] font-semibold text-emerald-600 truncate">
+                    {products.filter(p => p.status !== 'inactive').length} ativos para venda
+                  </p>
+                </div>
+              </div>
+
+              {/* 2. Mais Vendido (Top Seller) */}
+              <div 
+                onClick={() => {
+                  if (topSellingProductStats?.name) {
+                    setSearchTerm(topSellingProductStats.name);
+                  }
+                }}
+                className="bg-white p-5 rounded-[1.5rem] border border-slate-100 shadow-sm flex items-center gap-4 group hover:shadow-md hover:border-amber-200 transition-all cursor-pointer"
+                title="Clique para filtrar este produto na lista"
+              >
+                <div className="p-3 bg-amber-50 text-amber-600 rounded-2xl group-hover:scale-110 transition-transform shrink-0">
+                  <Flame size={24} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Mais Vendido (Top Seller)</p>
+                    <span className="text-[9px] font-black text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded uppercase">Destaque</span>
+                  </div>
+                  <p className="text-base font-black text-slate-900 tracking-tight truncate mt-0.5">
+                    {topSellingProductStats ? topSellingProductStats.name : 'Nenhum pedido ainda'}
+                  </p>
+                  <p className="text-[11px] font-semibold text-amber-700 truncate">
+                    {topSellingProductStats && topSellingProductStats.qty > 0 
+                      ? `${topSellingProductStats.qty} un vendidas • R$ ${topSellingProductStats.revenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` 
+                      : 'Aguardando histórico de vendas'}
+                  </p>
+                </div>
+              </div>
+
+              {/* 3. Menor Margem / Menor Lucro (Alerta de Precificação) */}
+              <div 
+                onClick={() => {
+                  if (lowestMarginProductStats?.product.name) {
+                    setSearchTerm(lowestMarginProductStats.product.name);
+                  }
+                }}
+                className="bg-white p-5 rounded-[1.5rem] border border-slate-100 shadow-sm flex items-center gap-4 group hover:shadow-md hover:border-rose-200 transition-all cursor-pointer"
+                title="Clique para filtrar este produto e revisar custo/preço"
+              >
+                <div className="p-3 bg-rose-50 text-rose-600 rounded-2xl group-hover:scale-110 transition-transform shrink-0">
+                  <TrendingDown size={24} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Menor Margem de Lucro</p>
+                    <span className="text-[9px] font-black text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded uppercase">Revisar</span>
+                  </div>
+                  <p className="text-base font-black text-slate-900 tracking-tight truncate mt-0.5">
+                    {lowestMarginProductStats ? lowestMarginProductStats.product.name : '100% Margem'}
+                  </p>
+                  <p className="text-[11px] font-semibold text-rose-700 truncate">
+                    {lowestMarginProductStats 
+                      ? `Margem: ${lowestMarginProductStats.margin.toFixed(1)}% • Lucro: R$ ${lowestMarginProductStats.profit.toFixed(2)}/un` 
+                      : 'Sem ficha técnica cadastrada'}
+                  </p>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Insumos / Lista de Compras */}
+              <div className="bg-white p-5 rounded-[1.5rem] border border-slate-100 shadow-sm flex items-center gap-4 group hover:shadow-md transition-all">
+                <div className="p-3 bg-teal-50 text-teal-600 rounded-2xl group-hover:scale-110 transition-transform shrink-0">
+                  {activeSubTab === 'shopping-list' ? <ShoppingCart size={24} /> : <Beaker size={24} />}
+                </div>
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                    {activeSubTab === 'shopping-list' ? 'Insumos Mapeados' : 'Total de Insumos'}
+                  </p>
+                  <p className="text-2xl font-black text-slate-900 tracking-tighter">
+                    {rawMaterials.length} <span className="text-xs font-bold text-slate-400">insumos</span>
+                  </p>
+                </div>
+              </div>
+              <div className="bg-white p-5 rounded-[1.5rem] border border-slate-100 shadow-sm flex items-center gap-4 group hover:shadow-md transition-all">
+                <div className="p-3 bg-rose-50 text-rose-600 rounded-2xl group-hover:scale-110 transition-transform shrink-0">
+                  <AlertCircle size={24} />
+                </div>
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Estoque Crítico</p>
+                  <p className="text-2xl font-black text-rose-600 tracking-tighter">
+                    {lowRawStockCount} <span className="text-xs font-bold text-rose-400">abaixo do mín.</span>
+                  </p>
+                </div>
+              </div>
+              <div className="bg-white p-5 rounded-[1.5rem] border border-slate-100 shadow-sm flex items-center gap-4 group hover:shadow-md transition-all">
+                <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl group-hover:scale-110 transition-transform shrink-0">
+                  <TrendingUp size={24} />
+                </div>
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                    {activeSubTab === 'shopping-list' ? 'Custo de Reposição Est.' : 'Valor em Estoque'}
+                  </p>
+                  <p className="text-2xl font-black text-slate-900 tracking-tighter">
+                    R$ {(activeSubTab === 'shopping-list' ? (
+                      rawMaterials
+                        .filter(m => selectedShoppingMaterials[m.id])
+                        .reduce((sum, m) => {
+                          const daily = customDailyConsumptions[m.id] || 0;
+                          const multiplier = shoppingPeriod === 'day' ? 1 : shoppingPeriod === 'week' ? 7 : 30;
+                          const needed = daily * multiplier;
+                          const suggested = Math.max(0, parseFloat((needed - m.currentStock).toFixed(2)));
+                          return sum + (suggested * m.costPerUnit);
+                        }, 0)
+                    ) : totalRawValue).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 

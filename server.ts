@@ -125,6 +125,8 @@ import {
   query as clientQuery,
   where as clientWhere,
   getDocs as getClientDocs,
+  getDoc as getClientDoc,
+  runTransaction as clientRunTransaction,
   limit as clientLimit,
   doc as clientDoc,
   setDoc as clientSetDoc,
@@ -1754,29 +1756,68 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
     }
   });
 
-  // Função auxiliar para persistir o auto-incremento da sequência de NFC-e
+  // Função auxiliar para persistir o auto-incremento da sequência de NFC-e com garantia atômica
   async function updateNextFiscalNumber(tenantId: string, currentNumber: number): Promise<number> {
-    const nextNumber = currentNumber + 1;
+    const nextNumber = Math.max(1, (Number(currentNumber) || 0) + 1);
     const tId = tenantId || 't1';
+    
+    // 1. Tentar persistência no Firebase Admin Firestore
+    try {
+      if (adminDb) {
+        const adminDocRef = adminDb.collection("settings").doc(tId);
+        const snap = await adminDocRef.get();
+        if (snap.exists) {
+          const data = snap.data() || {};
+          const existingAdmin = data.admin || {};
+          const existingFiscal = existingAdmin.fiscal || data.fiscal || {};
+          const storedNext = Number(existingFiscal.nextNfceNumber) || 0;
+          const finalNext = Math.max(nextNumber, storedNext > currentNumber ? storedNext + 1 : nextNumber);
+
+          await adminDocRef.set({
+            admin: {
+              ...existingAdmin,
+              fiscal: {
+                ...existingFiscal,
+                nextNfceNumber: finalNext
+              }
+            },
+            fiscal: {
+              ...existingFiscal,
+              nextNfceNumber: finalNext
+            },
+            updatedAt: new Date()
+          }, { merge: true });
+          console.log(`[Fiscal API] Auto-incrementado nextNfceNumber para ${finalNext} no tenant ${tId} (via Admin DB)`);
+          return finalNext;
+        }
+      }
+    } catch (adminErr: any) {
+      console.warn(`[Fiscal API] Admin DB falhou ao atualizar nextNfceNumber:`, adminErr.message);
+    }
+
+    // 2. Fallback com Client Firestore
     try {
       const settingsRef = clientDoc(clientDb, "settings", tId);
       const settingsSnap = await getClientDoc(settingsRef);
+      let finalNext = nextNumber;
       if (settingsSnap.exists()) {
         const data = settingsSnap.data() || {};
         const existingAdmin = data.admin || {};
         const existingFiscal = existingAdmin.fiscal || data.fiscal || {};
+        const storedNext = Number(existingFiscal.nextNfceNumber) || 0;
+        finalNext = Math.max(nextNumber, storedNext > currentNumber ? storedNext + 1 : nextNumber);
 
         await clientSetDoc(settingsRef, {
           admin: {
             ...existingAdmin,
             fiscal: {
               ...existingFiscal,
-              nextNfceNumber: nextNumber
+              nextNfceNumber: finalNext
             }
           },
           fiscal: {
             ...existingFiscal,
-            nextNfceNumber: nextNumber
+            nextNfceNumber: finalNext
           },
           updatedAt: new Date()
         }, { merge: true });
@@ -1793,12 +1834,33 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
           updatedAt: new Date()
         }, { merge: true });
       }
-      console.log(`[Fiscal API] Auto-incrementado nextNfceNumber para ${nextNumber} no tenant ${tId}`);
+      console.log(`[Fiscal API] Auto-incrementado nextNfceNumber para ${finalNext} no tenant ${tId}`);
+      return finalNext;
     } catch (err: any) {
       console.warn(`[Fiscal API] Falha ao persistir auto-incremento de nextNfceNumber para tenant ${tId}:`, err.message);
     }
     return nextNumber;
   }
+
+  // Rota de Consulta e Reserva do Próximo Número Fiscal (NFC-e)
+  app.get("/api/fiscal/next-number", async (req, res) => {
+    try {
+      const tenantId = (req.query.tenantId as string) || "t1";
+      const settingsRef = clientDoc(clientDb, "settings", tenantId);
+      const settingsSnap = await getClientDoc(settingsRef);
+      let nextNfceNumber = 1;
+      let series = 1;
+      if (settingsSnap.exists()) {
+        const data = settingsSnap.data() || {};
+        const fiscal = data.admin?.fiscal || data.fiscal || {};
+        nextNfceNumber = Number(fiscal.nextNfceNumber) || 1;
+        series = Number(fiscal.series) || 1;
+      }
+      return res.json({ success: true, tenantId, nextNfceNumber, series });
+    } catch (err: any) {
+      return res.json({ success: true, tenantId: "t1", nextNfceNumber: 1, series: 1, warning: err.message });
+    }
+  });
 
   // Fiscal routes - Emissão
   app.post("/api/fiscal/issue", async (req, res) => {

@@ -313,21 +313,9 @@ export default function LojistaCopilot({
       .reduce((sum, item) => sum + item.amount, 0);
   }, [fixedCostsList]);
 
-  // Custom fixed monthly costs configured by the lojista for smart day-proportional scaling
-  const [monthlyRent, setMonthlyRent] = useState(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem(`copilot_monthly_rent_${activeTenantId}`);
-      return saved ? parseFloat(saved) : 2500;
-    }
-    return 2500;
-  });
-  const [monthlyStaff, setMonthlyStaff] = useState(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem(`copilot_monthly_staff_${activeTenantId}`);
-      return saved ? parseFloat(saved) : 4800;
-    }
-    return 4800;
-  });
+  // Custom fixed monthly costs derived directly from lojista config
+  const monthlyRent = computedRentTotal;
+  const monthlyStaff = computedStaffTotal;
 
   const [estimatedWastePercent, setEstimatedWastePercent] = useState(() => {
     if (typeof window !== "undefined") {
@@ -356,22 +344,11 @@ export default function LojistaCopilot({
         ]);
       }
 
-      const savedRent = localStorage.getItem(`copilot_monthly_rent_${activeTenantId}`);
-      setMonthlyRent(savedRent ? parseFloat(savedRent) : 2500);
-
-      const savedStaff = localStorage.getItem(`copilot_monthly_staff_${activeTenantId}`);
-      setMonthlyStaff(savedStaff ? parseFloat(savedStaff) : 4800);
-
       const savedWaste = localStorage.getItem(`copilot_estimated_waste_${activeTenantId}`);
       setEstimatedWastePercent(savedWaste ? parseFloat(savedWaste) : 3.5);
     }
   }, [activeTenantId]);
 
-  // Synchronize monthly totals when the list changes
-  React.useEffect(() => {
-    setMonthlyRent(computedRentTotal);
-    setMonthlyStaff(computedStaffTotal);
-  }, [fixedCostsList, computedRentTotal, computedStaffTotal]);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
 
   // Estados de Simulação Financeira Interativa ("Alavancas de Lucro")
@@ -387,32 +364,25 @@ export default function LojistaCopilot({
   // Kai Local Chat States
   const [kaiPose, setKaiPose] = useState<KaiPose>('tudo-sob-controle');
   const [kaiExpression, setKaiExpression] = useState<KaiExpression>('feliz');
-  const [chatMessages, setChatMessages] = useState<{ sender: 'user' | 'kai'; text: string; pose?: KaiPose; expression?: KaiExpression }[]>([]);
-  const [userQuery, setUserQuery] = useState("");
-  const [isChatLoading, setIsChatLoading] = useState(false);
-
-  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'copilot' | 'cmv-cardapio' | 'chatbot' | 'analista-estoque' | 'fiscal'>('copilot');
-  const [isMobileAppMode, setIsMobileAppMode] = useState(false);
-
-  // Automatic initialization of chatMessages from Kai Copilot
-  React.useEffect(() => {
-    if (chatMessages.length === 0) {
-      setChatMessages([
-        {
-          sender: 'kai',
-          text: `Olá lojista! Eu sou o Kai, seu analista e Copiloto de Inteligência Operacional. 🤖💡
+  const [chatMessages, setChatMessages] = useState<{ sender: 'user' | 'kai'; text: string; pose?: KaiPose; expression?: KaiExpression }[]>([
+    {
+      sender: 'kai',
+      text: `Olá lojista! Eu sou o Kai, seu analista e Copiloto de Inteligência Operacional. 🤖💡
 
 Estou aqui para rodar diagnósticos em tempo real, efetuar projeções e tirar dúvidas estratégicas sobre a sua loja de forma 100% inteligente!
 
 Podemos conversar sobre como reduzir seu CMV, planejar o faturamento para bater o ponto de equilíbrio, criar combos rentáveis com pratos âncoras, ou ajustar insumos críticos do seu estoque.
 
 Como posso te ajudar a lucrar mais hoje? Pergunte abaixo ou clique em uma das sugestões rápidas!`,
-          pose: 'tudo-sob-controle',
-          expression: 'feliz'
-        }
-      ]);
+      pose: 'tudo-sob-controle',
+      expression: 'feliz'
     }
-  }, [chatMessages.length]);
+  ]);
+  const [userQuery, setUserQuery] = useState("");
+  const [isChatLoading, setIsChatLoading] = useState(false);
+
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'copilot' | 'cmv-cardapio' | 'chatbot' | 'analista-estoque' | 'fiscal'>('copilot');
+  const [isMobileAppMode, setIsMobileAppMode] = useState(false);
 
   const chatEndRef = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
@@ -470,6 +440,46 @@ Como posso te ajudar a lucrar mais hoje? Pergunte abaixo ou clique em uma das su
       average: todayOrders.length > 0 ? todayOrders.reduce((acc, o) => acc + (o.total || 0), 0) / todayOrders.length : 0
     };
   }, [orders]);
+
+  // Top Selling Product based on real completed orders
+  const topSellingProduct = useMemo(() => {
+    const counts: Record<string, { qty: number; revenue: number; name: string }> = {};
+    orders.forEach(o => {
+      if (o.status === 'cancelled' || o.isSubTicket || o.mergedIntoOrderId) return;
+      (o.items || []).forEach(item => {
+        const id = item.productId || item.id || item.name;
+        if (!counts[id]) {
+          counts[id] = { qty: 0, revenue: 0, name: item.name };
+        }
+        counts[id].qty += item.quantity || 1;
+        counts[id].revenue += (item.price || 0) * (item.quantity || 1);
+      });
+    });
+
+    const sorted = Object.entries(counts).sort((a, b) => b[1].qty - a[1].qty);
+    if (sorted.length > 0) {
+      const topId = sorted[0][0];
+      const topInfo = sorted[0][1];
+      const matchedProd = products.find(p => p.id === topId || p.name.toLowerCase() === topInfo.name.toLowerCase());
+      return {
+        name: matchedProd?.name || topInfo.name,
+        price: matchedProd?.price || (topInfo.qty > 0 ? topInfo.revenue / topInfo.qty : 0),
+        image: matchedProd?.image || 'https://picsum.photos/seed/food/200/200',
+        qtySold: topInfo.qty,
+        revenue: topInfo.revenue
+      };
+    }
+    if (products.length > 0) {
+      return {
+        name: products[0].name,
+        price: products[0].price || 0,
+        image: products[0].image || 'https://picsum.photos/seed/food/200/200',
+        qtySold: 0,
+        revenue: 0
+      };
+    }
+    return null;
+  }, [orders, products]);
 
   // 3. dailyCashFlow inside LojistaCopilot
   const dailyCashFlow = useMemo(() => {
@@ -2200,15 +2210,17 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
               {/* Best-selling Item Panel */}
               <div className="bg-white rounded-3xl border shadow-sm p-4">
                 <h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-4">Melhor Produto do Cardápio</h3>
-               {products.length > 0 ? (
+                {topSellingProduct ? (
                   <div className="flex gap-4 items-center">
                     <div className="w-20 h-20 rounded-2xl bg-slate-50 overflow-hidden border shrink-0">
-                      <img src={products[0]?.image || `https://picsum.photos/seed/food/200/200`} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      <img src={topSellingProduct.image} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     </div>
-                    <div>
-                      <h4 className="font-black text-slate-800 text-sm leading-tight">{products[0]?.name}</h4>
-                      <span className="inline-block px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 text-[8px] font-black uppercase mt-1">Estrela de Vendas</span>
-                      <p className="text-base font-black text-indigo-600 mt-1">R$ {(products[0]?.price || 0).toFixed(2)}</p>
+                    <div className="min-w-0">
+                      <h4 className="font-black text-slate-800 text-sm leading-tight truncate">{topSellingProduct.name}</h4>
+                      <span className="inline-block px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 text-[8px] font-black uppercase mt-1">
+                        {topSellingProduct.qtySold > 0 ? `${topSellingProduct.qtySold} vendidos` : 'Estrela de Vendas'}
+                      </span>
+                      <p className="text-base font-black text-indigo-600 mt-1">R$ {topSellingProduct.price.toFixed(2)}</p>
                     </div>
                   </div>
                 ) : (
@@ -3645,8 +3657,6 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                       localStorage.setItem(`copilot_monthly_staff_${activeTenantId}`, computedStaffTotal.toString());
                       localStorage.setItem(`copilot_estimated_waste_${activeTenantId}`, estimatedWastePercent.toString());
                     }
-                    setMonthlyRent(computedRentTotal);
-                    setMonthlyStaff(computedStaffTotal);
                     setIsConfigOpen(false);
                   }}
                   className="py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-extrabold text-[10px] uppercase tracking-wider rounded-xl transition-all shadow-md shadow-indigo-600/15"

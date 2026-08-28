@@ -1,4 +1,4 @@
-import { PaymentMethod, AdminSettings } from '../types';
+import { AdminSettings } from '../types';
 
 /**
  * Normaliza qualquer string ou identificador de método de pagamento para as chaves canônicas do sistema:
@@ -19,13 +19,13 @@ export const normalizePaymentMethod = (method: string | undefined | null, adminS
   if (standardKeys.includes(cleanMethod)) return cleanMethod;
 
   // Equivalências diretas
-  if (cleanMethod === 'cash' || cleanMethod === 'especie' || cleanMethod === 'espécie') return 'dinheiro';
+  if (cleanMethod === 'cash' || cleanMethod === 'especie' || cleanMethod === 'espécie' || cleanMethod === 'cedula' || cleanMethod === 'cédula') return 'dinheiro';
   if (cleanMethod === 'credit' || cleanMethod === 'credito' || cleanMethod === 'crédito' || cleanMethod === 'cartao_credito') return 'cartao_credito';
   if (cleanMethod === 'debit' || cleanMethod === 'debito' || cleanMethod === 'débito' || cleanMethod === 'cartao_debito') return 'cartao_debito';
   if (cleanMethod === 'card' || cleanMethod === 'cartao' || cleanMethod === 'cartão') return 'cartao_credito';
-  if (cleanMethod === 'pix' || cleanMethod === 'qrcode' || cleanMethod === 'qr_code') return 'pix';
-  if (cleanMethod === 'voucher' || cleanMethod === 'vr' || cleanMethod === 'va') return 'vale_refeicao';
-  if (cleanMethod === 'account' || cleanMethod === 'fiado' || cleanMethod === 'carteira') return 'conta_cliente';
+  if (cleanMethod === 'pix' || cleanMethod === 'qrcode' || cleanMethod === 'qr_code' || cleanMethod === 'transferencia' || cleanMethod === 'transferência' || cleanMethod === 'ted' || cleanMethod === 'doc') return 'pix';
+  if (cleanMethod === 'voucher' || cleanMethod === 'vr' || cleanMethod === 'va' || cleanMethod === 'ticket' || cleanMethod === 'sodexo' || cleanMethod === 'alelo' || cleanMethod === 'ben' || cleanMethod === 'pluxee') return 'vale_refeicao';
+  if (cleanMethod === 'account' || cleanMethod === 'fiado' || cleanMethod === 'carteira' || cleanMethod === 'promissoria' || cleanMethod === 'promissória' || cleanMethod === 'convenio' || cleanMethod === 'convênio') return 'conta_cliente';
 
   // Verificação no cadastro de métodos de pagamento das configurações
   if (adminSettings && adminSettings.paymentMethods) {
@@ -47,18 +47,29 @@ export const normalizePaymentMethod = (method: string | undefined | null, adminS
     }
   }
 
-  // Verificações por substring (Cartão nunca pode virar dinheiro!)
-  if (cleanMethod.includes('credito') || cleanMethod.includes('crédito') || cleanMethod.includes('credit')) {
-    return 'cartao_credito';
+  // Verificações por substring (Cartão e PIX nunca podem virar dinheiro!)
+  if (cleanMethod.includes('pix') || cleanMethod.includes('qr') || cleanMethod.includes('chave') || cleanMethod.includes('transferencia') || cleanMethod.includes('transferência') || cleanMethod.includes('picpay') || cleanMethod.includes('mercadopago') || cleanMethod.includes('mercado_pago')) {
+    return 'pix';
   }
   if (cleanMethod.includes('debito') || cleanMethod.includes('débito') || cleanMethod.includes('debit')) {
     return 'cartao_debito';
   }
-  if (cleanMethod.includes('cartao') || cleanMethod.includes('cartão') || cleanMethod.includes('card') || cleanMethod.includes('maquininha') || cleanMethod.includes('pos')) {
+  if (
+    cleanMethod.includes('credito') || 
+    cleanMethod.includes('crédito') || 
+    cleanMethod.includes('credit') || 
+    cleanMethod.includes('cartao') || 
+    cleanMethod.includes('cartão') || 
+    cleanMethod.includes('card') || 
+    cleanMethod.includes('maquininha') || 
+    cleanMethod.includes('pos') ||
+    cleanMethod.includes('visa') ||
+    cleanMethod.includes('master') ||
+    cleanMethod.includes('elo') ||
+    cleanMethod.includes('amex') ||
+    cleanMethod.includes('hiper')
+  ) {
     return 'cartao_credito';
-  }
-  if (cleanMethod.includes('pix')) {
-    return 'pix';
   }
   if (
     cleanMethod.includes('vale') ||
@@ -70,7 +81,9 @@ export const normalizePaymentMethod = (method: string | undefined | null, adminS
     cleanMethod.includes('sodexo') ||
     cleanMethod.includes('alelo') ||
     cleanMethod.includes('vr') ||
-    cleanMethod.includes('va')
+    cleanMethod.includes('va') ||
+    cleanMethod.includes('ben') ||
+    cleanMethod.includes('pluxee')
   ) {
     return 'vale_refeicao';
   }
@@ -78,7 +91,12 @@ export const normalizePaymentMethod = (method: string | undefined | null, adminS
     cleanMethod.includes('fiado') ||
     cleanMethod.includes('cliente') ||
     cleanMethod.includes('carteira') ||
-    cleanMethod.includes('conta')
+    cleanMethod.includes('conta') ||
+    cleanMethod.includes('promissoria') ||
+    cleanMethod.includes('promissória') ||
+    cleanMethod.includes('convenio') ||
+    cleanMethod.includes('convênio') ||
+    cleanMethod.includes('a prazo')
   ) {
     return 'conta_cliente';
   }
@@ -89,9 +107,14 @@ export const normalizePaymentMethod = (method: string | undefined | null, adminS
     cleanMethod.includes('cedula') ||
     cleanMethod.includes('cédula') ||
     cleanMethod.includes('especie') ||
-    cleanMethod.includes('espécie')
+    cleanMethod.includes('espécie') ||
+    cleanMethod.includes('cash')
   ) {
     return 'dinheiro';
+  }
+
+  if (cleanMethod.includes('online') || cleanMethod.includes('app') || cleanMethod.includes('marketplace') || cleanMethod.includes('ifood')) {
+    return 'pix';
   }
 
   return 'dinheiro';

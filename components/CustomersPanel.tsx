@@ -6,7 +6,8 @@ import {
   FileText, History, Wallet, ArrowDownCircle, 
   ArrowUpCircle, X, Check, Save, Plus,
   DollarSign, MoreVertical, CreditCard, Banknote, Smartphone,
-  AlertCircle, ChevronRight, UserCircle, Edit3, Printer, Calendar
+  AlertCircle, ChevronRight, UserCircle, Edit3, Printer, Calendar,
+  MessageSquare, CheckCircle2, Zap, Receipt, Share2, Sparkles
 } from 'lucide-react';
 import { maskPhone, maskCPF, maskCurrency, maskCEP } from '../utils/masks';
 import { maskPhoneLGPD, maskEmailLGPD, maskDocumentLGPD } from '../utils/lgpd';
@@ -94,6 +95,8 @@ const CustomersPanel: React.FC<CustomersPanelProps> = memo(({
   const [baixaMethod, setBaixaMethod] = useState<string>('dinheiro');
   const [manualTransactionType, setManualTransactionType] = useState<'credit' | 'debit'>('credit');
   const [manualTransactionDescription, setManualTransactionDescription] = useState('');
+  const [sendWhatsAppAfterBaixa, setSendWhatsAppAfterBaixa] = useState<boolean>(true);
+  const [printReceiptAfterBaixa, setPrintReceiptAfterBaixa] = useState<boolean>(false);
 
   // Customer Form
   const [formName, setFormName] = useState('');
@@ -112,6 +115,10 @@ const CustomersPanel: React.FC<CustomersPanelProps> = memo(({
 
   const debtorsCount = useMemo(() => {
     return customers.filter(c => (c.balance ?? 0) > 0).length;
+  }, [customers]);
+
+  const totalDebtSum = useMemo(() => {
+    return customers.reduce((acc, c) => acc + Math.max(0, c.balance ?? 0), 0);
   }, [customers]);
 
   const filteredCustomers = useMemo(() => {
@@ -140,6 +147,127 @@ const CustomersPanel: React.FC<CustomersPanelProps> = memo(({
     setFormCrmStatus(customer.crmStatus || 'active');
     setFormTags(customer.tags?.join(', ') || '');
     setShowAddModal(true);
+  };
+
+  const handleOpenBaixa = (customer: Customer, type: 'credit' | 'debit' = 'credit', prefillAmount?: number) => {
+    setShowBaixaModal(customer);
+    setManualTransactionType(type);
+    if (prefillAmount !== undefined) {
+      setBaixaAmount(prefillAmount > 0 ? prefillAmount.toFixed(2) : '');
+    } else if (type === 'credit' && (customer.balance ?? 0) > 0) {
+      setBaixaAmount((customer.balance ?? 0).toFixed(2));
+    } else {
+      setBaixaAmount('');
+    }
+    setManualTransactionDescription(type === 'credit' ? 'Baixa / Pagamento de Fiado' : 'Lançamento de Débito Fiado');
+  };
+
+  const handlePrintReceipt = (customer: Customer, transaction: CustomerTransaction, remainingBalance: number) => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    const d = parseSafeDate(transaction.date);
+    const dateFormatted = `${d.toLocaleDateString('pt-BR')} ${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Comprovante de Pagamento - ${customer.name}</title>
+          <style>
+            body { font-family: monospace; padding: 15px; color: #000; width: 300px; margin: 0 auto; }
+            .header { text-align: center; border-bottom: 1px dashed #000; padding-bottom: 8px; margin-bottom: 8px; }
+            .header h2 { margin: 0; font-size: 14px; text-transform: uppercase; }
+            .header p { margin: 2px 0; font-size: 11px; }
+            .row { display: flex; justify-content: space-between; margin: 4px 0; font-size: 11px; }
+            .divider { border-top: 1px dashed #000; margin: 8px 0; }
+            .amount { font-size: 16px; font-weight: bold; text-align: center; margin: 10px 0; }
+            .footer { text-align: center; font-size: 10px; margin-top: 12px; }
+            @media print { .no-print { display: none; } }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h2>RECIBO DE PAGAMENTO</h2>
+            <p>BAIXA DE CONTA / FIADO</p>
+          </div>
+          <div class="row">
+            <span>Cliente:</span>
+            <strong>${customer.name}</strong>
+          </div>
+          ${customer.document ? `<div class="row"><span>Doc:</span><span>${customer.document}</span></div>` : ''}
+          ${customer.phone ? `<div class="row"><span>Tel:</span><span>${customer.phone}</span></div>` : ''}
+          <div class="row">
+            <span>Data/Hora:</span>
+            <span>${dateFormatted}</span>
+          </div>
+          <div class="divider"></div>
+          <div class="row">
+            <span>Operação:</span>
+            <span>${transaction.description || 'Pagamento Recebido'}</span>
+          </div>
+          <div class="row">
+            <span>Forma de Pgto:</span>
+            <strong>${(transaction.paymentMethod || 'Dinheiro').toUpperCase()}</strong>
+          </div>
+          <div class="amount">
+            VALOR RECEBIDO: R$ ${(transaction.amount ?? 0).toFixed(2)}
+          </div>
+          <div class="divider"></div>
+          <div class="row">
+            <span>Saldo Anterior:</span>
+            <span>R$ ${(remainingBalance + transaction.amount).toFixed(2)}</span>
+          </div>
+          <div class="row">
+            <span>Saldo Restante:</span>
+            <strong>R$ ${remainingBalance.toFixed(2)}</strong>
+          </div>
+          ${remainingBalance <= 0 ? '<p style="text-align:center;font-weight:bold;margin:6px 0;">*** CONTA QUITADA ***</p>' : ''}
+          <div class="divider"></div>
+          <div class="footer">
+            <p>Obrigado pela preferência!</p>
+            <p>Comprovante gerado pelo sistema</p>
+          </div>
+          <script>
+            window.onload = () => {
+              setTimeout(() => {
+                window.print();
+                window.close();
+              }, 500);
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  const handleSendWhatsAppReceipt = (customer: Customer, transaction: CustomerTransaction, remainingBalance: number) => {
+    if (!customer.phone) {
+      alert("Este cliente não possui telefone cadastrado para envio de WhatsApp.");
+      return;
+    }
+
+    const cleanPhone = customer.phone.replace(/\D/g, '');
+    const phoneFormatted = cleanPhone.startsWith('55') ? cleanPhone : `55${cleanPhone}`;
+    const d = parseSafeDate(transaction.date);
+    const dateFormatted = `${d.toLocaleDateString('pt-BR')} às ${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+
+    let message = `Olá, *${customer.name}*!\n\n`;
+    message += `✅ *COMPROVANTE DE PAGAMENTO / BAIXA DE FIADO*\n\n`;
+    message += `💰 *Valor Recebido:* R$ ${(transaction.amount ?? 0).toFixed(2)}\n`;
+    message += `💳 *Forma de Pagamento:* ${(transaction.paymentMethod || 'Dinheiro').toUpperCase()}\n`;
+    message += `📅 *Data/Hora:* ${dateFormatted}\n`;
+    message += `📝 *Detalhes:* ${transaction.description || 'Quitação de conta'}\n\n`;
+    
+    if (remainingBalance <= 0) {
+      message += `🎉 *Saldo Restante:* R$ 0,00 (Sua conta está totalmente quitada! Muito obrigado!)\n\n`;
+    } else {
+      message += `📊 *Saldo Restante em Aberto:* R$ ${remainingBalance.toFixed(2)}\n\n`;
+    }
+    message += `Agradecemos pela pontualidade e preferência! 🍽️`;
+
+    const encodedMessage = encodeURIComponent(message);
+    window.open(`https://wa.me/${phoneFormatted}?text=${encodedMessage}`, '_blank');
   };
 
   const handleSaveCustomer = () => {
@@ -173,10 +301,9 @@ const CustomersPanel: React.FC<CustomersPanelProps> = memo(({
       );
 
       if (!confirmUnify) {
-        return; // Retorna e não prossegue se o usuário cancelar
+        return;
       }
 
-      // Se o usuário confirmou unificar, mandamos salvar/atualizar. O backend/AppState irá fazer o merge.
       if (editingCustomer) {
         onUpdateCustomer(editingCustomer.id, customerData);
       } else {
@@ -222,19 +349,23 @@ const CustomersPanel: React.FC<CustomersPanelProps> = memo(({
   const handleBaixa = () => {
     if (!showBaixaModal || !baixaAmount) return;
     const amount = parseFloat(baixaAmount);
+    if (isNaN(amount) || amount <= 0) {
+      alert("Por favor, informe um valor numérico válido maior que zero.");
+      return;
+    }
     
     const transaction: CustomerTransaction = {
       id: Math.random().toString(36).substr(2, 9),
       type: manualTransactionType,
       amount: amount,
-      description: manualTransactionDescription || (manualTransactionType === 'credit' ? `Pagamento recebido via ${baixaMethod.toUpperCase()}` : 'Lançamento de débito manual'),
+      description: manualTransactionDescription || (manualTransactionType === 'credit' ? `Recebimento de Fiado via ${baixaMethod.toUpperCase()}` : 'Lançamento de Débito Manual (Fiado)'),
       date: new Date(),
       paymentMethod: manualTransactionType === 'credit' ? baixaMethod : undefined
     };
 
     const newBalance = manualTransactionType === 'debit' 
       ? (showBaixaModal.balance ?? 0) + amount 
-      : (showBaixaModal.balance ?? 0) - amount;
+      : Math.max(0, (showBaixaModal.balance ?? 0) - amount);
 
     onUpdateCustomer(showBaixaModal.id, {
       balance: newBalance,
@@ -246,15 +377,24 @@ const CustomersPanel: React.FC<CustomersPanelProps> = memo(({
         type: 'income',
         amount: amount,
         category: 'Recebimento Fiado',
-        description: `Baixa de conta: ${showBaixaModal.name}`,
+        description: `Baixa de conta: ${showBaixaModal.name} (${baixaMethod.toUpperCase()})`,
+        paymentMethod: baixaMethod,
         date: new Date()
       });
+
+      if (sendWhatsAppAfterBaixa && showBaixaModal.phone) {
+        handleSendWhatsAppReceipt(showBaixaModal, transaction, newBalance);
+      }
+
+      if (printReceiptAfterBaixa) {
+        handlePrintReceipt(showBaixaModal, transaction, newBalance);
+      }
     }
 
+    const settledCustomer = showBaixaModal;
     setShowBaixaModal(null);
     setBaixaAmount('');
     setManualTransactionDescription('');
-    alert("Lançamento realizado com sucesso!");
   };
 
   const filteredHistory = useMemo(() => {
@@ -400,13 +540,47 @@ const CustomersPanel: React.FC<CustomersPanelProps> = memo(({
 
   return (
     <div className="space-y-4 animate-in fade-in duration-500">
+      {/* Header Cards & Summary */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-3">
+          <div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl">
+            <UserCircle size={22} />
+          </div>
+          <div>
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total de Clientes</p>
+            <p className="text-xl font-black text-slate-900">{customers.length}</p>
+          </div>
+        </div>
+
+        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-3">
+          <div className="p-3 bg-rose-50 text-rose-600 rounded-xl">
+            <AlertCircle size={22} />
+          </div>
+          <div>
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contas em Aberto (Fiado)</p>
+            <p className="text-xl font-black text-rose-600">{debtorsCount} clientes</p>
+          </div>
+        </div>
+
+        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-3">
+          <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl">
+            <DollarSign size={22} />
+          </div>
+          <div>
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total a Receber (Fiados)</p>
+            <p className="text-xl font-black text-emerald-600">R$ {totalDebtSum.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Action Bar & Search Filters */}
       <div className="flex flex-col md:flex-row justify-between items-stretch md:items-center gap-3">
         <div className="flex flex-wrap items-center gap-3 flex-1">
           <div className="relative w-full sm:w-80">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
             <input 
               type="text" 
-              placeholder="Buscar por nome ou CPF/CNPJ..." 
+              placeholder="Buscar por nome, telefone ou CPF/CNPJ..." 
               className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all font-medium text-xs shadow-sm"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -428,7 +602,7 @@ const CustomersPanel: React.FC<CustomersPanelProps> = memo(({
               onChange={(e) => setOnlyDebit(e.target.checked)}
               className="w-4 h-4 rounded border-slate-300 text-rose-600 focus:ring-rose-500 cursor-pointer accent-rose-600"
             />
-            <span>Apenas com Saldo Devedor</span>
+            <span>Apenas com Saldo Devedor (Fiado)</span>
             <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
               onlyDebit ? 'bg-rose-200 text-rose-900' : 'bg-slate-100 text-slate-600'
             }`}>
@@ -470,104 +644,135 @@ const CustomersPanel: React.FC<CustomersPanelProps> = memo(({
               )}
             </div>
           ) : (
-            filteredCustomers.map(customer => (
-              <div 
-                key={customer.id} 
-                className={`bg-white p-3 rounded-[1.5rem] border-2 transition-all cursor-pointer group ${selectedCustomer?.id === customer.id ? 'border-indigo-600 shadow-xl' : 'border-transparent hover:border-slate-200 shadow-sm'}`}
-                onClick={() => setSelectedCustomer(customer)}
-              >
-              <div className="flex justify-between items-start">
-                <div className="flex items-center gap-3">
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-black text-lg ${(customer.balance ?? 0) > 0 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                    {(customer.name || 'C').charAt(0)}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                       <h3 className="text-base font-black text-slate-800">{customer.name || ''}</h3>
-                      {customer.crmStatus && (
-                        <span className={`px-1.5 py-0.5 rounded-full text-[6px] font-black uppercase border ${
-                          customer.crmStatus === 'vip' ? 'bg-amber-100 text-amber-600 border-amber-200' :
-                          customer.crmStatus === 'lead' ? 'bg-indigo-100 text-indigo-600 border-indigo-200' :
-                          customer.crmStatus === 'active' ? 'bg-emerald-100 text-emerald-600 border-emerald-200' :
-                          'bg-slate-100 text-slate-500 border-slate-200'
-                        }`}>
-                          {customer.crmStatus}
-                        </span>
-                      )}
-                      {customer.source && (
-                        <span className="px-1.5 py-0.5 rounded-full text-[6px] font-black uppercase bg-indigo-50 text-indigo-400 border border-indigo-100">
-                           {customer.source}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1 mt-0.5">
-                      <PiiField 
-                        value={customer.document} 
-                        maskFn={maskDocumentLGPD} 
-                        className="text-[10px] font-bold text-slate-400 uppercase tracking-widest"
-                      />
-                      {customer.tags && customer.tags.length > 0 && (
-                        <div className="flex gap-1 ml-2">
-                           {customer.tags.map((tag, i) => (
-                             <span key={i} className="text-[7px] font-bold text-slate-400">#{tag}</span>
-                           ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-                <div className="text-right">
-                   <p className="text-[8px] font-black uppercase text-slate-400 tracking-tighter">Saldo Devedor</p>
-                   <p className={`text-xl font-black tracking-tighter ${(customer.balance ?? 0) > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                     R$ {(customer.balance ?? 0).toFixed(2)}
-                   </p>
-                </div>
-              </div>
+            filteredCustomers.map(customer => {
+              const hasDebt = (customer.balance ?? 0) > 0;
+              const isSelected = selectedCustomer?.id === customer.id;
 
-              <div className="mt-3 pt-3 border-t flex flex-wrap gap-3 items-center justify-between">
-                <div className="flex gap-3">
-                  <PiiField 
-                    value={customer.phone} 
-                    maskFn={maskPhoneLGPD} 
-                    icon={<Phone size={12} className="text-indigo-500" />} 
-                    className="text-[10px] font-bold text-slate-500"
-                  />
-                  {customer.email && (
-                    <PiiField 
-                      value={customer.email} 
-                      maskFn={maskEmailLGPD} 
-                      icon={<Mail size={12} className="text-indigo-500" />} 
-                      className="text-[10px] font-bold text-slate-500"
-                    />
-                  )}
+              return (
+                <div 
+                  key={customer.id} 
+                  className={`bg-white p-3.5 rounded-[1.5rem] border-2 transition-all cursor-pointer group ${isSelected ? 'border-indigo-600 shadow-xl' : 'border-transparent hover:border-slate-200 shadow-sm'}`}
+                  onClick={() => setSelectedCustomer(customer)}
+                >
+                  <div className="flex justify-between items-start">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-black text-lg ${hasDebt ? 'bg-rose-50 text-rose-600 ring-2 ring-rose-100' : 'bg-emerald-50 text-emerald-600'}`}>
+                        {(customer.name || 'C').charAt(0)}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-base font-black text-slate-800">{customer.name || ''}</h3>
+                          {customer.crmStatus && (
+                            <span className={`px-1.5 py-0.5 rounded-full text-[6px] font-black uppercase border ${
+                              customer.crmStatus === 'vip' ? 'bg-amber-100 text-amber-600 border-amber-200' :
+                              customer.crmStatus === 'lead' ? 'bg-indigo-100 text-indigo-600 border-indigo-200' :
+                              customer.crmStatus === 'active' ? 'bg-emerald-100 text-emerald-600 border-emerald-200' :
+                              'bg-slate-100 text-slate-500 border-slate-200'
+                            }`}>
+                              {customer.crmStatus}
+                            </span>
+                          )}
+                          {customer.source && (
+                            <span className="px-1.5 py-0.5 rounded-full text-[6px] font-black uppercase bg-indigo-50 text-indigo-400 border border-indigo-100">
+                               {customer.source}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <PiiField 
+                            value={customer.document} 
+                            maskFn={maskDocumentLGPD} 
+                            className="text-[10px] font-bold text-slate-400 uppercase tracking-widest"
+                          />
+                          {customer.tags && customer.tags.length > 0 && (
+                            <div className="flex gap-1 ml-2">
+                               {customer.tags.map((tag, i) => (
+                                 <span key={i} className="text-[7px] font-bold text-slate-400">#{tag}</span>
+                               ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                       <p className="text-[8px] font-black uppercase text-slate-400 tracking-tighter">
+                         {hasDebt ? 'Saldo Devedor (Fiado)' : 'Saldo em Conta'}
+                       </p>
+                       <p className={`text-xl font-black tracking-tighter ${hasDebt ? 'text-rose-600' : 'text-emerald-600'}`}>
+                         R$ {(customer.balance ?? 0).toFixed(2)}
+                       </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 pt-3 border-t flex flex-wrap gap-2 items-center justify-between">
+                    <div className="flex gap-3">
+                      <PiiField 
+                        value={customer.phone} 
+                        maskFn={maskPhoneLGPD} 
+                        icon={<Phone size={12} className="text-indigo-500" />} 
+                        className="text-[10px] font-bold text-slate-500"
+                      />
+                      {customer.email && (
+                        <PiiField 
+                          value={customer.email} 
+                          maskFn={maskEmailLGPD} 
+                          icon={<Mail size={12} className="text-indigo-500" />} 
+                          className="text-[10px] font-bold text-slate-500"
+                        />
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); handleEditClick(customer); }}
+                        className="p-1.5 bg-slate-100 text-slate-600 hover:bg-slate-200 rounded-lg transition-colors"
+                        title="Editar Perfil"
+                      >
+                        <Edit3 size={14} />
+                      </button>
+
+                      {/* BOTÃO PRINCIPAL DE BAIXA DE FIADO */}
+                      {hasDebt ? (
+                        <button 
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            handleOpenBaixa(customer, 'credit');
+                          }}
+                          className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-[10px] font-black uppercase tracking-wider shadow-md shadow-emerald-200 flex items-center gap-1.5 transition-all"
+                          title="Dar baixa no fiado / receber pagamento deste cliente"
+                        >
+                          <Receipt size={13} />
+                          <span>Dar Baixa (Receber)</span>
+                        </button>
+                      ) : (
+                        <button 
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            handleOpenBaixa(customer, 'credit', 0);
+                          }}
+                          className="px-2.5 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg text-[9px] font-black uppercase tracking-wider transition-colors"
+                          title="Lançar crédito em conta"
+                        >
+                          + Crédito
+                        </button>
+                      )}
+
+                      <button 
+                        onClick={(e) => { 
+                          e.stopPropagation(); 
+                          handleOpenBaixa(customer, 'debit', 0);
+                        }}
+                        className="px-2.5 py-1.5 bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-lg text-[9px] font-black uppercase tracking-wider transition-colors"
+                        title="Lançar compra a prazo (novo débito fiado)"
+                      >
+                        + Lançar Débito
+                      </button>
+                    </div>
+                  </div>
                 </div>
-                <div className="flex gap-1.5">
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); handleEditClick(customer); }}
-                    className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors"
-                    title="Editar Perfil"
-                  >
-                    <Edit3 size={14} />
-                  </button>
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); setManualTransactionType('credit'); setShowBaixaModal(customer); }}
-                    className="px-3 py-1 bg-emerald-500 text-white rounded-lg text-[9px] font-black uppercase tracking-widest shadow-lg shadow-emerald-100 hover:bg-emerald-600"
-                  >
-                    Crédito
-                  </button>
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); setManualTransactionType('debit'); setShowBaixaModal(customer); }}
-                    className="px-3 py-1 bg-rose-500 text-white rounded-lg text-[9px] font-black uppercase tracking-widest shadow-lg shadow-rose-100 hover:bg-rose-600"
-                  >
-                    Débito
-                  </button>
-                  <button className="p-1.5 bg-slate-50 text-slate-400 rounded-lg hover:bg-slate-100 transition-colors">
-                    <MoreVertical size={14} />
-                  </button>
-                </div>
-              </div>
-            </div>
-          )))}
+              );
+            })
+          )}
         </div>
 
         {/* Detalhes e Histórico */}
@@ -582,7 +787,7 @@ const CustomersPanel: React.FC<CustomersPanelProps> = memo(({
                 <div className="flex items-center gap-2">
                   <button 
                     onClick={handlePrintExtrato}
-                    className="flex items-center gap-2 px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all shadow-md shadow-indigo-100 text-[10px] font-black uppercase tracking-widest"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all shadow-md shadow-indigo-100 text-[10px] font-black uppercase tracking-widest"
                     title="Imprimir Extrato"
                   >
                     <Printer size={14} /> Imprimir
@@ -590,9 +795,31 @@ const CustomersPanel: React.FC<CustomersPanelProps> = memo(({
                   <History size={18} className="text-indigo-300" />
                 </div>
               </div>
+
+              {/* CARD DE AÇÃO RÁPIDA DE BAIXA DE FIADO NO EXTRATO */}
+              {(activeCustomer.balance ?? 0) > 0 && (
+                <div className="p-3.5 bg-gradient-to-r from-emerald-50 to-teal-50 border-b border-emerald-100 flex items-center justify-between gap-2">
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                      <p className="text-[9px] font-black text-emerald-800 uppercase tracking-wider">Saldo Devedor Pendente</p>
+                    </div>
+                    <p className="text-lg font-black text-emerald-900 tracking-tight">
+                      R$ {(activeCustomer.balance ?? 0).toFixed(2)}
+                    </p>
+                  </div>
+                  <button 
+                    onClick={() => handleOpenBaixa(activeCustomer, 'credit')}
+                    className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-[10px] font-black uppercase tracking-wider shadow-md shadow-emerald-300/40 flex items-center gap-1.5 transition-all"
+                  >
+                    <Receipt size={14} />
+                    <span>Dar Baixa no Fiado</span>
+                  </button>
+                </div>
+              )}
               
               {/* Filtro de Datas */}
-              <div className="p-4 border-b bg-white space-y-3">
+              <div className="p-3 border-b bg-white space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Calendar size={14} className="text-indigo-500" />
@@ -607,21 +834,21 @@ const CustomersPanel: React.FC<CustomersPanelProps> = memo(({
                     </button>
                   )}
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-0.5">
                     <label className="text-[8px] font-black text-slate-400 uppercase ml-1 tracking-tighter">Data Inicial</label>
                     <input 
                       type="date" 
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[11px] font-bold outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/10 transition-all"
+                      className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-bold outline-none focus:border-indigo-500 transition-all"
                       value={startDate}
                       onChange={(e) => setStartDate(e.target.value)}
                     />
                   </div>
-                  <div className="space-y-1">
+                  <div className="space-y-0.5">
                     <label className="text-[8px] font-black text-slate-400 uppercase ml-1 tracking-tighter">Data Final</label>
                     <input 
                       type="date" 
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[11px] font-bold outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/10 transition-all"
+                      className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-bold outline-none focus:border-indigo-500 transition-all"
                       value={endDate}
                       onChange={(e) => setEndDate(e.target.value)}
                     />
@@ -657,24 +884,58 @@ const CustomersPanel: React.FC<CustomersPanelProps> = memo(({
 
               <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
                 {activeTab === 'movimentos' ? (
-                  filteredHistory.length > 0 ? filteredHistory.map(t => (
-                    <div key={t.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
-                       <div className="flex items-center gap-2">
-                          <div className={`p-1.5 rounded-lg ${t.type === 'debit' ? 'bg-rose-100 text-rose-600' : 'bg-emerald-100 text-emerald-600'}`}>
-                             {t.type === 'debit' ? <ArrowUpCircle size={14} /> : <ArrowDownCircle size={14} />}
-                          </div>
-                          <div>
-                             <p className="text-[10px] font-black text-slate-700 leading-tight">{t.description}</p>
-                             <p className="text-[8px] font-bold text-slate-400 uppercase">
-                               {parseSafeDate(t.date).toLocaleDateString()} {parseSafeDate(t.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
+                  filteredHistory.length > 0 ? filteredHistory.map(t => {
+                    const isCredit = t.type === 'credit';
+                    return (
+                      <div key={t.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100 hover:border-slate-200 transition-all">
+                         <div className="flex items-center gap-2 min-w-0">
+                            <div className={`p-1.5 rounded-lg shrink-0 ${!isCredit ? 'bg-rose-100 text-rose-600' : 'bg-emerald-100 text-emerald-600'}`}>
+                               {!isCredit ? <ArrowUpCircle size={14} /> : <ArrowDownCircle size={14} />}
+                            </div>
+                            <div className="min-w-0">
+                               <p className="text-[10px] font-black text-slate-700 leading-tight truncate">{t.description}</p>
+                               <div className="flex items-center gap-2 mt-0.5">
+                                 <p className="text-[8px] font-bold text-slate-400 uppercase">
+                                   {parseSafeDate(t.date).toLocaleDateString()} {parseSafeDate(t.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
+                                 </p>
+                                 {t.paymentMethod && (
+                                   <span className="text-[8px] font-black uppercase bg-emerald-50 text-emerald-700 px-1.5 py-0.2 rounded border border-emerald-200">
+                                     {t.paymentMethod}
+                                   </span>
+                                 )}
+                               </div>
+                            </div>
+                         </div>
+                         <div className="text-right shrink-0 pl-2 flex items-center gap-2">
+                           <div>
+                             <p className={`font-black text-xs ${!isCredit ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                {!isCredit ? '+' : '-'} R$ {(t.amount ?? 0).toFixed(2)}
                              </p>
-                          </div>
-                       </div>
-                       <p className={`font-black text-xs ${t.type === 'debit' ? 'text-rose-600' : 'text-emerald-600'}`}>
-                          {t.type === 'debit' ? '+' : '-'} R$ {(t.amount ?? 0).toFixed(2)}
-                       </p>
-                    </div>
-                  )) : (
+                           </div>
+                           {isCredit && (
+                             <div className="flex items-center gap-1">
+                               {activeCustomer.phone && (
+                                 <button
+                                   onClick={() => handleSendWhatsAppReceipt(activeCustomer, t, activeCustomer.balance ?? 0)}
+                                   className="p-1 hover:bg-emerald-100 text-emerald-600 rounded transition-colors"
+                                   title="Reenviar Recibo no WhatsApp"
+                                 >
+                                   <MessageSquare size={12} />
+                                 </button>
+                               )}
+                               <button
+                                 onClick={() => handlePrintReceipt(activeCustomer, t, activeCustomer.balance ?? 0)}
+                                 className="p-1 hover:bg-slate-200 text-slate-600 rounded transition-colors"
+                                 title="Imprimir Comprovante de Pagamento"
+                                >
+                                 <Printer size={12} />
+                               </button>
+                             </div>
+                           )}
+                         </div>
+                      </div>
+                    );
+                  }) : (
                     <div className="h-full flex flex-col items-center justify-center text-center opacity-30 grayscale p-6">
                        <FileText size={32} className="mb-2" />
                        <p className="text-[10px] font-black uppercase tracking-widest">Sem movimentação registrada</p>
@@ -708,11 +969,22 @@ const CustomersPanel: React.FC<CustomersPanelProps> = memo(({
                   )
                 )}
               </div>
-              <div className="p-4 border-t bg-indigo-600 text-white">
-                 <div className="flex justify-between items-center">
-                    <span className="text-[10px] font-bold uppercase tracking-widest opacity-80">Saldo Consolidado</span>
-                    <span className="text-xl font-black">R$ {(activeCustomer.balance ?? 0).toFixed(2)}</span>
+              <div className="p-4 border-t bg-slate-900 text-white flex items-center justify-between">
+                 <div>
+                    <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Saldo Consolidado</span>
+                    <p className={`text-xl font-black ${(activeCustomer.balance ?? 0) > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                      R$ {(activeCustomer.balance ?? 0).toFixed(2)}
+                    </p>
                  </div>
+                 {(activeCustomer.balance ?? 0) > 0 && (
+                   <button
+                     onClick={() => handleOpenBaixa(activeCustomer, 'credit')}
+                     className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-[10px] font-black uppercase tracking-wider shadow-md transition-all flex items-center gap-1.5"
+                   >
+                     <Receipt size={13} />
+                     <span>Receber Agora</span>
+                   </button>
+                 )}
               </div>
             </>
           ) : (
@@ -815,79 +1087,224 @@ const CustomersPanel: React.FC<CustomersPanelProps> = memo(({
         </div>
       )}
 
-      {/* Modal: Lançamento Manual (Crédito/Débito) */}
+      {/* Modal: Baixa de Pagamento de Fiado / Lançamento Manual */}
       {showBaixaModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-2 bg-slate-900/80 backdrop-blur-xl animate-in fade-in">
            <div className="bg-white w-full max-w-lg rounded-[2rem] shadow-2xl overflow-hidden animate-in zoom-in-95">
-              <div className={`p-4 border-b text-white flex justify-between items-center ${manualTransactionType === 'credit' ? 'bg-emerald-600' : 'bg-rose-600'}`}>
+              <div className={`p-4 border-b text-white flex justify-between items-center ${manualTransactionType === 'credit' ? 'bg-gradient-to-r from-emerald-600 to-teal-600' : 'bg-gradient-to-r from-rose-600 to-red-600'}`}>
                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-white/20 rounded-xl"><DollarSign size={18} /></div>
+                    <div className="p-2.5 bg-white/20 rounded-xl">
+                      {manualTransactionType === 'credit' ? <Receipt size={20} /> : <DollarSign size={20} />}
+                    </div>
                     <div>
-                       <h2 className="text-lg font-black">{manualTransactionType === 'credit' ? 'Lançar Crédito (Pagamento)' : 'Lançar Débito (Compra)'}</h2>
-                       <p className="text-[9px] font-bold uppercase opacity-80">{showBaixaModal.name}</p>
+                       <h2 className="text-lg font-black">
+                         {manualTransactionType === 'credit' ? 'Dar Baixa em Fiado (Receber)' : 'Lançar Débito Manual'}
+                       </h2>
+                       <p className="text-[10px] font-bold uppercase opacity-90">{showBaixaModal.name}</p>
                     </div>
                  </div>
-                 <button onClick={() => setShowBaixaModal(null)} className="p-1 hover:bg-white/20 rounded-full"><X size={20} /></button>
+                 <button onClick={() => setShowBaixaModal(null)} className="p-1 hover:bg-white/20 rounded-full transition-colors"><X size={20} /></button>
               </div>
 
-              <div className="p-6 space-y-5">
-                 <div className="bg-slate-50 p-4 rounded-[1.5rem] border text-center space-y-0.5">
-                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Saldo Atual Devedor</p>
-                    <p className="text-3xl font-black text-slate-800 tracking-tighter">R$ {(showBaixaModal.balance ?? 0).toFixed(2)}</p>
+              <div className="p-6 space-y-4 max-h-[80vh] overflow-y-auto custom-scrollbar">
+                 {/* Tipo de Operação Tabs */}
+                 <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl">
+                   <button
+                     type="button"
+                     onClick={() => {
+                       setManualTransactionType('credit');
+                       if ((showBaixaModal.balance ?? 0) > 0) {
+                         setBaixaAmount((showBaixaModal.balance ?? 0).toFixed(2));
+                       }
+                     }}
+                     className={`py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
+                       manualTransactionType === 'credit'
+                         ? 'bg-emerald-600 text-white shadow-md'
+                         : 'text-slate-600 hover:text-slate-900'
+                     }`}
+                   >
+                     <ArrowDownCircle size={14} />
+                     <span>Receber Fiado (Crédito)</span>
+                   </button>
+                   <button
+                     type="button"
+                     onClick={() => setManualTransactionType('debit')}
+                     className={`py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
+                       manualTransactionType === 'debit'
+                         ? 'bg-rose-600 text-white shadow-md'
+                         : 'text-slate-600 hover:text-slate-900'
+                     }`}
+                   >
+                     <ArrowUpCircle size={14} />
+                     <span>Lançar Débito (Fiado)</span>
+                   </button>
                  </div>
 
-                 <div className="space-y-4">
-                    <div className="space-y-1">
-                       <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Valor do Lançamento (R$)</label>
-                       <input 
-                        type="number" 
-                        className={`w-full px-4 py-3 bg-slate-50 border-2 rounded-[1.5rem] text-3xl font-black outline-none text-center ${manualTransactionType === 'credit' ? 'border-emerald-100 text-emerald-600 focus:border-emerald-500' : 'border-rose-100 text-rose-600 focus:border-rose-500'}`} 
-                        value={baixaAmount}
-                        onChange={(e)=>setBaixaAmount(e.target.value)}
-                        placeholder="0,00"
-                        autoFocus
-                       />
+                 {/* Cartão de Saldo Atual & Simulação */}
+                 <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200/80 flex items-center justify-between">
+                    <div>
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Saldo Devedor Atual</p>
+                      <p className="text-2xl font-black text-slate-800 tracking-tighter">
+                        R$ {(showBaixaModal.balance ?? 0).toFixed(2)}
+                      </p>
                     </div>
 
-                    <div className="space-y-1">
-                       <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Descrição / Observação</label>
-                       <input 
-                        type="text" 
-                        className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:border-indigo-500 text-xs" 
-                        value={manualTransactionDescription}
-                        onChange={(e)=>setManualTransactionDescription(e.target.value)}
-                        placeholder={manualTransactionType === 'credit' ? "Ex: Pagamento parcial" : "Ex: Compra de marmitex"}
-                       />
-                    </div>
-
-                    {manualTransactionType === 'credit' && (
-                      <div className="grid grid-cols-2 gap-2">
-                        {[
-                          { id: 'dinheiro', label: 'Dinheiro', icon: Banknote },
-                          { id: 'pix', label: 'PIX', icon: Smartphone },
-                          { id: 'cartao', label: 'Cartão', icon: CreditCard }
-                        ].map(m => (
-                            <button 
-                              key={m.id} 
-                              onClick={() => setBaixaMethod(m.id)}
-                              className={`flex items-center gap-2 p-3 rounded-xl border-2 transition-all font-bold text-xs ${baixaMethod === m.id ? 'bg-emerald-600 border-emerald-600 text-white shadow-lg' : 'bg-slate-50 border-slate-100 text-slate-500 hover:border-slate-200'}`}
-                            >
-                                <m.icon size={16} /> {m.label}
-                            </button>
-                        ))}
+                    {manualTransactionType === 'credit' && baixaAmount && parseFloat(baixaAmount) > 0 && (
+                      <div className="text-right pl-4 border-l border-slate-200">
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Saldo Após Baixa</p>
+                        {(() => {
+                          const rem = Math.max(0, (showBaixaModal.balance ?? 0) - parseFloat(baixaAmount));
+                          return (
+                            <p className={`text-xl font-black tracking-tighter ${rem === 0 ? 'text-emerald-600' : 'text-slate-700'}`}>
+                              {rem === 0 ? 'Quitado (R$ 0,00)' : `R$ ${rem.toFixed(2)}`}
+                            </p>
+                          );
+                        })()}
                       </div>
                     )}
                  </div>
+
+                 {/* Atalhos Rápidos de Valor */}
+                 {manualTransactionType === 'credit' && (showBaixaModal.balance ?? 0) > 0 && (
+                   <div className="space-y-1.5">
+                     <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Atalhos de Quitação</p>
+                     <div className="flex flex-wrap gap-1.5">
+                       <button
+                         type="button"
+                         onClick={() => setBaixaAmount((showBaixaModal.balance ?? 0).toFixed(2))}
+                         className="px-3 py-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors flex items-center gap-1"
+                       >
+                         <Zap size={11} />
+                         <span>Quitar Total: R$ {(showBaixaModal.balance ?? 0).toFixed(2)}</span>
+                       </button>
+
+                       {(showBaixaModal.balance ?? 0) > 10 && (
+                         <button
+                           type="button"
+                           onClick={() => setBaixaAmount(((showBaixaModal.balance ?? 0) / 2).toFixed(2))}
+                           className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] font-bold transition-colors"
+                         >
+                           50%: R$ {((showBaixaModal.balance ?? 0) / 2).toFixed(2)}
+                         </button>
+                       )}
+
+                       {[20, 50, 100].filter(v => v < (showBaixaModal.balance ?? 0)).map(val => (
+                         <button
+                           key={val}
+                           type="button"
+                           onClick={() => setBaixaAmount(val.toFixed(2))}
+                           className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] font-bold transition-colors"
+                         >
+                           R$ {val},00
+                         </button>
+                       ))}
+                     </div>
+                   </div>
+                 )}
+
+                 {/* Campo de Entrada de Valor */}
+                 <div className="space-y-1">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                      {manualTransactionType === 'credit' ? 'Valor a Receber / Baixar (R$)' : 'Valor a Debitar (R$)'}
+                    </label>
+                    <input 
+                     type="number" 
+                     step="0.01"
+                     className={`w-full px-4 py-3 bg-slate-50 border-2 rounded-2xl text-2xl font-black outline-none text-center ${manualTransactionType === 'credit' ? 'border-emerald-200 text-emerald-600 focus:border-emerald-500' : 'border-rose-200 text-rose-600 focus:border-rose-500'}`} 
+                     value={baixaAmount}
+                     onChange={(e)=>setBaixaAmount(e.target.value)}
+                     placeholder="0,00"
+                     autoFocus
+                    />
+                 </div>
+
+                 {/* Forma de Pagamento */}
+                 {manualTransactionType === 'credit' && (
+                   <div className="space-y-1.5">
+                     <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Forma de Pagamento Recebida</label>
+                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                       {[
+                         { id: 'dinheiro', label: 'Dinheiro', icon: Banknote },
+                         { id: 'pix', label: 'PIX', icon: Smartphone },
+                         { id: 'debito', label: 'Débito', icon: CreditCard },
+                         { id: 'credito', label: 'Crédito', icon: CreditCard }
+                       ].map(m => (
+                           <button 
+                             key={m.id} 
+                             type="button"
+                             onClick={() => setBaixaMethod(m.id)}
+                             className={`flex items-center justify-center gap-1.5 p-2.5 rounded-xl border-2 transition-all font-bold text-xs ${baixaMethod === m.id ? 'bg-emerald-600 border-emerald-600 text-white shadow-md' : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-slate-300'}`}
+                           >
+                               <m.icon size={15} /> {m.label}
+                           </button>
+                       ))}
+                     </div>
+                   </div>
+                 )}
+
+                 {/* Descrição / Observação */}
+                 <div className="space-y-1">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Descrição / Observação</label>
+                    <input 
+                     type="text" 
+                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:border-indigo-500 text-xs" 
+                     value={manualTransactionDescription}
+                     onChange={(e)=>setManualTransactionDescription(e.target.value)}
+                     placeholder={manualTransactionType === 'credit' ? "Ex: Pagamento parcial de fiado" : "Ex: Compra de marmitex / consumo"}
+                    />
+                 </div>
+
+                 {/* Opções de Comprovante */}
+                 {manualTransactionType === 'credit' && (
+                   <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                     <p className="text-[9px] font-black text-slate-500 uppercase tracking-wider">Comprovante de Quitação</p>
+                     
+                     <label className="flex items-center gap-2.5 cursor-pointer text-xs font-bold text-slate-700 select-none">
+                       <input 
+                         type="checkbox"
+                         checked={sendWhatsAppAfterBaixa}
+                         onChange={(e) => setSendWhatsAppAfterBaixa(e.target.checked)}
+                         className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 accent-emerald-600 cursor-pointer"
+                       />
+                       <span className="flex items-center gap-1 text-slate-700">
+                         <MessageSquare size={13} className="text-emerald-600" />
+                         <span>Enviar recibo automático por WhatsApp</span>
+                         {showBaixaModal.phone && (
+                           <span className="text-[10px] text-slate-400">({showBaixaModal.phone})</span>
+                         )}
+                       </span>
+                     </label>
+
+                     <label className="flex items-center gap-2.5 cursor-pointer text-xs font-bold text-slate-700 select-none">
+                       <input 
+                         type="checkbox"
+                         checked={printReceiptAfterBaixa}
+                         onChange={(e) => setPrintReceiptAfterBaixa(e.target.checked)}
+                         className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 accent-emerald-600 cursor-pointer"
+                       />
+                       <span className="flex items-center gap-1 text-slate-700">
+                         <Printer size={13} className="text-indigo-600" />
+                         <span>Imprimir comprovante térmico (80mm)</span>
+                       </span>
+                     </label>
+                   </div>
+                 )}
               </div>
 
               <div className="p-4 border-t bg-slate-50 flex gap-3">
-                 <button onClick={() => setShowBaixaModal(null)} className="flex-1 py-3 font-black text-slate-400 uppercase tracking-widest text-[10px]">Cancelar</button>
+                 <button 
+                   onClick={() => setShowBaixaModal(null)} 
+                   className="flex-1 py-2.5 font-black text-slate-400 uppercase tracking-widest text-[10px] hover:text-slate-600 transition-colors"
+                 >
+                   Cancelar
+                 </button>
                  <button 
                   onClick={handleBaixa} 
-                  disabled={!baixaAmount} 
-                  className={`flex-1 py-3 text-white rounded-xl font-black uppercase tracking-widest text-[10px] shadow-xl disabled:opacity-50 ${manualTransactionType === 'credit' ? 'bg-emerald-600 shadow-emerald-100' : 'bg-rose-600 shadow-rose-100'}`}
+                  disabled={!baixaAmount || parseFloat(baixaAmount) <= 0} 
+                  className={`flex-1 py-2.5 text-white rounded-xl font-black uppercase tracking-widest text-[10px] shadow-lg disabled:opacity-40 transition-all flex items-center justify-center gap-2 ${manualTransactionType === 'credit' ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200' : 'bg-rose-600 hover:bg-rose-700 shadow-rose-200'}`}
                  >
-                   Confirmar Lançamento
+                   <CheckCircle2 size={15} />
+                   <span>{manualTransactionType === 'credit' ? 'Confirmar Recebimento' : 'Confirmar Lançamento'}</span>
                  </button>
               </div>
            </div>
@@ -898,3 +1315,4 @@ const CustomersPanel: React.FC<CustomersPanelProps> = memo(({
 });
 
 export default CustomersPanel;
+

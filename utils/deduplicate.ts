@@ -1,4 +1,5 @@
 import { Order, FinancialRecord } from '../types';
+import { safeParseDate } from './dateUtils';
 
 /**
  * Deduplicates orders strictly by ID, docId, and fingerprint signature.
@@ -20,9 +21,8 @@ export function deduplicateOrders(ordersList: Order[]): Order[] {
     }
 
     // 2. Secondary fingerprint check
-    const timeMs = o.createdAt instanceof Date 
-      ? o.createdAt.getTime() 
-      : (new Date(o.createdAt).getTime() || 0);
+    const parsedDate = safeParseDate(o.createdAt);
+    const timeMs = parsedDate ? parsedDate.getTime() : 0;
     
     // Round time to 5-second bucket to catch rapid duplicate posts/syncs
     const timeBucket = Math.floor(timeMs / 5000);
@@ -59,9 +59,8 @@ export function deduplicateFinancialRecords(recordsList: FinancialRecord[]): Fin
       return false;
     }
 
-    const timeMs = r.date instanceof Date 
-      ? r.date.getTime() 
-      : (new Date(r.date).getTime() || 0);
+    const parsedDate = safeParseDate(r.date);
+    const timeMs = parsedDate ? parsedDate.getTime() : 0;
     const timeBucket = Math.floor(timeMs / 5000);
     const amount = typeof r.amount === 'number' ? r.amount.toFixed(2) : '0.00';
     const signature = `${r.tenantId || ''}_${r.type || ''}_${r.category || ''}_${r.paymentMethod || ''}_${amount}_${r.orderId || ''}_${timeBucket}`;
