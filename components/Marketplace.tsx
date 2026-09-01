@@ -2147,7 +2147,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
             TAXA FIXA R$ 2,00
           </span>
           <span className="text-slate-300 text-[11px] sm:text-xs truncate">
-            <strong className="text-white font-black">{marketplaceSettings?.name || "Nova Delivery"}:</strong> O app da sua cidade • Tecnologia que conecta pessoas, comércios e oportunidades locais
+            <strong className="text-white font-black">{marketplaceSettings?.name || "Zupi Delivery"}:</strong> O app da sua cidade • Tecnologia que conecta pessoas, comércios e oportunidades locais
           </span>
         </div>
         <div className="flex items-center gap-3.5 sm:gap-4 shrink-0 text-[11px] sm:text-xs text-slate-300 font-medium">
@@ -2177,13 +2177,15 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 }}
                 className="flex items-center gap-2.5 group cursor-pointer"
               >
-                <div className="w-10 h-10 rounded-2xl bg-[#FF3B00] text-white flex items-center justify-center font-black text-xl shadow-md shadow-orange-500/20 group-hover:scale-105 transition-transform">
-                  N
+                <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-[#FF6200] to-[#FF3B00] text-white flex items-center justify-center shadow-md shadow-orange-500/25 group-hover:scale-105 transition-transform overflow-hidden p-2">
+                  <svg viewBox="0 0 512 512" className="w-full h-full fill-white">
+                    <path d="M 300 100 L 170 275 L 265 275 L 212 412 L 342 237 L 247 237 Z" />
+                  </svg>
                 </div>
                 <div className="flex flex-col text-left">
                   <div className="flex items-center gap-1">
                     <span className="font-display font-black text-xl tracking-tight text-slate-900 leading-none">
-                      Nova <span className="text-[#FF3B00]">Delivery</span>
+                      Zupi <span className="text-[#FF3B00]">Delivery</span>
                     </span>
                   </div>
                   <span className="text-[11px] font-semibold text-slate-400 mt-0.5">

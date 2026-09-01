@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="zupiFavGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF6200"/>
+      <stop offset="100%" stop-color="#FF3B00"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="32" fill="url(#zupiFavGrad)"/>
+  <path d="M 75 25 L 42.5 68.75 L 66.25 68.75 L 53 103 L 85.5 59.25 L 61.75 59.25 Z" fill="#FFFFFF"/>
+</svg>

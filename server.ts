@@ -1436,8 +1436,7 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
       const docRef = clientDoc(clientDb, "fiscal_documents", targetDocId);
       let docSnap;
       try {
-        const { getDoc } = await import("firebase/firestore");
-        docSnap = await getDoc(docRef);
+        docSnap = await getClientDoc(docRef);
       } catch (e: any) {
         console.warn("[Fiscal Reprint] getDoc error:", e.message);
       }
@@ -1456,12 +1455,11 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
       if (!docData) {
         // Tenta buscar por orderId se o targetDocId for o ID do pedido
         try {
-          const { getDocs, query, where } = await import("firebase/firestore");
-          const q = query(
-            clientCollection(clientDb, "fiscal_documents"),
-            where("orderId", "==", targetDocId)
+          const q = clientQuery(
+            getClientCollection(clientDb, "fiscal_documents"),
+            clientWhere("orderId", "==", targetDocId)
           );
-          const qSnap = await getDocs(q);
+          const qSnap = await getClientDocs(q);
           if (!qSnap.empty) {
             docData = qSnap.docs[0].data();
           }
@@ -1568,8 +1566,7 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
 
     try {
       const docRef = clientDoc(clientDb, "fiscal_documents", documentId);
-      const { getDoc } = await import("firebase/firestore");
-      const docSnap = await getDoc(docRef);
+      const docSnap = await getClientDoc(docRef);
 
       if (!docSnap.exists()) {
         return res.status(404).json({ success: false, error: "Documento fiscal não encontrado." });
@@ -1885,13 +1882,12 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
       // Verificação de Idempotência: Se o pedido já possui NFC-e autorizada, retornar o documento existente
       if (order?.id) {
         try {
-          const { getDocs, query, where } = await import("firebase/firestore");
-          const existingQ = query(
-            clientCollection(clientDb, "fiscal_documents"),
-            where("orderId", "==", order.id),
-            where("tenantId", "==", targetTenantId)
+          const existingQ = clientQuery(
+            getClientCollection(clientDb, "fiscal_documents"),
+            clientWhere("orderId", "==", order.id),
+            clientWhere("tenantId", "==", targetTenantId)
           );
-          const existingSnap = await getDocs(existingQ);
+          const existingSnap = await getClientDocs(existingQ);
           if (!existingSnap.empty) {
             const existingDoc = existingSnap.docs[0].data() as any;
             if (existingDoc.status === "AUTORIZADA" || existingDoc.fiscalKey) {

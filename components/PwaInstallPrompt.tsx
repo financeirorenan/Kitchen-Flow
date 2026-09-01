@@ -93,10 +93,10 @@ export const PwaInstallPrompt: React.FC<{ compact?: boolean }> = ({ compact = fa
         <button
           onClick={handleInstallClick}
           className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white rounded-full text-xs font-bold shadow-sm transition-all active:scale-95"
-          title="Instalar Nova Delivery no seu dispositivo"
+          title="Instalar Zupi Delivery no seu dispositivo"
         >
           <Smartphone size={14} />
-          <span>Baixar Nova Delivery</span>
+          <span>Baixar Zupi Delivery</span>
         </button>
 
         {/* Modal Instruções iOS */}
@@ -120,10 +120,10 @@ export const PwaInstallPrompt: React.FC<{ compact?: boolean }> = ({ compact = fa
 
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-orange-500 to-red-600 flex items-center justify-center text-white overflow-hidden p-1 shadow-md">
-                  <img src="/icon.svg" alt="Nova Delivery" className="w-full h-full object-contain" />
+                  <img src="/icon.svg" alt="Zupi Delivery" className="w-full h-full object-contain" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-base">Instalar Nova Delivery</h3>
+                  <h3 className="font-bold text-base">Instalar Zupi Delivery</h3>
                   <p className="text-xs text-slate-400">Aplicativo Oficial no iPhone / iPad</p>
                 </div>
               </div>
@@ -139,7 +139,7 @@ export const PwaInstallPrompt: React.FC<{ compact?: boolean }> = ({ compact = fa
                 </li>
                 <li className="flex items-start gap-2.5 bg-slate-800/60 p-3 rounded-xl border border-slate-700/50">
                   <span className="bg-orange-500/20 text-orange-400 font-black px-2 py-0.5 rounded-lg text-[10px]">3</span>
-                  <span>Confirme tocando em <strong className="text-white font-semibold">Adicionar</strong> e aproveite o app Nova Delivery!</span>
+                  <span>Confirme tocando em <strong className="text-white font-semibold">Adicionar</strong> e aproveite o app Zupi Delivery!</span>
                 </li>
               </ol>
 
@@ -163,10 +163,10 @@ export const PwaInstallPrompt: React.FC<{ compact?: boolean }> = ({ compact = fa
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-orange-500 to-red-600 flex items-center justify-center text-white shrink-0 shadow-lg shadow-orange-500/20 overflow-hidden p-1">
-              <img src="/icon.svg" alt="Nova Delivery" className="w-full h-full object-contain" />
+              <img src="/icon.svg" alt="Zupi Delivery" className="w-full h-full object-contain" />
             </div>
             <div>
-              <h4 className="font-bold text-xs md:text-sm text-white">Baixar App Nova Delivery</h4>
+              <h4 className="font-bold text-xs md:text-sm text-white">Baixar App Zupi Delivery</h4>
               <p className="text-[11px] text-slate-400">Acesse direto da sua tela inicial (iOS e Android)</p>
             </div>
           </div>
@@ -176,7 +176,7 @@ export const PwaInstallPrompt: React.FC<{ compact?: boolean }> = ({ compact = fa
               onClick={handleInstallClick}
               className="px-3.5 py-2 bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white text-xs font-bold rounded-xl shadow-md transition-all active:scale-95 flex items-center gap-1.5"
             >
-              <span>Instalar Nova Delivery</span>
+              <span>Instalar Zupi Delivery</span>
             </button>
             <button
               onClick={() => setDismissed(true)}
@@ -210,10 +210,10 @@ export const PwaInstallPrompt: React.FC<{ compact?: boolean }> = ({ compact = fa
 
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-orange-500 to-red-600 flex items-center justify-center text-white overflow-hidden p-1 shadow-md">
-                <img src="/icon.svg" alt="Nova Delivery" className="w-full h-full object-contain" />
+                <img src="/icon.svg" alt="Zupi Delivery" className="w-full h-full object-contain" />
               </div>
               <div>
-                <h3 className="font-bold text-base">Instalar Nova Delivery</h3>
+                <h3 className="font-bold text-base">Instalar Zupi Delivery</h3>
                 <p className="text-xs text-slate-400">Instalação rápida pelo Safari</p>
               </div>
             </div>
@@ -229,7 +229,7 @@ export const PwaInstallPrompt: React.FC<{ compact?: boolean }> = ({ compact = fa
               </li>
               <li className="flex items-start gap-2.5 bg-slate-800/60 p-3 rounded-xl border border-slate-700/50">
                 <span className="bg-orange-500/20 text-orange-400 font-black px-2 py-0.5 rounded-lg text-[10px]">3</span>
-                <span>Toque em <strong className="text-white font-semibold">Adicionar</strong> e aproveite seu app Nova Delivery!</span>
+                <span>Toque em <strong className="text-white font-semibold">Adicionar</strong> e aproveite seu app Zupi Delivery!</span>
               </li>
             </ol>
 

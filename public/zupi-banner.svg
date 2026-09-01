@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 84" width="360" height="84">
+  <defs>
+    <linearGradient id="zupiPillGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF6200"/>
+      <stop offset="100%" stop-color="#FF3B00"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Outer Pill Container -->
+  <rect width="360" height="84" rx="24" fill="url(#zupiPillGrad)"/>
+  
+  <!-- Inner White Squircle -->
+  <g transform="translate(16, 14)">
+    <rect width="56" height="56" rx="16" fill="#FFFFFF"/>
+    <!-- Orange Lightning Inside -->
+    <path d="M 32.8 10.9 L 18.6 30.1 L 29.0 30.1 L 23.2 45.1 L 37.4 25.9 L 27.0 25.9 Z" fill="#FF4500"/>
+  </g>
+  
+  <!-- White Typography -->
+  <text x="86" y="49" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="900" font-size="28" fill="#FFFFFF" letter-spacing="-0.5">Zupi</text>
+  <text x="150" y="49" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="900" font-size="28" fill="#FFF1E8" letter-spacing="-0.5">Delivery</text>
+  <text x="87" y="63" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="700" font-size="8" fill="#FFE0CC" letter-spacing="1">TECNOLOGIA & CONEXÃO LOCAL</text>
+</svg>

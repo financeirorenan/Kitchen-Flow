@@ -1,17 +1,11 @@
 {
-  "short_name": "KitchenFlow",
-  "name": "KitchenFlow - Sistema de Gestão para Restaurantes",
+  "short_name": "Zupi Delivery",
+  "name": "Zupi Delivery - O App da Sua Cidade",
   "icons": [
     {
-      "src": "/icon-192.png",
-      "type": "image/png",
-      "sizes": "192x192",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "/icon-512.png",
-      "type": "image/png",
-      "sizes": "512x512",
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "128x128",
       "purpose": "any maskable"
     },
     {
@@ -23,9 +17,9 @@
   ],
   "start_url": "/marketplace",
   "background_color": "#111111",
-  "theme_color": "#FF4F18",
+  "theme_color": "#FF4500",
   "display": "standalone",
   "orientation": "portrait-primary",
   "scope": "/",
-  "description": "KitchenFlow - Sistema de Gestão e Copiloto Operacional para Restaurantes"
+  "description": "Zupi Delivery - Conectando os melhores restaurantes e comércios locais da sua cidade."
 }
