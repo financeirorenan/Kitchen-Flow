@@ -2313,8 +2313,8 @@ const App: React.FC = () => {
           updatedAt: new Date()
         };
 
-        if (tenantData?.category) {
-          tenantUpdate.category = tenantData.category;
+        if (updatedAdmin.category || tenantData?.category) {
+          tenantUpdate.category = updatedAdmin.category || tenantData?.category;
         }
 
         batch.set(doc(db, 'tenants', effectiveTenantId), cleanObject(tenantUpdate), { merge: true });

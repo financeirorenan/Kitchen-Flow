@@ -119,14 +119,15 @@ const SAAS_ADMIN_MODULES: { id: Permission; label: string }[] = [
 ];
 
 const DEFAULT_COMMERCE_CATEGORIES = [
-  { id: 'lanches', name: 'Lanches', description: 'Hambúrgueres, sanduíches e petiscos' },
-  { id: 'pizza', name: 'Pizza', description: 'Pizzarias, calzones e massas' },
-  { id: 'sobremesas', name: 'Sobremesas', description: 'Doces, bolos, sorvetes e açaí' },
-  { id: 'bebidas', name: 'Bebidas', description: 'Sucos, refrigerantes, cervejas e coquetéis' },
-  { id: 'restaurantes', name: 'Restaurantes', description: 'Refeições, pratos executivos e gastronomia' },
-  { id: 'tabacaria', name: 'Tabacaria', description: 'Narguile, essências, fumo e acessórios' },
-  { id: 'mercado', name: 'Mercado', description: 'Supermercados, mercearias e hortifrúti' },
-  { id: 'farmacia', name: 'Farmácia', description: 'Medicamentos, cosméticos e cuidados pessoais' }
+  { id: 'burger', name: 'Lanches & Hamburguerias', description: 'Artesanais, smash burgers, lanches e petiscos', iconName: 'Sandwich', bg: 'bg-amber-50', color: 'text-amber-500' },
+  { id: 'pizza', name: 'Pizzarias', description: 'Pizzas artesanais, forno a lenha, calzones e bordas recheadas', iconName: 'Pizza', bg: 'bg-rose-50', color: 'text-rose-500' },
+  { id: 'marmitaria', name: 'Marmitarias & Caseira', description: 'Comida caseira, marmitex, pratos executivos e almoço', iconName: 'ChefHat', bg: 'bg-emerald-50', color: 'text-emerald-500' },
+  { id: 'mercado', name: 'Mercados & Hortifruti', description: 'Supermercados, mercearias, hortifrúti e produtos básicos', iconName: 'Store', bg: 'bg-green-50', color: 'text-green-500' },
+  { id: 'farmacia', name: 'Farmácias & Drogaria', description: 'Medicamentos, cosméticos, drogarias e cuidados de saúde', iconName: 'Pill', bg: 'bg-teal-50', color: 'text-teal-500' },
+  { id: 'pet', name: 'Pet & Agro', description: 'Rações, pet shops, produtos agropecuários e cuidados animais', iconName: 'PawPrint', bg: 'bg-purple-50', color: 'text-purple-500' },
+  { id: 'bebidas', name: 'Adegas & Bebidas', description: 'Cervejas trincando, adegas, distribuidoras e destilados', iconName: 'Wine', bg: 'bg-cyan-50', color: 'text-cyan-500' },
+  { id: 'doces', name: 'Açaí & Doces', description: 'Açaí, sobremesas, sorvetes, doces e gelados', iconName: 'IceCream', bg: 'bg-pink-50', color: 'text-pink-500' },
+  { id: 'pastel', name: 'Pastéis & Salgados', description: 'Pastéis fritos na hora, salgados e empanadas', iconName: 'UtensilsCrossed', bg: 'bg-orange-50', color: 'text-orange-500' }
 ];
 
 const DEFAULT_SAAS_LEDGER = [
@@ -1103,7 +1104,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   const [marketplaceEnableSponsored, setMarketplaceEnableSponsored] = useState<boolean>(true);
   const [marketplaceAnnouncementBanner, setMarketplaceAnnouncementBanner] = useState<string>('🎉 Cupom BEMVINDO10 para R$ 10 OFF no seu 1º pedido pelo app!');
   const [marketplaceCategories, setMarketplaceCategories] = useState<string[]>([
-    'Burgers & Lanches', 'Pizzas', 'Comida Japonesa', 'Marmitas & Almoço', 'Açaí & Doces', 'Saudável & Fit', 'Bebidas & Adega'
+    'Lanches & Hamburguerias', 'Pizzarias', 'Marmitarias & Caseira', 'Mercados & Hortifruti', 'Farmácias & Drogaria', 'Pet & Agro', 'Adegas & Bebidas', 'Açaí & Doces', 'Pastéis & Salgados'
   ]);
   const [marketplaceNewCategoryInput, setMarketplaceNewCategoryInput] = useState<string>('');
   const [marketplacePaymentMethods, setMarketplacePaymentMethods] = useState({

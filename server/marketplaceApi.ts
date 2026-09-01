@@ -58,7 +58,7 @@ const extractMerchant = (req: AuthenticatedRequest, _res: Response, next: () => 
   const merchantIdHeader = req.headers["x-merchant-id"] as string;
   const queryTenant = (req.query.tenantId || req.query.merchantId || req.query.token) as string;
 
-  let tenantId = merchantIdHeader || queryTenant || "";
+  const tenantId = merchantIdHeader || queryTenant || "";
   let token = tokenHeader || "";
 
   if (authHeader && authHeader.startsWith("Bearer ")) {
@@ -388,7 +388,8 @@ marketplaceApiRouter.get("/catalog", async (req: AuthenticatedRequest, res: Resp
       success: true,
       merchantId,
       totalItems: items.length,
-      catalog: items
+      catalog: items,
+      items: items
     });
 
   } catch (err: unknown) {
@@ -455,12 +456,14 @@ marketplaceApiRouter.get("/merchant/status", async (req: AuthenticatedRequest, r
     }
 
     return res.json({
+      success: true,
       merchantId,
       status: isClosed ? "CLOSED" : "OPEN",
+      isClosed: isClosed,
       isStoreForceClosed: isClosed
     });
   } catch (_err) {
-    return res.json({ status: "OPEN", isStoreForceClosed: false });
+    return res.json({ success: true, status: "OPEN", isClosed: false, isStoreForceClosed: false });
   }
 });
 

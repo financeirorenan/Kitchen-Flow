@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { AdminSettings, BusinessHours, Product, Order, Customer, User, Permission, CardOperator, Tenant, Plan } from '../types';
+import { AdminSettings, BusinessHours, Product, Order, Customer, User, Permission, CardOperator, Tenant, Plan, COMMERCE_VERTICAL_CATEGORIES } from '../types';
 import { db } from '../firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { printTestReceipt, pairUSBPrinter } from '../services/printService';
@@ -514,6 +514,24 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
                  <div className="space-y-0.5">
                     <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest ml-1">WhatsApp (Link Direto)</label>
                     <input type="text" placeholder="wa.me/55..." className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg outline-none font-bold text-[10px]" value={settings.socialMedia?.whatsapp || ''} onChange={(e) => onUpdateSettings({...settings, socialMedia: {...settings.socialMedia, whatsapp: maskPhone(e.target.value)}})} />
+                 </div>
+                 <div className="space-y-0.5">
+                    <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest ml-1">Categoria & Vertical no Marketplace</label>
+                    <select 
+                      className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg outline-none font-bold text-[10px] text-slate-700"
+                      value={settings.category || (tenantData?.category || '')}
+                      onChange={(e) => {
+                        const newCat = e.target.value;
+                        onUpdateSettings({ ...settings, category: newCat });
+                      }}
+                    >
+                      <option value="">Selecione a categoria do estabelecimento...</option>
+                      {COMMERCE_VERTICAL_CATEGORIES.filter(c => c.id !== 'todos').map((cat) => (
+                        <option key={cat.id} value={cat.name}>
+                          {cat.emoji} {cat.name} ({cat.subtitle})
+                        </option>
+                      ))}
+                    </select>
                  </div>
                  <div className="space-y-0.5 md:col-span-2">
                     <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest ml-1">Endereço Completo</label>

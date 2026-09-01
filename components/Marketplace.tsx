@@ -81,6 +81,8 @@ import {
   Order,
   Courier,
   MarketplaceSettings,
+  COMMERCE_VERTICAL_CATEGORIES,
+  CommerceCategoryPreset,
 } from "../types";
 import { maskPhone } from "../utils/masks";
 import DigitalMenu from "./DigitalMenu";
@@ -422,6 +424,43 @@ const getCategoryPresets = (name: string) => {
   return fallbacks[index];
 };
 
+const matchesMarketplaceCategory = (
+  storeCategory: string | undefined | null,
+  storeName: string | undefined | null,
+  activeCategoryId: string
+): boolean => {
+  if (!activeCategoryId || activeCategoryId === "todos") return true;
+
+  const normCat = (storeCategory || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+
+  const normName = (storeName || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+
+  const preset = COMMERCE_VERTICAL_CATEGORIES.find((c) => c.id === activeCategoryId);
+  if (!preset) {
+    const rawId = activeCategoryId.toLowerCase();
+    return normCat.includes(rawId) || normName.includes(rawId);
+  }
+
+  // Exact match on ID or Name
+  const normPresetName = preset.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  if (normCat === preset.id.toLowerCase() || normCat === normPresetName) return true;
+  if (normCat.includes(normPresetName) || normPresetName.includes(normCat)) return true;
+
+  // Aliases check
+  return preset.aliases.some((alias) => {
+    const normAlias = alias.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    return normCat.includes(normAlias) || normAlias.includes(normCat) || normName.includes(normAlias);
+  });
+};
+
 const Marketplace: React.FC<MarketplaceProps> = ({
   onSelectTenant,
   currentUser,
@@ -458,86 +497,20 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     };
 
     if (!commerceCategories || commerceCategories.length === 0) {
-      return [
-        todosCategory,
-        {
-          id: "pizza",
-          label: "Pizza",
-          icon: Pizza,
-          bg: "bg-rose-50",
-          border: "border-rose-100",
-          activeBorder: "border-rose-500",
-          ring: "ring-rose-500/20",
-          color: "text-rose-500",
-          img: "https://cdn-icons-png.flaticon.com/512/3132/3132693.png",
-        },
-        {
-          id: "japa",
-          label: "Japa",
-          icon: Fish,
-          bg: "bg-blue-50",
-          border: "border-blue-100",
-          activeBorder: "border-blue-500",
-          ring: "ring-blue-500/20",
-          color: "text-blue-500",
-          img: "https://cdn-icons-png.flaticon.com/512/2252/2252431.png",
-        },
-        {
-          id: "burger",
-          label: "Burger",
-          icon: Sandwich,
-          bg: "bg-amber-50",
-          border: "border-amber-100",
-          activeBorder: "border-amber-500",
-          ring: "ring-amber-500/20",
-          color: "text-amber-500",
-          img: "https://cdn-icons-png.flaticon.com/512/3075/3075929.png",
-        },
-        {
-          id: "doces",
-          label: "Sobremesas",
-          icon: IceCream,
-          bg: "bg-pink-50",
-          border: "border-pink-100",
-          activeBorder: "border-pink-500",
-          ring: "ring-pink-500/20",
-          color: "text-pink-500",
-          img: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none'><path d='M18 32l4 22c0 2 2 4 4 4h12c2 0 4-2 4-4l4-22H18z' fill='%23F43F5E'/><path d='M22 32l3 22M28 32l1 22M34 32l-1 22M40 32l-3 22' stroke='%23BE123C' stroke-width='2'/><path d='M14 32c0-5 4-8 9-8c2-4 7-6 11-4c3-3 8-3 11 1c4 1 6 5 5 9c3 1 4 5 2 8H12c-2-3-1-5 2-6z' fill='%23FB7185'/><path d='M16 32c3 3 7 3 10 0c3 3 7 3 10 0c3 3 7 3 10 0' stroke='%23FFF1F2' stroke-width='3' stroke-linecap='round'/><circle cx='32' cy='14' r='6' fill='%23E11D48'/><path d='M32 8c2-4 6-5 9-3' stroke='%23059669' stroke-width='2.5' stroke-linecap='round'/><circle cx='24' cy='24' r='1.5' fill='%23FEF08A'/><circle cx='38' cy='22' r='1.5' fill='%23FEF08A'/><circle cx='30' cy='26' r='1.5' fill='%23FEF08A'/></svg>",
-        },
-        {
-          id: "bebidas",
-          label: "Bebidas",
-          icon: Beer,
-          bg: "bg-cyan-50",
-          border: "border-cyan-100",
-          activeBorder: "border-cyan-500",
-          ring: "ring-cyan-500/20",
-          color: "text-cyan-500",
-          img: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none'><rect x='20' y='12' width='24' height='42' rx='5' fill='%23EF4444'/><ellipse cx='32' cy='12' rx='11' ry='3' fill='%23E2E8F0'/><ellipse cx='32' cy='12' rx='9' ry='2' fill='%2394A3B8'/><rect x='30' y='8' width='4' height='5' rx='1' fill='%2364748B'/><path d='M20 28c4 3 10 3 14-1s6-3 10 0v10c-4-3-10-3-14 1s-6 3-10 0V28z' fill='%23FFFFFF' opacity='0.85'/><circle cx='25' cy='22' r='1.2' fill='%23FFFFFF' opacity='0.8'/><circle cx='38' cy='20' r='1.5' fill='%23FFFFFF' opacity='0.8'/><circle cx='24' cy='44' r='1.2' fill='%23FFFFFF' opacity='0.8'/></svg>",
-        },
-        {
-          id: "restaurantes",
-          label: "Restaurantes",
-          icon: ChefHat,
-          bg: "bg-emerald-50",
-          border: "border-emerald-100",
-          activeBorder: "border-emerald-500",
-          ring: "ring-emerald-500/20",
-          color: "text-emerald-500",
-          img: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none'><path d='M16 26C11 26 8 21 11 16C9 11 14 6 20 7C23 2 33 2 36 7C42 6 47 11 45 16C48 21 45 26 40 26H16Z' fill='%2310B981'/><path d='M22 26V16M28 26V12M34 26V16' stroke='%23047857' stroke-width='2.5' stroke-linecap='round'/><rect x='15' y='26' width='26' height='16' rx='3' fill='%23059669'/><rect x='12' y='42' width='32' height='4' rx='2' fill='%23047857'/><path d='M18 34h20' stroke='%23A7F3D0' stroke-width='2' stroke-linecap='round'/></svg>",
-        },
-        {
-          id: "tabacaria",
-          label: "Tabacaria",
-          icon: Flame,
-          bg: "bg-orange-50",
-          border: "border-orange-100",
-          activeBorder: "border-orange-500",
-          ring: "ring-orange-500/20",
-          color: "text-orange-500",
-          img: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none'><path d='M26 10h12l2 6H24l2-6z' fill='%23EF4444'/><path d='M18 16h28v3H18z' fill='%2394A3B8'/><rect x='30' y='19' width='4' height='18' rx='2' fill='%23CBD5E1'/><circle cx='32' cy='24' r='3.5' fill='%2364748B'/><circle cx='32' cy='32' r='3' fill='%2364748B'/><path d='M24 37c0-2 2-3 8-3s8 1 8 3l4 18c0 3-3 5-12 5s-12-2-12-5l4-18z' fill='%2338BDF8' opacity='0.85'/><path d='M22.5 48c3 2 16 2 19 0l2.5 7c0 3-3 5-12 5s-12-2-12-5l2.5-7z' fill='%230284C7'/><path d='M34 27c10 0 16 6 16 16v6' stroke='%23F97316' stroke-width='3.5' stroke-linecap='round'/><path d='M50 49l4 6' stroke='%23E11D48' stroke-width='4' stroke-linecap='round'/><circle cx='32' cy='6' r='2.5' fill='%23CBD5E1' opacity='0.8'/><circle cx='28' cy='4' r='2' fill='%23E2E8F0' opacity='0.6'/><circle cx='36' cy='3' r='1.5' fill='%2394A3B8' opacity='0.5'/></svg>",
-        },
-      ];
+      return COMMERCE_VERTICAL_CATEGORIES.map((cat) => {
+        const presets = getCategoryPresets(cat.name);
+        return {
+          id: cat.id,
+          label: cat.label,
+          icon: cat.id === "todos" ? UtensilsCrossed : presets.icon,
+          bg: cat.bg || presets.bg,
+          border: presets.border,
+          activeBorder: presets.activeBorder,
+          ring: presets.ring,
+          color: cat.color || presets.color,
+          img: presets.img,
+        };
+      });
     }
 
     const mapped = commerceCategories.map((cat) => {
@@ -612,19 +585,18 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     setTimeout(() => setCopiedCoupon(null), 2500);
   };
 
-  // 10 Visual Verticals & Categories
-  const catalogCategories = useMemo(() => [
-    { id: "todos", label: "Todos", subtitle: "Tudo na cidade", icon: UtensilsCrossed, emoji: "🍽️" },
-    { id: "burger", label: "Lanches &...", subtitle: "Artesanais & smash", icon: Sandwich, emoji: "🍔" },
-    { id: "pizza", label: "Pizzarias", subtitle: "Forno a lenha", icon: Pizza, emoji: "🍕" },
-    { id: "marmitaria", label: "Marmitarias", subtitle: "Comida caseira", icon: ChefHat, emoji: "🍲" },
-    { id: "mercado", label: "Mercados &...", subtitle: "Hortifruti & básicos", icon: Store, emoji: "🛒" },
-    { id: "farmacia", label: "Farmácias", subtitle: "Saúde & bem-estar", icon: Pill, emoji: "💊" },
-    { id: "pet", label: "Pet & Agro", subtitle: "Rações & cuidados", icon: PawPrint, emoji: "🐾" },
-    { id: "bebidas", label: "Adegas &...", subtitle: "Cervejas trincando", icon: Wine, emoji: "🍷" },
-    { id: "doces", label: "Açaí & Doces", subtitle: "Gelados & doces", icon: IceCream, emoji: "🍧" },
-    { id: "pastel", label: "Pastéis &...", subtitle: "Fritos na hora", icon: UtensilsCrossed, emoji: "🥟" },
-  ], []);
+  // 10 Visual Verticals & Categories (Configurações de Categorias e Filtros)
+  const catalogCategories = useMemo(() => {
+    return COMMERCE_VERTICAL_CATEGORIES.map((cat) => ({
+      id: cat.id,
+      label: cat.label,
+      subtitle: cat.subtitle,
+      name: cat.name,
+      description: cat.description,
+      emoji: cat.emoji,
+      iconName: cat.iconName,
+    }));
+  }, []);
 
   // Navigation State
   const [navView, setNavView] = useState<
@@ -1858,7 +1830,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     const list = tenants.filter((t) => {
       const matchesCategory =
         activeCategory === "todos" ||
-        t.category?.toLowerCase() === activeCategory;
+        matchesMarketplaceCategory(t.category, t.name, activeCategory);
       const matchesSearch = t.name
         .toLowerCase()
         .includes(searchTerm.toLowerCase());

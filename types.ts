@@ -224,6 +224,7 @@ export interface FiscalDocument {
 
 export interface AdminSettings {
   companyName: string;
+  category?: string; // Categoria/Vertical no Marketplace (ex: Lanches & Hamburguerias, Pizzarias, etc.)
   cnpj: string;
   cep?: string;
   address: string;
@@ -724,3 +725,140 @@ export interface FinancialRecord {
   recurringId?: string;
   orderId?: string;
 }
+
+export interface CommerceCategoryPreset {
+  id: string;
+  name: string;
+  label: string;
+  subtitle: string;
+  description: string;
+  emoji: string;
+  iconName: string;
+  bg: string;
+  color: string;
+  aliases: string[];
+}
+
+export const COMMERCE_VERTICAL_CATEGORIES: CommerceCategoryPreset[] = [
+  {
+    id: 'todos',
+    name: 'Todos',
+    label: 'Todos',
+    subtitle: 'Tudo na cidade',
+    description: 'Todas as lojas e categorias',
+    emoji: '🍽️',
+    iconName: 'UtensilsCrossed',
+    bg: 'bg-slate-50',
+    color: 'text-slate-700',
+    aliases: ['todos', 'todas', 'geral', 'tudo']
+  },
+  {
+    id: 'burger',
+    name: 'Lanches & Hamburguerias',
+    label: 'Lanches & Hamburguerias',
+    subtitle: 'Artesanais & smash',
+    description: 'Artesanais, smash burgers, lanches e petiscos',
+    emoji: '🍔',
+    iconName: 'Sandwich',
+    bg: 'bg-amber-50',
+    color: 'text-amber-500',
+    aliases: ['burger', 'lanches', 'lanche', 'hamburguer', 'hamburgueria', 'smash', 'sanduiche', 'sanduiches', 'artesanais']
+  },
+  {
+    id: 'pizza',
+    name: 'Pizzarias',
+    label: 'Pizzarias',
+    subtitle: 'Forno a lenha',
+    description: 'Pizzas artesanais, forno a lenha, calzones e bordas recheadas',
+    emoji: '🍕',
+    iconName: 'Pizza',
+    bg: 'bg-rose-50',
+    color: 'text-rose-500',
+    aliases: ['pizza', 'pizzas', 'pizzaria', 'pizzarias', 'calzone', 'forno a lenha']
+  },
+  {
+    id: 'marmitaria',
+    name: 'Marmitarias & Caseira',
+    label: 'Marmitarias & Caseira',
+    subtitle: 'Comida caseira',
+    description: 'Comida caseira, marmitex, pratos executivos e almoço',
+    emoji: '🍲',
+    iconName: 'ChefHat',
+    bg: 'bg-emerald-50',
+    color: 'text-emerald-500',
+    aliases: ['marmitaria', 'marmitarias', 'marmita', 'marmitas', 'marmitex', 'comida caseira', 'caseira', 'almoco', 'almoço', 'restaurante', 'restaurantes', 'prato executivo', 'prato feito']
+  },
+  {
+    id: 'mercado',
+    name: 'Mercados & Hortifruti',
+    label: 'Mercados & Hortifruti',
+    subtitle: 'Hortifruti & básicos',
+    description: 'Supermercados, mercearias, hortifrúti, frutas e produtos básicos',
+    emoji: '🛒',
+    iconName: 'Store',
+    bg: 'bg-green-50',
+    color: 'text-green-500',
+    aliases: ['mercado', 'mercados', 'supermercado', 'supermercados', 'mercearia', 'mercearias', 'hortifruti', 'hortifrúti', 'basicos', 'frutas', 'verduras']
+  },
+  {
+    id: 'farmacia',
+    name: 'Farmácias & Drogaria',
+    label: 'Farmácias & Drogaria',
+    subtitle: 'Saúde & bem-estar',
+    description: 'Medicamentos, cosméticos, drogarias, higiene e saúde',
+    emoji: '💊',
+    iconName: 'Pill',
+    bg: 'bg-teal-50',
+    color: 'text-teal-500',
+    aliases: ['farmacia', 'farmácia', 'farmacias', 'farmácias', 'drogaria', 'drogarias', 'medicamento', 'medicamentos', 'saude', 'saúde', 'bem-estar']
+  },
+  {
+    id: 'pet',
+    name: 'Pet & Agro',
+    label: 'Pet & Agro',
+    subtitle: 'Rações & cuidados',
+    description: 'Rações, pet shops, produtos agropecuários e cuidados animais',
+    emoji: '🐾',
+    iconName: 'PawPrint',
+    bg: 'bg-purple-50',
+    color: 'text-purple-500',
+    aliases: ['pet', 'pet & agro', 'agro', 'petshop', 'pet shop', 'racao', 'rações', 'racoes', 'veterinaria', 'veterinária', 'animais', 'cuidados']
+  },
+  {
+    id: 'bebidas',
+    name: 'Adegas & Bebidas',
+    label: 'Adegas & Bebidas',
+    subtitle: 'Cervejas trincando',
+    description: 'Cervejas trincando, adegas, distribuidoras, vinhos e drinks',
+    emoji: '🍷',
+    iconName: 'Wine',
+    bg: 'bg-cyan-50',
+    color: 'text-cyan-500',
+    aliases: ['bebidas', 'bebida', 'adega', 'adegas', 'adegas &...', 'distribuidora', 'cerveja', 'cervejas', 'vinho', 'vinhos', 'drinks', 'geladas']
+  },
+  {
+    id: 'doces',
+    name: 'Açaí & Doces',
+    label: 'Açaí & Doces',
+    subtitle: 'Gelados & doces',
+    description: 'Açaí, sorvetes, sobremesas, bolos, tortas e doces artesanais',
+    emoji: '🍧',
+    iconName: 'IceCream',
+    bg: 'bg-pink-50',
+    color: 'text-pink-500',
+    aliases: ['doces', 'doce', 'acai', 'açaí', 'açaí & doces', 'acai & doces', 'sobremesa', 'sobremesas', 'sorvete', 'sorvetes', 'sorveteria', 'gelados', 'bolos', 'confeitaria']
+  },
+  {
+    id: 'pastel',
+    name: 'Pastéis & Salgados',
+    label: 'Pastéis & Salgados',
+    subtitle: 'Fritos na hora',
+    description: 'Pastéis fritos na hora, salgados, coxinhas e empanadas',
+    emoji: '🥟',
+    iconName: 'UtensilsCrossed',
+    bg: 'bg-orange-50',
+    color: 'text-orange-500',
+    aliases: ['pastel', 'pasteis', 'pastéis', 'pastéis &...', 'pastelaria', 'salgados', 'salgado', 'empanadas', 'fritos na hora', 'coxinhas']
+  }
+];
+
