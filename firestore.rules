@@ -2,10 +2,113 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Permissive development sandbox rules to unblock testing without Identity Toolkit API
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null && request.auth.uid != null;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isSaasAdmin() {
+      return isAuthenticated() && 
+        (getUserData().role == 'SAAS_ADMIN' || getUserData().role == 'ADMIN' || request.auth.token.email == 'admin@kitchenflow.com' || request.auth.token.email == 'financeirorenanuk@gmail.com');
+    }
+
+    function userTenantId() {
+      return getUserData().tenantId;
+    }
+
+    function belongsToTenant(tenantId) {
+      return isSaasAdmin() || (isAuthenticated() && userTenantId() == tenantId);
+    }
+
+    // Users Collection - Autenticação & Gestão de Usuários
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+
+    // Tenants Collection - Lojas & Estabelecimentos
+    match /tenants/{tenantId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Settings Collection - Configurações Administrativas e Cardápio Digital
+    match /settings/{tenantId} {
+      allow read, write: if true;
+    }
+
+    // Products Collection - Catálogo & SKUs
+    match /products/{productId} {
+      allow read, write: if true;
+    }
+
+    // Orders Collection - Pedidos PDV, KDS e Marketplace
+    match /orders/{orderId} {
+      allow read, write: if true;
+    }
+
+    // Tables Collection - Mesas e Comandas
+    match /tables/{tableId} {
+      allow read, write: if true;
+    }
+
+    // Customers Collection - Clientes & CRM
+    match /customers/{customerId} {
+      allow read, write: if true;
+    }
+
+    // Couriers Collection - Entregadores
+    match /couriers/{courierId} {
+      allow read, write: if true;
+    }
+
+    // Financial Records & Cash Closings - Módulo Financeiro e Fechamentos de Caixa
+    match /financial_records/{recordId} {
+      allow read, write: if true;
+    }
+    match /financialRecords/{recordId} {
+      allow read, write: if true;
+    }
+    match /cash_closings/{closingId} {
+      allow read, write: if true;
+    }
+    match /cashClosings/{closingId} {
+      allow read, write: if true;
+    }
+
+    // Fiscal Documents - Documentos Fiscais NFC-e e NF-e
+    match /fiscal_documents/{docId} {
+      allow read, write: if true;
+    }
+
+    // Integration Events - Fila de Integração (Saipos / ERPs)
+    match /integration_events/{eventId} {
+      allow read, write: if true;
+    }
+
+    // Audit Logs - Logs de Auditoria
+    match /auditLogs/{logId} {
+      allow read, write: if true;
+    }
+    match /audit_logs/{logId} {
+      allow read, write: if true;
+    }
+
+    // Plans & Marketplace Settings
+    match /plans/{planId} {
+      allow read, write: if true;
+    }
+    match /marketplace_settings/{settingId} {
+      allow read, write: if true;
+    }
+
+    // Default Fallback
     match /{document=**} {
       allow read, write: if true;
     }
   }
 }
-

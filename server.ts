@@ -1474,9 +1474,9 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
         return res.status(404).json({ success: false, error: "Documento fiscal não localizado para reimpressão." });
       }
 
-      // Normaliza tenant se necessário
-      if (docData.tenantId !== targetTenantId) {
-        docData.tenantId = targetTenantId;
+      // Validação anti-IDOR: o documento deve pertencer ao tenant solicitante
+      if (docData.tenantId && targetTenantId && docData.tenantId !== targetTenantId) {
+        return res.status(403).json({ success: false, error: "Acesso negado: o documento fiscal pertence a outro estabelecimento." });
       }
 
       // Validação e Autocorreção da Chave Fiscal e QR Code para a reimpressão
@@ -1862,12 +1862,60 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
     }
   });
 
-  // Fiscal routes - Emissão
+  // Fiscal routes - Emissão com Trava Anti-Concorrência e Idempotência Rigorosa
   app.post("/api/fiscal/issue", async (req, res) => {
+    const targetOrderId = req.body.order?.id || "";
+    const targetTenantId = req.body.tenantId || req.body.order?.tenantId || "t1";
+    const lockKey = `issue_${targetTenantId}_${targetOrderId || Date.now()}`;
+
+    if (targetOrderId && activeFiscalLocks.has(lockKey)) {
+      return res.status(409).json({
+        success: false,
+        error: "Uma emissão fiscal já está em processamento para este pedido. Aguarde alguns instantes para evitar duplicidade."
+      });
+    }
+
+    if (targetOrderId) {
+      activeFiscalLocks.add(lockKey);
+    }
+
     try {
       const { order, certificate, config, nfceNumber, series, settings, customerDocument, user } = req.body;
-      const targetTenantId = req.body.tenantId || order?.tenantId || "t1";
       
+      // Verificação de Idempotência: Se o pedido já possui NFC-e autorizada, retornar o documento existente
+      if (order?.id) {
+        try {
+          const { getDocs, query, where } = await import("firebase/firestore");
+          const existingQ = query(
+            clientCollection(clientDb, "fiscal_documents"),
+            where("orderId", "==", order.id),
+            where("tenantId", "==", targetTenantId)
+          );
+          const existingSnap = await getDocs(existingQ);
+          if (!existingSnap.empty) {
+            const existingDoc = existingSnap.docs[0].data() as any;
+            if (existingDoc.status === "AUTORIZADA" || existingDoc.fiscalKey) {
+              console.log(`[Fiscal API] Idempotência acionada: Pedido #${order.id} já possui NFC-e #${existingDoc.nfceNumber} autorizada.`);
+              return res.json({
+                success: true,
+                alreadyIssued: true,
+                xml: existingDoc.xml,
+                status: 'authorized',
+                protocol: existingDoc.protocol,
+                accessKey: existingDoc.fiscalKey,
+                nfeKey: existingDoc.fiscalKey,
+                nfceNumber: existingDoc.nfceNumber,
+                nextNfceNumber: Number(settings?.nextNfceNumber) || (existingDoc.nfceNumber + 1),
+                fiscalDocument: existingDoc,
+                message: "Este pedido já possui uma NFC-e autorizada perante a SEFAZ."
+              });
+            }
+          }
+        } catch (idempErr: any) {
+          console.warn("[Fiscal API] Erro ao consultar idempotência no Firestore:", idempErr.message);
+        }
+      }
+
       const pfxBase64 = certificate?.pfxBase64 || settings?.certificate?.pfxBase64;
       const pfxPassword = certificate?.password || settings?.certificate?.password;
 
@@ -2096,6 +2144,10 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
         success: false,
         error: error.message || "Erro na emissão fiscal SOAP SEFAZ SP."
       });
+    } finally {
+      if (targetOrderId) {
+        activeFiscalLocks.delete(lockKey);
+      }
     }
   });
 

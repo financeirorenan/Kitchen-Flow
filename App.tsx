@@ -2205,14 +2205,48 @@ const App: React.FC = () => {
       }
     }
     try {
-      localStorage.removeItem('kitchenflow_demo_user');
-      localStorage.removeItem('kitchenflow_cached_user');
-      localStorage.removeItem('kitchenflow_cached_tenant_data');
-      localStorage.removeItem('gastroai_cached_user');
-      localStorage.removeItem('gastroai_cached_tenant_data');
+      // Limpeza completa de credenciais e caches de sessão/tenant
+      const keysToRemove = [
+        'kitchenflow_demo_user',
+        'kitchenflow_cached_user',
+        'kitchenflow_cached_tenant_data',
+        'gastroai_cached_user',
+        'gastroai_cached_tenant_data',
+        'marketplace_profile',
+        'marketplace_favorites',
+        'marketplace_customer_address',
+        'kf_slug_map',
+        'kf_target_margins',
+        'kf_simulated_pizzas'
+      ];
+      keysToRemove.forEach(k => localStorage.removeItem(k));
+      
+      // Remover todos os caches de lojas (kf_store_*, copilot_*, etc.)
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (key && (key.startsWith('kf_store_') || key.startsWith('copilot_') || key.startsWith('kf_cache_') || key.startsWith('last_order_'))) {
+          localStorage.removeItem(key);
+        }
+      }
+      for (let i = sessionStorage.length - 1; i >= 0; i--) {
+        const key = sessionStorage.key(i);
+        if (key && (key.startsWith('mp_store_') || key.startsWith('mp_') || key.startsWith('kf_'))) {
+          sessionStorage.removeItem(key);
+        }
+      }
     } catch (e) {
       console.warn(e);
     }
+    // Resetar estados em memória para isolamento total
+    setCurrentUserData(null);
+    setViewingTenantId(null);
+    setOrders([]);
+    setProducts([]);
+    setTables([]);
+    setCustomers([]);
+    setCouriers([]);
+    setFinancialRecords([]);
+    
     await signOut(auth);
     window.location.href = '/login';
   };
@@ -4098,6 +4132,29 @@ const App: React.FC = () => {
         }
       }
 
+      // Estorno de pagamentos parciais se houver
+      const partialPayments = (table as any)?.partialPayments || [];
+      if (partialPayments.length > 0) {
+        const now = new Date();
+        for (const part of partialPayments) {
+          const refundAmount = Number(part.amount || 0);
+          if (refundAmount > 0) {
+            const refundRecord: FinancialRecord = {
+              id: `estorno-canc-${tableId}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+              tenantId: effectiveTenantId || 't1',
+              type: 'expense',
+              amount: refundAmount,
+              category: 'Estorno de Pagamento Parcial',
+              description: `Estorno por cancelamento de ${isCounter ? 'Balcão' : `Mesa ${tableNumber}`} - Forma: ${part.method || 'Não informada'}`,
+              date: now,
+              status: 'paid',
+              paymentMethod: part.method || 'dinheiro'
+            };
+            await handleAddFinancialRecord(refundRecord);
+          }
+        }
+      }
+
       if (isCounter) {
         setCounterOrders(prev => prev.filter(t => t.id !== tableId && t.id !== numericId));
       } else {
@@ -5532,9 +5589,20 @@ const App: React.FC = () => {
 
   const handleOpenCash = async (value: number) => {
     try {
+      const numValue = Number(value);
+      if (isNaN(numValue) || numValue < 0) {
+        showToast("Valor de abertura inválido. O saldo inicial não pode ser negativo.", "error");
+        return;
+      }
+
+      if (cashSession.isOpen) {
+        showToast("O caixa já se encontra aberto.", "info");
+        return;
+      }
+
       const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
       const now = new Date();
-      const newSession = { isOpen: true, openingValue: value, openedAt: now };
+      const newSession = { isOpen: true, openingValue: numValue, openedAt: now };
       
       // Update states immediately (Optimistic)
       lastWriteTimeRef.current = Date.now();
@@ -5545,7 +5613,7 @@ const App: React.FC = () => {
         id: `open-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
         tenantId: effectiveTenantId || 't1',
         type: 'income',
-        amount: value,
+        amount: numValue,
         category: 'Abertura de Caixa',
         description: `Fundo de Troco - Abertura de Caixa`,
         date: now,
@@ -5605,6 +5673,11 @@ const App: React.FC = () => {
 
   const handleCloseCash = async (actualValue: number, observations?: string) => {
     try {
+      if (!cashSession.isOpen) {
+        showToast("O caixa já se encontra fechado.", "info");
+        return null;
+      }
+
       const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
       // Robust parsing of openedAt
       const openedDate = safeParseDate(cashSession.openedAt);

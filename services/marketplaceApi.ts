@@ -65,11 +65,8 @@ const extractMerchant = (req: AuthenticatedRequest, _res: Response, next: () => 
     token = authHeader.substring(7);
   }
 
-  if (!tenantId && !token) {
-    tenantId = "HCL1177LRQVPEKCTYRAHU7IGBQ42";
-  }
-
-  req.merchantId = tenantId || "HCL1177LRQVPEKCTYRAHU7IGBQ42";
+  // Se nenhum merchant for explicitamente fornecido, preservar o token ou tenantId informado
+  req.merchantId = tenantId || "";
   req.merchantToken = token;
 
   next();
@@ -77,14 +74,27 @@ const extractMerchant = (req: AuthenticatedRequest, _res: Response, next: () => 
 
 marketplaceApiRouter.use(extractMerchant);
 
+// Helper para validar a presença de identificação do lojista
+const requireMerchant = (req: AuthenticatedRequest, res: Response): string | null => {
+  const mId = req.merchantId || (req.query.tenantId as string) || (req.headers["x-merchant-id"] as string);
+  if (!mId) {
+    res.status(401).json({ error: "Identificação do estabelecimento (x-merchant-id ou tenantId) é obrigatória." });
+    return null;
+  }
+  return mId;
+};
+
 // 1. Polling de Eventos (GET /api/v1/marketplace/events:poll)
 marketplaceApiRouter.get("/events:poll", async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const merchantId = req.merchantId || "HCL1177LRQVPEKCTYRAHU7IGBQ42";
-    console.log(`[Marketplace API] Saipos Polling de Eventos para Merchant: ${merchantId}`);
+    const merchantId = requireMerchant(req, res);
+    if (!merchantId) return;
+
+    console.log(`[Marketplace API] Polling de Eventos isolado para Tenant: ${merchantId}`);
 
     const eventsRef = getClientCollection(db, "integration_events");
     
+    // Consulta estrita isolada por tenantId
     const q = clientQuery(
       eventsRef,
       clientWhere("tenantId", "==", merchantId),
@@ -93,33 +103,6 @@ marketplaceApiRouter.get("/events:poll", async (req: AuthenticatedRequest, res: 
     );
 
     const snapshot = await getClientDocs(q);
-
-    if (snapshot.empty) {
-      const qFallback = clientQuery(
-        eventsRef,
-        clientWhere("status", "==", "PENDING"),
-        clientLimit(50)
-      );
-      const fallbackSnap = await getClientDocs(qFallback);
-      const matchedDocs = fallbackSnap.docs.filter(d => {
-        const data = d.data();
-        return !data.tenantId || data.tenantId === merchantId || merchantId === "HCL1177LRQVPEKCTYRAHU7IGBQ42";
-      });
-
-      const events = matchedDocs.map(d => ({
-        eventId: d.id,
-        eventType: d.data().eventType || "ORDER_CREATED",
-        createdAt: d.data().createdAt || new Date().toISOString(),
-        order: d.data().order || null
-      }));
-
-      return res.json({
-        success: true,
-        merchantId,
-        eventsCount: events.length,
-        events
-      });
-    }
 
     const events = snapshot.docs.map(d => ({
       eventId: d.id,
@@ -143,8 +126,11 @@ marketplaceApiRouter.get("/events:poll", async (req: AuthenticatedRequest, res: 
 });
 
 // 2. Confirmação de Recebimento de Eventos (POST /api/v1/marketplace/events/ack)
-marketplaceApiRouter.post("/events/ack", async (req: Request, res: Response) => {
+marketplaceApiRouter.post("/events/ack", async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const merchantId = requireMerchant(req, res);
+    if (!merchantId) return;
+
     const { eventIds } = req.body;
     if (!eventIds || !Array.isArray(eventIds) || eventIds.length === 0) {
       return res.status(400).json({ error: "Array 'eventIds' é obrigatório." });
@@ -156,19 +142,22 @@ marketplaceApiRouter.post("/events/ack", async (req: Request, res: Response) => 
     for (const id of eventIds) {
       try {
         const docRef = clientDoc(db, "integration_events", id);
-        await clientUpdateDoc(docRef, {
-          status: "ACKNOWLEDGED",
-          acknowledgedAt: now
-        });
-        acknowledgedCount++;
-      } catch (_docErr) {
-        try {
-          const docRef = clientDoc(db, "integration_events", id);
-          await clientSetDoc(docRef, { status: "ACKNOWLEDGED", acknowledgedAt: now }, { merge: true });
+        const docSnap = await getClientDoc(docRef);
+        if (docSnap.exists()) {
+          const evData = docSnap.data();
+          // Validação anti-IDOR: o evento deve pertencer ao lojista autenticado
+          if (evData.tenantId && evData.tenantId !== merchantId) {
+            console.warn(`[Marketplace API ACK Security] Tentativa de ACK em evento de outro tenant (${evData.tenantId}) por ${merchantId}`);
+            continue;
+          }
+          await clientUpdateDoc(docRef, {
+            status: "ACKNOWLEDGED",
+            acknowledgedAt: now
+          });
           acknowledgedCount++;
-        } catch (mErr) {
-          console.warn(`[Marketplace API] Erro ao dar ACK no evento ${id}:`, mErr);
         }
+      } catch (_docErr) {
+        console.warn(`[Marketplace API] Erro ao dar ACK no evento ${id}:`, _docErr);
       }
     }
 
@@ -185,12 +174,27 @@ marketplaceApiRouter.post("/events/ack", async (req: Request, res: Response) => 
 });
 
 // 3. Confirmar Pedido na Cozinha (POST /api/v1/marketplace/orders/:orderId/confirm)
-marketplaceApiRouter.post("/orders/:orderId/confirm", async (req: Request, res: Response) => {
+marketplaceApiRouter.post("/orders/:orderId/confirm", async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const merchantId = requireMerchant(req, res);
+    if (!merchantId) return;
+
     const { orderId } = req.params;
     const now = new Date();
 
     const orderRef = clientDoc(db, "orders", orderId);
+    const orderSnap = await getClientDoc(orderRef);
+
+    if (!orderSnap.exists()) {
+      return res.status(404).json({ error: "Pedido não encontrado." });
+    }
+
+    const orderData = orderSnap.data();
+    // Validação estrita de isolamento de dados (Anti-IDOR)
+    if (orderData.tenantId && orderData.tenantId !== merchantId) {
+      return res.status(403).json({ error: "Acesso negado: o pedido pertence a outro estabelecimento." });
+    }
+
     await clientSetDoc(orderRef, {
       status: "preparing",
       acceptedAt: now,
@@ -215,13 +219,28 @@ marketplaceApiRouter.post("/orders/:orderId/confirm", async (req: Request, res: 
 });
 
 // 4. Despachar Pedido para Entrega (POST /api/v1/marketplace/orders/:orderId/dispatch)
-marketplaceApiRouter.post("/orders/:orderId/dispatch", async (req: Request, res: Response) => {
+marketplaceApiRouter.post("/orders/:orderId/dispatch", async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const merchantId = requireMerchant(req, res);
+    if (!merchantId) return;
+
     const { orderId } = req.params;
     const { courierName, courierPhone } = req.body;
     const now = new Date();
 
     const orderRef = clientDoc(db, "orders", orderId);
+    const orderSnap = await getClientDoc(orderRef);
+
+    if (!orderSnap.exists()) {
+      return res.status(404).json({ error: "Pedido não encontrado." });
+    }
+
+    const orderData = orderSnap.data();
+    // Validação estrita de isolamento de dados (Anti-IDOR)
+    if (orderData.tenantId && orderData.tenantId !== merchantId) {
+      return res.status(403).json({ error: "Acesso negado: o pedido pertence a outro estabelecimento." });
+    }
+
     await clientSetDoc(orderRef, {
       status: "delivering",
       dispatchedAt: now,
@@ -248,12 +267,27 @@ marketplaceApiRouter.post("/orders/:orderId/dispatch", async (req: Request, res:
 });
 
 // 5. Marcar Pedido Pronto (POST /api/v1/marketplace/orders/:orderId/ready)
-marketplaceApiRouter.post("/orders/:orderId/ready", async (req: Request, res: Response) => {
+marketplaceApiRouter.post("/orders/:orderId/ready", async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const merchantId = requireMerchant(req, res);
+    if (!merchantId) return;
+
     const { orderId } = req.params;
     const now = new Date();
 
     const orderRef = clientDoc(db, "orders", orderId);
+    const orderSnap = await getClientDoc(orderRef);
+
+    if (!orderSnap.exists()) {
+      return res.status(404).json({ error: "Pedido não encontrado." });
+    }
+
+    const orderData = orderSnap.data();
+    // Validação estrita de isolamento de dados (Anti-IDOR)
+    if (orderData.tenantId && orderData.tenantId !== merchantId) {
+      return res.status(403).json({ error: "Acesso negado: o pedido pertence a outro estabelecimento." });
+    }
+
     await clientSetDoc(orderRef, {
       status: "ready",
       readyAt: now,
@@ -273,13 +307,28 @@ marketplaceApiRouter.post("/orders/:orderId/ready", async (req: Request, res: Re
 });
 
 // 6. Cancelar Pedido (POST /api/v1/marketplace/orders/:orderId/cancel)
-marketplaceApiRouter.post("/orders/:orderId/cancel", async (req: Request, res: Response) => {
+marketplaceApiRouter.post("/orders/:orderId/cancel", async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const merchantId = requireMerchant(req, res);
+    if (!merchantId) return;
+
     const { orderId } = req.params;
     const { reason, code } = req.body;
     const now = new Date();
 
     const orderRef = clientDoc(db, "orders", orderId);
+    const orderSnap = await getClientDoc(orderRef);
+
+    if (!orderSnap.exists()) {
+      return res.status(404).json({ error: "Pedido não encontrado." });
+    }
+
+    const orderData = orderSnap.data();
+    // Validação estrita de isolamento de dados (Anti-IDOR)
+    if (orderData.tenantId && orderData.tenantId !== merchantId) {
+      return res.status(403).json({ error: "Acesso negado: o pedido pertence a outro estabelecimento." });
+    }
+
     await clientSetDoc(orderRef, {
       status: "cancelled",
       cancelReason: reason || "Cancelado pelo sistema parceiro/Saipos",
@@ -300,23 +349,21 @@ marketplaceApiRouter.post("/orders/:orderId/cancel", async (req: Request, res: R
   }
 });
 
-// 7. Cardápio & SKUs (GET /api/v1/marketplace/catalog)
+// 7. Cardápio & SKUs Isolado por Tenant (GET /api/v1/marketplace/catalog)
 marketplaceApiRouter.get("/catalog", async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const merchantId = req.merchantId || "HCL1177LRQVPEKCTYRAHU7IGBQ42";
+    const merchantId = requireMerchant(req, res);
+    if (!merchantId) return;
+
     const productsRef = getClientCollection(db, "products");
     
+    // Consulta estrita isolada por tenantId sem fallback para outros estabelecimentos
     const q = clientQuery(
       productsRef,
       clientWhere("tenantId", "==", merchantId),
       clientLimit(200)
     );
-    let snapshot = await getClientDocs(q);
-
-    if (snapshot.empty) {
-      const qAll = clientQuery(productsRef, clientLimit(100));
-      snapshot = await getClientDocs(qAll);
-    }
+    const snapshot = await getClientDocs(q);
 
     const items = snapshot.docs.map(d => {
       const p = d.data();
@@ -350,13 +397,28 @@ marketplaceApiRouter.get("/catalog", async (req: AuthenticatedRequest, res: Resp
   }
 });
 
-// 8. Atualizar Disponibilidade/Preço de Item (PATCH /api/v1/marketplace/catalog/items/:itemId)
-marketplaceApiRouter.patch("/catalog/items/:itemId", async (req: Request, res: Response) => {
+// 8. Atualizar Disponibilidade/Preço de Item com Checagem Anti-IDOR (PATCH /api/v1/marketplace/catalog/items/:itemId)
+marketplaceApiRouter.patch("/catalog/items/:itemId", async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const merchantId = requireMerchant(req, res);
+    if (!merchantId) return;
+
     const { itemId } = req.params;
     const { available, price } = req.body;
 
     const docRef = clientDoc(db, "products", itemId);
+    const docSnap = await getClientDoc(docRef);
+
+    if (!docSnap.exists()) {
+      return res.status(404).json({ error: "Item do catálogo não encontrado." });
+    }
+
+    const prodData = docSnap.data();
+    // Validação estrita de isolamento de dados (Anti-IDOR)
+    if (prodData.tenantId && prodData.tenantId !== merchantId) {
+      return res.status(403).json({ error: "Acesso negado: o item do cardápio pertence a outro estabelecimento." });
+    }
+
     const updateData: Record<string, unknown> = {};
     if (typeof available === "boolean") {
       updateData.active = available;
@@ -382,7 +444,9 @@ marketplaceApiRouter.patch("/catalog/items/:itemId", async (req: Request, res: R
 // 9. Status da Loja no Marketplace (GET & POST /api/v1/marketplace/merchant/status)
 marketplaceApiRouter.get("/merchant/status", async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const merchantId = req.merchantId || "HCL1177LRQVPEKCTYRAHU7IGBQ42";
+    const merchantId = requireMerchant(req, res);
+    if (!merchantId) return;
+
     const settingsDoc = await getClientDoc(clientDoc(db, "settings", merchantId));
     
     let isClosed = false;
@@ -402,7 +466,9 @@ marketplaceApiRouter.get("/merchant/status", async (req: AuthenticatedRequest, r
 
 marketplaceApiRouter.post("/merchant/status", async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const merchantId = req.merchantId || "HCL1177LRQVPEKCTYRAHU7IGBQ42";
+    const merchantId = requireMerchant(req, res);
+    if (!merchantId) return;
+
     const { status } = req.body;
     
     const isClosed = status === "CLOSED";
@@ -428,7 +494,11 @@ marketplaceApiRouter.post("/merchant/status", async (req: AuthenticatedRequest, 
 // 10. Disparador de Evento de Teste para o Saipos / Integrador (POST /api/v1/marketplace/test-event)
 marketplaceApiRouter.post("/test-event", async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const merchantId = req.body.merchantId || req.merchantId || "HCL1177LRQVPEKCTYRAHU7IGBQ42";
+    const merchantId = req.body.merchantId || req.merchantId;
+    if (!merchantId) {
+      return res.status(400).json({ error: "Identificador do estabelecimento (merchantId) é obrigatório." });
+    }
+
     const now = new Date();
     const orderId = `test_ord_${Date.now().toString().slice(-6)}`;
     const eventId = `evt_saipos_${Date.now()}`;
@@ -519,14 +589,17 @@ marketplaceApiRouter.post("/test-event", async (req: AuthenticatedRequest, res: 
   }
 });
 
-// 11. Histórico de Eventos para Monitoramento da UI (GET /api/v1/marketplace/events/history)
+// 11. Histórico de Eventos Isolado por Tenant (GET /api/v1/marketplace/events/history)
 marketplaceApiRouter.get("/events/history", async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const merchantId = req.merchantId || "HCL1177LRQVPEKCTYRAHU7IGBQ42";
+    const merchantId = requireMerchant(req, res);
+    if (!merchantId) return;
+
     const eventsRef = getClientCollection(db, "integration_events");
 
     const q = clientQuery(
       eventsRef,
+      clientWhere("tenantId", "==", merchantId),
       clientLimit(30)
     );
 
