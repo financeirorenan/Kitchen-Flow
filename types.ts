@@ -461,6 +461,34 @@ export interface AuditLog {
   stackTrace?: string;
 }
 
+export interface SaasAuditLog {
+  id: string;
+  userId?: string;
+  userName: string;
+  action: string;
+  tenantId?: string;
+  clientName?: string;
+  previousValue?: string;
+  newValue?: string;
+  timestamp: Date | string;
+  category?: string;
+  severity?: 'info' | 'warning' | 'danger';
+}
+
+export interface SaasNotification {
+  id: string;
+  title: string;
+  description: string;
+  type: 'danger' | 'warning' | 'info' | 'success';
+  timestamp: Date | string;
+  read: boolean;
+  tenantId?: string;
+  tenantName?: string;
+  actionUrl?: string;
+  actionTab?: string;
+  resolved?: boolean;
+}
+
 export interface PriceHistory {
   date: string;
   price: number;

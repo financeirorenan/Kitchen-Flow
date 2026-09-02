@@ -481,6 +481,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   const [tenantsSettings, setTenantsSettings] = useState<Record<string, any>>({});
   const [commerceCategories, setCommerceCategories] = useState<any[]>([]);
   const [allProducts, setAllProducts] = useState<Product[]>([]);
+  const [marketplaceProducts, setMarketplaceProducts] = useState<Product[]>([]);
   const [activeCategory, setActiveCategory] = useState("todos");
 
   const dynamicCategories = useMemo(() => {
@@ -998,7 +999,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     return extractCityFromAddress(currentAddress);
   }, [currentAddress]);
 
-  // Dynamic Popular Featured Items strictly tied to customer's city
+  // Dynamic Popular Featured Items strictly tied to REAL registered products in customer's city
   const popularFeaturedItems = useMemo(() => {
     const targetCity = customerCity || "Pradópolis";
     const normTargetCity = normalizeString(targetCity);
@@ -1012,83 +1013,70 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     });
 
     const activePool = cityTenants.length > 0 ? cityTenants : tenants;
+    const activeTenantIds = new Set(activePool.map((t) => t.id));
 
-    // Pratos populares com alta conversão e vínculo com o comércio local da cidade
-    const dishTemplates = [
-      {
-        name: "Pizza Especial Calabresa & Catupiry",
-        categoryKeyword: "pizza",
-        price: 49.90,
-        image: "https://images.unsplash.com/photo-1534308983496-4fabb1a015ee?q=80&w=600&auto=format&fit=crop",
-        badge: `🔥 #1 EM ${targetCity.toUpperCase()}`,
-        defaultStore: `Pizzaria Tradicional de ${targetCity}`
-      },
-      {
-        name: "Smash Burger Duplo Cheddar & Bacon",
-        categoryKeyword: "burger",
-        price: 33.90,
-        image: "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?q=80&w=600&auto=format&fit=crop",
-        badge: "🍔 MAIS PEDIDO",
-        defaultStore: `Burger House ${targetCity}`
-      },
-      {
-        name: "Parmegiana de Alcatra na Brasa",
-        categoryKeyword: "restaurante",
-        price: 38.50,
-        image: "https://images.unsplash.com/photo-1598515214211-89d3c73ae83b?q=80&w=600&auto=format&fit=crop",
-        badge: "⭐ FAVORITO LOCAL",
-        defaultStore: `Cantina & Restaurante ${targetCity}`
-      },
-      {
-        name: "Açaí Especial 500ml com Frutas & Nutella",
-        categoryKeyword: "doce",
-        price: 23.50,
-        image: "https://images.unsplash.com/photo-1590080875515-8a3a8dc5735e?q=80&w=600&auto=format&fit=crop",
-        badge: "🍧 SOBREMESA TOP",
-        defaultStore: `Açaí & Delícias ${targetCity}`
-      },
-      {
-        name: "Combo Pastel Especial de Carne Seca & Queijo",
-        categoryKeyword: "pastel",
-        price: 27.90,
-        image: "https://images.unsplash.com/photo-1626777552726-4a6b54c97e46?q=80&w=600&auto=format&fit=crop",
-        badge: "🥟 FRITO NA HORA",
-        defaultStore: `Pastelaria Central ${targetCity}`
-      },
-      {
-        name: "Marmitex Executivo Caseiro Completo",
-        categoryKeyword: "marmitaria",
-        price: 25.00,
-        image: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=600&auto=format&fit=crop",
-        badge: "🍲 ALMOÇO DO DIA",
-        defaultStore: `Marmitaria & Sabor ${targetCity}`
+    // 2. Filtrar produtos REAIS da base de dados que pertencem aos estabelecimentos ativos
+    const realProducts = marketplaceProducts.filter((p) => {
+      if (!p.tenantId || !activeTenantIds.has(p.tenantId)) return false;
+      if (p.active === false || p.isAvailableOnline === false) return false;
+      if (!p.name || typeof p.price !== "number" || p.price <= 0) return false;
+      return true;
+    });
+
+    // Se NÃO houver produtos reais cadastrados para as lojas ativas, retornar vazio (NUNCA inventar pratos fictícios)
+    if (realProducts.length === 0) {
+      return [];
+    }
+
+    // Função de imagem fallback caso o lojista não tenha colocado foto no prato real
+    const getCategoryFallback = (catName?: string) => {
+      const cat = (catName || "").toLowerCase();
+      if (cat.includes("pastel") || cat.includes("pasteis")) return "https://images.unsplash.com/photo-1626777552726-4a6b54c97e46?q=80&w=600&auto=format&fit=crop";
+      if (cat.includes("pizza")) return "https://images.unsplash.com/photo-1534308983496-4fabb1a015ee?q=80&w=600&auto=format&fit=crop";
+      if (cat.includes("burger") || cat.includes("hambúrguer") || cat.includes("lanche")) return "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?q=80&w=600&auto=format&fit=crop";
+      if (cat.includes("marmit") || cat.includes("refeição") || cat.includes("almoço") || cat.includes("executiv")) return "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=600&auto=format&fit=crop";
+      if (cat.includes("bebida") || cat.includes("refrigerante") || cat.includes("suco") || cat.includes("cerveja")) return "https://images.unsplash.com/photo-1551024709-8f23befc6f87?q=80&w=600&auto=format&fit=crop";
+      if (cat.includes("doce") || cat.includes("sobremesa") || cat.includes("sorvete") || cat.includes("açaí") || cat.includes("acai")) return "https://images.unsplash.com/photo-1590080875515-8a3a8dc5735e?q=80&w=600&auto=format&fit=crop";
+      return "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=600&auto=format&fit=crop";
+    };
+
+    // Ordenar: produtos com foto e promoções primeiro
+    const sorted = [...realProducts].sort((a, b) => {
+      if (a.isPromotional && !b.isPromotional) return -1;
+      if (!a.isPromotional && b.isPromotional) return 1;
+      if (a.image && !b.image) return -1;
+      if (!a.image && b.image) return 1;
+      return (a.displayOrder || 0) - (b.displayOrder || 0);
+    });
+
+    return sorted.slice(0, 10).map((p, idx) => {
+      const matchedTenant = activePool.find((t) => t.id === p.tenantId) || tenants.find((t) => t.id === p.tenantId);
+      const storeDisplayName = matchedTenant ? matchedTenant.name : "Restaurante Local";
+
+      let badge = "⭐ DESTAQUE";
+      if (p.isPromotional) {
+        badge = "🏷️ OFERTA";
+      } else if (idx === 0) {
+        badge = `🔥 #1 EM ${(targetCity || "SUA CIDADE").toUpperCase()}`;
+      } else if (idx === 1) {
+        badge = "🍔 MAIS PEDIDO";
+      } else if (idx === 2) {
+        badge = "⭐ FAVORITO LOCAL";
       }
-    ];
-
-    return dishTemplates.map((template, idx) => {
-      // Tentar associar com um restaurante real correspondente daquela cidade
-      const matchedTenant = activePool.find((t) => {
-        const cat = (t.category || "").toLowerCase();
-        const name = (t.name || "").toLowerCase();
-        return cat.includes(template.categoryKeyword) || name.includes(template.categoryKeyword);
-      }) || activePool[idx % Math.max(1, activePool.length)];
-
-      const storeDisplayName = matchedTenant 
-        ? matchedTenant.name 
-        : template.defaultStore;
 
       return {
-        id: `pop-city-${idx}`,
-        name: template.name,
+        id: p.id,
+        name: p.name,
         storeName: storeDisplayName,
-        tenantId: matchedTenant?.id,
-        price: template.price,
-        image: template.image,
-        badge: template.badge,
-        city: targetCity
+        tenantId: p.tenantId,
+        price: (p.isPromotional && p.promoPrice) ? p.promoPrice : p.price,
+        image: p.image || getCategoryFallback(p.category),
+        badge: badge,
+        city: targetCity,
+        product: p
       };
     });
-  }, [customerCity, tenants, tenantsSettings]);
+  }, [customerCity, tenants, tenantsSettings, marketplaceProducts]);
 
   const [isLocating, setIsLocating] = useState(false);
 
@@ -1281,6 +1269,127 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     useState<MarketplaceSettings | null>(null);
   const storeListRef = React.useRef<HTMLDivElement>(null);
 
+  // Notifications State & Logic
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notificationsFilter, setNotificationsFilter] = useState<"all" | "coupons" | "orders">("all");
+  const [readNotificationIds, setReadNotificationIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem("marketplace_read_notifications");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const activeNotificationsList = useMemo(() => {
+    const list: Array<{
+      id: string;
+      type: "order" | "coupon" | "news";
+      title: string;
+      message: string;
+      time: string;
+      couponCode?: string;
+      discount?: string;
+      actionType?: "order" | "coupon" | "category" | "none";
+      actionLabel?: string;
+      orderId?: string;
+    }> = [];
+
+    // 1. Notificações de pedidos em andamento (Tempo Real)
+    if (activeOrders && activeOrders.length > 0) {
+      activeOrders.forEach((ord) => {
+        let statusText = "Em preparo na cozinha";
+        if (ord.status === "delivering") statusText = "A caminho do seu endereço";
+        else if (ord.status === "ready") statusText = "Pronto para entrega/retirada";
+        else if (ord.status === "pending") statusText = "Confirmando com o restaurante";
+
+        list.push({
+          id: `order-notif-${ord.id}`,
+          type: "order",
+          title: `Pedido #${ord.id.slice(-4).toUpperCase()}: ${statusText}`,
+          message: `${ord.items?.length || 1} ${ord.items?.length === 1 ? "item" : "itens"} no total de R$ ${(ord.total || 0).toFixed(2)}. Toque para acompanhar.`,
+          time: "Agora",
+          actionType: "order",
+          actionLabel: "Acompanhar Pedido",
+          orderId: ord.id,
+        });
+      });
+    }
+
+    // 2. Cupons de desconto ativos e utilizáveis
+    list.push({
+      id: "coupon-primeira-compra",
+      type: "coupon",
+      title: "R$ 15 OFF no primeiro pedido",
+      message: "Use o cupom PRIMEIRACOMPRA em pedidos a partir de R$ 40 em qualquer restaurante parceiro.",
+      time: "Válido hoje",
+      couponCode: "PRIMEIRACOMPRA",
+      discount: "R$ 15 OFF",
+      actionType: "coupon",
+      actionLabel: "Copiar Cupom",
+    });
+
+    list.push({
+      id: "coupon-frete-gratis",
+      type: "coupon",
+      title: "Entrega Grátis na sua região",
+      message: "Use FRETEGRATIS para isenção da taxa de entrega em pedidos selecionados.",
+      time: "Válido hoje",
+      couponCode: "FRETEGRATIS",
+      discount: "Frete Grátis",
+      actionType: "coupon",
+      actionLabel: "Copiar Cupom",
+    });
+
+    list.push({
+      id: "coupon-kitchen-10",
+      type: "coupon",
+      title: "10% de desconto gastronômico",
+      message: "Cupom KITCHEN10 válido para lanches, pizzas e porções hoje.",
+      time: "Válido hoje",
+      couponCode: "KITCHEN10",
+      discount: "10% OFF",
+      actionType: "coupon",
+      actionLabel: "Copiar Cupom",
+    });
+
+    // 3. Novidades locais
+    list.push({
+      id: "news-restaurantes-locais",
+      type: "news",
+      title: `Novos restaurantes em ${customerCity || "sua região"}`,
+      message: "Confira novos estabelecimentos parceiros com entregas rápidas e cardápios completos.",
+      time: "Hoje",
+      actionType: "category",
+      actionLabel: "Explorar Cardápios",
+    });
+
+    return list;
+  }, [activeOrders, customerCity]);
+
+  const unreadCount = useMemo(() => {
+    return activeNotificationsList.filter((n) => !readNotificationIds.includes(n.id)).length;
+  }, [activeNotificationsList, readNotificationIds]);
+
+  const markNotificationAsRead = (id: string) => {
+    setReadNotificationIds((prev) => {
+      if (prev.includes(id)) return prev;
+      const next = [...prev, id];
+      try {
+        localStorage.setItem("marketplace_read_notifications", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const markAllNotificationsAsRead = () => {
+    const allIds = activeNotificationsList.map((n) => n.id);
+    setReadNotificationIds(allIds);
+    try {
+      localStorage.setItem("marketplace_read_notifications", JSON.stringify(allIds));
+    } catch {}
+  };
+
   // Set dynamic document title for KitchenFlow
   useEffect(() => {
     if (selectedTenant) {
@@ -1317,9 +1426,29 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       if (cachedCats) {
         setCommerceCategories(JSON.parse(cachedCats));
       }
+      const cachedProducts = sessionStorage.getItem("mp_products_cache");
+      if (cachedProducts) {
+        setMarketplaceProducts(JSON.parse(cachedProducts));
+      }
     } catch {
       // Ignore cache parsing errors
     }
+
+    const unsubscribeProducts = onSnapshot(
+      query(collection(db, "products"), limit(200)),
+      (snapshot) => {
+        const prods = snapshot.docs
+          .map((doc) => ({ ...doc.data(), id: doc.id }) as Product)
+          .filter((p) => p.active !== false && p.isAvailableOnline !== false);
+        setMarketplaceProducts(prods);
+        try {
+          sessionStorage.setItem("mp_products_cache", JSON.stringify(prods));
+        } catch {}
+      },
+      (error) => {
+        console.warn("Erro ao carregar produtos reais do marketplace:", error);
+      }
+    );
 
     const q = query(
       collection(db, "tenants"),
@@ -1393,6 +1522,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       unsubscribeMarketplaceSettings();
       unsubscribeSettings();
       unsubscribeCategories();
+      unsubscribeProducts();
     };
   }, []);
 
@@ -2139,7 +2269,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   }
 
   return (
-    <div className="h-full overflow-y-auto bg-brand-white flex flex-col font-sans pb-36 custom-scrollbar">
+    <div className="h-full overflow-y-auto bg-brand-white flex flex-col font-sans pb-36 custom-scrollbar w-full overflow-x-hidden select-none">
       {/* Top Announcement Bar */}
       <div className="bg-black text-white px-4 sm:px-6 py-2 border-b border-slate-900 text-xs flex items-center justify-between z-50">
         <div className="flex items-center gap-3 overflow-hidden">
@@ -2165,7 +2295,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
       {/* Brand & Address Header - Clean White High-Contrast */}
       {navView !== "profile" && (
-        <header className="bg-white border-b border-slate-100 sticky top-0 z-[60] shadow-sm">
+        <header className="bg-white/95 backdrop-blur-md border-b border-slate-100 sticky top-0 z-[60] shadow-sm">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
             {/* Brand Logo & Name */}
             <div className="flex items-center gap-3">
@@ -2174,6 +2304,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 onClick={() => {
                   setNavView("home");
                   setActiveCategory("todos");
+                  setSearchTerm("");
                 }}
                 className="flex items-center gap-2.5 group cursor-pointer"
               >
@@ -2224,14 +2355,16 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
               {/* Notification Bell */}
               <button
-                onClick={() => alert("Você tem 9+ notificações de promoções e cupons disponíveis na sua cidade!")}
-                className="w-9 h-9 rounded-full bg-slate-50 hover:bg-slate-100 border border-slate-200/80 flex items-center justify-center text-slate-700 relative transition-colors cursor-pointer"
-                title="Notificações"
+                onClick={() => setShowNotifications(true)}
+                className="w-9 h-9 rounded-full bg-slate-50 hover:bg-slate-100 border border-slate-200/80 flex items-center justify-center text-slate-700 relative transition-all hover:scale-105 active:scale-95 cursor-pointer"
+                title="Notificações e Cupons"
               >
                 <Bell size={16} />
-                <span className="absolute -top-1 -right-1 bg-[#FF3B00] text-white text-[9px] font-black px-1.5 py-0.2 rounded-full border-2 border-white shadow-sm leading-tight">
-                  9+
-                </span>
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-[#FF3B00] text-white text-[9px] font-black px-1.5 py-0.2 rounded-full border-2 border-white shadow-sm leading-tight animate-pulse">
+                    {unreadCount}
+                  </span>
+                )}
               </button>
 
               {/* User Profile Chip */}
@@ -2268,25 +2401,48 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 <LogOut size={16} />
               </button>
 
-              {/* Sacola / Cart Button */}
+              {/* Sacola / Cart Button (Ícone Limpo) */}
               <button
                 onClick={() => {
                   if (activeOrders.length > 0) {
                     setNavView("orders");
                   } else {
-                    alert("Sua sacola está pronta para receber deliciosos pedidos!");
+                    alert("Sua sacola está pronta para receber seus pedidos!");
                   }
                 }}
-                className="flex items-center gap-2 px-4 py-2 bg-[#FF3B00] hover:bg-[#E63500] text-white rounded-2xl font-black text-xs uppercase tracking-wider shadow-md shadow-orange-500/25 transition-all hover:scale-102 active:scale-98 cursor-pointer ml-1"
+                className="w-9 h-9 rounded-full bg-[#FF3B00] hover:bg-[#E63500] text-white flex items-center justify-center relative shadow-md shadow-orange-500/25 transition-all hover:scale-105 active:scale-95 cursor-pointer ml-0.5"
+                title="Minha Sacola / Pedidos"
               >
-                <ShoppingBag size={15} />
-                <span>Sacola</span>
+                <ShoppingBag size={16} />
                 {activeOrders.length > 0 && (
-                  <span className="bg-white text-[#FF3B00] text-[10px] font-black px-1.5 py-0.2 rounded-full">
+                  <span className="absolute -top-1 -right-1 bg-white text-[#FF3B00] text-[9px] font-black w-4 h-4 rounded-full border border-[#FF3B00] flex items-center justify-center shadow-sm">
                     {activeOrders.length}
                   </span>
                 )}
               </button>
+            </div>
+          </div>
+
+          {/* Quick Search Bar */}
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-3 pt-1">
+            <div className="relative flex items-center">
+              <Search className="absolute left-4 text-slate-400 pointer-events-none" size={18} strokeWidth={2.5} />
+              <input 
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Buscar restaurantes ou categorias..."
+                className="w-full bg-slate-50 focus:bg-white border border-slate-200/90 focus:border-[#FF3B00] rounded-2xl py-2.5 pl-11 pr-10 text-xs sm:text-sm font-semibold text-slate-800 placeholder:text-slate-400 outline-none transition-all shadow-inner focus:shadow-md"
+              />
+              {searchTerm && (
+                <button
+                  onClick={() => setSearchTerm("")}
+                  className="absolute right-3 p-1 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors"
+                  title="Limpar busca"
+                >
+                  <X size={16} />
+                </button>
+              )}
             </div>
           </div>
         </header>
@@ -2461,84 +2617,86 @@ const Marketplace: React.FC<MarketplaceProps> = ({
               </div>
             </div>
 
-            {/* 🔥 Mais Pedidos na Cidade do Cliente */}
-            <div className="px-4 sm:px-6 pt-4 pb-4 text-left">
-              <div className="mb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-2">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-orange-500/10 text-[#FF3B00] text-[10px] font-black uppercase tracking-wider border border-orange-500/20">
-                      🔥 DESTAQUES DA CIDADE
-                    </span>
-                    <span className="text-xs font-bold text-slate-400">
-                      • {customerCity || "Pradópolis"}
-                    </span>
+            {/* 🔥 Mais Pedidos na Cidade do Cliente (Apenas pratos REAIS cadastrados) */}
+            {popularFeaturedItems.length > 0 && (
+              <div className="px-4 sm:px-6 pt-4 pb-4 text-left">
+                <div className="mb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-2">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-orange-500/10 text-[#FF3B00] text-[10px] font-black uppercase tracking-wider border border-orange-500/20">
+                        🔥 DESTAQUES DA CIDADE
+                      </span>
+                      <span className="text-xs font-bold text-slate-400">
+                        • {customerCity || "Pradópolis"}
+                      </span>
+                    </div>
+                    <h2 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 mt-1">
+                      Mais Pedidos da Cidade de {customerCity || "Pradópolis"}
+                    </h2>
+                    <p className="text-xs text-slate-500 font-medium mt-0.5">
+                      Os pratos, lanches e produtos favoritos dos moradores de {customerCity || "Pradópolis"}
+                    </p>
                   </div>
-                  <h2 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 mt-1">
-                    Mais Pedidos da Cidade de {customerCity || "Pradópolis"}
-                  </h2>
-                  <p className="text-xs text-slate-500 font-medium mt-0.5">
-                    Os pratos, lanches e produtos favoritos dos moradores de {customerCity || "Pradópolis"}
-                  </p>
+
+                  <button
+                    onClick={() => setShowAddressModal(true)}
+                    className="text-xs font-bold text-[#FF3B00] hover:underline flex items-center gap-1 self-start sm:self-auto cursor-pointer"
+                  >
+                    <MapPin size={13} />
+                    <span>Trocar cidade ({customerCity || "Pradópolis"})</span>
+                  </button>
                 </div>
 
-                <button
-                  onClick={() => setShowAddressModal(true)}
-                  className="text-xs font-bold text-[#FF3B00] hover:underline flex items-center gap-1 self-start sm:self-auto cursor-pointer"
-                >
-                  <MapPin size={13} />
-                  <span>Trocar cidade ({customerCity || "Pradópolis"})</span>
-                </button>
-              </div>
-
-              <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
-                {popularFeaturedItems.map((item, idx) => (
-                  <div
-                    key={idx}
-                    onClick={() => {
-                      const tenant =
-                        (item.tenantId ? tenants.find((t) => t.id === item.tenantId) : null) ||
-                        filteredTenants.find((t) =>
-                          t.name.toLowerCase().includes(item.storeName.toLowerCase())
-                        ) || filteredTenants[0] || tenants[0];
-                      if (tenant) handleStoreClick(tenant);
-                    }}
-                    className="min-w-[210px] sm:min-w-[240px] rounded-3xl overflow-hidden border border-slate-200/80 bg-white shadow-sm hover:shadow-md transition-all cursor-pointer shrink-0 group flex flex-col"
-                  >
-                    <div className="relative h-32 sm:h-36 overflow-hidden">
-                      <img
-                        src={item.image}
-                        alt={item.name}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                      />
-                      <span className="absolute top-2.5 left-2.5 px-2 py-0.5 bg-black/80 backdrop-blur-sm text-white text-[9px] font-black uppercase tracking-wider rounded-md">
-                        {item.badge}
-                      </span>
-                      <span className="absolute bottom-2.5 right-2.5 px-2 py-0.5 bg-white/90 backdrop-blur-sm text-slate-800 text-[9px] font-bold rounded-md shadow-sm">
-                        📍 {customerCity || "Pradópolis"}
-                      </span>
-                    </div>
-                    <div className="p-3.5 flex-1 flex flex-col justify-between text-left">
-                      <div>
-                        <p className="text-[10px] font-bold text-[#FF3B00] uppercase tracking-wider truncate">
-                          {item.storeName}
-                        </p>
-                        <h4 className="text-xs sm:text-sm font-black text-slate-900 line-clamp-1 group-hover:text-[#FF3B00] transition-colors">
-                          {item.name}
-                        </h4>
-                      </div>
-                      <div className="mt-2.5 flex items-center justify-between">
-                        <span className="text-xs sm:text-sm font-black text-slate-900">
-                          R$ {item.price.toFixed(2).replace(".", ",")}
+                <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
+                  {popularFeaturedItems.map((item, idx) => (
+                    <div
+                      key={idx}
+                      onClick={() => {
+                        const tenant =
+                          (item.tenantId ? tenants.find((t) => t.id === item.tenantId) : null) ||
+                          filteredTenants.find((t) =>
+                            t.name.toLowerCase().includes(item.storeName.toLowerCase())
+                          ) || filteredTenants[0] || tenants[0];
+                        if (tenant) handleStoreClick(tenant);
+                      }}
+                      className="min-w-[210px] sm:min-w-[240px] rounded-3xl overflow-hidden border border-slate-200/80 bg-white shadow-sm hover:shadow-md transition-all cursor-pointer shrink-0 group flex flex-col"
+                    >
+                      <div className="relative h-32 sm:h-36 overflow-hidden">
+                        <img
+                          src={item.image}
+                          alt={item.name}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                        />
+                        <span className="absolute top-2.5 left-2.5 px-2 py-0.5 bg-black/80 backdrop-blur-sm text-white text-[9px] font-black uppercase tracking-wider rounded-md">
+                          {item.badge}
                         </span>
-                        <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md group-hover:bg-emerald-600 group-hover:text-white transition-colors">
-                          Pedir
+                        <span className="absolute bottom-2.5 right-2.5 px-2 py-0.5 bg-white/90 backdrop-blur-sm text-slate-800 text-[9px] font-bold rounded-md shadow-sm">
+                          📍 {customerCity || "Pradópolis"}
                         </span>
                       </div>
+                      <div className="p-3.5 flex-1 flex flex-col justify-between text-left">
+                        <div>
+                          <p className="text-[10px] font-bold text-[#FF3B00] uppercase tracking-wider truncate">
+                            {item.storeName}
+                          </p>
+                          <h4 className="text-xs sm:text-sm font-black text-slate-900 line-clamp-1 group-hover:text-[#FF3B00] transition-colors">
+                            {item.name}
+                          </h4>
+                        </div>
+                        <div className="mt-2.5 flex items-center justify-between">
+                          <span className="text-xs sm:text-sm font-black text-slate-900">
+                            R$ {item.price.toFixed(2).replace(".", ",")}
+                          </span>
+                          <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+                            Pedir
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Real-time Tracking Widget */}
             <AnimatePresence>
@@ -3243,7 +3401,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       </main>
 
       {/* Floating Modern Bottom Navigation Dock */}
-      <nav className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-2xl border-t border-slate-200/90 px-4 py-2.5 sm:py-3 z-50 flex justify-around items-center max-w-7xl mx-auto shadow-2xl">
+      <nav className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-2xl border-t border-slate-200/90 px-4 py-2.5 sm:py-3 pb-safe z-50 flex justify-around items-center max-w-7xl mx-auto shadow-2xl">
         {/* Início */}
         <button
           className={`flex flex-col items-center gap-1 transition-all relative px-3 py-1 rounded-xl cursor-pointer ${
@@ -3788,6 +3946,244 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                   Confirmar Endereço
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Interactive Notifications Drawer/Modal */}
+      {showNotifications && (
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowNotifications(false);
+            }
+          }}
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-end sm:items-center justify-end p-0 sm:p-4 animate-in fade-in duration-200 cursor-pointer"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white w-full sm:max-w-md h-[88vh] sm:h-auto sm:max-h-[85vh] rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl overflow-hidden flex flex-col cursor-default animate-in slide-in-from-bottom sm:slide-in-from-right duration-300"
+          >
+            {/* Header */}
+            <div className="p-5 sm:p-6 bg-slate-900 text-white relative flex items-center justify-between border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-[#FF3B00] flex items-center justify-center text-white shadow-md shadow-orange-500/30">
+                  <Bell size={20} />
+                </div>
+                <div>
+                  <h2 className="text-base sm:text-lg font-black tracking-tight text-white flex items-center gap-2">
+                    Notificações
+                    {unreadCount > 0 && (
+                      <span className="bg-[#FF3B00] text-white text-[10px] font-black px-2 py-0.5 rounded-full">
+                        {unreadCount} nova{unreadCount === 1 ? "" : "s"}
+                      </span>
+                    )}
+                  </h2>
+                  <p className="text-[11px] font-medium text-slate-400">
+                    Cupons exclusivos, pedidos e novidades da sua cidade
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setShowNotifications(false)}
+                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors cursor-pointer"
+                title="Fechar"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Sub-header Controls / Filter Chips */}
+            <div className="px-5 py-3 bg-slate-50 border-b border-slate-200/80 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar py-0.5">
+                <button
+                  onClick={() => setNotificationsFilter("all")}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    notificationsFilter === "all"
+                      ? "bg-[#FF3B00] text-white shadow-sm"
+                      : "bg-white text-slate-600 border border-slate-200/80 hover:bg-slate-100"
+                  }`}
+                >
+                  Todas ({activeNotificationsList.length})
+                </button>
+                <button
+                  onClick={() => setNotificationsFilter("coupons")}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    notificationsFilter === "coupons"
+                      ? "bg-[#FF3B00] text-white shadow-sm"
+                      : "bg-white text-slate-600 border border-slate-200/80 hover:bg-slate-100"
+                  }`}
+                >
+                  Cupons & Ofertas ({activeNotificationsList.filter(n => n.type === "coupon").length})
+                </button>
+                <button
+                  onClick={() => setNotificationsFilter("orders")}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    notificationsFilter === "orders"
+                      ? "bg-[#FF3B00] text-white shadow-sm"
+                      : "bg-white text-slate-600 border border-slate-200/80 hover:bg-slate-100"
+                  }`}
+                >
+                  Pedidos ({activeNotificationsList.filter(n => n.type === "order").length})
+                </button>
+              </div>
+
+              {unreadCount > 0 && (
+                <button
+                  onClick={markAllNotificationsAsRead}
+                  className="text-[11px] font-bold text-[#FF3B00] hover:text-[#E63500] whitespace-nowrap px-1 cursor-pointer transition-colors"
+                  title="Marcar todas como lidas"
+                >
+                  Limpar avisos
+                </button>
+              )}
+            </div>
+
+            {/* Notifications Feed */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3 custom-scrollbar">
+              {activeNotificationsList
+                .filter((item) => {
+                  if (notificationsFilter === "coupons") return item.type === "coupon";
+                  if (notificationsFilter === "orders") return item.type === "order";
+                  return true;
+                })
+                .map((item) => {
+                  const isRead = readNotificationIds.includes(item.id);
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() => markNotificationAsRead(item.id)}
+                      className={`p-4 rounded-2xl border transition-all relative ${
+                        !isRead
+                          ? "bg-orange-50/40 border-orange-200/80 shadow-sm"
+                          : "bg-white border-slate-200/70 hover:border-slate-300"
+                      }`}
+                    >
+                      {/* Unread dot */}
+                      {!isRead && (
+                        <span className="absolute top-4 right-4 w-2 h-2 rounded-full bg-[#FF3B00] ring-4 ring-orange-100" />
+                      )}
+
+                      <div className="flex items-start gap-3.5">
+                        {/* Icon Box */}
+                        <div
+                          className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                            item.type === "order"
+                              ? "bg-emerald-100 text-emerald-700"
+                              : item.type === "coupon"
+                              ? "bg-amber-100 text-amber-700"
+                              : "bg-blue-100 text-blue-700"
+                          }`}
+                        >
+                          {item.type === "order" && <Truck size={20} strokeWidth={2.5} />}
+                          {item.type === "coupon" && <Ticket size={20} strokeWidth={2.5} />}
+                          {item.type === "news" && <Sparkles size={20} strokeWidth={2.5} />}
+                        </div>
+
+                        {/* Text details */}
+                        <div className="flex-1 min-w-0 pr-4">
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-xs sm:text-sm font-bold text-slate-900 leading-snug">
+                              {item.title}
+                            </h3>
+                          </div>
+                          <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                            {item.message}
+                          </p>
+                          <span className="text-[10px] font-semibold text-slate-400 mt-1 block">
+                            {item.time}
+                          </span>
+
+                          {/* Action area: Coupon Copy Button */}
+                          {item.couponCode && (
+                            <div className="mt-3 flex items-center gap-2">
+                              <div className="px-3 py-1.5 bg-slate-100 border border-dashed border-slate-300 rounded-xl flex items-center gap-2 font-mono font-bold text-xs text-slate-800 tracking-wider">
+                                <Tag size={13} className="text-[#FF3B00]" />
+                                <span>{item.couponCode}</span>
+                              </div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleCopyCoupon(item.couponCode!);
+                                  markNotificationAsRead(item.id);
+                                }}
+                                className={`px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-sm ${
+                                  copiedCoupon === item.couponCode
+                                    ? "bg-emerald-600 text-white"
+                                    : "bg-[#FF3B00] hover:bg-[#E63500] text-white"
+                                }`}
+                              >
+                                {copiedCoupon === item.couponCode ? (
+                                  <>
+                                    <Check size={14} />
+                                    <span>Copiado!</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy size={13} />
+                                    <span>Copiar Código</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Action area: Order Tracking Button */}
+                          {item.actionType === "order" && (
+                            <div className="mt-3">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setNavView("orders");
+                                  setShowNotifications(false);
+                                  markNotificationAsRead(item.id);
+                                }}
+                                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                              >
+                                <Truck size={14} />
+                                <span>Rastrear Pedido</span>
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Action area: Explore Restaurants Button */}
+                          {item.actionType === "category" && (
+                            <div className="mt-3">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setNavView("home");
+                                  setShowNotifications(false);
+                                  markNotificationAsRead(item.id);
+                                }}
+                                className="px-3.5 py-1.5 bg-slate-900 hover:bg-black text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                              >
+                                <Store size={14} />
+                                <span>Ver Restaurantes</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+
+            {/* Footer with helpful note */}
+            <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 pb-safe">
+              <span className="flex items-center gap-1.5 font-medium">
+                <ShieldCheck size={15} className="text-emerald-600" />
+                Promoções e cupons verificados
+              </span>
+              <button
+                onClick={() => setShowNotifications(false)}
+                className="font-bold text-slate-700 hover:text-slate-900 px-2 py-1 rounded-lg hover:bg-slate-200/60 transition-colors cursor-pointer"
+              >
+                Fechar
+              </button>
             </div>
           </div>
         </div>

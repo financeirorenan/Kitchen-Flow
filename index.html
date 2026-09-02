@@ -67,8 +67,28 @@
     </script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
-        html { font-size: 14px; }
-        body { font-family: 'Inter', sans-serif; }
+        html { 
+          font-size: 14px; 
+          -webkit-tap-highlight-color: transparent;
+          -webkit-text-size-adjust: 100%;
+        }
+        body { 
+          font-family: 'Inter', sans-serif;
+          overscroll-behavior-y: none;
+          -webkit-font-smoothing: antialiased;
+          -moz-osx-font-smoothing: grayscale;
+          touch-action: pan-y;
+        }
+        /* Mobile safe-area utilities */
+        .pb-safe {
+          padding-bottom: max(1rem, env(safe-area-inset-bottom, 1rem));
+        }
+        .pt-safe {
+          padding-top: max(0.5rem, env(safe-area-inset-top, 0.5rem));
+        }
+        .bottom-safe {
+          bottom: env(safe-area-inset-bottom, 0px);
+        }
         .custom-scrollbar::-webkit-scrollbar {
           width: 4px;
         }

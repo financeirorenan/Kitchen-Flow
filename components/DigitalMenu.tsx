@@ -1285,7 +1285,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
         <motion.div 
           initial={{ y: 50, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-md border-t border-slate-100 p-4 z-50 flex items-center justify-between shadow-[0_-12px_25px_rgba(0,0,0,0.08)]"
+          className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-md border-t border-slate-100 p-4 pb-safe z-50 flex items-center justify-between shadow-[0_-12px_25px_rgba(0,0,0,0.08)]"
         >
           <div className="flex items-center gap-3.5">
             <div className="relative">

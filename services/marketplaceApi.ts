@@ -462,7 +462,7 @@ marketplaceApiRouter.get("/merchant/status", async (req: AuthenticatedRequest, r
       isClosed: isClosed,
       isStoreForceClosed: isClosed
     });
-  } catch (_err) {
+  } catch {
     return res.json({ success: true, status: "OPEN", isClosed: false, isStoreForceClosed: false });
   }
 });

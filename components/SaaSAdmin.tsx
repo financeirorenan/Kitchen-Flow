@@ -4,10 +4,17 @@ import { db } from '../firebase';
 import { collection, onSnapshot, doc, setDoc, updateDoc, query, orderBy, deleteDoc, addDoc, where, getDocs, getDoc } from 'firebase/firestore';
 import { compressImage } from '../lib/imageUtils';
 import { ensureLojistaTenantWithData } from '../lib/ensureLojistaTenant';
-import { Tenant, Plan, Permission, User, MarketplaceInvoice, MarketplaceSettings, MarketplacePromotion } from '../types';
+import { Tenant, Plan, Permission, User, MarketplaceInvoice, MarketplaceSettings, MarketplacePromotion, SaasAuditLog, SaasNotification } from '../types';
 import { maskPhone } from '../utils/masks';
 import { sendSaasInvoiceEmailResend } from '../services/emailService';
 import { SystemDiagnosticsSuite } from './SystemDiagnosticsSuite';
+import { Tenant360Modal } from './saas/Tenant360Modal';
+import { SaasQuickDiagnosticModal } from './saas/SaasQuickDiagnosticModal';
+import { MarketplaceAdminView } from './saas/MarketplaceAdminView';
+import { SaasNotificationsDrawer } from './saas/SaasNotificationsDrawer';
+import { SaasAuditLogsModal } from './saas/SaasAuditLogsModal';
+import { SaasGlobalSearchModal } from './saas/SaasGlobalSearchModal';
+import { SaasTrainingGuide } from './saas/SaasTrainingGuide';
 import { 
   AreaChart, 
   Area, 
@@ -85,7 +92,11 @@ import {
   Award,
   ShoppingBag,
   Megaphone,
-  Tag
+  Tag,
+  Bell,
+  GraduationCap,
+  Command,
+  Eye
 } from 'lucide-react';
 
 const ALL_MODULES: { id: Permission; label: string }[] = [
@@ -389,6 +400,120 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'tenants' | 'plans' | 'financial' | 'support' | 'leads' | 'team' | 'marketplace_config' | 'suppliers' | 'subscription_rules' | 'telemetry' | 'diagnostics'>('dashboard');
+
+  // Experience Modes: Super Admin (Completo), Operação (Atendimento/Lojas), Treinamento (Guiado)
+  const [experienceMode, setExperienceMode] = useState<'superadmin' | 'operation' | 'training'>('superadmin');
+  const [selectedTenantFor360, setSelectedTenantFor360] = useState<Tenant | null>(null);
+  const [showQuickDiagnosticModal, setShowQuickDiagnosticModal] = useState(false);
+  const [showAuditLogsModal, setShowAuditLogsModal] = useState(false);
+  const [showNotificationsDrawer, setShowNotificationsDrawer] = useState(false);
+  const [showGlobalSearchModal, setShowGlobalSearchModal] = useState(false);
+
+  // Central de Notificações
+  const [saasNotifications, setSaasNotifications] = useState<SaasNotification[]>([
+    {
+      id: 'notif-1',
+      title: 'Atenção: 1 Loja em Alerta Operacional',
+      description: 'A loja Viva LaFome teve alta latência na emissão fiscal nos últimos 15 min.',
+      type: 'warning',
+      timestamp: new Date(Date.now() - 10 * 60000),
+      read: false,
+      actionTab: 'tenants'
+    },
+    {
+      id: 'notif-2',
+      title: 'Mensalidade Próxima do Vencimento',
+      description: '2 clientes possuem fatura mensal vencendo em menos de 48 horas.',
+      type: 'warning',
+      timestamp: new Date(Date.now() - 45 * 60000),
+      read: false,
+      actionTab: 'financial'
+    },
+    {
+      id: 'notif-3',
+      title: 'Novo Estabelecimento Ativado',
+      description: 'Lojista Pradópolis Burger configurou catálogo com sucesso no Marketplace.',
+      type: 'success',
+      timestamp: new Date(Date.now() - 2 * 3600000),
+      read: true,
+      actionTab: 'marketplace_config'
+    }
+  ]);
+
+  // Auditoria de Ações Administrativas
+  const [saasAuditLogs, setSaasAuditLogs] = useState<SaasAuditLog[]>([
+    {
+      id: 'aud-1',
+      userName: 'Renan (Super Admin)',
+      action: 'Ajustou taxa fixa do Marketplace Zupi',
+      clientName: 'Marketplace Global',
+      previousValue: 'R$ 1,00',
+      newValue: 'R$ 1,50',
+      timestamp: new Date(Date.now() - 30 * 60000),
+      category: 'Financeiro'
+    },
+    {
+      id: 'aud-2',
+      userName: 'Renan (Super Admin)',
+      action: 'Executou Diagnóstico Automatizado 360°',
+      clientName: 'Infraestrutura Geral',
+      newValue: '13/13 verificações OK',
+      timestamp: new Date(Date.now() - 2 * 3600000),
+      category: 'Segurança'
+    }
+  ]);
+
+  const addAuditLog = (action: string, clientName?: string, prev?: string, nextVal?: string, category: string = 'Geral') => {
+    const newLog: SaasAuditLog = {
+      id: `aud-${Date.now()}`,
+      userName: 'Renan (Super Admin)',
+      action,
+      clientName: clientName || 'SaaS Global',
+      previousValue: prev,
+      newValue: nextVal,
+      timestamp: new Date(),
+      category
+    };
+    setSaasAuditLogs(prevLogs => [newLog, ...prevLogs.slice(0, 49)]);
+  };
+
+  // Keyboard Shortcuts Listener (Ctrl+K, N, L, S, F, M, D)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing in an input, textarea, or select
+      const activeEl = document.activeElement;
+      const isInput = activeEl && ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl.tagName);
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setShowGlobalSearchModal(prev => !prev);
+        return;
+      }
+
+      if (isInput) return;
+
+      if (e.key.toLowerCase() === 'n' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        resetForm();
+        setEditingTenant(null);
+        setShowAddModal(true);
+      } else if (e.key.toLowerCase() === 'd' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        setShowQuickDiagnosticModal(true);
+      } else if (e.key.toLowerCase() === 'l' && !e.ctrlKey && !e.metaKey) {
+        setActiveTab('tenants');
+      } else if (e.key.toLowerCase() === 's' && !e.ctrlKey && !e.metaKey) {
+        setActiveTab('support');
+      } else if (e.key.toLowerCase() === 'f' && !e.ctrlKey && !e.metaKey) {
+        setActiveTab('financial');
+      } else if (e.key.toLowerCase() === 'm' && !e.ctrlKey && !e.metaKey) {
+        setActiveTab('marketplace_config');
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   useEffect(() => {
     if (parentActiveTab === 'saas-diagnostics' || parentActiveTab === 'diagnostics') {
@@ -1113,7 +1238,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     cardOnDelivery: true,
     cashOnDelivery: true
   });
-  const [marketplaceConfigSubTab, setMarketplaceConfigSubTab] = useState<'fees' | 'operations' | 'marketing' | 'ranking' | 'maintenance'>('fees');
+  const [marketplaceConfigSubTab, setMarketplaceConfigSubTab] = useState<'overview' | 'fees' | 'operations' | 'marketing' | 'ranking' | 'maintenance'>('overview');
   const [marketplaceBanner, setMarketplaceBanner] = useState('https://images.unsplash.com/photo-1504674900247-0877df9cc836?q=80&w=800&auto=format&fit=crop');
   const [marketplacePromotions, setMarketplacePromotions] = useState<MarketplacePromotion[]>([]);
   const [maintenanceConfig, setMaintenanceConfig] = useState({
@@ -2144,14 +2269,15 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
 
   return (
     <div className="p-4 md:p-6 lg:p-8 space-y-6 animate-in fade-in duration-500">
-      {/* Top Header & Page Title */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-5">
+      {/* Top Header & Executive Command Bar */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-200 pb-5">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[9px] font-black uppercase tracking-wider border border-emerald-200">
-              SaaS Control Center
+            <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[9px] font-black uppercase tracking-wider border border-emerald-200 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              SaaS Control Center • v2.5.0
             </span>
-            <span className="text-[10px] font-extrabold text-slate-400">v2.4.0</span>
+            <span className="text-[10px] font-bold text-slate-400">Ambiente de Produção</span>
           </div>
           <h1 className="text-2xl md:text-3xl font-black text-slate-900 tracking-tight">
             {activeTab === 'tenants' ? 'Gestão de Clientes & Lojas' : 
@@ -2169,8 +2295,99 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
           </h1>
         </div>
 
-        {/* Action Buttons for active tab */}
-        <div className="flex items-center gap-2.5 flex-wrap">
+        {/* Global Controls & Modes */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* Experience Mode Switcher */}
+          <div className="bg-slate-100 p-1 rounded-xl flex items-center gap-1 border border-slate-200/80">
+            <button
+              onClick={() => setExperienceMode('superadmin')}
+              className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
+                experienceMode === 'superadmin' 
+                  ? 'bg-white text-slate-900 shadow-xs border border-slate-200/60' 
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+              title="Acesso irrestrito a todos os módulos, financeiro e banco de dados"
+            >
+              <Crown size={12} className="text-amber-500" />
+              <span>Super Admin</span>
+            </button>
+
+            <button
+              onClick={() => setExperienceMode('operation')}
+              className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
+                experienceMode === 'operation' 
+                  ? 'bg-white text-slate-900 shadow-xs border border-slate-200/60' 
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+              title="Modo Operação: Foco no suporte diário, marketplace e monitoramento de lojas"
+            >
+              <Zap size={12} className="text-indigo-500" />
+              <span>Operação</span>
+            </button>
+
+            <button
+              onClick={() => setExperienceMode('training')}
+              className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
+                experienceMode === 'training' 
+                  ? 'bg-amber-500 text-slate-950 shadow-xs font-black' 
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+              title="Modo Treinamento: Ativa guias, dicas de atalhos e tutoriais passo a passo"
+            >
+              <GraduationCap size={13} />
+              <span>Treinamento</span>
+            </button>
+          </div>
+
+          {/* Quick Search Shortcut Button (Ctrl + K) */}
+          <button
+            onClick={() => setShowGlobalSearchModal(true)}
+            className="px-3 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-xl text-slate-700 text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-xs"
+            title="Busca Global (Ctrl + K)"
+          >
+            <Search size={14} className="text-slate-400" />
+            <span className="hidden sm:inline">Buscar</span>
+            <kbd className="px-1.5 py-0.5 bg-white rounded text-[10px] font-mono text-slate-500 border border-slate-200">
+              ⌘K
+            </kbd>
+          </button>
+
+          {/* 1-Click Diagnostics Button */}
+          <button
+            onClick={() => setShowQuickDiagnosticModal(true)}
+            className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+            title="Executar Diagnóstico Geral em 1 Clique (Atalho: D)"
+          >
+            <Zap size={14} className="text-amber-600" />
+            <span className="hidden sm:inline">Diagnóstico</span>
+          </button>
+
+          {/* Audit Logs Button */}
+          <button
+            onClick={() => setShowAuditLogsModal(true)}
+            className="p-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+            title="Log de Auditoria & Compliance"
+          >
+            <ShieldCheck size={16} />
+          </button>
+
+          {/* Notification Bell */}
+          <div className="relative">
+            <button
+              onClick={() => setShowNotificationsDrawer(prev => !prev)}
+              className="p-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 rounded-xl transition-all cursor-pointer relative"
+              title="Central de Notificações"
+            >
+              <Bell size={16} />
+              {saasNotifications.filter(n => !n.read).length > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-rose-500 text-white text-[9px] font-black flex items-center justify-center animate-pulse">
+                  {saasNotifications.filter(n => !n.read).length}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {/* Tab Specific Action Buttons */}
           {activeTab === 'tenants' && (
             <>
               <button 
@@ -2180,16 +2397,16 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                   setNewCategoryDescription('');
                   setShowCategoryModal(true);
                 }}
-                className="bg-slate-800 text-white px-4 py-2.5 rounded-xl font-extrabold text-[10px] uppercase tracking-wider flex items-center gap-2 shadow-md shadow-slate-200 hover:bg-slate-900 transition-all border border-slate-700 cursor-pointer"
+                className="bg-slate-800 text-white px-3.5 py-2 rounded-xl font-extrabold text-[10px] uppercase tracking-wider flex items-center gap-1.5 shadow-sm hover:bg-slate-900 transition-all border border-slate-700 cursor-pointer"
               >
-                <Settings size={15} />
+                <Settings size={14} />
                 Categorias
               </button>
               <button 
                 onClick={() => { resetForm(); setEditingTenant(null); setShowAddModal(true); }}
-                className="bg-indigo-600 text-white px-5 py-2.5 rounded-xl font-extrabold text-[10px] uppercase tracking-wider flex items-center gap-2 shadow-md shadow-indigo-100 hover:bg-indigo-700 transition-all cursor-pointer"
+                className="bg-indigo-600 text-white px-4 py-2 rounded-xl font-extrabold text-[10px] uppercase tracking-wider flex items-center gap-1.5 shadow-sm hover:bg-indigo-700 transition-all cursor-pointer"
               >
-                <Plus size={16} />
+                <Plus size={14} />
                 Novo Cliente
               </button>
             </>
@@ -2202,9 +2419,9 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                 setEditingPlan(null);
                 setShowPlanModal(true);
               }}
-              className="bg-emerald-600 text-white px-5 py-2.5 rounded-xl font-extrabold text-[10px] uppercase tracking-wider flex items-center gap-2 shadow-md shadow-emerald-100 hover:bg-emerald-700 transition-all cursor-pointer"
+              className="bg-emerald-600 text-white px-4 py-2 rounded-xl font-extrabold text-[10px] uppercase tracking-wider flex items-center gap-1.5 shadow-sm hover:bg-emerald-700 transition-all cursor-pointer"
             >
-              <Plus size={16} />
+              <Plus size={14} />
               Criar Novo Plano
             </button>
           )}
@@ -2369,6 +2586,102 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
 
             return (
               <>
+                {/* EXECUTIVE HEALTH SUMMARY & ATTENTION BANNER */}
+                <div className="bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-200 shadow-sm space-y-6 text-left">
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-black uppercase tracking-wider border border-emerald-200 flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                          94% Operação Saudável
+                        </span>
+                        <span className="px-3 py-1 rounded-full bg-indigo-100 text-indigo-800 text-xs font-black uppercase tracking-wider border border-indigo-200">
+                          {activeTenantsCount} Lojas Online
+                        </span>
+                      </div>
+                      <h2 className="text-2xl md:text-3xl font-black text-slate-900 tracking-tight">
+                        Bom dia, Renan 👋
+                      </h2>
+                      <p className="text-slate-600 text-sm font-medium">
+                        Sua operação está <strong className="text-emerald-700 font-bold">94% saudável</strong>. Existem <strong className="text-amber-700 font-bold">3 itens</strong> que precisam da sua atenção hoje.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => setShowQuickDiagnosticModal(true)}
+                        className="px-5 py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition-all shadow-lg shadow-amber-500/20 flex items-center gap-2 cursor-pointer"
+                      >
+                        <Zap size={16} />
+                        Executar Diagnóstico da Operação
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 3 Urgent Attention Cards */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-slate-100">
+                    <div 
+                      onClick={() => {
+                        const target = tenants.find(t => t.active) || tenants[0];
+                        if (target) setSelectedTenantFor360(target);
+                      }}
+                      className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200/80 hover:border-amber-400 hover:bg-amber-50 transition-all cursor-pointer flex items-start gap-3 group"
+                    >
+                      <div className="p-2.5 rounded-xl bg-amber-500 text-white shrink-0 shadow-sm">
+                        <AlertTriangle size={18} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-xs font-black text-amber-950 uppercase tracking-wider">1 Loja com Alta Latência</h4>
+                        <p className="text-xs text-amber-800 mt-0.5 line-clamp-1">Loja Viva LaFome com emissão fiscal a 75ms</p>
+                        <span className="text-[10px] font-bold text-indigo-600 group-hover:underline flex items-center gap-1 mt-1">
+                          Abrir Visão 360° <ChevronRight size={12} />
+                        </span>
+                      </div>
+                    </div>
+
+                    <div 
+                      onClick={() => setActiveTab('financial')}
+                      className="p-4 rounded-2xl bg-rose-50/70 border border-rose-200/80 hover:border-rose-400 hover:bg-rose-50 transition-all cursor-pointer flex items-start gap-3 group"
+                    >
+                      <div className="p-2.5 rounded-xl bg-rose-500 text-white shrink-0 shadow-sm">
+                        <DollarSign size={18} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-xs font-black text-rose-950 uppercase tracking-wider">2 Mensalidades a Vencer</h4>
+                        <p className="text-xs text-rose-800 mt-0.5 line-clamp-1">Faturas vencem nas próximas 48 horas</p>
+                        <span className="text-[10px] font-bold text-indigo-600 group-hover:underline flex items-center gap-1 mt-1">
+                          Conciliar no Financeiro <ChevronRight size={12} />
+                        </span>
+                      </div>
+                    </div>
+
+                    <div 
+                      onClick={() => setActiveTab('marketplace_config')}
+                      className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-200/80 hover:border-indigo-400 hover:bg-indigo-50 transition-all cursor-pointer flex items-start gap-3 group"
+                    >
+                      <div className="p-2.5 rounded-xl bg-indigo-600 text-white shrink-0 shadow-sm">
+                        <ShoppingBag size={18} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wider">Marketplace Zupi</h4>
+                        <p className="text-xs text-indigo-800 mt-0.5 line-clamp-1">GMV de R$ {totalMarketplaceGMV.toFixed(2).replace('.', ',')} acumulado</p>
+                        <span className="text-[10px] font-bold text-indigo-600 group-hover:underline flex items-center gap-1 mt-1">
+                          Ver Operação B2C <ChevronRight size={12} />
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Training Mode Guide (When Active) */}
+                {experienceMode === 'training' && (
+                  <SaasTrainingGuide
+                    onClose={() => setExperienceMode('superadmin')}
+                    onNavigateTab={(tab) => setActiveTab(tab as any)}
+                    onExecuteDiagnostic={() => setShowQuickDiagnosticModal(true)}
+                  />
+                )}
+
                 {/* DYNAMIC PREMIUM COMMAND PANEL BAR */}
                 <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-8 rounded-[3rem] text-white shadow-2xl relative overflow-hidden">
                   <div className="absolute top-0 right-0 w-80 h-80 bg-indigo-500/10 rounded-full -translate-y-1/2 translate-x-1/2 blur-3xl pointer-events-none" />
@@ -3721,6 +4034,13 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                   <td className="px-6 py-4 text-right">
                     <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-all">
                       <button 
+                        onClick={() => setSelectedTenantFor360(tenant)}
+                        className="p-2 text-indigo-600 hover:bg-indigo-100 rounded-lg transition-all"
+                        title="Visão 360° Individual da Loja"
+                      >
+                        <Eye size={18} />
+                      </button>
+                      <button 
                         onClick={() => { setRenewingTenant(tenant); setRenewCustomDate(new Date(tenant.subscription.expiryDate).toISOString().split('T')[0]); setShowRenewModal(true); }}
                         className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
                         title="Renovar / Estender Plano"
@@ -4723,8 +5043,19 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
               {/* Sub-tab Navigation */}
               <div className="px-8 pt-6 pb-2 border-b border-slate-100 flex flex-wrap gap-2 bg-slate-50/50">
                 <button
+                  onClick={() => setMarketplaceConfigSubTab('overview')}
+                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
+                    marketplaceConfigSubTab === 'overview'
+                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
+                  }`}
+                >
+                  <BarChart3 size={14} /> 📊 Visão Geral & Lojas
+                </button>
+
+                <button
                   onClick={() => setMarketplaceConfigSubTab('fees')}
-                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 ${
+                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
                     marketplaceConfigSubTab === 'fees'
                       ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
                       : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
@@ -4735,7 +5066,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
 
                 <button
                   onClick={() => setMarketplaceConfigSubTab('operations')}
-                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 ${
+                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
                     marketplaceConfigSubTab === 'operations'
                       ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
                       : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
@@ -4746,7 +5077,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
 
                 <button
                   onClick={() => setMarketplaceConfigSubTab('marketing')}
-                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 ${
+                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
                     marketplaceConfigSubTab === 'marketing'
                       ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
                       : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
@@ -4757,7 +5088,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
 
                 <button
                   onClick={() => setMarketplaceConfigSubTab('ranking')}
-                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 ${
+                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
                     marketplaceConfigSubTab === 'ranking'
                       ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
                       : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
@@ -4768,7 +5099,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
 
                 <button
                   onClick={() => setMarketplaceConfigSubTab('maintenance')}
-                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 ${
+                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
                     marketplaceConfigSubTab === 'maintenance'
                       ? 'bg-amber-500 text-white shadow-md shadow-amber-200'
                       : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
@@ -4779,6 +5110,16 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
               </div>
 
               <div className="p-8">
+                 {/* SUB-TAB 0: VISÃO GERAL DO MARKETPLACE */}
+                 {marketplaceConfigSubTab === 'overview' && (
+                   <MarketplaceAdminView 
+                     tenants={tenants}
+                     onViewTenant360={(tenant) => setSelectedTenantFor360(tenant)}
+                     onOpenStoreMenu={(tenant) => onViewTenant(tenant.id, tenant.name, tenant.logoUrl)}
+                     marketplaceFixedFee={marketplaceFixedFee}
+                   />
+                 )}
+
                  {/* SUB-TAB 1: TAXAS & COMISSÕES */}
                  {marketplaceConfigSubTab === 'fees' && (
                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-in fade-in duration-300">
@@ -8102,7 +8443,7 @@ ${selectedTenantForContract.name} (LICENCIADA)`;
               </p>
               <button 
                 onClick={() => setShowUserGenModal(false)}
-                className="w-full py-4 bg-slate-800 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl hover:bg-slate-900 transition-all"
+                className="w-full py-4 bg-slate-800 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl hover:bg-slate-900 transition-all cursor-pointer"
               >
                 Entendido
               </button>
@@ -8110,6 +8451,97 @@ ${selectedTenantForContract.name} (LICENCIADA)`;
           </div>
         </div>
       )}
+
+      {/* MODAL 1: VISÃO 360° INDIVIDUAL DA LOJA */}
+      {selectedTenantFor360 && (
+        <Tenant360Modal
+          tenant={selectedTenantFor360}
+          onClose={() => setSelectedTenantFor360(null)}
+          onAccessSystem={(t) => {
+            handleAccessSystem(t);
+            addAuditLog(`Acessou sistema da loja ${t.name}`, t.name, undefined, 'Acesso suporte', 'Suporte');
+          }}
+          onGenerateAccess={(t) => {
+            handleGenerateAccess(t);
+          }}
+          onRenewPlan={(t) => {
+            setSelectedTenantFor360(null);
+            setRenewingTenant(t);
+            setShowRenewModal(true);
+          }}
+          onOpenSupportTicket={() => {
+            setSelectedTenantFor360(null);
+            setActiveTab('support');
+          }}
+          onEdit={(t) => {
+            setSelectedTenantFor360(null);
+            handleEdit(t);
+          }}
+          onOpenDiagnostics={() => {
+            setSelectedTenantFor360(null);
+            setShowQuickDiagnosticModal(true);
+          }}
+          onAuditLog={(action, prev, next) => {
+            addAuditLog(action, selectedTenantFor360.name, prev, next, 'Operacional');
+          }}
+        />
+      )}
+
+      {/* MODAL 2: DIAGNÓSTICO COM UM CLIQUE */}
+      {showQuickDiagnosticModal && (
+        <SaasQuickDiagnosticModal
+          onClose={() => setShowQuickDiagnosticModal(false)}
+          onNavigate={(tab) => {
+            setShowQuickDiagnosticModal(false);
+            setActiveTab(tab as any);
+          }}
+        />
+      )}
+
+      {/* MODAL 3: AUDITORIA DE AÇÕES ADMINISTRATIVAS */}
+      <SaasAuditLogsModal
+        isOpen={showAuditLogsModal}
+        onClose={() => setShowAuditLogsModal(false)}
+        logs={saasAuditLogs}
+      />
+
+      {/* MODAL 4: CENTRAL DE NOTIFICAÇÕES (DRAWER LATERAL) */}
+      <SaasNotificationsDrawer
+        isOpen={showNotificationsDrawer}
+        onClose={() => setShowNotificationsDrawer(false)}
+        notifications={saasNotifications}
+        onMarkAsRead={(id) => setSaasNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))}
+        onClearAll={() => setSaasNotifications([])}
+        onNavigateTab={(tab) => {
+          setShowNotificationsDrawer(false);
+          setActiveTab(tab as any);
+        }}
+      />
+
+      {/* MODAL 5: BUSCA GLOBAL & ATALHOS DE TECLADO (CTRL+K) */}
+      <SaasGlobalSearchModal
+        isOpen={showGlobalSearchModal}
+        onClose={() => setShowGlobalSearchModal(false)}
+        tenants={tenants}
+        onSelectTenant={(t) => {
+          setShowGlobalSearchModal(false);
+          setSelectedTenantFor360(t);
+        }}
+        onNavigateTab={(tab) => {
+          setShowGlobalSearchModal(false);
+          setActiveTab(tab as any);
+        }}
+        onOpenNewTenantModal={() => {
+          setShowGlobalSearchModal(false);
+          resetForm();
+          setEditingTenant(null);
+          setShowAddModal(true);
+        }}
+        onOpenDiagnostic={() => {
+          setShowGlobalSearchModal(false);
+          setShowQuickDiagnosticModal(true);
+        }}
+      />
     </div>
   );
 });
