@@ -11,6 +11,14 @@ import { SystemDiagnosticsSuite } from './SystemDiagnosticsSuite';
 import { Tenant360Modal } from './saas/Tenant360Modal';
 import { SaasQuickDiagnosticModal } from './saas/SaasQuickDiagnosticModal';
 import { MarketplaceAdminView } from './saas/MarketplaceAdminView';
+import { MarketplaceCommandCenter } from './saas/marketplace/MarketplaceCommandCenter';
+import { MarketplaceStoreScoresView } from './saas/marketplace/MarketplaceStoreScoresView';
+import { MarketplaceMonetizationView } from './saas/marketplace/MarketplaceMonetizationView';
+import { MarketplacePromotionsView } from './saas/marketplace/MarketplacePromotionsView';
+import { MarketplaceCrmFunnelView } from './saas/marketplace/MarketplaceCrmFunnelView';
+import { MarketplaceAlgorithmAuctionView } from './saas/marketplace/MarketplaceAlgorithmAuctionView';
+import { MarketplaceOpportunitiesView } from './saas/marketplace/MarketplaceOpportunitiesView';
+import { MarketplaceBannersManagerView } from './saas/marketplace/MarketplaceBannersManagerView';
 import { SaasNotificationsDrawer } from './saas/SaasNotificationsDrawer';
 import { SaasAuditLogsModal } from './saas/SaasAuditLogsModal';
 import { SaasGlobalSearchModal } from './saas/SaasGlobalSearchModal';
@@ -96,7 +104,8 @@ import {
   Bell,
   GraduationCap,
   Command,
-  Eye
+  Eye,
+  Store
 } from 'lucide-react';
 
 const ALL_MODULES: { id: Permission; label: string }[] = [
@@ -1238,7 +1247,9 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     cardOnDelivery: true,
     cashOnDelivery: true
   });
-  const [marketplaceConfigSubTab, setMarketplaceConfigSubTab] = useState<'overview' | 'fees' | 'operations' | 'marketing' | 'ranking' | 'maintenance'>('overview');
+  const [marketplaceConfigSubTab, setMarketplaceConfigSubTab] = useState<
+    'overview' | 'stores' | 'monetization' | 'promotions' | 'crm' | 'algorithm' | 'opportunities' | 'banners' | 'fees' | 'operations' | 'marketing' | 'ranking' | 'maintenance'
+  >('overview');
   const [marketplaceBanner, setMarketplaceBanner] = useState('https://images.unsplash.com/photo-1504674900247-0877df9cc836?q=80&w=800&auto=format&fit=crop');
   const [marketplacePromotions, setMarketplacePromotions] = useState<MarketplacePromotion[]>([]);
   const [maintenanceConfig, setMaintenanceConfig] = useState({
@@ -5044,79 +5055,194 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
               <div className="px-8 pt-6 pb-2 border-b border-slate-100 flex flex-wrap gap-2 bg-slate-50/50">
                 <button
                   onClick={() => setMarketplaceConfigSubTab('overview')}
-                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
+                  className={`px-3.5 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
                     marketplaceConfigSubTab === 'overview'
                       ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
                       : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
                   }`}
                 >
-                  <BarChart3 size={14} /> 📊 Visão Geral & Lojas
+                  <Rocket size={13} /> 🚀 Centro de Comando
+                </button>
+
+                <button
+                  onClick={() => setMarketplaceConfigSubTab('stores')}
+                  className={`px-3.5 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
+                    marketplaceConfigSubTab === 'stores'
+                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
+                  }`}
+                >
+                  <Store size={13} /> 🏪 Lojas & Scores
+                </button>
+
+                <button
+                  onClick={() => setMarketplaceConfigSubTab('monetization')}
+                  className={`px-3.5 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
+                    marketplaceConfigSubTab === 'monetization'
+                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
+                  }`}
+                >
+                  <DollarSign size={13} /> 💎 Monetização & Ads
+                </button>
+
+                <button
+                  onClick={() => setMarketplaceConfigSubTab('promotions')}
+                  className={`px-3.5 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
+                    marketplaceConfigSubTab === 'promotions'
+                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
+                  }`}
+                >
+                  <Tag size={13} /> 🏷️ Promoções & Cupons
+                </button>
+
+                <button
+                  onClick={() => setMarketplaceConfigSubTab('crm')}
+                  className={`px-3.5 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
+                    marketplaceConfigSubTab === 'crm'
+                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
+                  }`}
+                >
+                  <Users size={13} /> 👥 Funil & CRM
+                </button>
+
+                <button
+                  onClick={() => setMarketplaceConfigSubTab('algorithm')}
+                  className={`px-3.5 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
+                    marketplaceConfigSubTab === 'algorithm'
+                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
+                  }`}
+                >
+                  <Award size={13} /> 🧠 Algoritmo & Leilão
+                </button>
+
+                <button
+                  onClick={() => setMarketplaceConfigSubTab('opportunities')}
+                  className={`px-3.5 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
+                    marketplaceConfigSubTab === 'opportunities'
+                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
+                  }`}
+                >
+                  <Sparkles size={13} /> 💡 Oportunidades
+                </button>
+
+                <button
+                  onClick={() => setMarketplaceConfigSubTab('banners')}
+                  className={`px-3.5 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
+                    marketplaceConfigSubTab === 'banners'
+                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
+                  }`}
+                >
+                  <Megaphone size={13} /> 🎨 Banners & Vitrine
                 </button>
 
                 <button
                   onClick={() => setMarketplaceConfigSubTab('fees')}
-                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
+                  className={`px-3.5 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
                     marketplaceConfigSubTab === 'fees'
                       ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
                       : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
                   }`}
                 >
-                  <DollarSign size={14} /> Taxas & Comissões
+                  <Percent size={13} /> Taxas & Comissões
                 </button>
 
                 <button
                   onClick={() => setMarketplaceConfigSubTab('operations')}
-                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
+                  className={`px-3.5 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
                     marketplaceConfigSubTab === 'operations'
                       ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
                       : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
                   }`}
                 >
-                  <Truck size={14} /> Logística & Operação
-                </button>
-
-                <button
-                  onClick={() => setMarketplaceConfigSubTab('marketing')}
-                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
-                    marketplaceConfigSubTab === 'marketing'
-                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
-                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
-                  }`}
-                >
-                  <Sparkles size={14} /> Banners, Promoções & Categorias
-                </button>
-
-                <button
-                  onClick={() => setMarketplaceConfigSubTab('ranking')}
-                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
-                    marketplaceConfigSubTab === 'ranking'
-                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
-                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
-                  }`}
-                >
-                  <Award size={14} /> Algoritmos & Destaque
+                  <Truck size={13} /> Operação & Entrega
                 </button>
 
                 <button
                   onClick={() => setMarketplaceConfigSubTab('maintenance')}
-                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
+                  className={`px-3.5 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
                     marketplaceConfigSubTab === 'maintenance'
                       ? 'bg-amber-500 text-white shadow-md shadow-amber-200'
                       : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
                   }`}
                 >
-                  <AlertTriangle size={14} /> Manutenção Programada
+                  <AlertTriangle size={13} /> Manutenção
                 </button>
               </div>
 
               <div className="p-8">
-                 {/* SUB-TAB 0: VISÃO GERAL DO MARKETPLACE */}
+                 {/* SUB-TAB 0: CENTRO DE COMANDO & PERFORMANCE */}
                  {marketplaceConfigSubTab === 'overview' && (
-                   <MarketplaceAdminView 
+                   <div className="space-y-6">
+                     <MarketplaceCommandCenter 
+                       tenants={tenants}
+                       marketplaceFixedFee={marketplaceFixedFee}
+                       marketplaceFeePercent={marketplaceFee}
+                       onNavigateTab={(tab) => setMarketplaceConfigSubTab(tab as any)}
+                     />
+                   </div>
+                 )}
+
+                 {/* SUB-TAB: DESEMPENHO DE LOJAS & SCORE */}
+                 {marketplaceConfigSubTab === 'stores' && (
+                   <MarketplaceStoreScoresView 
                      tenants={tenants}
                      onViewTenant360={(tenant) => setSelectedTenantFor360(tenant)}
                      onOpenStoreMenu={(tenant) => onViewTenant(tenant.id, tenant.name, tenant.logoUrl)}
                      marketplaceFixedFee={marketplaceFixedFee}
+                   />
+                 )}
+
+                 {/* SUB-TAB: MONETIZAÇÃO & ESPAÇOS PUBLICITÁRIOS */}
+                 {marketplaceConfigSubTab === 'monetization' && (
+                   <MarketplaceMonetizationView 
+                     tenants={tenants}
+                     onSaveConfig={handleSaveMarketplaceConfig}
+                   />
+                 )}
+
+                 {/* SUB-TAB: PROMOÇÕES & CUPONS */}
+                 {marketplaceConfigSubTab === 'promotions' && (
+                   <MarketplacePromotionsView 
+                     tenants={tenants}
+                     promotions={marketplacePromotions}
+                     onUpdatePromotions={(promos) => setMarketplacePromotions(promos)}
+                   />
+                 )}
+
+                 {/* SUB-TAB: CRM & FUNIL DE CONVERSÃO */}
+                 {marketplaceConfigSubTab === 'crm' && (
+                   <MarketplaceCrmFunnelView 
+                     tenants={tenants}
+                   />
+                 )}
+
+                 {/* SUB-TAB: ALGORITMO & LEILÃO DE DESTAQUES */}
+                 {marketplaceConfigSubTab === 'algorithm' && (
+                   <MarketplaceAlgorithmAuctionView 
+                     tenants={tenants}
+                   />
+                 )}
+
+                 {/* SUB-TAB: OPORTUNIDADES & METAS */}
+                 {marketplaceConfigSubTab === 'opportunities' && (
+                   <MarketplaceOpportunitiesView 
+                     tenants={tenants}
+                     onNavigateTab={(tab) => setMarketplaceConfigSubTab(tab as any)}
+                   />
+                 )}
+
+                 {/* SUB-TAB: BANNERS & VITRINE */}
+                 {marketplaceConfigSubTab === 'banners' && (
+                   <MarketplaceBannersManagerView 
+                     tenants={tenants}
+                     bannerUrl={marketplaceBanner}
+                     onBannerChange={(url) => setMarketplaceBanner(url)}
                    />
                  )}
 

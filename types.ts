@@ -385,10 +385,129 @@ export interface MarketplacePromotion {
   bannerUrl?: string;
   participatingTenantIds: string[];
   description?: string;
-  type?: 'free_delivery' | 'percentage_discount' | 'fixed_discount';
+  type?: 'free_delivery' | 'percentage_discount' | 'fixed_discount' | 'buy_x_get_y' | 'combo_deal' | 'tiered_discount';
   minOrderValue?: number; // Ex: R$ 65,00 para entrega grátis
   discountValue?: number; // Ex: 10 (%) ou 15 (R$)
   couponCode?: string; // Código opcional (ex: FRETE65)
+  sponsoredBy?: 'store' | 'nova' | 'split'; // Quem financia o desconto
+  splitStoreShare?: number; // Ex: 70 (%) ou R$ 7
+  splitNovaShare?: number; // Ex: 30 (%) ou R$ 3
+  startDate?: string;
+  endDate?: string;
+  maxUsageLimit?: number;
+  currentUsageCount?: number;
+  targetAudience?: 'all' | 'new_customers' | 'recurring_customers' | 'vip_customers' | 'cart_abandoners';
+  targetCategory?: string;
+  targetProductId?: string;
+}
+
+export interface MarketplaceAdSpace {
+  id: string;
+  name: string;
+  placement: 'home_hero' | 'home_secondary' | 'category_top' | 'search_sponsored' | 'store_list_top' | 'checkout_upsell' | 'custom';
+  description: string;
+  pricingModel: 'monthly' | 'weekly' | 'cpc' | 'cpm' | 'fixed';
+  price: number;
+  maxSlots: number;
+  activeSlots: number;
+  active: boolean;
+  recommendedFor?: string;
+}
+
+export interface MarketplaceAdCampaign {
+  id: string;
+  title: string;
+  tenantId: string;
+  tenantName: string;
+  spaceId: string;
+  spaceName: string;
+  placement: string;
+  bannerUrl?: string;
+  targetUrl?: string;
+  status: 'active' | 'scheduled' | 'ended' | 'paused';
+  startDate: string;
+  endDate: string;
+  investmentAmount: number;
+  impressions: number;
+  clicks: number;
+  ordersGenerated: number;
+  revenueGenerated: number;
+  targetRegion?: string;
+  targetCategory?: string;
+  createdAt: Date | string;
+}
+
+export interface MarketplaceBannerItem {
+  id: string;
+  title: string;
+  description?: string;
+  imageUrl: string;
+  linkUrl?: string;
+  tenantId?: string;
+  tenantName?: string;
+  position: 'home_hero' | 'home_middle' | 'category_top' | 'search_top';
+  priority: number; // 1 a 10
+  startDate: string;
+  endDate: string;
+  pricePaid?: number;
+  active: boolean;
+  clicks?: number;
+  impressions?: number;
+}
+
+export interface MarketplaceCoupon {
+  id: string;
+  code: string;
+  description: string;
+  discountType: 'percentage' | 'fixed';
+  discountValue: number;
+  minOrderValue: number;
+  usageLimit: number;
+  usedCount: number;
+  startDate: string;
+  endDate: string;
+  targetAudience: 'all' | 'new_customers' | 'recurring_customers' | 'vip_customers' | 'cart_abandoners';
+  specificTenantId?: string;
+  specificCategory?: string;
+  sponsoredBy: 'store' | 'nova' | 'split';
+  splitStoreShare?: number;
+  splitNovaShare?: number;
+  active: boolean;
+}
+
+export interface MarketplaceAlgorithmWeights {
+  ratingWeight: number; // 0 a 100
+  ordersWeight: number; // 0 a 100
+  conversionWeight: number; // 0 a 100
+  prepTimeWeight: number; // 0 a 100
+  cancelRatePenalty: number; // 0 a 100
+  deliveryTimeWeight: number; // 0 a 100
+  availabilityWeight: number; // 0 a 100
+  promoWeight: number; // 0 a 100
+  sponsoredBoost: number; // 0 a 100
+  preventLowQualitySponsorship: boolean;
+}
+
+export interface MarketplaceOpportunity {
+  id: string;
+  type: 'growth' | 'ad_upsell' | 'retention' | 'warning' | 'category';
+  title: string;
+  description: string;
+  potentialImpact: string;
+  suggestedAction: string;
+  actionType: 'create_campaign' | 'create_coupon' | 'contact_store' | 'boost_category' | 'recover_cart';
+  actionPayload?: any;
+  priority: 'high' | 'medium' | 'low';
+}
+
+export interface MarketplaceGoal {
+  id: string;
+  title: string;
+  metric: 'gmv' | 'revenue' | 'orders' | 'active_stores' | 'ad_revenue';
+  targetValue: number;
+  currentValue: number;
+  unit: 'currency' | 'number';
+  deadlineMonth: string; // "09/2026"
 }
 
 export interface MarketplaceSettings {
@@ -402,6 +521,13 @@ export interface MarketplaceSettings {
     message?: string;
   };
   bannerUrl: string; // Banner global padrão
+  announcementText?: string;
+  adSpaces?: MarketplaceAdSpace[];
+  banners?: MarketplaceBannerItem[];
+  adCampaigns?: MarketplaceAdCampaign[];
+  coupons?: MarketplaceCoupon[];
+  algorithmWeights?: MarketplaceAlgorithmWeights;
+  goals?: MarketplaceGoal[];
   updatedAt: Date;
 }
 

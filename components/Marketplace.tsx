@@ -3427,20 +3427,6 @@ const Marketplace: React.FC<MarketplaceProps> = ({
           )}
         </button>
 
-        {/* Explorar */}
-        <button
-          className="flex flex-col items-center gap-1 transition-all relative px-3 py-1 rounded-xl cursor-pointer text-slate-500 hover:text-slate-800 font-semibold"
-          onClick={() => {
-            setNavView("home");
-            storeListRef.current?.scrollIntoView({ behavior: "smooth" });
-          }}
-        >
-          <Compass size={20} strokeWidth={2} />
-          <span className="text-[10px] tracking-tight">
-            Explorar
-          </span>
-        </button>
-
         {/* Pedidos */}
         <button
           className={`flex flex-col items-center gap-1 transition-all relative px-3 py-1 rounded-xl cursor-pointer ${
