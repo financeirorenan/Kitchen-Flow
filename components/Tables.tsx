@@ -1296,7 +1296,7 @@ const Tables: React.FC<TablesProps> = memo(
 
         const finalOptions = options || [];
         const optionNames = finalOptions
-          .map((o) => o.name)
+          .map((o) => `${(o.quantity && o.quantity > 1) ? `${o.quantity}x ` : ""}${o.name}`)
           .sort()
           .join(", ");
         const existingIndex = selectedTable.items.findIndex(
@@ -1306,14 +1306,14 @@ const Tables: React.FC<TablesProps> = memo(
             !i.sentToKitchen &&
             (i.observation || "") === (observation || "") &&
             (i.selectedOptions
-              ?.map((o) => o.name)
+              ?.map((o) => `${(o.quantity && o.quantity > 1) ? `${o.quantity}x ` : ""}${o.name}`)
               .sort()
               .join(", ") || "") === optionNames,
         );
 
         let newItems: OrderItem[];
         const itemPrice =
-          product.price + finalOptions.reduce((acc, o) => acc + o.price, 0);
+          product.price + finalOptions.reduce((acc, o) => acc + (o.price * (o.quantity || 1)), 0);
 
         if (existingIndex > -1) {
           newItems = [...selectedTable.items];
@@ -1343,11 +1343,7 @@ const Tables: React.FC<TablesProps> = memo(
             ...selectedTable.items,
             {
               productId: product.id,
-              name:
-                product.name +
-                (finalOptions.length > 0
-                  ? ` (${finalOptions.map((o) => o.name).join(", ")})`
-                  : ""),
+              name: product.name,
               price: itemPrice,
               quantity: qty,
               category: product.category,
@@ -1386,24 +1382,24 @@ const Tables: React.FC<TablesProps> = memo(
 
     const confirmOptions = () => {
       if (selectedProductForOptions) {
-        // Verificar se categorias obrigatórias foram selecionadas
+        // Verificar se categorias obrigatórias foram selecionadas com suporte a quantidades
         if (
           selectedProductForOptions.optionCategories &&
           selectedProductForOptions.optionCategories.length > 0
         ) {
           for (const cat of selectedProductForOptions.optionCategories) {
-            const selectedInCat = selectedOptions.filter(
-              (o) => o.category === cat.name,
-            );
-            if (selectedInCat.length < cat.min) {
+            const selectedInCat = selectedOptions
+              .filter((o) => o.category === cat.name || (cat.options || []).some((co) => co.id === o.id))
+              .reduce((sum, o) => sum + (o.quantity || 1), 0);
+            if (selectedInCat < cat.min) {
               alert(
-                `Por favor, selecione pelo menos ${cat.min} opção(ões) para: ${cat.name}`,
+                `Por favor, selecione pelo menos ${cat.min} opção(ões) para: ${cat.name} (atualmente: ${selectedInCat})`,
               );
               return;
             }
-            if (cat.max > 0 && selectedInCat.length > cat.max) {
+            if (cat.max > 0 && selectedInCat > cat.max) {
               alert(
-                `Você pode selecionar no máximo ${cat.max} opção(ões) para: ${cat.name}`,
+                `Você pode selecionar no máximo ${cat.max} opção(ões) para: ${cat.name} (atualmente: ${selectedInCat})`,
               );
               return;
             }
@@ -1429,45 +1425,78 @@ const Tables: React.FC<TablesProps> = memo(
       }
     };
 
-    const toggleOption = (option: ProductOption) => {
+    const getOptionQtyInModal = (option: ProductOption) => {
+      const match = selectedOptions.find((o) => (o.id && option.id ? o.id === option.id : o.name === option.name));
+      return match?.quantity || (match ? 1 : 0);
+    };
+
+    const updateOptionQtyInModal = (option: ProductOption, delta: number, categoryName?: string) => {
       if (!selectedProductForOptions) return;
+      const catName = categoryName || option.category;
+      const category = selectedProductForOptions.optionCategories?.find(
+        (c) => c.name === catName || (c.options || []).some((co) => co.id === option.id),
+      );
 
       setSelectedOptions((prev) => {
-        const isSelected = prev.find((o) => o.id === option.id);
+        const matchKey = (o: ProductOption) => (o.id && option.id ? o.id === option.id : o.name === option.name);
+        const existing = prev.find(matchKey);
+        const currentQty = existing?.quantity || (existing ? 1 : 0);
+        const newQty = currentQty + delta;
 
-        if (isSelected) {
-          return prev.filter((o) => o.id !== option.id);
-        } else {
-          // Se houver categorias estruturadas, verificar o limite máximo
-          if (selectedProductForOptions.optionCategories) {
-            const category = selectedProductForOptions.optionCategories.find(
-              (c) => c.name === option.category,
-            );
-            if (category && category.max > 0) {
-              const selectedInCat = prev.filter(
-                (o) => o.category === option.category,
-              );
+        if (newQty <= 0) {
+          return prev.filter((o) => !matchKey(o));
+        }
 
-              // Se o máximo for 1, substitui a seleção anterior na mesma categoria
-              if (category.max === 1) {
-                return [
-                  ...prev.filter((o) => o.category !== option.category),
-                  option,
-                ];
-              }
+        // Se o máximo for 1, substitui a seleção anterior na mesma categoria
+        if (category && category.max === 1) {
+          const otherIds = (category.options || []).map((o) => o.id);
+          return [
+            ...prev.filter((o) => o.category !== catName && !otherIds.includes(o.id)),
+            { ...option, category: catName, quantity: 1 },
+          ];
+        }
 
-              // Se já atingiu o máximo, não permite adicionar mais
-              if (selectedInCat.length >= category.max) {
-                alert(
-                  `Limite máximo de ${category.max} opções atingido para ${category.name}`,
-                );
-                return prev;
-              }
-            }
+        // Se houver limite na categoria e for adição
+        if (category && category.max > 1 && delta > 0) {
+          const totalInCat = prev
+            .filter((o) => o.category === catName || (category.options || []).some((co) => co.id === o.id))
+            .reduce((sum, o) => sum + (o.quantity || 1), 0);
+          if (totalInCat >= category.max) {
+            alert(`Limite máximo de ${category.max} opções atingido para ${category.name}`);
+            return prev;
           }
-          return [...prev, option];
+        }
+
+        if (option.maxQuantity && newQty > option.maxQuantity) {
+          return prev;
+        }
+
+        if (existing) {
+          return prev.map((o) => (matchKey(o) ? { ...o, quantity: newQty } : o));
+        } else {
+          return [...prev, { ...option, category: catName, quantity: newQty }];
         }
       });
+    };
+
+    const toggleOption = (option: ProductOption, categoryName?: string) => {
+      if (!selectedProductForOptions) return;
+      const catName = categoryName || option.category;
+      const category = selectedProductForOptions.optionCategories?.find(
+        (c) => c.name === catName || (c.options || []).some((co) => co.id === option.id),
+      );
+
+      if (category && category.max === 1) {
+        updateOptionQtyInModal(option, 1, catName);
+        return;
+      }
+
+      const currentQty = getOptionQtyInModal(option);
+      if (currentQty === 0) {
+        updateOptionQtyInModal(option, 1, catName);
+      } else {
+        updateOptionQtyInModal(option, -currentQty, catName);
+      }
     };
 
     const removeItem = useCallback(
@@ -4285,9 +4314,33 @@ const Tables: React.FC<TablesProps> = memo(
                           className="group relative bg-slate-50 rounded-2xl border border-slate-100 p-3 hover:border-indigo-200 transition-all cursor-pointer hover:bg-indigo-50/30"
                         >
                           <div className="flex justify-between items-start mb-1">
-                            <p className="font-black text-slate-800 text-xs leading-tight pr-6">
-                              {item.name}
-                            </p>
+                            <div className="flex-1 pr-6">
+                              {(() => {
+                                let displayName = item.name;
+                                if (item.selectedOptions && item.selectedOptions.length > 0) {
+                                  displayName = displayName.replace(/\s*\(([^)]+)\)/g, (match, inner) => {
+                                    const innerLower = inner.toLowerCase();
+                                    return item.selectedOptions!.some(opt => opt.name && innerLower.includes(opt.name.trim().toLowerCase())) ? '' : match;
+                                  }).trim();
+                                }
+                                return (
+                                  <>
+                                    <p className="font-black text-slate-800 text-xs leading-tight">
+                                      {displayName}
+                                    </p>
+                                    {item.selectedOptions && item.selectedOptions.length > 0 && (
+                                      <div className="text-[10px] text-slate-500 font-semibold mt-0.5 space-y-0.5">
+                                        {item.selectedOptions.map((o, optIdx) => (
+                                          <p key={optIdx} className="text-amber-700 font-bold">
+                                            + {(o.quantity && o.quantity > 1) ? `${o.quantity}x ` : ''}{o.name}
+                                          </p>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </>
+                                );
+                              })()}
+                            </div>
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -4709,7 +4762,13 @@ const Tables: React.FC<TablesProps> = memo(
               <div className="p-6 lg:p-8 space-y-4 lg:space-y-6 overflow-y-auto max-h-[60vh] custom-scrollbar">
                 {selectedProductForOptions.optionCategories &&
                 selectedProductForOptions.optionCategories.length > 0 ? (
-                  selectedProductForOptions.optionCategories.map((category) => (
+                  selectedProductForOptions.optionCategories.map((category) => {
+                    const totalInCat = selectedOptions
+                      .filter((o) => o.category === category.name || (category.options || []).some((co) => co.id === o.id))
+                      .reduce((sum, o) => sum + (o.quantity || 1), 0);
+                    const isSingleChoice = category.max === 1;
+
+                    return (
                     <div key={category.id} className="space-y-3">
                       <div className="flex justify-between items-end border-b pb-2">
                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
@@ -4719,7 +4778,7 @@ const Tables: React.FC<TablesProps> = memo(
                           {category.min > 0
                             ? `Mín: ${category.min}`
                             : "Opcional"}
-                          {category.max > 0 ? ` • Máx: ${category.max}` : ""}
+                          {category.max > 0 ? ` • ${totalInCat}/${category.max} item(ns)` : ` • ${totalInCat} selecionado(s)`}
                         </span>
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
@@ -4740,39 +4799,119 @@ const Tables: React.FC<TablesProps> = memo(
                             }
                             return true;
                           })
-                          .map((option) => (
-                            <button
-                              key={option.id}
-                              onClick={() =>
-                                toggleOption({
-                                  ...option,
-                                  category: category.name,
-                                })
-                              }
-                              className={`w-full flex items-center justify-between p-4 rounded-2xl border-2 transition-all ${selectedOptions.find((o) => o.id === option.id) ? "border-indigo-600 bg-indigo-50" : "bg-white border-slate-50 hover:border-slate-200"}`}
-                            >
-                              <div className="flex items-center gap-3">
-                                <div
-                                  className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center transition-all ${selectedOptions.find((o) => o.id === option.id) ? "bg-indigo-600 border-indigo-600 text-white" : "border-slate-200"}`}
-                                >
-                                  {selectedOptions.find(
-                                    (o) => o.id === option.id,
-                                  ) && <Check size={14} strokeWidth={4} />}
+                          .map((option) => {
+                            const optWithCat = { ...option, category: category.name };
+                            const qty = getOptionQtyInModal(optWithCat);
+                            const isSelected = qty > 0;
+                            const isCatMaxReached = !isSingleChoice && category.max > 0 && totalInCat >= category.max;
+
+                            return (
+                              <div
+                                key={option.id}
+                                onClick={() => {
+                                  if (isSingleChoice) {
+                                    toggleOption(optWithCat, category.name);
+                                  } else if (!isSelected) {
+                                    updateOptionQtyInModal(optWithCat, 1, category.name);
+                                  }
+                                }}
+                                className={`w-full flex items-center justify-between p-3.5 rounded-2xl border-2 transition-all ${
+                                  isSingleChoice ? 'cursor-pointer' : (!isSelected ? 'cursor-pointer' : '')
+                                } ${
+                                  isSelected 
+                                    ? "border-indigo-600 bg-indigo-50/70 shadow-sm" 
+                                    : "bg-white border-slate-100 hover:border-slate-200"
+                                }`}
+                              >
+                                <div className="flex items-center gap-3 min-w-0 flex-1 pr-2">
+                                  {isSingleChoice ? (
+                                    <div
+                                      className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all shrink-0 ${
+                                        isSelected ? "border-indigo-600 bg-indigo-600" : "border-slate-300 bg-white"
+                                      }`}
+                                    >
+                                      {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                                    </div>
+                                  ) : (
+                                    <div
+                                      className={`w-7 h-7 rounded-xl border flex items-center justify-center font-black text-xs transition-all shrink-0 ${
+                                        isSelected ? "bg-indigo-600 border-indigo-600 text-white shadow-sm" : "bg-slate-50 border-slate-200 text-slate-400"
+                                      }`}
+                                    >
+                                      {isSelected ? `${qty}x` : <Plus size={13} strokeWidth={3} />}
+                                    </div>
+                                  )}
+                                  <div className="min-w-0">
+                                    <p className={`text-xs font-black truncate ${isSelected ? "text-indigo-950" : "text-slate-700"}`}>
+                                      {option.name}
+                                    </p>
+                                    {option.price > 0 && (
+                                      <p className="text-[10px] font-bold text-slate-400">
+                                        + R$ {option.price.toFixed(2)}
+                                      </p>
+                                    )}
+                                  </div>
                                 </div>
-                                <p className="text-xs font-black text-slate-700">
-                                  {option.name}
-                                </p>
+
+                                <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                                  {isSingleChoice ? (
+                                    <p className="font-black text-indigo-600 text-xs">
+                                      {option.price > 0 ? `+ R$ ${option.price.toFixed(2)}` : "Grátis"}
+                                    </p>
+                                  ) : (
+                                    <>
+                                      {!isSelected ? (
+                                        <button
+                                          type="button"
+                                          disabled={isCatMaxReached}
+                                          onClick={() => updateOptionQtyInModal(optWithCat, 1, category.name)}
+                                          className={`w-8 h-8 rounded-xl flex items-center justify-center font-black transition-all ${
+                                            isCatMaxReached 
+                                              ? 'bg-slate-100 text-slate-300 cursor-not-allowed' 
+                                              : 'bg-slate-100 hover:bg-indigo-600 hover:text-white text-slate-600 active:scale-95'
+                                          }`}
+                                          title={isCatMaxReached ? `Limite atingido (${category.max})` : "Adicionar"}
+                                        >
+                                          <Plus size={14} strokeWidth={3} />
+                                        </button>
+                                      ) : (
+                                        <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-indigo-200 shadow-sm">
+                                          <button
+                                            type="button"
+                                            onClick={() => updateOptionQtyInModal(optWithCat, -1, category.name)}
+                                            className="w-6 h-6 rounded-lg bg-slate-100 hover:bg-rose-50 hover:text-rose-600 text-slate-600 flex items-center justify-center transition-colors"
+                                            title="Diminuir"
+                                          >
+                                            <Minus size={11} strokeWidth={3} />
+                                          </button>
+                                          <span className="w-4 text-center text-xs font-black text-slate-800">
+                                            {qty}
+                                          </span>
+                                          <button
+                                            type="button"
+                                            disabled={isCatMaxReached}
+                                            onClick={() => updateOptionQtyInModal(optWithCat, 1, category.name)}
+                                            className={`w-6 h-6 rounded-lg flex items-center justify-center transition-all ${
+                                              isCatMaxReached
+                                                ? 'bg-slate-100 text-slate-300 cursor-not-allowed'
+                                                : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                                            }`}
+                                            title={isCatMaxReached ? `Limite atingido (${category.max})` : "Aumentar"}
+                                          >
+                                            <Plus size={11} strokeWidth={3} />
+                                          </button>
+                                        </div>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
                               </div>
-                              <p className="font-black text-slate-800 text-sm">
-                                {option.price > 0
-                                  ? `+ R$ ${option.price.toFixed(2)}`
-                                  : "Grátis"}
-                              </p>
-                            </button>
-                          ))}
+                            );
+                          })}
                       </div>
                     </div>
-                  ))
+                    );
+                  })
                 ) : (
                   <div className="space-y-4">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
@@ -4784,27 +4923,36 @@ const Tables: React.FC<TablesProps> = memo(
                           selectedProductForOptions.requiredOptionCategories?.includes(
                             option.category || "",
                           );
+                        const qty = getOptionQtyInModal(option);
+                        const isSelected = qty > 0;
+
                         return (
-                          <button
+                          <div
                             key={`opt-${idx}-${option.name.substring(0, 5)}`}
-                            onClick={() => toggleOption(option)}
-                            className={`w-full flex items-center justify-between p-4 rounded-2xl border-2 transition-all ${selectedOptions.find((o) => o.name === option.name) ? "border-indigo-600 bg-indigo-50" : "bg-white border-slate-50 hover:border-slate-200"}`}
+                            onClick={() => {
+                              if (!isSelected) {
+                                updateOptionQtyInModal(option, 1, option.category);
+                              }
+                            }}
+                            className={`w-full flex items-center justify-between p-3.5 rounded-2xl border-2 transition-all ${
+                              !isSelected ? 'cursor-pointer' : ''
+                            } ${isSelected ? "border-indigo-600 bg-indigo-50/70" : "bg-white border-slate-50 hover:border-slate-200"}`}
                           >
-                            <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-3 min-w-0 flex-1 pr-2">
                               <div
-                                className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center transition-all ${selectedOptions.find((o) => o.name === option.name) ? "bg-indigo-600 border-indigo-600 text-white" : "border-slate-200"}`}
+                                className={`w-7 h-7 rounded-xl border flex items-center justify-center font-black text-xs transition-all shrink-0 ${
+                                  isSelected ? "bg-indigo-600 border-indigo-600 text-white" : "border-slate-200 bg-slate-50 text-slate-400"
+                                }`}
                               >
-                                {selectedOptions.find(
-                                  (o) => o.name === option.name,
-                                ) && <Check size={14} strokeWidth={4} />}
+                                {isSelected ? `${qty}x` : <Plus size={13} strokeWidth={3} />}
                               </div>
-                              <div className="text-left">
-                                <p className="text-xs font-black text-slate-700">
+                              <div className="text-left min-w-0">
+                                <p className={`text-xs font-black truncate ${isSelected ? "text-indigo-950" : "text-slate-700"}`}>
                                   {option.name}
                                 </p>
                                 {option.category && (
                                   <p
-                                    className={`text-[8px] font-bold uppercase tracking-widest ${isRequired ? "text-indigo-500" : "text-slate-400"}`}
+                                    className={`text-[8px] font-bold uppercase tracking-widest truncate ${isRequired ? "text-indigo-500" : "text-slate-400"}`}
                                   >
                                     {option.category}{" "}
                                     {isRequired && "• Obrigatório"}
@@ -4812,10 +4960,39 @@ const Tables: React.FC<TablesProps> = memo(
                                 )}
                               </div>
                             </div>
-                            <p className="font-black text-slate-800 text-sm">
-                              R$ {option.price.toFixed(2)}
-                            </p>
-                          </button>
+
+                            <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                              {!isSelected ? (
+                                <button
+                                  type="button"
+                                  onClick={() => updateOptionQtyInModal(option, 1, option.category)}
+                                  className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-indigo-600 hover:text-white text-slate-600 flex items-center justify-center transition-colors"
+                                >
+                                  <Plus size={14} strokeWidth={3} />
+                                </button>
+                              ) : (
+                                <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-indigo-200">
+                                  <button
+                                    type="button"
+                                    onClick={() => updateOptionQtyInModal(option, -1, option.category)}
+                                    className="w-6 h-6 rounded-lg bg-slate-100 hover:bg-rose-50 hover:text-rose-600 text-slate-600 flex items-center justify-center transition-colors"
+                                  >
+                                    <Minus size={11} strokeWidth={3} />
+                                  </button>
+                                  <span className="w-4 text-center text-xs font-black text-slate-800">
+                                    {qty}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => updateOptionQtyInModal(option, 1, option.category)}
+                                    className="w-6 h-6 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 flex items-center justify-center transition-colors"
+                                  >
+                                    <Plus size={11} strokeWidth={3} />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
                         );
                       })}
                       {(!selectedProductForOptions.options ||
@@ -4877,7 +5054,7 @@ const Tables: React.FC<TablesProps> = memo(
                     R${" "}
                     {(
                       (selectedProductForOptions.price +
-                        selectedOptions.reduce((acc, o) => acc + o.price, 0)) *
+                        selectedOptions.reduce((acc, o) => acc + o.price * (o.quantity || 1), 0)) *
                       optionsModalQty
                     ).toFixed(2)}
                   </h3>

@@ -195,17 +195,39 @@ export const CourierOrderDetailModal: React.FC<CourierOrderDetailModalProps> = (
                           {item.quantity}x
                         </span>
                         <span className="text-xs font-bold text-slate-100 truncate">
-                          {item.name}
+                          {(() => {
+                            let displayName = item.name;
+                            if (item.selectedOptions && item.selectedOptions.length > 0) {
+                              displayName = displayName.replace(/\s*\(([^)]+)\)/g, (match, inner) => {
+                                const innerLower = inner.toLowerCase();
+                                return item.selectedOptions!.some(opt => opt.name && innerLower.includes(opt.name.trim().toLowerCase())) ? '' : match;
+                              }).trim();
+                            }
+                            return displayName;
+                          })()}
                         </span>
                       </div>
 
                       {item.selectedOptions && item.selectedOptions.length > 0 && (
                         <div className="mt-1 pl-7 flex flex-wrap gap-1">
-                          {item.selectedOptions.map((opt, oIdx) => (
-                            <span key={oIdx} className="text-[8px] font-bold bg-slate-900 text-slate-400 px-1.5 py-0.5 rounded border border-slate-800">
-                              + {opt.name}
-                            </span>
-                          ))}
+                          {(() => {
+                            const consolidated: { name: string; quantity: number }[] = [];
+                            item.selectedOptions.forEach(opt => {
+                              const existing = consolidated.find(o => o.name.trim().toLowerCase() === opt.name.trim().toLowerCase());
+                              const q = opt.quantity || 1;
+                              if (existing) existing.quantity += q;
+                              else consolidated.push({ name: opt.name, quantity: q });
+                            });
+                            return consolidated.map((opt, oIdx) => (
+                              <span key={oIdx} className={`text-[8px] font-bold px-1.5 py-0.5 rounded border ${
+                                opt.quantity > 1 
+                                  ? 'bg-amber-950/60 text-amber-300 border-amber-500/40' 
+                                  : 'bg-slate-900 text-slate-400 border-slate-800'
+                              }`}>
+                                + {opt.quantity > 1 ? `${opt.quantity}x ` : ''}{opt.name}
+                              </span>
+                            ));
+                          })()}
                         </div>
                       )}
                     </div>

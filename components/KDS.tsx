@@ -212,24 +212,67 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
                   <div className="space-y-1 pl-1">
                     {items.map((item, idx) => (
                       <div key={idx} className="flex flex-col text-slate-800 text-xs py-0.5">
-                        <div className="flex items-start gap-2">
-                          <span className="font-black text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded text-[10px] min-w-[20px] text-center border border-indigo-100 shrink-0">
-                            {item.quantity}x
-                          </span>
-                          <span className="font-bold text-slate-700 leading-tight">{item.name}</span>
-                          {((item as any).batchNumber > 1 || (item as any).isNew) && (
-                            <span className="ml-1 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-amber-500 text-white shrink-0">
-                              NOVO
-                            </span>
-                          )}
-                        </div>
-                        {item.selectedOptions && item.selectedOptions.length > 0 && (
-                          <div className="pl-7 mt-0.5 text-[10px] text-slate-500 font-medium space-y-0.5">
-                            {item.selectedOptions.map((opt, oIdx) => (
-                              <p key={oIdx}>+ {opt.name}</p>
-                            ))}
-                          </div>
-                        )}
+                        {(() => {
+                          const consolidatedOptions: { name: string; quantity: number; category?: string }[] = [];
+                          if (item.selectedOptions && item.selectedOptions.length > 0) {
+                            item.selectedOptions.forEach(opt => {
+                              const existing = consolidatedOptions.find(o => o.name.trim().toLowerCase() === opt.name.trim().toLowerCase());
+                              const q = opt.quantity || 1;
+                              if (existing) {
+                                existing.quantity += q;
+                              } else {
+                                consolidatedOptions.push({ name: opt.name, quantity: q, category: opt.category });
+                              }
+                            });
+                          }
+
+                          let displayName = item.name || '';
+                          if (consolidatedOptions.length > 0 && displayName.includes('(')) {
+                            // Remove as opções entre parênteses do nome do prato para manter apenas o nome padrão, sem duplicidade
+                            displayName = displayName.replace(/\s*\(([^)]+)\)/g, (match, inner) => {
+                              const innerLower = inner.toLowerCase();
+                              const hasMatchingOption = consolidatedOptions.some(opt =>
+                                opt.name && innerLower.includes(opt.name.trim().toLowerCase())
+                              );
+                              return hasMatchingOption ? '' : match;
+                            }).trim();
+                          }
+
+                          return (
+                            <>
+                              <div className="flex items-start gap-2">
+                                <span className="font-black text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded text-[10px] min-w-[20px] text-center border border-indigo-100 shrink-0">
+                                  {item.quantity}x
+                                </span>
+                                <span className="font-bold text-slate-700 leading-tight">{displayName}</span>
+                                {((item as any).batchNumber > 1 || (item as any).isNew) && (
+                                  <span className="ml-1 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-amber-500 text-white shrink-0">
+                                    NOVO
+                                  </span>
+                                )}
+                              </div>
+                              {consolidatedOptions.length > 0 && (
+                                <div className="pl-7 mt-1 text-[10px] text-slate-600 font-bold space-y-1">
+                                  {consolidatedOptions.map((opt, oIdx) => {
+                                    const isMulti = opt.quantity > 1;
+                                    return (
+                                      <div key={oIdx} className="flex items-center gap-1.5 flex-wrap">
+                                        <span className={isMulti ? "text-amber-700 font-black" : ""}>
+                                          + {isMulti ? `${opt.quantity}x ` : ""}{opt.name}
+                                        </span>
+                                        {isMulti && (
+                                          <span className="text-[9px] uppercase font-black px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300 shadow-xs">
+                                            {opt.quantity} UNID
+                                          </span>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
                         {item.observation && (
                           <div className="pl-7 mt-1">
                             <p className="text-[9px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-md w-fit whitespace-pre-line">

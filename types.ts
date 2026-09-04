@@ -673,6 +673,8 @@ export interface ProductOption {
   isAvailableOnline?: boolean;
   isAvailableDigitalMenu?: boolean;
   active?: boolean;
+  quantity?: number; // Quantidade selecionada do opcional (ex: 1x, 2x, 3x)
+  maxQuantity?: number; // Quantidade máxima permitida para este opcional individual
 }
 
 export interface Product {
@@ -702,6 +704,7 @@ export interface Product {
     name: string;
     min: number;
     max: number;
+    allowQuantity?: boolean; // Permite seleção por quantidade neste grupo (ex: adicionais múltiplos)
     options: ProductOption[];
   }[];
   requiredOptionCategories?: string[]; // Categorias que precisam de pelo menos uma seleção

@@ -543,7 +543,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
   }, [availableProducts, activeCategory, searchQuery, productIndexMap]);
 
   const cartTotal = cart.reduce((acc, item) => {
-    const itemPrice = item.product.price + (item.selectedOptions?.reduce((sum, opt) => sum + (opt.price || 0), 0) || 0);
+    const itemPrice = item.product.price + (item.selectedOptions?.reduce((sum, opt) => sum + ((opt.price || 0) * (opt.quantity || 1)), 0) || 0);
     return acc + (itemPrice * item.quantity);
   }, 0);
   const cartCount = cart.reduce((acc, item) => acc + item.quantity, 0);
@@ -666,17 +666,23 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
       return;
     }
 
+    const getOptionsFingerprint = (opts?: ProductOption[]) => {
+      if (!opts || opts.length === 0) return '';
+      return opts.map(o => `${o.id || o.name}:${o.quantity || 1}`).sort().join('|');
+    };
+
     setCart(prev => {
-      // For items with options, we treat them as unique entries in the cart
+      // For items with options, we treat them as unique entries in the cart based on exact options and quantities
       if (options && options.length > 0) {
+        const optionsFp = getOptionsFingerprint(options);
         const existing = prev.find(item => 
           item.product.id === product.id && 
-          JSON.stringify(item.selectedOptions?.map(o => o.id).sort()) === JSON.stringify(options.map(o => o.id).sort())
+          getOptionsFingerprint(item.selectedOptions) === optionsFp
         );
         if (existing) {
           return prev.map(item => 
             (item.product.id === product.id && 
-             JSON.stringify(item.selectedOptions?.map(o => o.id).sort()) === JSON.stringify(options.map(o => o.id).sort())) 
+             getOptionsFingerprint(item.selectedOptions) === optionsFp) 
             ? { ...item, quantity: item.quantity + customQuantity } 
             : item
           );
@@ -698,45 +704,81 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
     }
   };
 
-  const toggleOptionInModal = (option: ProductOption, categoryId?: string) => {
+  const getOptionQuantityInModal = (optionId: string) => {
+    const found = selectedOptionsInModal.find(o => o.id === optionId);
+    return found?.quantity || (found ? 1 : 0);
+  };
+
+  const updateOptionQuantityInModal = (option: ProductOption, delta: number, categoryId?: string) => {
     if (!selectedProductForOptions) return;
-
     const category = selectedProductForOptions.optionCategories?.find(c => c.id === categoryId);
-    
-    setSelectedOptionsInModal(prev => {
-      const isSelected = prev.find(o => o.id === option.id);
-      
-      if (isSelected) {
-        return prev.filter(o => o.id !== option.id);
-      } else {
-        // If it's a single selection category (max 1), remove other options from same category
-        if (category && category.max === 1) {
-          const otherOptionsInCat = (category.options || []).map(o => o.id);
-          return [...prev.filter(o => !otherOptionsInCat.includes(o.id)), option];
-        }
-        
-        // Check if max limit reached for this category
-        if (category && category.max > 1) {
-          const currentInCat = prev.filter(o => (category.options || []).find(co => co.id === o.id)).length;
-          if (currentInCat >= category.max) {
-            return prev; // Don't add if limit reached
-          }
-        }
 
-        return [...prev, option];
+    setSelectedOptionsInModal(prev => {
+      const existing = prev.find(o => o.id === option.id);
+      const currentQty = existing?.quantity || (existing ? 1 : 0);
+      const newQty = currentQty + delta;
+
+      if (newQty <= 0) {
+        return prev.filter(o => o.id !== option.id);
+      }
+
+      // Se a categoria for de escolha única (max 1), remove outras da mesma categoria e deixa essa com 1
+      if (category && category.max === 1) {
+        const otherOptionsInCat = (category.options || []).map(o => o.id);
+        return [...prev.filter(o => !otherOptionsInCat.includes(o.id)), { ...option, quantity: 1 }];
+      }
+
+      // Se houver limite máximo na categoria, soma as quantidades de todas as opções da categoria
+      if (category && category.max > 1 && delta > 0) {
+        const currentInCat = prev
+          .filter(o => (category.options || []).some(co => co.id === o.id))
+          .reduce((sum, o) => sum + (o.quantity || 1), 0);
+        if (currentInCat >= category.max) {
+          return prev; // Limite da categoria atingido
+        }
+      }
+
+      // Se a opção tiver limite individual configurado
+      if (option.maxQuantity && newQty > option.maxQuantity) {
+        return prev;
+      }
+
+      if (existing) {
+        return prev.map(o => o.id === option.id ? { ...o, quantity: newQty } : o);
+      } else {
+        return [...prev, { ...option, quantity: newQty }];
       }
     });
+  };
+
+  const toggleOptionInModal = (option: ProductOption, categoryId?: string) => {
+    if (!selectedProductForOptions) return;
+    const category = selectedProductForOptions.optionCategories?.find(c => c.id === categoryId);
+
+    if (category && category.max === 1) {
+      updateOptionQuantityInModal(option, 1, categoryId);
+      return;
+    }
+
+    const currentQty = getOptionQuantityInModal(option.id);
+    if (currentQty === 0) {
+      updateOptionQuantityInModal(option, 1, categoryId);
+    } else {
+      updateOptionQuantityInModal(option, -currentQty, categoryId);
+    }
   };
 
   const confirmOptions = () => {
     if (!selectedProductForOptions) return;
 
-    // Validate min requirements
+    // Validate min requirements respecting total quantities
     if (selectedProductForOptions?.optionCategories) {
       for (const cat of selectedProductForOptions.optionCategories) {
-        const selectedInCat = selectedOptionsInModal.filter(o => (cat.options || []).find(co => co.id === o.id)).length;
-        if (selectedInCat < (cat.min || 0)) {
-          alert(`Por favor, selecione pelo menos ${cat.min} opção(ões) em "${cat.name}"`);
+        const totalInCat = selectedOptionsInModal
+          .filter(o => (cat.options || []).some(co => co.id === o.id))
+          .reduce((sum, o) => sum + (o.quantity || 1), 0);
+        if (totalInCat < (cat.min || 0)) {
+          alert(`Por favor, selecione pelo menos ${cat.min} opção(ões) em "${cat.name}" (atualmente selecionado: ${totalInCat})`);
           return;
         }
       }
@@ -746,9 +788,14 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
   };
 
   const removeFromCart = (productId: string, options?: ProductOption[]) => {
+    const getOptionsFingerprint = (opts?: ProductOption[]) => {
+      if (!opts || opts.length === 0) return '';
+      return opts.map(o => `${o.id || o.name}:${o.quantity || 1}`).sort().join('|');
+    };
+
     setCart(prev => prev.map(item => {
       const sameProduct = item.product.id === productId;
-      const sameOptions = JSON.stringify(item.selectedOptions?.map(o => o.id).sort()) === JSON.stringify(options?.map(o => o.id).sort());
+      const sameOptions = getOptionsFingerprint(item.selectedOptions) === getOptionsFingerprint(options);
       
       if (sameProduct && sameOptions) {
         return { ...item, quantity: item.quantity - 1 };
@@ -765,7 +812,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
       items: cart.map(item => ({
         productId: item.product.id,
         name: item.product.name,
-        price: item.product.price + (item.selectedOptions?.reduce((sum, opt) => sum + (opt.price || 0), 0) || 0),
+        price: item.product.price + (item.selectedOptions?.reduce((sum, opt) => sum + ((opt.price || 0) * (opt.quantity || 1)), 0) || 0),
         quantity: item.quantity,
         category: item.product.category,
         selectedOptions: item.selectedOptions
@@ -825,8 +872,8 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
         (normalizedMethod === 'dinheiro' && changeFor ? `💵 *Troco para:* R$ ${parseFloat(changeFor).toFixed(2)}\n` : '') +
         `\n🛒 *ITENS:*\n` +
         cart.map(item => 
-          `- ${item.quantity}x ${item.product.name} (R$ ${(item.product.price + (item.selectedOptions?.reduce((sum, opt) => sum + (opt.price || 0), 0) || 0)).toFixed(2)})\n` +
-          (item.selectedOptions?.length ? `  _Adicionais: ${item.selectedOptions.map(o => o.name).join(', ')}_\n` : '')
+          `- ${item.quantity}x ${item.product.name} (R$ ${(item.product.price + (item.selectedOptions?.reduce((sum, opt) => sum + ((opt.price || 0) * (opt.quantity || 1)), 0) || 0)).toFixed(2)})\n` +
+          (item.selectedOptions?.length ? `  _Adicionais: ${item.selectedOptions.map(o => `${(o.quantity && o.quantity > 1) ? `${o.quantity}x ` : ''}${o.name}`).join(', ')}_\n` : '')
         ).join('') +
         (orderType === 'delivery' && isFreeDeliveryEligible && deliveryFee > 0 
           ? `\n🚚 *Entrega:* GRÁTIS (Promoção - economia de R$ ${deliveryFee.toFixed(2)})` 
@@ -1465,9 +1512,9 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                                 </div>
                                 {item.selectedOptions && item.selectedOptions.length > 0 && (
                                   <div className="flex flex-wrap gap-1 mt-1.5">
-                                    {item.selectedOptions.map(o => (
-                                      <span key={o.id} className="text-[7px] font-black uppercase text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded-md border border-slate-100/50">
-                                        {o.name}
+                                    {item.selectedOptions.map((o, optIdx) => (
+                                      <span key={o.id || optIdx} className="text-[7px] font-black uppercase text-slate-500 bg-slate-50 px-1.5 py-0.5 rounded-md border border-slate-100/50">
+                                        {(o.quantity && o.quantity > 1) ? `${o.quantity}x ` : ''}{o.name}
                                       </span>
                                     ))}
                                   </div>
@@ -1476,7 +1523,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                              
                              <div className="flex justify-between items-center mt-3">
                                 <span className="font-black text-slate-900 text-xs">
-                                  R$ {( (item.product.price + (item.selectedOptions?.reduce((s, o) => s + (o.price || 0), 0) || 0)) * item.quantity).toFixed(2)}
+                                  R$ {( (item.product.price + (item.selectedOptions?.reduce((s, o) => s + ((o.price || 0) * (o.quantity || 1)), 0) || 0)) * item.quantity).toFixed(2)}
                                 </span>
                                 <div className="flex items-center gap-3 bg-slate-50 p-1.5 rounded-2xl border border-slate-100 shadow-inner">
                                   <button onClick={() => removeFromCart(item.product.id, item.selectedOptions)} className="w-8 h-8 bg-white rounded-xl flex items-center justify-center text-slate-400 hover:text-rose-500 transition-colors shadow-sm"><Minus size={14} /></button>
@@ -2457,21 +2504,38 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
               </div>
 
               <div className="flex-1 overflow-y-auto p-8 pt-4 space-y-10 custom-scrollbar">
-                {selectedProductForOptions.optionCategories?.map(category => (
+                {((selectedProductForOptions.optionCategories && selectedProductForOptions.optionCategories.length > 0)
+                  ? selectedProductForOptions.optionCategories
+                  : (selectedProductForOptions.options && selectedProductForOptions.options.length > 0)
+                    ? [{ id: 'default-cat', name: 'Opcionais & Adicionais', min: 0, max: 99, options: selectedProductForOptions.options }]
+                    : []
+                ).map(category => {
+                  const totalInCat = selectedOptionsInModal
+                    .filter(o => (category.options || []).some(co => co.id === o.id))
+                    .reduce((sum, o) => sum + (o.quantity || 1), 0);
+                  const isSingleChoice = category.max === 1;
+
+                  return (
                   <div key={category.id} className="space-y-6">
                     <div className="flex justify-between items-end border-b border-slate-100 pb-3">
                       <div>
                         <h4 className="text-base font-black text-slate-800 uppercase tracking-tighter">{category.name}</h4>
                         <div className="flex items-center gap-2 mt-1">
                            {category.min > 0 ? (
-                             <span className="bg-brand-primary text-white text-[7px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full">Obrigatório</span>
+                             <span className="bg-brand-primary text-white text-[7px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full">
+                               Obrigatório (mín. {category.min})
+                             </span>
                            ) : (
-                             <span className="bg-slate-100 text-slate-500 text-[7px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full">Opcional</span>
+                             <span className="bg-slate-100 text-slate-500 text-[7px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full">
+                               Opcional
+                             </span>
                            )}
-                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">até {category.max} {category.max === 1 ? 'item' : 'itens'}</span>
+                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                             {isSingleChoice ? '1 escolha' : `${totalInCat}/${category.max || 'ilimitado'} selecionado(s)`}
+                           </span>
                         </div>
                       </div>
-                      {selectedOptionsInModal.filter(o => (category.options || []).find(co => co.id === o.id)).length >= (category.min || 0) && (
+                      {totalInCat >= (category.min || 0) && (
                         <div className="bg-emerald-500 text-white p-1 rounded-lg shadow-lg shadow-emerald-500/20">
                           <Check size={14} strokeWidth={4} />
                         </div>
@@ -2485,41 +2549,134 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                         if (orderType === 'delivery' || orderType === 'takeout') return option.isAvailableOnline !== false;
                         return true;
                       }).map(option => {
-                        const isSelected = selectedOptionsInModal.find(o => o.id === option.id);
+                        const selectedOpt = selectedOptionsInModal.find(o => o.id === option.id);
+                        const qty = selectedOpt?.quantity || (selectedOpt ? 1 : 0);
+                        const isSelected = qty > 0;
+                        const isCatMaxReached = !isSingleChoice && category.max > 1 && totalInCat >= category.max;
+
                         return (
-                          <button
+                          <div
                             key={option.id}
-                            onClick={() => toggleOptionInModal(option, category.id)}
-                            className={`w-full p-5 rounded-[1.8rem] border-2 flex items-center justify-between transition-all relative overflow-hidden group ${
+                            onClick={() => {
+                              if (isSingleChoice) {
+                                toggleOptionInModal(option, category.id);
+                              } else if (!isSelected) {
+                                updateOptionQuantityInModal(option, 1, category.id);
+                              }
+                            }}
+                            className={`w-full p-4 rounded-[1.8rem] border-2 flex items-center justify-between transition-all relative overflow-hidden group ${
+                              isSingleChoice ? 'cursor-pointer' : (!isSelected ? 'cursor-pointer' : '')
+                            } ${
                               isSelected 
-                                ? 'border-brand-primary bg-brand-primary/5' 
+                                ? 'border-brand-primary bg-brand-primary/5 shadow-sm' 
                                 : 'border-slate-100 hover:border-slate-200 bg-white shadow-sm'
                             }`}
                           >
-                            <div className="flex items-center gap-4">
-                              <div className={`w-6 h-6 rounded-xl border-2 flex items-center justify-center transition-all ${
-                                isSelected ? 'bg-brand-primary border-brand-primary shadow-lg shadow-brand-primary/20' : 'bg-white border-slate-200'
-                              }`}>
-                                {isSelected && <Plus size={14} strokeWidth={4} className="text-white" />}
-                              </div>
-                              <div className="text-left">
-                                <span className={`text-sm font-black uppercase tracking-tight block ${isSelected ? 'text-brand-primary' : 'text-slate-700'}`}>
+                            <div className="flex items-center gap-3.5 flex-1 min-w-0 pr-3">
+                              {isSingleChoice ? (
+                                <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all shrink-0 ${
+                                  isSelected ? 'bg-brand-primary border-brand-primary shadow-md shadow-brand-primary/20' : 'bg-white border-slate-300'
+                                }`}>
+                                  {isSelected && <div className="w-2 h-2 rounded-full bg-white" />}
+                                </div>
+                              ) : (
+                                <div className={`w-8 h-8 rounded-xl border flex items-center justify-center font-black text-xs transition-all shrink-0 ${
+                                  isSelected 
+                                    ? 'bg-brand-primary border-brand-primary text-white shadow-md shadow-brand-primary/20' 
+                                    : 'bg-slate-50 border-slate-200 text-slate-400'
+                                }`}>
+                                  {isSelected ? `${qty}x` : <Plus size={14} strokeWidth={3} />}
+                                </div>
+                              )}
+                              <div className="text-left min-w-0">
+                                <span className={`text-sm font-black uppercase tracking-tight block truncate ${isSelected ? 'text-brand-primary' : 'text-slate-700'}`}>
                                   {option.name}
                                 </span>
-                                {option.description && <p className="text-[10px] text-slate-400 font-bold">{option.description}</p>}
+                                {option.description && <p className="text-[10px] text-slate-400 font-bold truncate">{option.description}</p>}
                               </div>
                             </div>
-                            {option.price > 0 && (
-                              <span className={`text-[11px] font-black ${isSelected ? 'text-brand-primary' : 'text-emerald-500'}`}>
-                                + R$ {option.price.toFixed(2)}
-                              </span>
-                            )}
-                          </button>
+
+                            {/* Actions / Quantities */}
+                            <div className="flex items-center gap-3 shrink-0" onClick={e => e.stopPropagation()}>
+                              {isSingleChoice ? (
+                                option.price > 0 && (
+                                  <span className={`text-xs font-black ${isSelected ? 'text-brand-primary' : 'text-emerald-600'}`}>
+                                    + R$ {option.price.toFixed(2)}
+                                  </span>
+                                )
+                              ) : (
+                                <>
+                                  {!isSelected ? (
+                                    <div className="flex items-center gap-2.5">
+                                      {option.price > 0 && (
+                                        <span className="text-xs font-black text-emerald-600">
+                                          + R$ {option.price.toFixed(2)}
+                                        </span>
+                                      )}
+                                      <button
+                                        type="button"
+                                        disabled={isCatMaxReached}
+                                        onClick={() => updateOptionQuantityInModal(option, 1, category.id)}
+                                        className={`w-9 h-9 rounded-xl flex items-center justify-center font-black transition-all shadow-sm ${
+                                          isCatMaxReached 
+                                            ? 'bg-slate-100 text-slate-300 cursor-not-allowed' 
+                                            : 'bg-slate-100 hover:bg-brand-primary hover:text-white text-slate-700 active:scale-95'
+                                        }`}
+                                        title={isCatMaxReached ? `Limite atingido (${category.max})` : "Adicionar"}
+                                      >
+                                        <Plus size={16} strokeWidth={3} />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center gap-3">
+                                      <div className="text-right">
+                                        <span className="text-xs font-black text-brand-primary block">
+                                          + R$ {((option.price || 0) * qty).toFixed(2)}
+                                        </span>
+                                        {qty > 1 && option.price > 0 && (
+                                          <span className="text-[9px] text-slate-400 font-bold block">
+                                            (R$ {option.price.toFixed(2)} un)
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center gap-1.5 bg-white p-1 rounded-2xl border border-brand-primary/30 shadow-inner">
+                                        <button
+                                          type="button"
+                                          onClick={() => updateOptionQuantityInModal(option, -1, category.id)}
+                                          className="w-7 h-7 rounded-xl bg-slate-100 hover:bg-rose-50 hover:text-rose-600 text-slate-600 flex items-center justify-center transition-colors shadow-sm"
+                                          title="Diminuir"
+                                        >
+                                          <Minus size={13} strokeWidth={3} />
+                                        </button>
+                                        <span className="w-5 text-center text-xs font-black text-slate-900">
+                                          {qty}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          disabled={isCatMaxReached}
+                                          onClick={() => updateOptionQuantityInModal(option, 1, category.id)}
+                                          className={`w-7 h-7 rounded-xl flex items-center justify-center transition-all shadow-sm ${
+                                            isCatMaxReached
+                                              ? 'bg-slate-100 text-slate-300 cursor-not-allowed'
+                                              : 'bg-brand-primary text-white hover:opacity-95'
+                                          }`}
+                                          title={isCatMaxReached ? `Limite atingido (${category.max})` : "Aumentar"}
+                                        >
+                                          <Plus size={13} strokeWidth={3} />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          </div>
                         );
                       })}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
 
               <div className="p-8 pb-12 bg-white border-t border-slate-100">
@@ -2530,7 +2687,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                      </div>
                      <div>
                         <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Preço Individual</p>
-                        <p className="text-lg font-black text-slate-900">R$ {((selectedProductForOptions.price + selectedOptionsInModal.reduce((sum, o) => sum + (o.price || 0), 0)) * optionsModalQuantity).toFixed(2)}</p>
+                        <p className="text-lg font-black text-slate-900">R$ {((selectedProductForOptions.price + selectedOptionsInModal.reduce((sum, o) => sum + ((o.price || 0) * (o.quantity || 1)), 0)) * optionsModalQuantity).toFixed(2)}</p>
                      </div>
                   </div>
                   <div className="flex items-center gap-5">

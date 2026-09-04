@@ -49,10 +49,10 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
     }
 
     const finalOptions = options || [];
-    const optionNames = finalOptions.map(o => o.name).sort().join(', ');
+    const optionNames = finalOptions.map(o => `${(o.quantity && o.quantity > 1) ? `${o.quantity}x ` : ''}${o.name}`).sort().join(', ');
     const existingIndex = items.findIndex(i => 
       i.productId === product.id && 
-      (i.selectedOptions?.map(o => o.name).sort().join(', ') || '') === optionNames &&
+      (i.selectedOptions?.map(o => `${(o.quantity && o.quantity > 1) ? `${o.quantity}x ` : ''}${o.name}`).sort().join(', ') || '') === optionNames &&
       (i.observation || '') === (optionsModalObs || '')
     );
 
@@ -74,10 +74,10 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
         if (!confirmAdd) return;
       }
 
-      const itemPrice = product.price + finalOptions.reduce((acc, o) => acc + o.price, 0);
+      const itemPrice = product.price + finalOptions.reduce((acc, o) => acc + (o.price * (o.quantity || 1)), 0);
       setItems([...items, {
         productId: product.id,
-        name: product.name + (finalOptions.length > 0 ? ` (${finalOptions.map(o => o.name).join(', ')})` : ''),
+        name: product.name,
         quantity: optionsModalQty,
         price: itemPrice,
         category: product.category,
@@ -90,32 +90,91 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
     setShowOptionsModal(false);
   };
 
-  const toggleOption = (option: ProductOption) => {
+  const getOptionQtyInModal = (option: ProductOption) => {
+    const match = selectedOptions.find(o => (o.id && option.id ? o.id === option.id : o.name === option.name));
+    return match?.quantity || (match ? 1 : 0);
+  };
+
+  const updateOptionQtyInModal = (option: ProductOption, delta: number, categoryName?: string) => {
     if (!selectedProductForOptions) return;
+    const catName = categoryName || option.category;
+    const category = selectedProductForOptions.optionCategories?.find(
+      c => c.name === catName || (c.options || []).some(co => co.id === option.id)
+    );
+
     setSelectedOptions(prev => {
-      const isSelected = prev.find(o => o.id === option.id);
-      if (isSelected) return prev.filter(o => o.id !== option.id);
-      
-      if (selectedProductForOptions.optionCategories) {
-        const category = selectedProductForOptions.optionCategories.find(c => c.name === option.category);
-        if (category && category.max === 1) {
-          return [...prev.filter(o => o.category !== option.category), option];
-        }
-        if (category && category.max > 0 && prev.filter(o => o.category === option.category).length >= category.max) {
+      const matchKey = (o: ProductOption) => (o.id && option.id ? o.id === option.id : o.name === option.name);
+      const existing = prev.find(matchKey);
+      const currentQty = existing?.quantity || (existing ? 1 : 0);
+      const newQty = currentQty + delta;
+
+      if (newQty <= 0) {
+        return prev.filter(o => !matchKey(o));
+      }
+
+      if (category && category.max === 1) {
+        const otherIds = (category.options || []).map(o => o.id);
+        return [
+          ...prev.filter(o => o.category !== catName && !otherIds.includes(o.id)),
+          { ...option, category: catName, quantity: 1 }
+        ];
+      }
+
+      if (category && category.max > 1 && delta > 0) {
+        const totalInCat = prev
+          .filter(o => o.category === catName || (category.options || []).some(co => co.id === o.id))
+          .reduce((sum, o) => sum + (o.quantity || 1), 0);
+        if (totalInCat >= category.max) {
+          alert(`Limite de ${category.max} atingido em ${category.name}`);
           return prev;
         }
       }
-      return [...prev, option];
+
+      if (option.maxQuantity && newQty > option.maxQuantity) {
+        return prev;
+      }
+
+      if (existing) {
+        return prev.map(o => matchKey(o) ? { ...o, quantity: newQty } : o);
+      } else {
+        return [...prev, { ...option, category: catName, quantity: newQty }];
+      }
     });
+  };
+
+  const toggleOption = (option: ProductOption, categoryName?: string) => {
+    if (!selectedProductForOptions) return;
+    const catName = categoryName || option.category;
+    const category = selectedProductForOptions.optionCategories?.find(
+      c => c.name === catName || (c.options || []).some(co => co.id === option.id)
+    );
+
+    if (category && category.max === 1) {
+      updateOptionQtyInModal(option, 1, catName);
+      return;
+    }
+
+    const currentQty = getOptionQtyInModal(option);
+    if (currentQty === 0) {
+      updateOptionQtyInModal(option, 1, catName);
+    } else {
+      updateOptionQtyInModal(option, -currentQty, catName);
+    }
   };
 
   const confirmOptions = () => {
     if (selectedProductForOptions) {
       if (selectedProductForOptions.optionCategories) {
         for (const cat of selectedProductForOptions.optionCategories) {
-          const selectedInCat = selectedOptions.filter(o => o.category === cat.name);
-          if (selectedInCat.length < cat.min) {
-            alert(`Selecione pelo menos ${cat.min} em ${cat.name}`);
+          const selectedInCat = selectedOptions
+            .filter(o => o.category === cat.name || (cat.options || []).some(co => co.id === o.id))
+            .reduce((sum, o) => sum + (o.quantity || 1), 0);
+          if (selectedInCat < cat.min) {
+            alert(`Selecione pelo menos ${cat.min} em ${cat.name} (atualmente: ${selectedInCat})`);
+            return;
+          }
+          if (cat.max > 0 && selectedInCat > cat.max) {
+            alert(`Máximo de ${cat.max} opções em ${cat.name} (atualmente: ${selectedInCat})`);
             return;
           }
         }
@@ -155,10 +214,19 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
               {items.map((item, idx) => (
                 <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
                   <div className="flex-1">
-                    <p className="font-bold text-slate-800">{item.name}</p>
+                    {(() => {
+                      let displayName = item.name;
+                      if (item.selectedOptions && item.selectedOptions.length > 0) {
+                        displayName = displayName.replace(/\s*\(([^)]+)\)/g, (match, inner) => {
+                          const innerLower = inner.toLowerCase();
+                          return item.selectedOptions!.some(opt => opt.name && innerLower.includes(opt.name.trim().toLowerCase())) ? '' : match;
+                        }).trim();
+                      }
+                      return <p className="font-bold text-slate-800">{displayName}</p>;
+                    })()}
                     {item.selectedOptions && item.selectedOptions.length > 0 && (
                       <p className="text-[9px] font-bold text-indigo-500 uppercase tracking-tighter">
-                        {item.selectedOptions.map(o => o.name).join(', ')}
+                        {item.selectedOptions.map(o => `${(o.quantity && o.quantity > 1) ? `${o.quantity}x ` : ''}${o.name}`).join(', ')}
                       </p>
                     )}
                     {item.observation && (
@@ -290,52 +358,162 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
             </div>
             
             <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
-              {selectedProductForOptions.optionCategories?.map(cat => (
+              {selectedProductForOptions.optionCategories?.map(cat => {
+                const totalInCat = selectedOptions
+                  .filter(o => o.category === cat.name || (cat.options || []).some(co => co.id === o.id))
+                  .reduce((sum, o) => sum + (o.quantity || 1), 0);
+                const isSingleChoice = cat.max === 1;
+
+                return (
                 <div key={cat.id} className="space-y-2">
                   <div className="flex justify-between items-center border-b pb-1">
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{cat.name}</p>
-                    <p className="text-[8px] font-bold text-indigo-500 uppercase">Min: {cat.min} / Max: {cat.max || '∞'}</p>
+                    <p className="text-[8px] font-bold text-indigo-500 uppercase">
+                      Min: {cat.min} / Max: {cat.max || '∞'} • {totalInCat} selecionado(s)
+                    </p>
                   </div>
                   <div className="grid grid-cols-1 gap-2">
                     {cat.options.map(opt => {
-                      const isSelected = selectedOptions.find(o => o.id === opt.id);
+                      const optWithCat = { ...opt, category: cat.name };
+                      const qty = getOptionQtyInModal(optWithCat);
+                      const isSelected = qty > 0;
+                      const isCatMaxReached = !isSingleChoice && cat.max > 0 && totalInCat >= cat.max;
+
                       return (
-                        <button 
+                        <div 
                           key={opt.id}
-                          onClick={() => toggleOption({ ...opt, category: cat.name })}
-                          className={`flex items-center justify-between p-3 rounded-xl border-2 transition-all ${isSelected ? 'border-indigo-600 bg-indigo-50' : 'border-slate-50 hover:border-slate-200'}`}
+                          onClick={() => {
+                            if (isSingleChoice) {
+                              toggleOption(optWithCat, cat.name);
+                            } else if (!isSelected) {
+                              updateOptionQtyInModal(optWithCat, 1, cat.name);
+                            }
+                          }}
+                          className={`flex items-center justify-between p-2.5 rounded-xl border-2 transition-all ${
+                            isSingleChoice ? 'cursor-pointer' : (!isSelected ? 'cursor-pointer' : '')
+                          } ${isSelected ? 'border-indigo-600 bg-indigo-50/70' : 'border-slate-50 hover:border-slate-200'}`}
                         >
-                          <div className="flex items-center gap-2">
-                            <div className={`w-4 h-4 rounded border flex items-center justify-center ${isSelected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300'}`}>
-                              {isSelected && <Check size={12} strokeWidth={4} />}
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-2">
+                            {isSingleChoice ? (
+                              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${isSelected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300'}`}>
+                                {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                              </div>
+                            ) : (
+                              <div className={`w-6 h-6 rounded-lg border flex items-center justify-center font-bold text-xs shrink-0 ${isSelected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-200 bg-slate-50 text-slate-400'}`}>
+                                {isSelected ? `${qty}x` : <Plus size={11} strokeWidth={3} />}
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <span className={`text-xs font-bold truncate block ${isSelected ? 'text-indigo-950' : 'text-slate-700'}`}>{opt.name}</span>
+                              {opt.price > 0 && <span className="text-[10px] text-slate-400 font-semibold">+ R$ {opt.price.toFixed(2)}</span>}
                             </div>
-                            <span className="text-xs font-bold text-slate-700">{opt.name}</span>
                           </div>
-                          <span className="text-xs font-black text-slate-800">R$ {opt.price.toFixed(2)}</span>
-                        </button>
+
+                          <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
+                            {isSingleChoice ? (
+                              <span className="text-xs font-black text-indigo-600">
+                                {opt.price > 0 ? `+ R$ ${opt.price.toFixed(2)}` : 'Grátis'}
+                              </span>
+                            ) : (
+                              <>
+                                {!isSelected ? (
+                                  <button
+                                    type="button"
+                                    disabled={isCatMaxReached}
+                                    onClick={() => updateOptionQtyInModal(optWithCat, 1, cat.name)}
+                                    className={`w-7 h-7 rounded-lg flex items-center justify-center font-black transition-all ${
+                                      isCatMaxReached ? 'bg-slate-100 text-slate-300 cursor-not-allowed' : 'bg-slate-100 hover:bg-indigo-600 hover:text-white text-slate-600'
+                                    }`}
+                                  >
+                                    <Plus size={13} strokeWidth={3} />
+                                  </button>
+                                ) : (
+                                  <div className="flex items-center gap-1 bg-white p-0.5 rounded-lg border border-indigo-200">
+                                    <button
+                                      type="button"
+                                      onClick={() => updateOptionQtyInModal(optWithCat, -1, cat.name)}
+                                      className="w-5 h-5 rounded bg-slate-100 hover:bg-rose-50 hover:text-rose-600 text-slate-600 flex items-center justify-center text-xs"
+                                    >
+                                      <Minus size={10} strokeWidth={3} />
+                                    </button>
+                                    <span className="w-4 text-center text-xs font-black text-slate-800">{qty}</span>
+                                    <button
+                                      type="button"
+                                      disabled={isCatMaxReached}
+                                      onClick={() => updateOptionQtyInModal(optWithCat, 1, cat.name)}
+                                      className={`w-5 h-5 rounded flex items-center justify-center text-xs ${
+                                        isCatMaxReached ? 'bg-slate-100 text-slate-300 cursor-not-allowed' : 'bg-indigo-600 text-white'
+                                      }`}
+                                    >
+                                      <Plus size={10} strokeWidth={3} />
+                                    </button>
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </div>
                       );
                     })}
                   </div>
                 </div>
-              ))}
+                );
+              })}
               
               {/* Fallback para opções legadas */}
               {(!selectedProductForOptions.optionCategories || selectedProductForOptions.optionCategories.length === 0) && selectedProductForOptions.options?.map((opt, idx) => {
-                const isSelected = selectedOptions.find(o => o.name === opt.name);
+                const qty = getOptionQtyInModal(opt);
+                const isSelected = qty > 0;
                 return (
-                  <button 
+                  <div 
                     key={idx}
-                    onClick={() => toggleOption(opt)}
-                    className={`w-full flex items-center justify-between p-3 rounded-xl border-2 transition-all ${isSelected ? 'border-indigo-600 bg-indigo-50' : 'border-slate-50 hover:border-slate-200'}`}
+                    onClick={() => {
+                      if (!isSelected) updateOptionQtyInModal(opt, 1, opt.category);
+                    }}
+                    className={`w-full flex items-center justify-between p-2.5 rounded-xl border-2 transition-all ${
+                      !isSelected ? 'cursor-pointer' : ''
+                    } ${isSelected ? 'border-indigo-600 bg-indigo-50/70' : 'border-slate-50 hover:border-slate-200'}`}
                   >
-                    <div className="flex items-center gap-2">
-                      <div className={`w-4 h-4 rounded border flex items-center justify-center ${isSelected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300'}`}>
-                        {isSelected && <Check size={12} strokeWidth={4} />}
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-2">
+                      <div className={`w-6 h-6 rounded-lg border flex items-center justify-center font-bold text-xs shrink-0 ${isSelected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-200 bg-slate-50 text-slate-400'}`}>
+                        {isSelected ? `${qty}x` : <Plus size={11} strokeWidth={3} />}
                       </div>
-                      <span className="text-xs font-bold text-slate-700">{opt.name}</span>
+                      <div className="min-w-0">
+                        <span className={`text-xs font-bold truncate block ${isSelected ? 'text-indigo-950' : 'text-slate-700'}`}>{opt.name}</span>
+                        {opt.price > 0 && <span className="text-[10px] text-slate-400 font-semibold">+ R$ {opt.price.toFixed(2)}</span>}
+                      </div>
                     </div>
-                    <span className="text-xs font-black text-slate-800">R$ {opt.price.toFixed(2)}</span>
-                  </button>
+
+                    <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
+                      {!isSelected ? (
+                        <button
+                          type="button"
+                          onClick={() => updateOptionQtyInModal(opt, 1, opt.category)}
+                          className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-indigo-600 hover:text-white text-slate-600 flex items-center justify-center"
+                        >
+                          <Plus size={13} strokeWidth={3} />
+                        </button>
+                      ) : (
+                        <div className="flex items-center gap-1 bg-white p-0.5 rounded-lg border border-indigo-200">
+                          <button
+                            type="button"
+                            onClick={() => updateOptionQtyInModal(opt, -1, opt.category)}
+                            className="w-5 h-5 rounded bg-slate-100 hover:bg-rose-50 hover:text-rose-600 text-slate-600 flex items-center justify-center text-xs"
+                          >
+                            <Minus size={10} strokeWidth={3} />
+                          </button>
+                          <span className="w-4 text-center text-xs font-black text-slate-800">{qty}</span>
+                          <button
+                            type="button"
+                            onClick={() => updateOptionQtyInModal(opt, 1, opt.category)}
+                            className="w-5 h-5 rounded bg-indigo-600 text-white flex items-center justify-center text-xs"
+                          >
+                            <Plus size={10} strokeWidth={3} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 );
               })}
               {/* Seletor de Quantidade & Observações */}
@@ -388,7 +566,7 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
                   R${" "}
                   {(
                     (selectedProductForOptions.price +
-                      selectedOptions.reduce((acc, o) => acc + o.price, 0)) *
+                      selectedOptions.reduce((acc, o) => acc + o.price * (o.quantity || 1), 0)) *
                     optionsModalQty
                   ).toFixed(2)}
                 </h3>

@@ -327,8 +327,16 @@ export const generateRawTextReceipt = (order: Partial<Order>, settings: AdminSet
       });
     }
     if (item.selectedOptions && item.selectedOptions.length > 0) {
+      const consolidated: { name: string; quantity: number }[] = [];
       item.selectedOptions.forEach(opt => {
-        out += `  + ${opt.name.toUpperCase()}\n`;
+        const existing = consolidated.find(o => o.name.trim().toLowerCase() === opt.name.trim().toLowerCase());
+        const q = opt.quantity || 1;
+        if (existing) existing.quantity += q;
+        else consolidated.push({ name: opt.name, quantity: q });
+      });
+      consolidated.forEach(opt => {
+        const qtyPrefix = opt.quantity > 1 ? `${opt.quantity}X ` : '';
+        out += `  + ${qtyPrefix}${opt.name.toUpperCase()}\n`;
       });
     }
     out += right(totalItemRow, lineCharLimit) + '\n';
@@ -612,7 +620,16 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
           ` : ''}
           ${item.selectedOptions && item.selectedOptions.length > 0 ? `
             <div style="font-size: ${fontSizeSmall}; margin-left: 6px; font-weight: 700; color: #000000 !important; word-break: break-word;">
-              ${item.selectedOptions.map(opt => `+ ${opt.name.toUpperCase()}`).join(', ')}
+              ${(() => {
+                const consolidated: { name: string; quantity: number }[] = [];
+                item.selectedOptions.forEach(opt => {
+                  const existing = consolidated.find(o => o.name.trim().toLowerCase() === opt.name.trim().toLowerCase());
+                  const q = opt.quantity || 1;
+                  if (existing) existing.quantity += q;
+                  else consolidated.push({ name: opt.name, quantity: q });
+                });
+                return consolidated.map(opt => `+ ${opt.quantity > 1 ? `${opt.quantity}x ` : ''}${opt.name.toUpperCase()}`).join(', ');
+              })()}
             </div>
           ` : ''}
         </div>
@@ -745,7 +762,16 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
         ` : ''}
         ${item.selectedOptions && item.selectedOptions.length > 0 ? `
           <div style="font-size: ${fontSizeSmall}; margin-left: 26px; font-weight: 700; color: #000000 !important; word-break: break-word;">
-            ${item.selectedOptions.map(opt => `+ ${opt.name.toUpperCase()}`).join(', ')}
+            ${(() => {
+              const consolidated: { name: string; quantity: number }[] = [];
+              item.selectedOptions.forEach(opt => {
+                const existing = consolidated.find(o => o.name.trim().toLowerCase() === opt.name.trim().toLowerCase());
+                const q = opt.quantity || 1;
+                if (existing) existing.quantity += q;
+                else consolidated.push({ name: opt.name, quantity: q });
+              });
+              return consolidated.map(opt => `+ ${opt.quantity > 1 ? `${opt.quantity}x ` : ''}${opt.name.toUpperCase()}`).join(', ');
+            })()}
           </div>
         ` : ''}
       </div>

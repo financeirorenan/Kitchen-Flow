@@ -665,23 +665,71 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                                     </div>
                                   )}
 
-                                  {/* Nome do Produto */}
-                                  <span className={`text-base sm:text-lg font-black tracking-tight leading-snug ${
-                                    isChecked ? 'text-slate-400 font-semibold' : isLight ? 'text-slate-900' : 'text-slate-100'
-                                  }`}>
-                                    {item.name}
-                                  </span>
+                                  {/* Nome do Produto e Opções Consolidadas */}
+                                  {(() => {
+                                    const consolidatedOptions: { name: string; quantity: number; category?: string }[] = [];
+                                    if (item.selectedOptions && item.selectedOptions.length > 0) {
+                                      item.selectedOptions.forEach(opt => {
+                                        const existing = consolidatedOptions.find(o => o.name.trim().toLowerCase() === opt.name.trim().toLowerCase());
+                                        const q = opt.quantity || 1;
+                                        if (existing) {
+                                          existing.quantity += q;
+                                        } else {
+                                          consolidatedOptions.push({ name: opt.name, quantity: q, category: opt.category });
+                                        }
+                                      });
+                                    }
 
-                                  {/* Opções e Observações */}
-                                  {item.selectedOptions && item.selectedOptions.length > 0 && (
-                                    <div className={`text-xs sm:text-sm space-y-0.5 font-bold pl-1 mt-0.5 ${
-                                      isLight ? 'text-slate-600' : 'text-slate-400'
-                                    }`}>
-                                      {item.selectedOptions.map((opt, oIdx) => (
-                                        <p key={oIdx}>+ {opt.name}</p>
-                                      ))}
-                                    </div>
-                                  )}
+                                    let displayName = item.name || '';
+                                    if (consolidatedOptions.length > 0 && displayName.includes('(')) {
+                                      // Remove as opções entre parênteses do nome do prato para manter apenas o nome padrão, sem duplicidade
+                                      displayName = displayName.replace(/\s*\(([^)]+)\)/g, (match, inner) => {
+                                        const innerLower = inner.toLowerCase();
+                                        const hasMatchingOption = consolidatedOptions.some(opt =>
+                                          opt.name && innerLower.includes(opt.name.trim().toLowerCase())
+                                        );
+                                        return hasMatchingOption ? '' : match;
+                                      }).trim();
+                                    }
+
+                                    return (
+                                      <>
+                                        {/* Nome do Produto */}
+                                        <span className={`text-base sm:text-lg font-black tracking-tight leading-snug ${
+                                          isChecked ? 'text-slate-400 font-semibold' : isLight ? 'text-slate-900' : 'text-slate-100'
+                                        }`}>
+                                          {displayName}
+                                        </span>
+
+                                        {/* Opções e Observações */}
+                                        {consolidatedOptions.length > 0 && (
+                                          <div className={`text-xs sm:text-sm space-y-1 font-bold pl-1 mt-1 ${
+                                            isLight ? 'text-slate-600' : 'text-slate-400'
+                                          }`}>
+                                            {consolidatedOptions.map((opt, oIdx) => {
+                                              const isMulti = opt.quantity > 1;
+                                              return (
+                                                <div key={oIdx} className="flex items-center gap-1.5 flex-wrap">
+                                                  <span className={`leading-tight ${isMulti ? (isLight ? 'text-amber-700 font-black' : 'text-amber-300 font-black') : ''}`}>
+                                                    + {isMulti ? `${opt.quantity}x ` : ''}{opt.name}
+                                                  </span>
+                                                  {isMulti && (
+                                                    <span className={`text-[10px] uppercase font-black px-1.5 py-0.5 rounded shadow-xs ${
+                                                      isLight 
+                                                        ? 'bg-amber-100 text-amber-900 border border-amber-300' 
+                                                        : 'bg-amber-500/25 text-amber-300 border border-amber-500/40'
+                                                    }`}>
+                                                      {opt.quantity} UNID
+                                                    </span>
+                                                  )}
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        )}
+                                      </>
+                                    );
+                                  })()}
 
                                   {item.observation && (
                                     <p className={`text-xs sm:text-sm font-black border px-2.5 py-1 rounded-xl w-fit mt-1.5 shadow-sm whitespace-pre-line ${
