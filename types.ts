@@ -30,6 +30,8 @@ export type Permission =
   | 'delivery_manage' 
   | 'inventory_edit' 
   | 'finance_view' 
+  | 'audit_view'
+  | 'audit_manage'
   | 'cmv_analysis' 
   | 'users_manage'
   | 'digital_menu_manage'
@@ -573,6 +575,13 @@ export interface UserPreset {
   settings: any;
 }
 
+export interface AuditDiffItem {
+  field: string;
+  label: string;
+  before: any;
+  after: any;
+}
+
 export interface AuditLog {
   id: string;
   tenantId: string;
@@ -581,10 +590,48 @@ export interface AuditLog {
   userRole: UserRole;
   action: string;
   description: string;
-  timestamp: Date;
+  timestamp: Date | string;
   level?: 'INFO' | 'WARNING' | 'ERROR' | 'SYSTEM';
   details?: string;
   stackTrace?: string;
+  // Campos estruturados para rastreabilidade total
+  entityType?: 'order' | 'customer' | 'financial_record' | 'cash_session' | 'product' | 'account_receivable' | 'user' | 'system' | 'discount' | 'cancellation' | 'settlement';
+  entityId?: string;
+  orderId?: string;
+  customerId?: string;
+  previousValue?: any;
+  newValue?: any;
+  financialImpact?: number;
+  reason?: string;
+  operationType?: 'CREATE' | 'UPDATE' | 'DELETE' | 'CANCEL' | 'REVERSE' | 'SETTLEMENT' | 'DISCOUNT' | 'EXPENSE' | 'SUPPLY' | 'BLEED' | 'TRANSFER' | 'INCONSISTENCY';
+  diff?: AuditDiffItem[];
+  metadata?: Record<string, any>;
+  severity?: 'normal' | 'suspicious' | 'warning' | 'critical';
+}
+
+export interface AuditInconsistency {
+  id: string;
+  code: string;
+  title: string;
+  description: string;
+  severity: 'normal' | 'suspicious' | 'warning' | 'critical';
+  entityType: 'order' | 'customer' | 'financial_record' | 'cash_session' | 'product' | 'account_receivable';
+  entityId: string;
+  detectedAt: Date;
+  details: string;
+  amount?: number;
+  userResponsible?: string;
+  recommendedAction?: string;
+}
+
+export interface AuditAlertRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  type: 'discount_above' | 'cancellation_above' | 'reversal_above' | 'user_cancellations_count' | 'order_edit_after_paid' | 'manual_settlement' | 'price_change' | 'item_deleted_after_closing';
+  thresholdValue: number;
+  description: string;
+  severity: 'warning' | 'critical' | 'suspicious';
 }
 
 export interface SaasAuditLog {

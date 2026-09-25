@@ -28,6 +28,42 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="icon" type="image/svg+xml" href="/icon.svg">
     <link rel="shortcut icon" href="/favicon.svg">
+    <script>
+      (function() {
+        function isFirestoreAssertionOrQuota(msg) {
+          if (!msg || typeof msg !== 'string') return false;
+          return msg.indexOf('FIRESTORE') !== -1 ||
+                 msg.indexOf('INTERNAL ASSERTION FAILED') !== -1 ||
+                 msg.indexOf('Unexpected state') !== -1 ||
+                 msg.indexOf('Quota') !== -1 ||
+                 msg.indexOf('quota') !== -1 ||
+                 msg.indexOf('resource-exhausted') !== -1;
+        }
+
+        window.addEventListener('error', function(event) {
+          var msg = (event && (event.message || (event.error && event.error.message))) || '';
+          if (isFirestoreAssertionOrQuota(msg)) {
+            console.warn('[KitchenFlow Resiliência] Erro assíncrono interno do Firestore interceptado com sucesso:', msg);
+            if (event.preventDefault) event.preventDefault();
+            if (event.stopPropagation) event.stopPropagation();
+            if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+            return true;
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function(event) {
+          var reason = event && event.reason;
+          var msg = (reason && (reason.message || (typeof reason === 'string' ? reason : ''))) || '';
+          if (isFirestoreAssertionOrQuota(msg)) {
+            console.warn('[KitchenFlow Resiliência] Rejeição interna do Firestore interceptada com sucesso:', msg);
+            if (event.preventDefault) event.preventDefault();
+            if (event.stopPropagation) event.stopPropagation();
+            if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+            return true;
+          }
+        }, true);
+      })();
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       if (typeof tailwind !== 'undefined') {

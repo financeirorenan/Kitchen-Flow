@@ -53,9 +53,9 @@ import { motion, AnimatePresence } from 'motion/react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import KaiAvatar from './KaiAvatar';
 
-// Fotografias profissionais via Unsplash CDN
+// Fotografias profissionais via Unsplash CDN (testadas e ativas)
 const chefImage = "https://images.unsplash.com/photo-1577219491135-ce391730fb2c?auto=format&fit=crop&w=1200&q=80";
-const managerImage = "https://images.unsplash.com/photo-1556742049-0a670f4a4591?auto=format&fit=crop&w=1200&q=80";
+const managerImage = "https://images.unsplash.com/photo-1556740738-b6a63e27c4df?auto=format&fit=crop&w=1200&q=80";
 const waiterImage = "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1200&q=80";
 const interiorImage = "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=1200&q=80";
 
@@ -91,55 +91,75 @@ const KitchenFlowBrandLogo = ({ className = "w-10 h-10" }: { className?: string 
 
 const DEFAULT_PLANS = [
   {
-    id: 'essential',
-    name: 'Essential POS',
-    description: 'Gestão ideal para novos cafés, lanchonetes ou operações individuais buscando estabilidade.',
+    id: 'start',
+    name: 'Start',
+    ordersLimit: 'Até 500 pedidos / mês',
+    maxOrders: 500,
+    description: 'Acesso 100% liberado ao sistema completo. Ideal para cafeterias, lanchonetes e operações em estágio inicial.',
     priceMonthly: 149,
     priceYearly: 119,
     icon: Smartphone,
     isPopular: false,
     features: [
-      'Operação de Vendas Ultra-Rápida (PDV)',
-      'Gestão de Mesas & Comandas Básicas',
-      'Controle de Caixa e Fluxo de Entrada',
-      'Fichas Técnicas & Baixa por Ingrediente',
-      'Até 3 usuários simultâneos',
-      'Suporte prioritário por E-mail'
+      'Acesso a 100% dos Recursos do Sistema',
+      'Franquia de até 500 pedidos no mês',
+      'PDV Frente de Caixa & Mesas / Comandas',
+      'Cardápio Digital & Pedidos via QR Code',
+      'Monitor Eletrônico de Cozinha (KDS)',
+      'Copiloto de IA para Auditoria de CMV & Gestão',
+      'Controle Financeiro Completo, Caixa & DRE',
+      'Gestão de Estoque & Fichas Técnicas',
+      'App do Entregador & Rastreamento de Rotas',
+      'Usuários e telas simultâneas liberados',
+      'Suporte ágil e humanizado'
     ]
   },
   {
-    id: 'pro-ai',
-    name: 'Professional AI',
-    description: 'A solução definitiva de alta performance para restaurantes em crescimento, integrando IA ao salão.',
-    priceMonthly: 299,
-    priceYearly: 239,
+    id: 'pro',
+    name: 'Pro',
+    ordersLimit: 'Até 1.500 pedidos / mês',
+    maxOrders: 1500,
+    description: 'Acesso 100% liberado ao sistema completo com franquia ampliada para até 1.500 pedidos/mês. O mais recomendado.',
+    priceMonthly: 249,
+    priceYearly: 199,
     icon: Sparkles,
     isPopular: true,
     features: [
-      'Tudo do Plano Essential',
-      'Copiloto de IA para Auditoria de CMV',
+      'Acesso a 100% dos Recursos do Sistema',
+      'Franquia de até 1.500 pedidos no mês',
+      'PDV Frente de Caixa & Mesas / Comandas',
+      'Cardápio Digital & Pedidos via QR Code',
       'Monitor Eletrônico de Cozinha (KDS)',
-      'Cardápio Digital por QR Code Autônomo',
-      'Relatórios Preditivos de Sobra Limpa',
-      'Até 10 usuários simultâneos',
-      'Suporte Premium via WhatsApp'
+      'Copiloto de IA para Auditoria de CMV & Gestão',
+      'Controle Financeiro Completo, Caixa & DRE',
+      'Gestão de Estoque & Fichas Técnicas',
+      'App do Entregador & Rastreamento de Rotas',
+      'Usuários e telas simultâneas liberados',
+      'Suporte prioritário via WhatsApp'
     ]
   },
   {
-    id: 'elite',
-    name: 'Elite Enterprise',
-    description: 'Arquitetura premium multi-filial para redes de franquias e operações de altíssimo volume.',
-    priceMonthly: 599,
-    priceYearly: 479,
+    id: 'scale',
+    name: 'Scale Ilimitado',
+    ordersLimit: 'Pedidos Ilimitados',
+    maxOrders: 0,
+    description: 'Acesso 100% liberado ao sistema completo sem teto de pedidos. Para cozinhas de alto fluxo, dark kitchens e franquias.',
+    priceMonthly: 449,
+    priceYearly: 359,
     icon: Award,
     isPopular: false,
     features: [
-      'Tudo do Plano Professional AI',
-      'Emissão Fiscal Integrada (NFC-e/NF-e)',
-      'App Corporativo p/ Entregadores Próprios',
-      'Múltiplas Filiais & Painel de Redes',
-      'Suporte Exclusivo 24h com Gerente dedicado',
-      'Pedidos Mensais Ilimitados'
+      'Acesso a 100% dos Recursos do Sistema',
+      'Pedidos Mensais Ilimitados (Sem Teto)',
+      'PDV Frente de Caixa & Mesas / Comandas',
+      'Cardápio Digital & Pedidos via QR Code',
+      'Monitor Eletrônico de Cozinha (KDS)',
+      'Copiloto de IA para Auditoria de CMV & Gestão',
+      'Controle Financeiro Completo, Caixa & DRE',
+      'Gestão de Estoque & Fichas Técnicas',
+      'App do Entregador & Rastreamento de Rotas',
+      'Usuários e telas simultâneas liberados',
+      'Suporte VIP 24/7 com gerente de contas'
     ]
   }
 ];
@@ -385,13 +405,28 @@ export default function KitchenflowWebsite() {
             priceYearly = price;
           }
 
-          const dynamicFeatures: string[] = [];
-          if (data.features && Array.isArray(data.features)) {
-            dynamicFeatures.push(...data.features);
-          } else {
-            dynamicFeatures.push('Acesso operacional imediato');
-            dynamicFeatures.push('Controle de caixa e faturamento');
-            dynamicFeatures.push('Integração de módulos nativos');
+          const maxOrders = data.maxOrders !== undefined && data.maxOrders !== null ? Number(data.maxOrders) : 0;
+          const ordersLimit = maxOrders === 0 || maxOrders >= 99999 
+            ? 'Pedidos Ilimitados' 
+            : `Até ${maxOrders.toLocaleString('pt-BR')} pedidos / mês`;
+
+          const dynamicFeatures: string[] = [
+            'Acesso a 100% dos Recursos do Sistema',
+            maxOrders === 0 || maxOrders >= 99999 ? 'Pedidos Mensais Ilimitados (Sem Teto)' : `Franquia de até ${maxOrders.toLocaleString('pt-BR')} pedidos no mês`,
+            'PDV Frente de Caixa & Mesas / Comandas',
+            'Cardápio Digital & Pedidos via QR Code',
+            'Monitor Eletrônico de Cozinha (KDS)',
+            'Copiloto de IA para Auditoria de CMV & Gestão',
+            'Controle Financeiro Completo, Caixa & DRE',
+            'Gestão de Estoque & Fichas Técnicas',
+            'App do Entregador & Rastreamento de Rotas',
+            'Usuários e telas simultâneas liberados'
+          ];
+
+          if (data.features && Array.isArray(data.features) && data.features.length > 0) {
+            data.features.forEach((f: string) => {
+              if (!dynamicFeatures.includes(f)) dynamicFeatures.push(f);
+            });
           }
 
           let planIcon = Smartphone;
@@ -401,7 +436,9 @@ export default function KitchenflowWebsite() {
           return {
             id: doc.id,
             name: data.name || 'Sem Nome',
-            description: data.description || 'Sem descrição cadastrada.',
+            ordersLimit,
+            maxOrders,
+            description: data.description || 'Acesso total ao sistema KitchenFlow AI com limite mensal dimensionado para sua operação.',
             priceMonthly,
             priceYearly,
             icon: planIcon,
@@ -1637,6 +1674,13 @@ export default function KitchenflowWebsite() {
                   alt="Chef utilizando tablet KDS na cozinha" 
                   className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                   referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    if (!target.dataset.fallback) {
+                      target.dataset.fallback = 'true';
+                      target.src = "https://images.unsplash.com/photo-1556910103-1c02745aae4d?auto=format&fit=crop&w=1200&q=80";
+                    }
+                  }}
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-[#0b0f19] to-transparent" />
               </div>
@@ -1659,6 +1703,13 @@ export default function KitchenflowWebsite() {
                   alt="Gerente analisando faturamento e custos no tablet" 
                   className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                   referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    if (!target.dataset.fallback) {
+                      target.dataset.fallback = 'true';
+                      target.src = "https://images.unsplash.com/photo-1556740758-90de374c12ad?auto=format&fit=crop&w=1200&q=80";
+                    }
+                  }}
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-[#0b0f19] to-transparent" />
               </div>
@@ -1681,6 +1732,13 @@ export default function KitchenflowWebsite() {
                   alt="Garçom anotando comanda digital no celular" 
                   className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                   referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    if (!target.dataset.fallback) {
+                      target.dataset.fallback = 'true';
+                      target.src = "https://images.unsplash.com/photo-1552664730-d307ca884978?auto=format&fit=crop&w=1200&q=80";
+                    }
+                  }}
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-[#0b0f19] to-transparent" />
               </div>
@@ -1703,6 +1761,13 @@ export default function KitchenflowWebsite() {
                   alt="Lanchonete ou restaurante moderno acolhedor" 
                   className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                   referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    if (!target.dataset.fallback) {
+                      target.dataset.fallback = 'true';
+                      target.src = "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1200&q=80";
+                    }
+                  }}
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-[#0b0f19] to-transparent" />
               </div>
@@ -1741,17 +1806,38 @@ export default function KitchenflowWebsite() {
       <section className="py-20 bg-[#06080e] border-t border-white/5 px-6" id="precos">
         <div className="max-w-7xl mx-auto space-y-12">
           
-          <div className="text-center space-y-4 max-w-xl mx-auto">
-            <span className="text-xs font-mono font-bold text-[#FF4F18] tracking-[0.25em] uppercase">Investimento Transparente</span>
+          <div className="text-center space-y-4 max-w-2xl mx-auto">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-mono font-bold uppercase tracking-widest">
+              <Check size={12} strokeWidth={3} /> Sistema 100% Liberado em Todos os Planos
+            </span>
             <h3 className="text-3xl sm:text-4xl font-sans font-black text-white tracking-tight">
-              Preços claros. Sem amarras.
+              Acesso total para todos. Você escolhe pelo volume de pedidos.
             </h3>
             <p className="text-xs sm:text-sm text-slate-400 font-medium leading-relaxed">
-              Sem taxas surpresas, sem comissões sobre suas comandas e sem fidelidade contratual. Cancele ou altere quando quiser.
+              No KitchenFlow AI não cobramos a mais para liberar IA, KDS, estoque ou cardápio digital. Todos os nossos clientes têm acesso completo a 100% da plataforma. A única diferença é o limite de pedidos gerados no mês.
             </p>
 
+            {/* Inclusos em todos os planos pills */}
+            <div className="flex flex-wrap justify-center gap-2 pt-2">
+              {[
+                'PDV & Frente de Caixa',
+                'Mesas & Comandas',
+                'Cardápio Digital QR Code',
+                'KDS Cozinha em Tempo Real',
+                'Copiloto de IA de CMV',
+                'Controle de Estoque & Fichas',
+                'Gestão Financeira & DRE',
+                'App do Entregador & Logística',
+                'Usuários Ilimitados'
+              ].map((item, idx) => (
+                <span key={idx} className="px-2.5 py-1 rounded-lg bg-slate-900/90 border border-white/10 text-slate-300 text-[9px] font-mono font-semibold flex items-center gap-1">
+                  <Check size={10} className="text-emerald-400" strokeWidth={3} /> {item}
+                </span>
+              ))}
+            </div>
+
             {/* Toggle Switch */}
-            <div className="inline-flex justify-center items-center gap-2 bg-slate-900/60 border border-white/5 p-1 rounded-xl mt-2">
+            <div className="inline-flex justify-center items-center gap-2 bg-slate-900/60 border border-white/5 p-1 rounded-xl mt-4">
               <button 
                 onClick={() => setBillingPeriod('monthly')}
                 className={`px-4 py-1.5 rounded-lg text-[10px] font-mono uppercase tracking-wider transition-all ${
@@ -1774,6 +1860,7 @@ export default function KitchenflowWebsite() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-stretch pt-2">
             {activePlans.map((plan) => {
               const price = billingPeriod === 'yearly' ? plan.priceYearly : plan.priceMonthly;
+              const ordersLabel = plan.ordersLimit || (plan.maxOrders === 0 ? 'Pedidos Ilimitados' : `Até ${plan.maxOrders} pedidos / mês`);
               return (
                 <div 
                   key={plan.id}
@@ -1791,10 +1878,26 @@ export default function KitchenflowWebsite() {
 
                   <div className="space-y-6">
                     <div className="flex items-center justify-between">
-                      <h4 className="text-base font-sans font-extrabold text-white uppercase tracking-wider">{plan.name}</h4>
-                      <div className={`p-2.5 rounded-xl ${plan.isPopular ? 'bg-[#FF4F18] text-white' : 'bg-slate-900 border border-white/5 text-slate-400'}`}>
-                        <plan.icon size={16} />
+                      <div>
+                        <h4 className="text-lg font-sans font-black text-white uppercase tracking-wider">{plan.name}</h4>
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 flex items-center gap-1 mt-0.5">
+                          <Check size={11} strokeWidth={3} /> Sistema Completo Liberado
+                        </span>
                       </div>
+                      <div className={`p-2.5 rounded-xl ${plan.isPopular ? 'bg-[#FF4F18] text-white' : 'bg-slate-900 border border-white/5 text-slate-400'}`}>
+                        <plan.icon size={18} />
+                      </div>
+                    </div>
+
+                    {/* Order limit highlight pill */}
+                    <div className="p-3 rounded-2xl bg-gradient-to-r from-orange-500/10 to-amber-500/5 border border-orange-500/20 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Package size={16} className="text-[#FF4F18]" />
+                        <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400 font-bold">Limite Mensal:</span>
+                      </div>
+                      <span className="text-xs font-mono font-black text-white bg-slate-950/80 px-2.5 py-1 rounded-lg border border-white/5">
+                        {ordersLabel}
+                      </span>
                     </div>
                     
                     <p className="text-xs text-slate-400 leading-relaxed min-h-[44px] font-semibold">
@@ -1808,14 +1911,23 @@ export default function KitchenflowWebsite() {
                     </div>
 
                     <div className="space-y-3 pt-2">
-                      {plan.features.map((feat: string, idx: number) => (
-                        <div key={idx} className="flex items-start gap-2.5 text-xs">
-                          <div className="w-5 h-5 rounded-md bg-orange-500/10 border border-orange-500/20 flex items-center justify-center shrink-0 text-[#FF4F18] mt-0.5">
-                            <Check size={10} strokeWidth={3} />
+                      {plan.features.map((feat: string, idx: number) => {
+                        const isMain = idx < 2;
+                        return (
+                          <div key={idx} className="flex items-start gap-2.5 text-xs">
+                            <div className={`w-5 h-5 rounded-md flex items-center justify-center shrink-0 mt-0.5 ${
+                              isMain 
+                                ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-400' 
+                                : 'bg-orange-500/10 border border-orange-500/20 text-[#FF4F18]'
+                            }`}>
+                              <Check size={10} strokeWidth={3} />
+                            </div>
+                            <span className={`leading-normal ${isMain ? 'text-white font-bold' : 'text-slate-300 font-semibold'}`}>
+                              {feat}
+                            </span>
                           </div>
-                          <span className="text-slate-300 leading-normal font-semibold">{feat}</span>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -1828,13 +1940,37 @@ export default function KitchenflowWebsite() {
                           : 'bg-slate-950 hover:bg-slate-900 text-slate-300 hover:text-white border border-white/5'
                       }`}
                     >
-                      Solicitar {plan.name}
+                      Escolher Plano {plan.name}
                     </a>
                   </div>
                 </div>
               );
             })}
           </div>
+
+          {/* Operational Continuity Assurance Box */}
+          <div className="p-6 rounded-2xl bg-[#090d16] border border-white/5 flex flex-col md:flex-row items-center justify-between gap-4 text-center md:text-left">
+            <div className="flex items-center gap-3.5">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+                <ShieldCheck size={20} />
+              </div>
+              <div>
+                <p className="text-xs font-sans font-bold text-white uppercase tracking-wider">
+                  Vendas Nunca São Travadas
+                </p>
+                <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
+                  Ultrapassou o limite em um mês de pico? O KitchenFlow AI nunca interrompe suas vendas nem bloqueia o salão. Os pedidos continuam rodando 100% normalmente.
+                </p>
+              </div>
+            </div>
+            <a 
+              href="#leads-section"
+              className="px-5 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white text-[10px] font-mono uppercase tracking-wider border border-white/10 shrink-0 transition-all font-bold"
+            >
+              Tirar Dúvidas com Consultor
+            </a>
+          </div>
+
         </div>
       </section>
 
@@ -1848,6 +1984,14 @@ export default function KitchenflowWebsite() {
 
           <div className="space-y-4">
             {[
+              {
+                q: "Qual a diferença entre os planos se todos têm acesso ao sistema completo?",
+                a: "Acreditamos que todo restaurante precisa de tecnologia de ponta para crescer. Por isso, não bloqueamos nenhum módulo: PDV, KDS de cozinha, Cardápio Digital por QR Code, IA preditiva de CMV, gestão financeira e controle de entregadores estão 100% inclusos em todos os planos. A única diferença é a franquia de pedidos gerados no mês (ex: até 500 pedidos, até 1.500 pedidos ou pedidos ilimitados). Assim, você começa com custo baixo e seu investimento só cresce conforme o seu restaurante vende mais."
+              },
+              {
+                q: "E se meu restaurante vender mais pedidos que o limite do plano no mês?",
+                a: "O KitchenFlow AI nunca bloqueia sua operação ou suas vendas. Se em um mês de pico ou feriado você ultrapassar a franquia do plano, o sistema continua emitindo pedidos e rodando a cozinha normalmente. Os pedidos excedentes são contabilizados de forma transparente ou você pode migrar para o plano seguinte quando preferir."
+              },
               {
                 q: "Preciso trocar meus tablets, celulares ou computadores?",
                 a: "Não. O KitchenFlow AI funciona diretamente através de qualquer navegador web moderno. Você pode rodar em tablets comuns, PCs antigos, celulares Android/iOS ou nas telas profissionais de KDS que já possuir."

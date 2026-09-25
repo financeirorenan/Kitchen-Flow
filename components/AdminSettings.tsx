@@ -631,6 +631,7 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
               <FiscalSettings 
                 settings={settings} 
                 onUpdate={onUpdateSettings} 
+                onSave={handleSave}
               />
             </div>
           )}

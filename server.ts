@@ -165,13 +165,63 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true }));
 
+  // Metrics tracking for real-time telemetry
+  let totalApiRequests = 0;
+  const serverStartTime = Date.now();
+
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api')) {
+      totalApiRequests++;
+    }
+    next();
+  });
+
   app.get("/health", (_req, res) => {
     res.status(200).json({ ok: true });
   });
 
   // API routes
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok" });
+    res.json({ 
+      status: "ok",
+      timestamp: Date.now(),
+      uptime: Math.floor(process.uptime())
+    });
+  });
+
+  // Real-time server telemetry endpoint
+  app.get("/api/telemetry", (_req, res) => {
+    const mem = process.memoryUsage();
+    const uptimeSeconds = Math.floor(process.uptime());
+    const hours = Math.floor(uptimeSeconds / 3600);
+    const minutes = Math.floor((uptimeSeconds % 3600) / 60);
+    const seconds = uptimeSeconds % 60;
+    const uptimeFormatted = `${hours}h ${minutes}m ${seconds}s`;
+
+    res.json({
+      status: "healthy",
+      timestamp: Date.now(),
+      serverStartTime,
+      uptimeSeconds,
+      uptimeFormatted,
+      memory: {
+        rssMb: Math.round((mem.rss / (1024 * 1024)) * 10) / 10,
+        heapUsedMb: Math.round((mem.heapUsed / (1024 * 1024)) * 10) / 10,
+        heapTotalMb: Math.round((mem.heapTotal / (1024 * 1024)) * 10) / 10,
+        externalMb: Math.round((mem.external / (1024 * 1024)) * 10) / 10,
+        heapUsagePercent: Math.round((mem.heapUsed / mem.heapTotal) * 100),
+      },
+      system: {
+        platform: process.platform,
+        arch: process.arch,
+        nodeVersion: process.version,
+        pid: process.pid,
+      },
+      traffic: {
+        totalRequests: totalApiRequests,
+        requestsPerMinute: Math.max(1, Math.round((totalApiRequests / Math.max(1, uptimeSeconds / 60)) * 10) / 10),
+      }
+    });
   });
 
   // Open API do Marketplace (Integradores Saipos / Takeat / Anota AI)

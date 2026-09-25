@@ -1483,25 +1483,27 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       },
     );
 
+    const qSettings = query(collection(db, "settings"), limit(50));
     const unsubscribeSettings = onSnapshot(
-      collection(db, "settings"),
+      qSettings,
       (snapshot) => {
         const settingsMap: Record<string, any> = {};
         snapshot.docs.forEach((doc) => {
           settingsMap[doc.id] = doc.data();
         });
-        setTenantsSettings(settingsMap);
+        setTenantsSettings(prev => ({ ...prev, ...settingsMap }));
         try {
           sessionStorage.setItem("mp_settings_cache", JSON.stringify(settingsMap));
         } catch {}
       },
       (error) => {
-        console.error("Erro ao carregar configurações de inquilinos:", error);
+        console.warn("Erro ao carregar configurações de inquilinos:", error);
       },
     );
 
+    const qCats = query(collection(db, "commerceCategories"), limit(50));
     const unsubscribeCategories = onSnapshot(
-      collection(db, "commerceCategories"),
+      qCats,
       (snapshot) => {
         const cats = snapshot.docs.map((doc) => ({
           ...doc.data(),
@@ -1513,7 +1515,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
         } catch {}
       },
       (error) => {
-        console.error("Erro ao carregar categorias de comércio:", error);
+        console.warn("Erro ao carregar categorias de comércio:", error);
       }
     );
 

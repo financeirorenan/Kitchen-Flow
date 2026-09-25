@@ -19,6 +19,7 @@ import DigitalMenuConfig from './components/DigitalMenuConfig';
 import AdminSettingsComponent from './components/AdminSettings';
 import CustomersPanel from './components/CustomersPanel';
 import SaaSAdmin from './components/SaaSAdmin';
+import { B2BSuppliersModule } from './components/suppliers/B2BSuppliersModule';
 import KitchenflowWebsite from './components/KitchenflowWebsite';
 import PartnerHub from './components/PartnerHub';
 import SupportView from './components/SupportView';
@@ -28,6 +29,7 @@ import IntelligentReports from './components/IntelligentReports';
 import LojistaCopilot from './components/LojistaCopilot';
 import { FiscalEngineModule } from './components/FiscalEngineModule';
 import { FiscalCoupons } from './components/FiscalCoupons';
+import { SystemAudit } from './components/SystemAudit';
 import { db as localDb } from './services/db';
 import { auth, db } from './firebase';
 import { handlePrintOrder, enqueueBrowserPrint } from './services/printService';
@@ -35,7 +37,7 @@ import { onAuthStateChanged, signOut, User as FirebaseUser, updateEmail, updateP
 import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, onSnapshot, query, where, orderBy, limit, addDoc, writeBatch } from 'firebase/firestore';
 import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import Login from './components/Login';
-import { setOnQuotaExceededCallback } from './lib/firestoreErrors';
+import { setOnQuotaExceededCallback, isQuotaError } from './lib/firestoreErrors';
 import { setLocalCache, getLocalCache } from './lib/cacheUtils';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt';
 import { UserProfileModal } from './components/UserProfileModal';
@@ -112,6 +114,8 @@ const ALL_MODULES: { id: Permission; label: string }[] = [
   { id: 'users_manage', label: 'Gestão de Equipe' },
   { id: 'admin_settings_manage', label: 'Configurações do Sistema' },
   { id: 'fiscal_manage', label: 'Gestão Fiscal' },
+  { id: 'audit_view', label: 'Auditoria do Sistema' },
+  { id: 'audit_manage', label: 'Gestão de Auditoria' },
   { id: 'courier_app_access', label: 'Rastreio de Entregadores' },
 ];
 
@@ -178,6 +182,8 @@ const handleFirestoreError = (error: unknown, operationType: OperationType, path
     errCode === 'resource-exhausted' || 
     errCode === 'unavailable' ||
     errMsg.includes('unavailable') ||
+    errMsg.includes('INTERNAL ASSERTION FAILED') ||
+    errMsg.includes('Unexpected state') ||
     errMsg.includes('Could not reach Cloud Firestore backend')
   ) {
     console.warn('Firestore connectivity or quota notice:', errMsg);
@@ -375,19 +381,24 @@ const App: React.FC = () => {
     };
 
     const handleError = (event: ErrorEvent) => {
-      const errorMsg = event.message || 'Erro inesperado no cliente';
+      const errorMsg = event.message || event.error?.message || 'Erro inesperado no cliente';
       
+      if (isQuotaError(event.error) || isQuotaError(event.message)) {
+        console.warn('Aviso de cota do Firestore interceptado:', errorMsg);
+        setQuotaExceeded(true);
+        if (event.preventDefault) event.preventDefault();
+        if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+        return;
+      }
+
       if (
         errorMsg.includes('FIRESTORE') || 
         errorMsg.includes('INTERNAL ASSERTION FAILED') || 
-        errorMsg.includes('Unexpected state') || 
-        errorMsg.includes('Quota') || 
-        errorMsg.includes('quota') || 
-        errorMsg.includes('resource-exhausted')
+        errorMsg.includes('Unexpected state')
       ) {
-        console.warn('Aviso de conexão/cota do Firestore interceptado:', errorMsg);
-        setQuotaExceeded(true);
+        console.warn('Aviso de conexão do Firestore interceptado:', errorMsg);
         if (event.preventDefault) event.preventDefault();
+        if (event.stopImmediatePropagation) event.stopImmediatePropagation();
         return;
       }
 
@@ -415,17 +426,22 @@ const App: React.FC = () => {
       const reason = event.reason;
       const errorMsg = reason instanceof Error ? reason.message : String(reason);
 
+      if (isQuotaError(reason) || isQuotaError(errorMsg)) {
+        console.warn('Aviso de cota do Firestore interceptado:', errorMsg);
+        setQuotaExceeded(true);
+        if (event.preventDefault) event.preventDefault();
+        if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+        return;
+      }
+
       if (
         errorMsg.includes('FIRESTORE') || 
         errorMsg.includes('INTERNAL ASSERTION FAILED') || 
-        errorMsg.includes('Unexpected state') || 
-        errorMsg.includes('Quota') || 
-        errorMsg.includes('quota') || 
-        errorMsg.includes('resource-exhausted')
+        errorMsg.includes('Unexpected state')
       ) {
-        console.warn('Aviso de rejeição assíncrona/cota do Firestore interceptado:', errorMsg);
-        setQuotaExceeded(true);
+        console.warn('Aviso de rejeição assíncrona do Firestore interceptado:', errorMsg);
         if (event.preventDefault) event.preventDefault();
+        if (event.stopImmediatePropagation) event.stopImmediatePropagation();
         return;
       }
 
@@ -737,6 +753,7 @@ const App: React.FC = () => {
     switch (tab) {
       case 'saas-admin':
       case 'saas-diagnostics':
+      case 'saas-audit':
       case 'saas-suppliers':
       case 'saas-tenants':
       case 'saas-plans':
@@ -756,6 +773,8 @@ const App: React.FC = () => {
         return `/lojista/${currentTenant}/entregas`;
       case 'inventory':
         return `/lojista/${currentTenant}/estoque`;
+      case 'suppliers':
+        return `/lojista/${currentTenant}/fornecedores`;
       case 'digital-menu':
         return `/lojista/${currentTenant}/cardapio-digital`;
       case 'customers':
@@ -953,6 +972,8 @@ const App: React.FC = () => {
         targetTab = 'delivery';
       } else if (subPath === 'estoque' || subPath === 'inventory') {
         targetTab = 'inventory';
+      } else if (subPath === 'fornecedores' || subPath === 'suppliers') {
+        targetTab = 'suppliers';
       } else if (subPath === 'cardapio-digital' || subPath === 'cardapio') {
         targetTab = 'digital-menu';
       } else if (subPath === 'clientes' || subPath === 'customers') {
@@ -1179,6 +1200,8 @@ const App: React.FC = () => {
 
     return (
       source === 'marketplace' ||
+      source === 'zupi' ||
+      source === 'zupi_delivery' ||
       source === 'digital_menu' ||
       source === 'digital_menu_delivery' ||
       source === 'digital_menu_takeout' ||
@@ -1366,22 +1389,24 @@ const App: React.FC = () => {
     let activeTenantLogo: string | null = null;
 
     const collectionsToSync = [
-      { name: 'products', setter: setProducts, syncType: 'snapshot', limit: 300 },
-      { name: 'diningTables', setter: setTables, syncType: 'snapshot' },
-      { name: 'customers', setter: setCustomers, syncType: 'snapshot', limit: 200 },
-      { name: 'orders', setter: setOrders, syncType: 'snapshot', recentOnly: true, limit: 500 },
-      { name: 'financialRecords', setter: setFinancialRecords, syncType: 'snapshot', limit: 300, recentOnly: true },
-      { name: 'rawMaterials', setter: setRawMaterials, syncType: 'snapshot', limit: 200 },
-      { name: 'bankAccounts', setter: setBankAccounts, syncType: 'snapshot', limit: 50 },
-      { name: 'couriers', setter: setCouriers, syncType: 'snapshot', limit: 50 },
+      { name: 'products', setter: setProducts, syncType: 'snapshot', limit: 250 },
+      { name: 'diningTables', setter: setTables, syncType: 'snapshot', limit: 50 },
+      { name: 'customers', setter: setCustomers, syncType: 'snapshot', limit: 100 },
+      { name: 'orders', setter: setOrders, syncType: 'snapshot', recentOnly: true, limit: 150 },
+      { name: 'financialRecords', setter: setFinancialRecords, syncType: 'snapshot', limit: 150, recentOnly: true },
+      { name: 'rawMaterials', setter: setRawMaterials, syncType: 'snapshot', limit: 150 },
+      { name: 'bankAccounts', setter: setBankAccounts, syncType: 'snapshot', limit: 30 },
+      { name: 'couriers', setter: setCouriers, syncType: 'snapshot', limit: 30 },
       { name: 'auditLogs', setter: setAuditLogs, syncType: 'snapshot', limit: 30 },
-      { name: 'users', setter: setUsers, syncType: 'snapshot', limit: 50 },
+      { name: 'users', setter: setUsers, syncType: 'snapshot', limit: 40 },
       { name: 'cashClosings', setter: setCashClosings, syncType: 'snapshot', limit: 20 }
     ];
 
     const unsubscribes = collectionsToSync.map(col => {
-      // Usar uma query simples de igualdade por tenantId para evitar dependência de índices compostos no Firestore
-      const q = query(collection(db, col.name), where('tenantId', '==', effectiveTenantId));
+      // Usar limit no nível do banco para garantir que a cota de leitura não seja excedida
+      const q = col.limit 
+        ? query(collection(db, col.name), where('tenantId', '==', effectiveTenantId), limit(col.limit))
+        : query(collection(db, col.name), where('tenantId', '==', effectiveTenantId));
 
       return onSnapshot(q, (snapshot) => {
         let items = snapshot.docs.map(doc => {
@@ -1524,8 +1549,9 @@ const App: React.FC = () => {
         } else {
           col.setter(items);
         }
+        setQuotaExceeded(false);
       }, (error) => {
-        if (error.message?.includes("Quota exceeded") || error.message?.includes("quota")) {
+        if (isQuotaError(error)) {
           setQuotaExceeded(true);
         } else {
           handleFirestoreError(error, OperationType.LIST, col.name);
@@ -1534,6 +1560,7 @@ const App: React.FC = () => {
     });
 
     const plansUnsub = onSnapshot(collection(db, 'plans'), (snapshot) => {
+      setQuotaExceeded(false);
       const loadedPlans: Plan[] = [];
       snapshot.forEach((doc) => {
         loadedPlans.push({ id: doc.id, ...doc.data() } as Plan);
@@ -1542,12 +1569,13 @@ const App: React.FC = () => {
       setLocalCache('plans', loadedPlans);
     }, (error) => {
       console.warn("Error loading plans:", error.message);
-      if (error.message?.includes("Quota") || error.message?.includes("quota") || (error as any).code === "resource-exhausted") {
+      if (isQuotaError(error)) {
         setQuotaExceeded(true);
       }
     });
 
     const saasConfigUnsub = onSnapshot(doc(db, 'settings', 'saas_config'), (snapshot) => {
+      setQuotaExceeded(false);
       if (snapshot.exists()) {
         const data = snapshot.data();
         const conf = {
@@ -1564,12 +1592,13 @@ const App: React.FC = () => {
       }
     }, (error) => {
       console.warn("Error loading saas_config:", error.message);
-      if (error.message?.includes("Quota") || error.message?.includes("quota") || (error as any).code === "resource-exhausted") {
+      if (isQuotaError(error)) {
         setQuotaExceeded(true);
       }
     });
 
     const settingsUnsub = onSnapshot(doc(db, 'settings', effectiveTenantId), (snapshot) => {
+      setQuotaExceeded(false);
       if (snapshot.exists()) {
         const rawData = snapshot.data();
         const s = convertTimestamps(rawData);
@@ -1658,7 +1687,7 @@ const App: React.FC = () => {
         }
       }
     }, (error) => {
-      if (error.message?.includes("Quota exceeded") || error.message?.includes("quota")) {
+      if (isQuotaError(error)) {
         setQuotaExceeded(true);
       } else {
         handleFirestoreError(error, OperationType.GET, `settings/${effectiveTenantId}`);
@@ -1666,6 +1695,7 @@ const App: React.FC = () => {
     });
 
     const tenantUnsub = onSnapshot(doc(db, 'tenants', effectiveTenantId), (snapshot) => {
+      setQuotaExceeded(false);
       if (snapshot.exists()) {
         const loadedTenant = convertTimestamps(snapshot.data()) as Tenant;
         setTenantData(loadedTenant);
@@ -1687,7 +1717,7 @@ const App: React.FC = () => {
         }));
       }
     }, (error) => {
-      if (error.message?.includes("Quota exceeded") || error.message?.includes("quota")) {
+      if (isQuotaError(error)) {
         setQuotaExceeded(true);
       } else {
         handleFirestoreError(error, OperationType.GET, `tenants/${effectiveTenantId}`);
@@ -1841,12 +1871,7 @@ const App: React.FC = () => {
             userUnsubscribe = onSnapshot(userDocRef, (snap) => {
               if (snap.exists()) {
                 const liveUserData = convertTimestamps(snap.data()) as User;
-                
-                // Garante que o status do usuário seja online no Firestore
-                if (liveUserData.status !== 'online') {
-                  liveUserData.status = 'online';
-                  setDoc(userDocRef, { status: 'online', updatedAt: new Date() }, { merge: true }).catch(() => {});
-                }
+                liveUserData.status = 'online';
 
                 setCurrentUserData(liveUserData);
                 try {
@@ -1855,30 +1880,19 @@ const App: React.FC = () => {
                   console.warn(e);
                 }
 
-                // Se o usuário pertence a um tenant, buscar dados do tenant
+                // Se o usuário pertence a um tenant e ainda não carregamos, carregar do cache local com segurança
                 if (liveUserData.tenantId && liveUserData.tenantId !== 'GLOBAL') {
-                  getDoc(doc(db, 'tenants', liveUserData.tenantId)).then((tenantDoc) => {
-                    if (tenantDoc.exists()) {
-                      const tData = convertTimestamps(tenantDoc.data()) as Tenant;
-                      setTenantData(tData);
-                      try {
-                        localStorage.setItem('kitchenflow_cached_tenant_data', JSON.stringify(tData));
-                      } catch (e) {
-                        console.warn(e);
+                  const cachedTenant = localStorage.getItem('kitchenflow_cached_tenant_data');
+                  if (cachedTenant) {
+                    try {
+                      const parsed = JSON.parse(cachedTenant);
+                      if (parsed && parsed.id === liveUserData.tenantId) {
+                        setTenantData(prev => prev || parsed);
                       }
+                    } catch (e) {
+                      console.warn(e);
                     }
-                  }).catch((err: any) => {
-                    if (err.message?.includes("Quota exceeded")) {
-                      console.warn("Cota do Firebase atingida. Usando dados básicos do tenant.");
-                      const offlineTenant = { id: liveUserData.tenantId, name: 'Restaurante (Modo Offline)', plan: 'free' } as any;
-                      setTenantData(offlineTenant);
-                      try {
-                        localStorage.setItem('kitchenflow_cached_tenant_data', JSON.stringify(offlineTenant));
-                      } catch (e) {
-                        console.warn(e);
-                      }
-                    }
-                  });
+                  }
                 }
               }
             }, (error) => {
@@ -2513,10 +2527,12 @@ const App: React.FC = () => {
       return;
     }
 
-    // Query estritamente isolada por tenantId do lojista
+    // Query estritamente isolada por tenantId do lojista e apenas para pedidos pendentes com limite de segurança
     const q = query(
       collection(db, 'orders'),
-      where('tenantId', '==', effectiveTenantId)
+      where('tenantId', '==', effectiveTenantId),
+      where('status', '==', 'pending'),
+      limit(25)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -5744,12 +5760,12 @@ const App: React.FC = () => {
         return date >= openedDate;
       }));
 
-      // Try to get fresh data if online
+      // Try to get fresh data if online with limit protection
       if (effectiveTenantId) {
         try {
           const [ordersSnapshot, recordsSnapshot] = await Promise.all([
-             getDocs(query(collection(db, 'orders'), where('tenantId', '==', effectiveTenantId))),
-             getDocs(query(collection(db, 'financialRecords'), where('tenantId', '==', effectiveTenantId)))
+             getDocs(query(collection(db, 'orders'), where('tenantId', '==', effectiveTenantId), limit(150))),
+             getDocs(query(collection(db, 'financialRecords'), where('tenantId', '==', effectiveTenantId), limit(150)))
           ]);
           
           if (!ordersSnapshot.empty) {
@@ -6400,6 +6416,27 @@ const App: React.FC = () => {
                 }
               }}
               isQuotaExceeded={quotaExceeded}
+              onResetQuota={() => setQuotaExceeded(false)}
+              orders={orders}
+              financialRecords={financialRecords}
+              customers={customers}
+              products={products}
+              cashClosings={cashClosings}
+              cashSession={cashSession}
+              auditLogs={auditLogs}
+              users={users}
+              currentUser={currentUserData}
+              bankAccounts={bankAccounts}
+              onUpdateCustomer={handleUpdateCustomer}
+              onAddFinancialRecord={handleAddFinancialRecord}
+              onUpdateFinancialRecord={handleUpdateFinancialRecord}
+              onRefreshData={() => fetchRealtimeData()}
+              onOpenOrder={(orderId) => {
+                const found = orders.find(o => o.id === orderId);
+                if (found) {
+                  setPdvEditOrder(found);
+                }
+              }}
             />
           ) : currentProject === 'PLATFORM' && !isSuperAdmin ? (
             <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-slate-50 min-h-[60vh]">
@@ -6484,6 +6521,7 @@ const App: React.FC = () => {
                            activeTab === 'digital-menu' ? 'Cardápio Digital' :
                            activeTab === 'customers' ? 'Gestão de Clientes' :
                            activeTab === 'inventory' ? 'Controle de Estoque' :
+                           activeTab === 'suppliers' ? 'Fornecedores B2B & Abastecimento' :
                            activeTab === 'finance' ? 'Gestão Financeira' :
                            activeTab === 'merchant-copilot' ? 'Módulo Lojista' :
                            activeTab === 'ai-cmv' ? 'Assistente de Cardápio' :
@@ -6492,6 +6530,7 @@ const App: React.FC = () => {
                            activeTab === 'saas-admin' ? 'Gestão SaaS' :
                            activeTab === 'fiscal' ? 'Motor Tributário & Gestão Fiscal (CBS/IBS)' :
                            activeTab === 'fiscal-coupons' ? 'Cupons Fiscais (NFC-e)' :
+                           activeTab === 'audit' ? 'Central de Diagnóstico & Prevenção' :
                            activeTab === 'settings' ? 'Configurações do Sistema' : activeTab}
                         </span>
                       </h1>
@@ -6803,7 +6842,7 @@ const App: React.FC = () => {
             </div>
           </div>
         )}
-        {((activeTab === 'tables' || activeTab === 'pos') && hasPermission('tables_manage') || pdvEditOrder !== null) && <Tables 
+        {((activeTab === 'tables' || activeTab === 'pos') && (hasPermission('tables_manage') || hasPermission('pos_access')) || pdvEditOrder !== null) && <Tables 
           tables={tables} 
           counterOrders={counterOrders} 
           products={products} 
@@ -6906,6 +6945,15 @@ const App: React.FC = () => {
             onSyncCloud={handleSaveSettings}
             orders={orders}
           />
+        )}
+        {pdvEditOrder === null && activeTab === 'suppliers' && (
+          <div className="space-y-6">
+            <B2BSuppliersModule 
+              currentUserEmail={currentUserData?.email}
+              currentTenantId={effectiveTenantId}
+              onNavigateTab={setActiveTab}
+            />
+          </div>
         )}
         {pdvEditOrder === null && activeTab === 'finance' && hasPermission('finance_view') && (
           <Finance 
@@ -7063,6 +7111,50 @@ const App: React.FC = () => {
             showToast={showToast}
             addLog={addLog}
           />
+        )}
+        {activeTab === 'audit' && (
+          isSuperAdmin ? (
+            <SystemAudit
+              orders={orders}
+              financialRecords={financialRecords}
+              customers={customers}
+              products={products}
+              cashClosings={cashClosings}
+              cashSession={cashSession}
+              auditLogs={auditLogs}
+              users={users}
+              currentUser={currentUserData}
+              bankAccounts={bankAccounts}
+              onUpdateCustomer={handleUpdateCustomer}
+              onAddFinancialRecord={handleAddFinancialRecord}
+              onUpdateFinancialRecord={handleUpdateFinancialRecord}
+              onOpenOrder={(orderId) => {
+                const found = orders.find(o => o.id === orderId);
+                if (found) {
+                  setPdvEditOrder(found);
+                }
+              }}
+              onRefresh={() => {
+                fetchRealtimeData();
+              }}
+            />
+          ) : (
+            <div className="flex flex-col items-center justify-center p-12 text-center bg-white rounded-3xl border border-slate-200 m-4 shadow-sm">
+              <div className="w-14 h-14 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center mb-3">
+                <ShieldAlert size={28} />
+              </div>
+              <h3 className="text-lg font-black text-slate-800">Recurso Exclusivo do Administrador SaaS</h3>
+              <p className="text-xs text-slate-500 max-w-sm mt-1">
+                A Central de Auditoria é um módulo administrativo restrito à gestão da plataforma.
+              </p>
+              <button
+                onClick={() => setActiveTab('merchant-copilot')}
+                className="mt-5 px-5 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all cursor-pointer"
+              >
+                Voltar ao Painel da Loja
+              </button>
+            </div>
+          )
         )}
         {(activeTab === 'settings' || activeTab === 'admin-settings') && hasPermission('admin_settings_manage') && (
           <AdminSettingsComponent 

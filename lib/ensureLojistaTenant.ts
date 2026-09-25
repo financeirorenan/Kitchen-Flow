@@ -42,7 +42,14 @@ let isLojistaTenantEnsured = false;
 
 export async function ensureLojistaTenantWithData() {
   if (isLojistaTenantEnsured) return;
+  if (typeof window !== 'undefined' && localStorage.getItem('kf_lojista_ensured_v2')) {
+    isLojistaTenantEnsured = true;
+    return;
+  }
   isLojistaTenantEnsured = true;
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('kf_lojista_ensured_v2', 'true');
+  }
   try {
     const lojistaRef = doc(db, 'tenants', 'lojista');
     const lojistaSnap = await getDoc(lojistaRef);

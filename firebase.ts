@@ -1,6 +1,12 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, setLogLevel } from 'firebase/firestore';
+import { 
+  initializeFirestore, 
+  persistentLocalCache, 
+  persistentSingleTabManager, 
+  memoryLocalCache, 
+  setLogLevel 
+} from 'firebase/firestore';
 import firebaseConfig from './firebase-applet-config.json';
 
 // Silence non-fatal Firestore internal warnings (such as primary lease acquisition on background index backfill across tabs/iframes)
@@ -14,12 +20,11 @@ const resolvedConfig = {
 const app = initializeApp(resolvedConfig);
 export const auth = getAuth(app);
 
+// Use memoryLocalCache to prevent cross-tab/iframe lock sync corruption and assertion crashes (ID: ca9 / b815)
 export const db = initializeFirestore(
   app,
   {
-    localCache: persistentLocalCache({
-      tabManager: persistentMultipleTabManager()
-    }),
+    localCache: memoryLocalCache(),
     experimentalAutoDetectLongPolling: true,
   },
   (firebaseConfig as any).firestoreDatabaseId || '(default)'

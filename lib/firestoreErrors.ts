@@ -44,16 +44,15 @@ if (typeof window !== 'undefined') {
 
 export function isQuotaError(error: any): boolean {
   if (!error) return false;
-  const errMsg = error?.message || String(error);
+  const errMsg = (error?.message || String(error)).toLowerCase();
+  const code = (error?.code || '').toLowerCase();
   return (
-    errMsg.includes('Quota') ||
-    errMsg.includes('quota') ||
-    error?.code === 'resource-exhausted' ||
-    errMsg.includes('INTERNAL ASSERTION FAILED') ||
-    errMsg.includes('Unexpected state') ||
-    errMsg.includes('ca9') ||
-    errMsg.includes('b815') ||
-    errMsg.includes('ve')
+    code === 'resource-exhausted' ||
+    code.includes('resource-exhausted') ||
+    errMsg.includes('quota exceeded') ||
+    errMsg.includes('quota limit exceeded') ||
+    errMsg.includes('resource has been exhausted') ||
+    errMsg.includes('daily quota')
   );
 }
 

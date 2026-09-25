@@ -30,7 +30,10 @@ import {
   ArrowLeft,
   Activity,
   Layers,
-  Gauge
+  Gauge,
+  ShieldCheck,
+  Building2,
+  ChevronRight
 } from 'lucide-react';
 import { User, Permission } from '../types';
 
@@ -81,6 +84,7 @@ const Sidebar: React.FC<SidebarProps> = memo(({
     { id: 'digital-menu', label: 'Cardápio Digital', icon: Smartphone, permission: 'digital_menu_manage' },
     { id: 'customers', label: 'Clientes / Fiado', icon: UserCircle, permission: 'customers_manage' },
     { id: 'inventory', label: 'Estoque', icon: Package, permission: 'inventory_edit' },
+    { id: 'suppliers', label: 'Fornecedores B2B', icon: Layers, permission: 'inventory_edit' },
     { id: 'finance', label: 'Financeiro', icon: DollarSign, permission: 'finance_view' },
     { id: 'fiscal-coupons', label: 'Cupons Fiscais', icon: Receipt, permission: 'fiscal_manage' },
     { id: 'users', label: 'Equipe', icon: UsersIcon, permission: 'users_manage' },
@@ -91,6 +95,7 @@ const Sidebar: React.FC<SidebarProps> = memo(({
   const saasMenuItems = [
     { id: 'saas-admin', label: 'Dashboard SaaS', icon: LayoutDashboard, permission: 'admin_settings_manage' },
     { id: 'saas-diagnostics', label: 'Diagnóstico & Testes', icon: Activity, permission: 'admin_settings_manage' },
+    { id: 'saas-audit', label: 'Central de Diagnóstico & Saúde', icon: ShieldCheck, permission: 'admin_settings_manage' },
     { id: 'saas-suppliers', label: 'Fornecedores B2B', icon: Layers, permission: 'admin_settings_manage' },
     { id: 'saas-tenants', label: 'Clientes (Tenants)', icon: UsersIcon, permission: 'admin_settings_manage' },
     { id: 'saas-plans', label: 'Planos e Preços', icon: Package, permission: 'admin_settings_manage' },
@@ -122,6 +127,10 @@ const Sidebar: React.FC<SidebarProps> = memo(({
         // Now, check the user's specific permissions
         const actualUserPermissions = userPermissions || user.permissions || [];
         
+        if (item.id === 'tables') {
+          return actualUserPermissions.includes('tables_manage') || actualUserPermissions.includes('pos_access');
+        }
+
         if (item.id === 'kds-kitchen-only') {
           return actualUserPermissions.includes('kds_view') || actualUserPermissions.includes('kds_kitchen_only_view');
         }
@@ -213,6 +222,52 @@ const Sidebar: React.FC<SidebarProps> = memo(({
             <X size={20} />
           </button>
         </div>
+
+        {/* SuperAdmin Quick Switcher between SaaS Control Center and Store Dashboard */}
+        {isSuperAdmin && (
+          <div className="p-2 border-b border-slate-100/10">
+            {isSaaSMode ? (
+              <button
+                type="button"
+                onClick={() => {
+                  const targetTenant = user.tenantId || 'lojista';
+                  navigate(`/lojista/${targetTenant}`);
+                  setActiveTab('merchant-copilot');
+                  if (window.innerWidth < 1024) onClose();
+                }}
+                className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider bg-slate-900 hover:bg-slate-850 text-slate-300 hover:text-white border border-slate-700/60 shadow-xs transition-all group"
+                title="Acessar o Painel Operacional da Loja / Restaurante"
+              >
+                <span className="flex items-center gap-1.5 truncate">
+                  <Building2 size={13} className="text-emerald-400 shrink-0" />
+                  <span className="truncate">Ir para Painel Loja</span>
+                </span>
+                <ChevronRight size={12} className="text-slate-500 group-hover:translate-x-0.5 transition-transform shrink-0" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  if (isViewingTenant && onStopViewingTenant) {
+                    onStopViewingTenant();
+                  } else {
+                    navigate('/saas');
+                    setActiveTab('saas-admin');
+                  }
+                  if (window.innerWidth < 1024) onClose();
+                }}
+                className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 shadow-xs transition-all group"
+                title="Voltar ao Painel Geral SaaS Admin e Ver Clientes/Lojistas"
+              >
+                <span className="flex items-center gap-1.5 truncate">
+                  <ShieldCheck size={13} className="text-emerald-600 shrink-0" />
+                  <span className="truncate font-black">Painel SaaS Admin</span>
+                </span>
+                <ChevronRight size={12} className="text-emerald-600 group-hover:translate-x-0.5 transition-transform shrink-0" />
+              </button>
+            )}
+          </div>
+        )}
 
 
 

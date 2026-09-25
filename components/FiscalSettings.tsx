@@ -12,7 +12,8 @@ import {
   MapPin,
   Key,
   Zap,
-  Check
+  Check,
+  Loader2
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { maskCNPJ, maskCEP } from '../utils/masks';
@@ -20,9 +21,10 @@ import { maskCNPJ, maskCEP } from '../utils/masks';
 interface FiscalSettingsProps {
   settings: AdminSettings;
   onUpdate: (settings: AdminSettings) => void;
+  onSave?: () => Promise<boolean | void>;
 }
 
-const FiscalSettings: React.FC<FiscalSettingsProps> = ({ settings, onUpdate }) => {
+const FiscalSettings: React.FC<FiscalSettingsProps> = ({ settings, onUpdate, onSave }) => {
   const [activeSubTab, setActiveSubTab] = useState<'general' | 'certificate' | 'csc'>('general');
   const [pfxFile, setPfxFile] = useState<File | null>(null);
   const [pfxPassword, setPfxPassword] = useState('');
@@ -30,6 +32,22 @@ const FiscalSettings: React.FC<FiscalSettingsProps> = ({ settings, onUpdate }) =
   const [validationError, setValidationError] = useState<string | null>(null);
   const [isTestingSoap, setIsTestingSoap] = useState(false);
   const [soapStatusResult, setSoapStatusResult] = useState<{ online: boolean; message: string } | null>(null);
+  const [isSavingFiscal, setIsSavingFiscal] = useState(false);
+  const [fiscalSaveSuccess, setFiscalSaveSuccess] = useState(false);
+
+  const handleSaveFiscal = async () => {
+    if (!onSave) return;
+    setIsSavingFiscal(true);
+    try {
+      await onSave();
+      setFiscalSaveSuccess(true);
+      setTimeout(() => setFiscalSaveSuccess(false), 3500);
+    } catch (e) {
+      console.error("Erro ao salvar configurações fiscais:", e);
+    } finally {
+      setIsSavingFiscal(false);
+    }
+  };
 
   const testSefazSoapConnection = async () => {
     setIsTestingSoap(true);
@@ -233,6 +251,9 @@ const FiscalSettings: React.FC<FiscalSettingsProps> = ({ settings, onUpdate }) =
               password: pfxPassword
             }
           });
+          if (onSave) {
+            setTimeout(() => onSave(), 200);
+          }
           alert(`Certificado do titular "${result.subject?.slice(0, 40) || 'Lojista'}" validado e salvo com sucesso! Expira em: ${result.validTo || '31/12/2026'}`);
         } else {
           setValidationError(result.error || 'Erro ao validar certificado');
@@ -248,30 +269,62 @@ const FiscalSettings: React.FC<FiscalSettingsProps> = ({ settings, onUpdate }) =
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <h2 className="text-xl font-bold flex items-center gap-2">
           <FileText className="text-red-600" />
           Configurações Fiscais (NFC-e)
         </h2>
-        <div className="flex gap-2">
-          <button 
-            onClick={() => setActiveSubTab('general')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeSubTab === 'general' ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-          >
-            Dados da Empresa
-          </button>
-          <button 
-            onClick={() => setActiveSubTab('certificate')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeSubTab === 'certificate' ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-          >
-            Certificado Digital
-          </button>
-          <button 
-            onClick={() => setActiveSubTab('csc')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeSubTab === 'csc' ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-          >
-            CSC / Token
-          </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex gap-1.5 bg-gray-100 p-1 rounded-xl">
+            <button 
+              onClick={() => setActiveSubTab('general')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${activeSubTab === 'general' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+            >
+              Dados da Empresa
+            </button>
+            <button 
+              onClick={() => setActiveSubTab('certificate')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${activeSubTab === 'certificate' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+            >
+              Certificado Digital
+            </button>
+            <button 
+              onClick={() => setActiveSubTab('csc')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${activeSubTab === 'csc' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+            >
+              CSC / Token
+            </button>
+          </div>
+
+          {onSave && (
+            <button
+              type="button"
+              onClick={handleSaveFiscal}
+              disabled={isSavingFiscal}
+              className={`px-3.5 py-1.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all shadow-sm flex items-center gap-1.5 cursor-pointer ${
+                fiscalSaveSuccess
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-red-600 hover:bg-red-700 text-white disabled:opacity-50'
+              }`}
+            >
+              {isSavingFiscal ? (
+                <>
+                  <Loader2 size={13} className="animate-spin" />
+                  <span>Salvando...</span>
+                </>
+              ) : fiscalSaveSuccess ? (
+                <>
+                  <Check size={13} />
+                  <span>Salvo!</span>
+                </>
+              ) : (
+                <>
+                  <Save size={13} />
+                  <span>Salvar Dados</span>
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
 
@@ -747,6 +800,52 @@ const FiscalSettings: React.FC<FiscalSettingsProps> = ({ settings, onUpdate }) =
             </div>
           </div>
         </motion.div>
+      )}
+
+      {/* Barra de Salvamento e Persistência Cloud (Firestore) */}
+      {onSave && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4 mt-6">
+          <div className="flex items-center gap-3">
+            <div className={`p-2.5 rounded-xl ${isAllOk ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+              <Shield size={20} />
+            </div>
+            <div>
+              <p className="text-xs font-black text-slate-800">
+                {isAllOk ? 'Tudo pronto para emissão perante a SEFAZ!' : `${stepsPassed} de 6 parâmetros configurados`}
+              </p>
+              <p className="text-[11px] text-slate-500">
+                Ao clicar em salvar, suas credenciais fiscais e certificado são gravados no Firestore e sincronizados em tempo real.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleSaveFiscal}
+            disabled={isSavingFiscal}
+            className={`px-6 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all shadow-md flex items-center gap-2 cursor-pointer ${
+              fiscalSaveSuccess
+                ? 'bg-emerald-600 text-white'
+                : 'bg-red-600 hover:bg-red-700 text-white disabled:opacity-50'
+            }`}
+          >
+            {isSavingFiscal ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                <span>Salvando na Nuvem...</span>
+              </>
+            ) : fiscalSaveSuccess ? (
+              <>
+                <Check size={16} />
+                <span>Salvo no Firestore!</span>
+              </>
+            ) : (
+              <>
+                <Save size={16} />
+                <span>Salvar Configurações Fiscais</span>
+              </>
+            )}
+          </button>
+        </div>
       )}
 
     </div>
