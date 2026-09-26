@@ -792,6 +792,9 @@ export interface Order {
   id: string;
   docId?: string;
   tenantId: string;
+  storeId?: string;
+  kitchenStatus?: 'pending' | 'preparing' | 'ready' | 'delivered';
+  currentBatch?: number;
   tableNumber?: number | string;
   type: 'table' | 'delivery' | 'takeout';
   status: OrderStatus;

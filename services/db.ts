@@ -144,3 +144,4 @@ class KitchenFlowAIDatabase extends Dexie {
 }
 
 export const db = new KitchenFlowAIDatabase();
+export const localDb = db;

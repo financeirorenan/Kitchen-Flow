@@ -419,6 +419,26 @@ const Tables: React.FC<TablesProps> = memo(
     }, []);
 
     const handleExitOrder = useCallback(() => {
+      // Se houver itens na mesa que ainda não foram despachados para a cozinha, despacha automaticamente para o KDS
+      if (selectedTable && selectedTable.items && selectedTable.items.length > 0) {
+        const unsentItems = selectedTable.items.filter(i => !i.sentToKitchen);
+        if (unsentItems.length > 0) {
+          const targetId = pdvEditOrder ? pdvEditOrder.id : selectedTable.id;
+          const deliveryFeeVal = isDeliveryOrder && isCounterContext ? parseCurrency(deliveryFeeInput) : 0;
+          const customerData = {
+            customerName: customerName ? customerName.trim() : undefined,
+            customerPhone: customerPhone ? customerPhone.trim() : undefined,
+            customerAddress: deliveryAddress ? deliveryAddress.trim() : undefined,
+            deliveryFee: isDeliveryOrder ? deliveryFeeVal : undefined,
+            customerId: selectedCustomerId || undefined,
+            isDelivery: isDeliveryOrder,
+          };
+          onSendToKitchen(targetId, unsentItems, isCounterContext, customerData);
+          const updatedItems = selectedTable.items.map(i => ({ ...i, sentToKitchen: true }));
+          onUpdateTable(selectedTable.id, updatedItems, "occupied", isCounterContext, undefined, customerData);
+        }
+      }
+
       if (pdvEditOrder && onCancelPdvEdit) {
         onCancelPdvEdit();
       }
@@ -426,7 +446,21 @@ const Tables: React.FC<TablesProps> = memo(
       setIsCounterContext(false);
       setIsDeliveryOrder(false);
       resetCustomerFields();
-    }, [pdvEditOrder, onCancelPdvEdit, resetCustomerFields]);
+    }, [
+      selectedTable,
+      pdvEditOrder,
+      onCancelPdvEdit,
+      resetCustomerFields,
+      isDeliveryOrder,
+      isCounterContext,
+      deliveryFeeInput,
+      customerName,
+      customerPhone,
+      deliveryAddress,
+      selectedCustomerId,
+      onSendToKitchen,
+      onUpdateTable
+    ]);
 
     // Helper to handle order completion (new or update)
     const handleOrderCompletion = (
@@ -4540,14 +4574,16 @@ const Tables: React.FC<TablesProps> = memo(
                     disabled={
                       isSendingToKitchen || selectedTable.items.length === 0
                     }
-                    className="flex-1 sm:px-6 py-3 lg:py-4 bg-amber-500 text-white rounded-xl lg:rounded-2xl font-black text-[9px] lg:text-[10px] uppercase tracking-widest hover:bg-amber-600 transition-all flex items-center justify-center gap-2 shadow-lg shadow-amber-100 disabled:opacity-50"
+                    className="flex-1 sm:px-6 py-3 lg:py-4 bg-amber-500 text-white rounded-xl lg:rounded-2xl font-black text-[9px] lg:text-[10px] uppercase tracking-widest hover:bg-amber-600 transition-all flex items-center justify-center gap-2 shadow-lg shadow-amber-100 disabled:opacity-50 ring-2 ring-amber-400/40"
+                    title="Enviar pedido para o KDS da Cozinha (Atalho F4)"
                   >
                     {isSendingToKitchen ? (
-                      <Loader2 size={14} className="animate-spin" />
+                      <Loader2 size={15} className="animate-spin" />
                     ) : (
-                      <ChefHat size={14} />
+                      <ChefHat size={15} />
                     )}
-                    Cozinha
+                    <span>Finalizar Pedido (Cozinha)</span>
+                    <span className="hidden sm:inline-block bg-white/20 px-1.5 py-0.5 rounded text-[8px] font-mono">F4</span>
                   </button>
                 </div>
 

@@ -44,6 +44,13 @@ import { UserProfileModal } from './components/UserProfileModal';
 import { PrintPreviewModal } from './components/PrintPreviewModal';
 import { OpenCashModal } from './components/OpenCashModal';
 import { 
+  getCanonicalTenantId, 
+  getCanonicalStoreId, 
+  publishDomainEvent, 
+  subscribeToDomainEvents, 
+  logDiagnostic 
+} from './services/orderService';
+import { 
   INITIAL_PRODUCTS, 
   INITIAL_TABLES, 
   INITIAL_COURIERS,
@@ -1367,9 +1374,9 @@ const App: React.FC = () => {
     setUsers([]);
     setCashClosings([]);
 
-    // PRIORIDADE: Primeiro o ID que estamos visualizando (Suporte), depois o ID do próprio usuário logado
-    // Se for Super Admin, o padrão é a loja KitchenFlow (ID: lojista)
-    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || (isSuperAdmin ? 'lojista' : '');
+    // PRIORIDADE: Primeiro o ID canônico consolidado para todos os módulos (Caixa, KDS, Salão, Delivery)
+    const effectiveTenantId = getCanonicalTenantId(currentUserData, viewingTenantId, tenantData);
+    const canonicalStoreId = getCanonicalStoreId(effectiveTenantId);
     if (!effectiveTenantId) {
       setTenantData(null);
       setAdminSettings(prev => ({
@@ -2518,7 +2525,7 @@ const App: React.FC = () => {
       location.pathname === '/login';
 
     const isMerchantView = (currentProject === 'RESTAURANT' || (currentProject === 'PLATFORM' && isSuperAdmin && !!viewingTenantId)) && !isPublicOrCustomerView;
-    const effectiveTenantId = viewingTenantId || (user && currentUserData && !['CUSTOMER', 'COURIER'].includes(currentUserData.role) ? currentUserData.tenantId : null);
+    const effectiveTenantId = getCanonicalTenantId(currentUserData, viewingTenantId, tenantData);
     
     if (!isMerchantView || !effectiveTenantId) {
       // Limpa qualquer notificação ou modal pendente se estiver fora do painel do lojista
@@ -2527,12 +2534,11 @@ const App: React.FC = () => {
       return;
     }
 
-    // Query estritamente isolada por tenantId do lojista e apenas para pedidos pendentes com limite de segurança
+    // Query estritamente isolada por tenantId do lojista para sincronização em tempo real de todos os pedidos operacionais
     const q = query(
       collection(db, 'orders'),
       where('tenantId', '==', effectiveTenantId),
-      where('status', '==', 'pending'),
-      limit(25)
+      limit(100)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -2694,6 +2700,23 @@ const App: React.FC = () => {
               console.warn("Local DB sync warning:", e);
             }
 
+            logDiagnostic('KDS_EVENT_RECEIVED', {
+              tenant_id: docData.tenantId,
+              order_id: cloudOrder.id,
+              status: cloudOrder.status,
+              type: cloudOrder.type,
+              table: cloudOrder.tableNumber
+            });
+
+            // Sincronizar mesa se o pedido for de mesa
+            if (cloudOrder.type === 'table' && cloudOrder.tableNumber) {
+              setTables(prev => prev.map(t => (t.number === cloudOrder.tableNumber || String(t.number) === String(cloudOrder.tableNumber) || t.currentOrderId === cloudOrder.id) ? {
+                ...t,
+                currentOrderId: cloudOrder.id,
+                status: (cloudOrder.status === 'delivered' || cloudOrder.status === 'finished' || cloudOrder.status === 'cancelled') ? t.status : 'occupied'
+              } : t));
+            }
+
             setOrders(prev => {
               const idx = prev.findIndex(o => o.id === cloudOrder.id || o.docId === cloudOrder.docId);
               if (idx !== -1) {
@@ -2719,7 +2742,42 @@ const App: React.FC = () => {
     });
 
     return () => unsubscribe();
-  }, [currentUserData?.tenantId, currentUserData?.role, viewingTenantId, adminSettings.autoAcceptOrders, globalDeliveryFee, currentProject, location.pathname, isSuperAdmin]);
+  }, [currentUserData?.tenantId, currentUserData?.role, viewingTenantId, adminSettings.autoAcceptOrders, globalDeliveryFee, currentProject, location.pathname, isSuperAdmin, tenantData?.id]);
+
+  // Subscriber ao Domain Event Bus central para sincronização cross-tab instantânea
+  useEffect(() => {
+    const canonicalTenant = getCanonicalTenantId(currentUserData, viewingTenantId, tenantData);
+    const unsubscribeEvents = subscribeToDomainEvents((event) => {
+      if (event.tenantId !== canonicalTenant) return;
+
+      logDiagnostic('KDS_EVENT_RECEIVED', {
+        event: event.event,
+        tenant_id: event.tenantId,
+        store_id: event.storeId,
+        order_id: event.orderId,
+        source: event.source
+      });
+
+      if (event.payload && (
+        event.event === 'ORDER_CREATED' || 
+        event.event === 'ORDER_SENT_TO_KITCHEN' || 
+        event.event === 'ORDER_UPDATED' || 
+        event.event === 'ORDER_STATUS_CHANGED' || 
+        event.event === 'KITCHEN_STATUS_CHANGED'
+      )) {
+        const orderData = event.payload as Order;
+        setOrders(prev => {
+          const exists = prev.some(o => o.id === orderData.id || (orderData.docId && o.docId === orderData.docId));
+          if (exists) {
+            return prev.map(o => (o.id === orderData.id || (orderData.docId && o.docId === orderData.docId)) ? { ...o, ...orderData } : o);
+          }
+          return deduplicateOrders([orderData, ...prev]);
+        });
+      }
+    });
+
+    return () => unsubscribeEvents();
+  }, [currentUserData?.tenantId, viewingTenantId, tenantData?.id]);
 
   const [mockWhatsAppNotify, setMockWhatsAppNotify] = useState<{title: string, msg: string} | null>(null);
 
@@ -3184,7 +3242,9 @@ const App: React.FC = () => {
       isDelivery?: boolean;
     }
   ) => {
-    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || (user?.uid ? user.uid : 't1');
+    // Garantir rigorosamente o tenant canônico e a unidade para isolamento e tempo real
+    const effectiveTenantId = getCanonicalTenantId(currentUserData, viewingTenantId, tenantData);
+    const canonicalStoreId = getCanonicalStoreId(effectiveTenantId);
     
     // Encontrar o número da mesa/comanda ou balcão
     const tableInfo = isCounter 
@@ -3262,9 +3322,12 @@ const App: React.FC = () => {
       const finalOrderTotal = newItemsTotal + updatedDeliveryFee + (activeExistingOrder.additionalFee || 0) - (activeExistingOrder.discount || 0);
 
       const updates: Partial<Order> = {
+        tenantId: effectiveTenantId,
+        storeId: canonicalStoreId,
         items: existingItems,
         total: finalOrderTotal,
         status: activeExistingOrder.status === 'ready' ? 'preparing' : activeExistingOrder.status,
+        kitchenStatus: 'preparing',
         updatedAt: now,
         customerName: effectiveCustomerName || activeExistingOrder.customerName,
         customerPhone: effectiveCustomerPhone || activeExistingOrder.customerPhone,
@@ -3290,6 +3353,20 @@ const App: React.FC = () => {
           customerName: effectiveCustomerName || t.customerName,
           customerPhone: effectiveCustomerPhone || t.customerPhone
         } : t));
+
+        // Atualizar diningTables no Firestore
+        const tableDocId = (tableInfo as any)?.docId;
+        if (tableDocId) {
+          setDoc(doc(db, 'diningTables', tableDocId), cleanObject({
+            items: existingItems,
+            total: newItemsTotal,
+            currentOrderId: activeExistingOrder.id,
+            status: 'occupied',
+            customerName: effectiveCustomerName,
+            customerPhone: effectiveCustomerPhone,
+            updatedAt: now
+          }), { merge: true }).catch(e => console.warn("Erro ao atualizar mesa no Firestore:", e));
+        }
       } else {
         setCounterOrders(prev => prev.map(t => (t.id === tableId || String(t.id) === String(tableId)) ? {
           ...t,
@@ -3309,8 +3386,37 @@ const App: React.FC = () => {
       localDb.orders.put(updatedOrder as Order).catch(e => console.warn("LocalDb order update error:", e));
       if (effectiveTenantId) {
         setDoc(doc(db, 'orders', activeExistingOrder.docId || activeExistingOrder.id), cleanObject(updates), { merge: true })
+          .then(() => {
+            logDiagnostic('ORDER_PERSISTED', {
+              tenant_id: effectiveTenantId,
+              store_id: canonicalStoreId,
+              order_id: activeExistingOrder!.id,
+              status: updates.status,
+              kitchen_status: updates.kitchenStatus,
+              items_count: existingItems.length,
+              timestamp: now.toISOString()
+            });
+          })
           .catch(e => console.error("Error updating order in cloud:", e));
       }
+
+      // Disparar evento de novos itens adicionados ao pedido existente
+      publishDomainEvent('ORDER_ITEM_ADDED', {
+        tenantId: effectiveTenantId,
+        storeId: canonicalStoreId,
+        orderId: activeExistingOrder.id,
+        tableNumber: displayTableNumber,
+        userId: currentUserData?.id || user?.uid,
+        userName: currentUserData?.name,
+        userRole: currentUserData?.role,
+        source: 'pos',
+        payload: {
+          orderId: activeExistingOrder.id,
+          batchNumber: nextBatchNumber,
+          newItemsCount: items.length,
+          total: finalOrderTotal
+        }
+      });
 
       addLog('u1', 'COZINHA', `Pedido #${activeExistingOrder.dailyNumber || activeExistingOrder.id.slice(-4)} atualizado com novos itens na cozinha.`);
       return;
@@ -3329,18 +3435,34 @@ const App: React.FC = () => {
       customerId: effectiveCustomerId,
       counterId: isCounter ? (tableInfo?.id || tableId) : undefined,
       status: 'preparing',
-      items: items.map(i => ({ ...i, sentToKitchen: true, isNew: false })),
+      kitchenStatus: 'pending',
+      productionStatus: 'pending',
+      paymentStatus: 'pending',
+      items: items.map(i => ({ ...i, sentToKitchen: true, isNew: false, batchNumber: 1 })),
       total: items.reduce((acc, i) => acc + (i.price * i.quantity), 0) + (effectiveDeliveryFee || 0),
       createdAt: now,
       updatedAt: now,
       tenantId: effectiveTenantId,
+      storeId: canonicalStoreId,
       version: 1,
       isManual: true,
       source: 'pos',
-      isSettled: false,
-      paymentStatus: 'pending'
+      isSettled: false
     };
     const kitchenOrder = assignDailyNumberToOrder(rawKitchenOrder);
+
+    logDiagnostic('ORDER_CREATED', {
+      tenant_id: effectiveTenantId,
+      store_id: canonicalStoreId,
+      order_id: kitchenOrder.id,
+      table_number: displayTableNumber,
+      type: kitchenOrder.type,
+      status: kitchenOrder.status,
+      kitchen_status: kitchenOrder.kitchenStatus,
+      items_count: kitchenOrder.items.length,
+      total: kitchenOrder.total,
+      timestamp: now.toISOString()
+    });
 
     // 1. Instant optimistic state updates
     if (isCounter) {
@@ -3359,9 +3481,45 @@ const App: React.FC = () => {
       setTables(prev => prev.map(t => (t.id === tableId || (t as any).docId === tableId || t.number === displayTableNumber) ? { 
         ...t, 
         currentOrderId: kitchenOrder.id,
+        status: 'occupied',
         customerName: effectiveCustomerName || t.customerName,
         customerPhone: effectiveCustomerPhone || t.customerPhone
       } : t));
+
+      // Sincronizar diningTables no Firestore para outros terminais (Garçom, Salão, Admin)
+      const tableDocId = (tableInfo as any)?.docId;
+      if (tableDocId) {
+        setDoc(doc(db, 'diningTables', tableDocId), cleanObject({
+          currentOrderId: kitchenOrder.id,
+          status: 'occupied',
+          items: kitchenOrder.items,
+          total: kitchenOrder.total,
+          customerName: effectiveCustomerName,
+          customerPhone: effectiveCustomerPhone,
+          updatedAt: now
+        }), { merge: true }).catch(e => console.warn("Erro ao vincular mesa ao pedido no Firestore:", e));
+      } else {
+        const qTable = query(
+          collection(db, 'diningTables'),
+          where('tenantId', '==', effectiveTenantId),
+          where('number', '==', Number(displayTableNumber) || 0)
+        );
+        getDocs(qTable).then(snap => {
+          if (!snap.empty) {
+            snap.docs.forEach(d => {
+              setDoc(d.ref, cleanObject({
+                currentOrderId: kitchenOrder.id,
+                status: 'occupied',
+                items: kitchenOrder.items,
+                total: kitchenOrder.total,
+                customerName: effectiveCustomerName,
+                customerPhone: effectiveCustomerPhone,
+                updatedAt: now
+              }), { merge: true });
+            });
+          }
+        }).catch(e => console.warn("Erro ao buscar mesa para vincular docId:", e));
+      }
     }
 
     setOrders(prev => deduplicateOrders([kitchenOrder, ...prev]));
@@ -3371,9 +3529,39 @@ const App: React.FC = () => {
     if (effectiveTenantId) {
       setDoc(doc(db, 'orders', kitchenOrder.id), cleanObject({
         ...kitchenOrder,
-        createdAt: now
-      })).catch(err => console.error("Error creating KDS order in Firestore:", err));
+        createdAt: now,
+        updatedAt: now
+      })).then(() => {
+        logDiagnostic('ORDER_PERSISTED', {
+          tenant_id: effectiveTenantId,
+          store_id: canonicalStoreId,
+          order_id: kitchenOrder.id,
+          status: kitchenOrder.status,
+          kitchen_status: kitchenOrder.kitchenStatus,
+          timestamp: now.toISOString()
+        });
+      }).catch(err => console.error("Error creating KDS order in Firestore:", err));
     }
+
+    // 3. Disparar Evento de Domínio central para KDS e terminais autorizados
+    publishDomainEvent('ORDER_CREATED', {
+      tenantId: effectiveTenantId,
+      storeId: canonicalStoreId,
+      orderId: kitchenOrder.id,
+      tableNumber: displayTableNumber,
+      userId: currentUserData?.id || user?.uid,
+      userName: currentUserData?.name,
+      userRole: currentUserData?.role,
+      source: 'pos',
+      payload: {
+        orderId: kitchenOrder.id,
+        tableNumber: displayTableNumber,
+        status: kitchenOrder.status,
+        kitchenStatus: kitchenOrder.kitchenStatus,
+        total: kitchenOrder.total,
+        itemsCount: kitchenOrder.items.length
+      }
+    });
 
     addLog('u1', 'COZINHA', `Pedido enviado para cozinha: ${isCounter ? `Balcão (${effectiveCustomerName || 'Identificado'})` : `Mesa ${displayTableNumber}`}`);
   };
@@ -4365,7 +4553,11 @@ const App: React.FC = () => {
     additionalFeeReason?: string,
     discount?: number
   ) => {
-    // 1. Identificar a mesa/comanda/pedido e seu docId para sincronização precisa
+    // 1. Identificar tenant e unidade canônicos
+    const effectiveTenantId = getCanonicalTenantId(currentUserData, viewingTenantId, tenantData);
+    const canonicalStoreId = getCanonicalStoreId(effectiveTenantId);
+
+    // 2. Identificar a mesa/comanda/pedido e seu docId para sincronização precisa
     const strTableId = String(tableId);
     const numTableId = Number(strTableId.replace(/\D/g, ''));
     const source = isCounter ? counterOrders : tables;
@@ -4516,15 +4708,55 @@ const App: React.FC = () => {
       additionalFee: additionalFee || 0,
       additionalFeeReason: additionalFeeReason || '',
       discount: discount || 0,
-      tenantId: viewingTenantId || currentUserData?.tenantId || 't1',
+      tenantId: effectiveTenantId,
+      storeId: canonicalStoreId,
       source: table.currentOrderId ? (orders.find(o => o.id === table.currentOrderId)?.source || 'pos') : (pdvEditOrder?.source || 'pos'),
       isManual: true,
       isSettled: true,
+      kitchenStatus: determinedStatus === 'finished' ? 'delivered' : (activeOrderObj?.kitchenStatus || 'preparing'),
       finishedAt: determinedStatus === 'finished' ? new Date() : (activeOrderObj?.finishedAt || undefined),
       completedAt: determinedStatus === 'finished' ? new Date() : (activeOrderObj?.completedAt || undefined),
       updatedAt: new Date()
     };
     const newOrder = assignDailyNumberToOrder(rawOrder);
+
+    logDiagnostic('TABLE_CLOSED', {
+      tenant_id: effectiveTenantId,
+      store_id: canonicalStoreId,
+      table_id: tableId,
+      order_id: newOrder.id,
+      total: finalTotal,
+      status: determinedStatus,
+      timestamp: new Date().toISOString()
+    });
+
+    logDiagnostic('ORDER_COMPLETED', {
+      tenant_id: effectiveTenantId,
+      store_id: canonicalStoreId,
+      order_id: newOrder.id,
+      table_number: tableNumber,
+      total: finalTotal,
+      status: determinedStatus,
+      timestamp: new Date().toISOString()
+    });
+
+    publishDomainEvent('TABLE_CLOSED', {
+      tenantId: effectiveTenantId,
+      storeId: canonicalStoreId,
+      orderId: newOrder.id,
+      tableNumber: tableNumber,
+      userId: currentUserData?.id || user?.uid,
+      userName: currentUserData?.name,
+      userRole: currentUserData?.role,
+      source: 'pos',
+      payload: {
+        orderId: newOrder.id,
+        tableNumber: tableNumber,
+        total: finalTotal,
+        paymentMethod: method,
+        status: determinedStatus
+      }
+    });
 
     // 1. UPDATE LOCAL REACT STATE INSTANTLY FOR OPTIMISTIC FEEDBACK
     setOrders(prev => deduplicateOrders([newOrder, ...prev.filter(o => o.id !== newOrder.id && o.docId !== newOrder.id && o.id !== targetOrderId && o.docId !== targetOrderId)]));

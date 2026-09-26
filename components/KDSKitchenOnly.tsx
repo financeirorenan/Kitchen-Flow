@@ -7,6 +7,7 @@ import {
   Maximize2, Minimize2, Sun, Moon
 } from 'lucide-react';
 import { formatOrderNumber, getOrderNumericId, deduplicateOrders } from '../utils/deduplicate';
+import { logDiagnostic } from '../services/orderService';
 
 interface KDSKitchenOnlyProps {
   orders: Order[];
@@ -91,17 +92,12 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
 
   // Filter orders to only pending/preparing (to-be-produced)
   const kitchenOrders = useMemo(() => {
-    // Filtro estrito: apenas pedidos pendentes/preparando criados hoje e sem sub-comandas
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Filtro: apenas pedidos pendentes/preparando e sem sub-comandas
     const validOrders = deduplicateOrders(orders).filter(o => {
       if (!o) return false;
       if (o.isSubTicket || o.mergedIntoOrderId) return false;
       const isKitchenStatus = o.status === 'pending' || o.status === 'preparing';
-      if (!isKitchenStatus) return false;
-      const createdDate = safeParseDate(o.createdAt);
-      if (!createdDate) return false;
-      return createdDate >= today;
+      return isKitchenStatus;
     });
 
     // Se houver múltiplos registros de pedidos abertos para a mesma mesa no mesmo dia,
@@ -138,6 +134,23 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
 
     return result;
   }, [orders]);
+
+  // Log de diagnóstico de pedidos renderizados no KDS Cozinha
+  useEffect(() => {
+    if (kitchenOrders && kitchenOrders.length > 0) {
+      kitchenOrders.forEach(order => {
+        logDiagnostic('KDS_ORDER_RENDERED', {
+          tenant_id: order.tenantId,
+          store_id: order.storeId,
+          order_id: order.id,
+          status: order.status,
+          table: order.tableNumber,
+          items_count: order.items?.length || 0,
+          timestamp: new Date().toISOString()
+        });
+      });
+    }
+  }, [kitchenOrders]);
 
   // Extract all available product categories to serve as Kitchen Stations
   const stations = useMemo(() => {

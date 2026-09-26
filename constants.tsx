@@ -146,11 +146,11 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<string, Permission[]> = {
 };
 
 export const INITIAL_USERS: User[] = [
-  { id: 'u1', name: 'Julia Silva', email: 'julia@kitchenflowai.com', role: 'ADMIN', status: 'online', permissions: ROLE_DEFAULT_PERMISSIONS.ADMIN, createdAt: new Date('2024-01-10'), active: true },
-  { id: 'u2', name: 'Carlos Santos', email: 'carlos@kitchenflowai.com', role: 'MANAGER', status: 'online', permissions: ROLE_DEFAULT_PERMISSIONS.MANAGER, createdAt: new Date('2024-01-15'), active: true },
-  { id: 'u3', name: 'Ricardo Chef', email: 'ricardo@kitchenflowai.com', role: 'CHEF', status: 'offline', permissions: ROLE_DEFAULT_PERMISSIONS.CHEF, createdAt: new Date('2024-02-01'), active: true },
-  { id: 'u4', name: 'Maria Garçom', email: 'maria@kitchenflowai.com', role: 'WAITER', status: 'online', permissions: ROLE_DEFAULT_PERMISSIONS.WAITER, createdAt: new Date('2024-02-10'), active: true },
-  { id: 'u5', name: 'Paulo Caixa', email: 'paulo@kitchenflowai.com', role: 'CASHIER', status: 'offline', permissions: ROLE_DEFAULT_PERMISSIONS.CASHIER, createdAt: new Date('2024-02-15'), active: true },
+  { id: 'u1', tenantId: 'lojista', name: 'Julia Silva', email: 'julia@kitchenflowai.com', role: 'ADMIN', status: 'online', permissions: ROLE_DEFAULT_PERMISSIONS.ADMIN, createdAt: new Date('2024-01-10'), active: true },
+  { id: 'u2', tenantId: 'lojista', name: 'Carlos Santos', email: 'carlos@kitchenflowai.com', role: 'MANAGER', status: 'online', permissions: ROLE_DEFAULT_PERMISSIONS.MANAGER, createdAt: new Date('2024-01-15'), active: true },
+  { id: 'u3', tenantId: 'lojista', name: 'Ricardo Chef', email: 'ricardo@kitchenflowai.com', role: 'CHEF', status: 'offline', permissions: ROLE_DEFAULT_PERMISSIONS.CHEF, createdAt: new Date('2024-02-01'), active: true },
+  { id: 'u4', tenantId: 'lojista', name: 'Maria Garçom', email: 'maria@kitchenflowai.com', role: 'WAITER', status: 'online', permissions: ROLE_DEFAULT_PERMISSIONS.WAITER, createdAt: new Date('2024-02-10'), active: true },
+  { id: 'u5', tenantId: 'lojista', name: 'Paulo Caixa', email: 'paulo@kitchenflowai.com', role: 'CASHIER', status: 'offline', permissions: ROLE_DEFAULT_PERMISSIONS.CASHIER, createdAt: new Date('2024-02-15'), active: true },
 ];
 
 export const INITIAL_AUDIT_LOGS: AuditLog[] = [

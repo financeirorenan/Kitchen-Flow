@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { generateReceiptHtml, handlePrintOrder } from '../services/printService';
 import { getOrderNumericId, formatOrderNumber, deduplicateOrders } from '../utils/deduplicate';
+import { logDiagnostic, subscribeToDomainEvents } from '../services/orderService';
 import EditOrderModal from './EditOrderModal';
 
 interface KDSProps {
@@ -744,6 +745,8 @@ const KDS: React.FC<KDSProps> = memo(({
 
     // Validação estrita: O pedido deve ter sido criado no turno atual ou hoje
     const isOrderFromCurrentShiftOrToday = (o: Order): boolean => {
+      // Pedidos em fila de produção (pending ou preparing) NUNCA devem ser ocultados da cozinha!
+      if (o.status === 'pending' || o.status === 'preparing') return true;
       const created = safeParseDate(o.createdAt);
       if (!created) return false;
       if (isToday(created)) return true;
@@ -792,6 +795,23 @@ const KDS: React.FC<KDSProps> = memo(({
       }).sort(sortByLaunchOrder),
     };
   }, [filteredOrders, showCancelled, cashSession]);
+
+  // Log de diagnóstico de renderização no KDS em tempo real
+  React.useEffect(() => {
+    if (columns.preparing && columns.preparing.length > 0) {
+      columns.preparing.forEach(order => {
+        logDiagnostic('KDS_ORDER_RENDERED', {
+          tenant_id: order.tenantId,
+          store_id: order.storeId,
+          order_id: order.id,
+          status: order.status,
+          table: order.tableNumber,
+          items_count: order.items?.length || 0,
+          timestamp: new Date().toISOString()
+        });
+      });
+    }
+  }, [columns.preparing]);
 
   return (
     <div className="flex flex-col flex-1 bg-white rounded-2xl border border-slate-200 shadow-lg overflow-hidden text-slate-800 h-full min-h-0">
