@@ -683,7 +683,7 @@ const KDS: React.FC<KDSProps> = memo(({
     if (types.length === 3) return true;
     if (types.includes('delivery') && order.type === 'delivery') return true;
     if (types.includes('takeout') && (order.type === 'takeout' || order.type === 'counter')) return true;
-    if (types.includes('table') && (order.type === 'table' || (!order.type && !['delivery', 'takeout', 'counter'].includes(order.type)))) return true;
+    if (types.includes('table') && (order.type === 'table' || order.type === 'dine_in' || (!order.type && !['delivery', 'takeout', 'counter'].includes(order.type)))) return true;
     return false;
   }, []);
 
@@ -712,8 +712,8 @@ const KDS: React.FC<KDSProps> = memo(({
         const tableKey = String(order.tableNumber);
         if (tableOrdersMap.has(tableKey)) {
           const existing = tableOrdersMap.get(tableKey)!;
-          const mergedItems = [...existing.items];
-          for (const item of order.items) {
+          const mergedItems = [...(existing.items || [])];
+          for (const item of (order.items || [])) {
             const idx = mergedItems.findIndex(i => i.id === item.id || (i.productId === item.productId && i.name === item.name && (i.observation || '') === (item.observation || '')));
             if (idx !== -1) {
               mergedItems[idx] = { ...mergedItems[idx], ...item };
@@ -725,12 +725,12 @@ const KDS: React.FC<KDSProps> = memo(({
           existing.total = mergedItems.reduce((acc, i) => acc + (i.price * i.quantity), 0);
           continue;
         } else {
-          const clone = { ...order, items: [...order.items] };
+          const clone = { ...order, items: [...(order.items || [])] };
           tableOrdersMap.set(tableKey, clone);
           result.push(clone);
         }
       } else {
-        result.push(order);
+        result.push({ ...order, items: [...(order.items || [])] });
       }
     }
 
@@ -747,6 +747,8 @@ const KDS: React.FC<KDSProps> = memo(({
     const isOrderFromCurrentShiftOrToday = (o: Order): boolean => {
       // Pedidos em fila de produção (pending ou preparing) NUNCA devem ser ocultados da cozinha!
       if (o.status === 'pending' || o.status === 'preparing') return true;
+      // Pedidos prontos ou em entrega NUNCA devem ser ocultados do monitor logístico!
+      if (o.status === 'ready' || o.status === 'delivering') return true;
       const created = safeParseDate(o.createdAt);
       if (!created) return false;
       if (isToday(created)) return true;
@@ -773,9 +775,10 @@ const KDS: React.FC<KDSProps> = memo(({
     }
 
     return {
-      preparing: filteredOrders.filter(o => 
-        (o.status === 'preparing' || o.status === 'pending') && isOrderFromCurrentShiftOrToday(o)
-      ).sort(sortByLaunchOrder),
+      preparing: filteredOrders.filter(o => {
+        const isCooking = o.status === 'preparing' || o.status === 'pending' || ((o.kitchenStatus === 'preparing' || o.kitchenStatus === 'pending') && o.status !== 'ready' && o.status !== 'delivering' && o.status !== 'delivered');
+        return isCooking && isOrderFromCurrentShiftOrToday(o);
+      }).sort(sortByLaunchOrder),
       ready: filteredOrders.filter(o => 
         o.status === 'ready' && isOrderFromCurrentShiftOrToday(o)
       ).sort(sortByLaunchOrder),
@@ -785,6 +788,8 @@ const KDS: React.FC<KDSProps> = memo(({
       delivered: filteredOrders.filter(o => {
         const isDeliveredOrFinished = o.status === 'delivered' || o.status === 'finished';
         if (!isDeliveredOrFinished) return false;
+        // Don't show in delivered if still cooking in kitchen
+        if (o.kitchenStatus === 'preparing' || o.kitchenStatus === 'pending') return false;
         if (!isOrderFromCurrentShiftOrToday(o)) return false;
 
         const completionDate = safeParseDate(o.completedAt || o.finishedAt || o.deliveredAt || o.createdAt);

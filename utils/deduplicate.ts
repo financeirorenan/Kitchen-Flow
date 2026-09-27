@@ -20,23 +20,26 @@ export function deduplicateOrders(ordersList: Order[]): Order[] {
       return false;
     }
 
-    // 2. Secondary fingerprint check
+    // 2. Secondary fingerprint check (only for orders without strong unique IDs or identical payload mirrors)
     const parsedDate = safeParseDate(o.createdAt);
     const timeMs = parsedDate ? parsedDate.getTime() : 0;
     
-    // Round time to 5-second bucket to catch rapid duplicate posts/syncs
-    const timeBucket = Math.floor(timeMs / 5000);
-    const totalAmount = typeof o.total === 'number' ? o.total.toFixed(2) : '0.00';
-    const signature = `${o.tenantId || ''}_${o.type || ''}_${o.tableNumber ?? ''}_${o.dailyNumber ?? ''}_${totalAmount}_${timeBucket}`;
+    if (timeMs > 0 && o.items && o.items.length > 0) {
+      // Create a deterministic item fingerprint
+      const itemsFingerprint = o.items.map(i => `${i.productId || i.name}_${i.quantity}`).sort().join('|');
+      const timeBucket = Math.floor(timeMs / 4000);
+      const totalAmount = typeof o.total === 'number' ? o.total.toFixed(2) : '0.00';
+      const signature = `${o.tenantId || ''}_${o.type || ''}_${o.tableNumber ?? ''}_${totalAmount}_${itemsFingerprint}_${timeBucket}`;
 
-    if (signature && seenSignatures.has(signature)) {
-      console.warn(`[Deduplication] Filtered out duplicate order: ${primaryId} (signature: ${signature})`);
-      return false;
+      if (seenSignatures.has(signature)) {
+        console.warn(`[Deduplication] Filtered out mirror duplicate order: ${primaryId} (signature: ${signature})`);
+        return false;
+      }
+      seenSignatures.add(signature);
     }
 
     if (primaryId) seenIds.add(primaryId);
     if (o.docId) seenIds.add(String(o.docId));
-    seenSignatures.add(signature);
     return true;
   });
 }

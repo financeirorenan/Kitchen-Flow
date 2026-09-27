@@ -2761,17 +2761,55 @@ const App: React.FC = () => {
       if (event.payload && (
         event.event === 'ORDER_CREATED' || 
         event.event === 'ORDER_SENT_TO_KITCHEN' || 
+        event.event === 'ORDER_ITEM_ADDED' ||
         event.event === 'ORDER_UPDATED' || 
         event.event === 'ORDER_STATUS_CHANGED' || 
-        event.event === 'KITCHEN_STATUS_CHANGED'
+        event.event === 'KITCHEN_STATUS_CHANGED' ||
+        event.event === 'TABLE_CLOSED'
       )) {
-        const orderData = event.payload as Order;
+        const rawPayload = event.payload;
+        const targetId = rawPayload.id || rawPayload.orderId || event.orderId;
+        if (!targetId) return;
+
         setOrders(prev => {
-          const exists = prev.some(o => o.id === orderData.id || (orderData.docId && o.docId === orderData.docId));
-          if (exists) {
-            return prev.map(o => (o.id === orderData.id || (orderData.docId && o.docId === orderData.docId)) ? { ...o, ...orderData } : o);
+          const existingIdx = prev.findIndex(o => o.id === targetId || o.docId === targetId);
+          if (existingIdx !== -1) {
+            const existing = prev[existingIdx];
+            const merged: Order = {
+              ...existing,
+              ...rawPayload,
+              id: existing.id,
+              items: rawPayload.items && Array.isArray(rawPayload.items) && rawPayload.items.length > 0 
+                ? rawPayload.items 
+                : (existing.items || [])
+            };
+            const updated = [...prev];
+            updated[existingIdx] = merged;
+            return updated;
           }
-          return deduplicateOrders([orderData, ...prev]);
+
+          // Se for novo pedido vindo do barramento de eventos
+          if (rawPayload.items && Array.isArray(rawPayload.items)) {
+            const newOrder: Order = {
+              id: targetId,
+              tenantId: event.tenantId,
+              storeId: event.storeId,
+              status: rawPayload.status || 'preparing',
+              kitchenStatus: rawPayload.kitchenStatus || 'pending',
+              type: rawPayload.type || (event.tableNumber ? 'table' : 'takeout'),
+              tableNumber: rawPayload.tableNumber || event.tableNumber,
+              items: rawPayload.items,
+              total: rawPayload.total || 0,
+              createdAt: rawPayload.createdAt ? new Date(rawPayload.createdAt) : new Date(),
+              updatedAt: new Date(),
+              source: rawPayload.source || event.source || 'pos',
+              isManual: true,
+              ...rawPayload
+            };
+            return deduplicateOrders([newOrder, ...prev]);
+          }
+
+          return prev;
         });
       }
     });
@@ -3410,12 +3448,7 @@ const App: React.FC = () => {
         userName: currentUserData?.name,
         userRole: currentUserData?.role,
         source: 'pos',
-        payload: {
-          orderId: activeExistingOrder.id,
-          batchNumber: nextBatchNumber,
-          newItemsCount: items.length,
-          total: finalOrderTotal
-        }
+        payload: updatedOrder
       });
 
       addLog('u1', 'COZINHA', `Pedido #${activeExistingOrder.dailyNumber || activeExistingOrder.id.slice(-4)} atualizado com novos itens na cozinha.`);
@@ -3553,14 +3586,7 @@ const App: React.FC = () => {
       userName: currentUserData?.name,
       userRole: currentUserData?.role,
       source: 'pos',
-      payload: {
-        orderId: kitchenOrder.id,
-        tableNumber: displayTableNumber,
-        status: kitchenOrder.status,
-        kitchenStatus: kitchenOrder.kitchenStatus,
-        total: kitchenOrder.total,
-        itemsCount: kitchenOrder.items.length
-      }
+      payload: kitchenOrder
     });
 
     addLog('u1', 'COZINHA', `Pedido enviado para cozinha: ${isCounter ? `Balcão (${effectiveCustomerName || 'Identificado'})` : `Mesa ${displayTableNumber}`}`);
@@ -4231,6 +4257,10 @@ const App: React.FC = () => {
     const numericId = typeof id === 'string' ? Number(id) : id;
 
     const tableUpdates: Record<string, any> = { items, status, total };
+    const existingTable = (!isCounter ? tables : counterOrders).find(t => t.id === id || t.id === numericId || (t as any).docId === id);
+    if (existingTable?.currentOrderId) {
+      tableUpdates.currentOrderId = existingTable.currentOrderId;
+    }
     if (partialPayments !== undefined) {
       tableUpdates.partialPayments = partialPayments;
     }
@@ -4670,14 +4700,20 @@ const App: React.FC = () => {
 
     const activeStatus = activeOrderObj?.status;
 
-    // Regra Operacional: Para pedidos de Balcão e Delivery, o lançamento financeiro/pagamento
-    // NÃO DEVE alterar o status operacional para 'finished'!
-    // O pedido deve continuar em seu status operacional ativo (ex: 'pending', 'preparing', 'ready', 'delivering')
-    // para que a cozinha e o fluxo de entregas possam produzi-lo e entregá-lo normalmente.
-    const isCounterOrDelivery = isCounter || isRealDelivery;
-    const determinedStatus: OrderStatus = isCounterOrDelivery 
-      ? (activeStatus && activeStatus !== 'finished' && activeStatus !== 'cancelled' ? activeStatus : 'pending') 
-      : 'finished';
+    // Regra Operacional: Para qualquer pedido (Mesa, Balcão ou Delivery) que ainda estiver em produção/entrega,
+    // o pagamento/fechamento financeiro registra o pagamento (isSettled: true, paymentStatus: 'paid'),
+    // MAS PRESERVA ou inicia o status de preparo na Cozinha (pending, preparing ou ready), para que os cozinheiros
+    // e entregadores continuem vendo o pedido no KDS até a entrega final!
+    const isAlreadyFinished = activeStatus === 'delivered' || activeStatus === 'finished';
+    const determinedStatus: OrderStatus = isAlreadyFinished
+      ? 'finished'
+      : (activeStatus === 'ready' || activeStatus === 'delivering')
+        ? activeStatus
+        : 'preparing';
+
+    const determinedKitchenStatus = isAlreadyFinished
+      ? 'delivered'
+      : (activeStatus === 'ready' ? 'ready' : (activeOrderObj?.kitchenStatus || 'preparing'));
 
     const preparedItems = table.items.map(i => ({ ...i, sentToKitchen: true }));
 
@@ -4713,7 +4749,7 @@ const App: React.FC = () => {
       source: table.currentOrderId ? (orders.find(o => o.id === table.currentOrderId)?.source || 'pos') : (pdvEditOrder?.source || 'pos'),
       isManual: true,
       isSettled: true,
-      kitchenStatus: determinedStatus === 'finished' ? 'delivered' : (activeOrderObj?.kitchenStatus || 'preparing'),
+      kitchenStatus: determinedKitchenStatus,
       finishedAt: determinedStatus === 'finished' ? new Date() : (activeOrderObj?.finishedAt || undefined),
       completedAt: determinedStatus === 'finished' ? new Date() : (activeOrderObj?.completedAt || undefined),
       updatedAt: new Date()
@@ -4749,13 +4785,7 @@ const App: React.FC = () => {
       userName: currentUserData?.name,
       userRole: currentUserData?.role,
       source: 'pos',
-      payload: {
-        orderId: newOrder.id,
-        tableNumber: tableNumber,
-        total: finalTotal,
-        paymentMethod: method,
-        status: determinedStatus
-      }
+      payload: newOrder
     });
 
     // 1. UPDATE LOCAL REACT STATE INSTANTLY FOR OPTIMISTIC FEEDBACK
@@ -4947,7 +4977,7 @@ const App: React.FC = () => {
       if (relatedOrdersToUpdate.length > 0) {
         const now = new Date();
         for (const ro of relatedOrdersToUpdate) {
-          const targetStatus = isCounterOrDelivery ? (ro.status && ro.status !== 'finished' && ro.status !== 'cancelled' ? ro.status : 'pending') : 'finished';
+          const targetStatus = isAlreadyFinished ? 'finished' : (ro.status && ro.status !== 'finished' && ro.status !== 'cancelled' ? ro.status : 'preparing');
           const updates: Partial<Order> = {
             status: targetStatus,
             isSettled: true,
@@ -7084,7 +7114,7 @@ const App: React.FC = () => {
           adminSettings={adminSettings}
           digitalMenuSettings={digitalMenuSettings}
           cashSession={cashSession} 
-          tenantId={viewingTenantId || currentUserData?.tenantId || 't1'}
+          tenantId={getCanonicalTenantId(currentUserData, viewingTenantId, tenantData)}
           onUpdateTable={handleUpdateTable} 
           onAddTable={handleAddTable}
           onDeleteTable={handleDeleteTable}

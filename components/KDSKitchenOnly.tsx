@@ -96,7 +96,8 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
     const validOrders = deduplicateOrders(orders).filter(o => {
       if (!o) return false;
       if (o.isSubTicket || o.mergedIntoOrderId) return false;
-      const isKitchenStatus = o.status === 'pending' || o.status === 'preparing';
+      if (o.status === 'cancelled' || o.status === 'delivered') return false;
+      const isKitchenStatus = o.status === 'pending' || o.status === 'preparing' || o.kitchenStatus === 'pending' || o.kitchenStatus === 'preparing';
       return isKitchenStatus;
     });
 
@@ -110,8 +111,8 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
         const tableKey = String(order.tableNumber);
         if (tableOrdersMap.has(tableKey)) {
           const existing = tableOrdersMap.get(tableKey)!;
-          const mergedItems = [...existing.items];
-          for (const item of order.items) {
+          const mergedItems = [...(existing.items || [])];
+          for (const item of (order.items || [])) {
             const idx = mergedItems.findIndex(i => i.id === item.id || (i.productId === item.productId && i.name === item.name && (i.observation || '') === (item.observation || '')));
             if (idx !== -1) {
               mergedItems[idx] = { ...mergedItems[idx], ...item };
@@ -123,12 +124,12 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
           existing.total = mergedItems.reduce((acc, i) => acc + (i.price * i.quantity), 0);
           continue;
         } else {
-          const clone = { ...order, items: [...order.items] };
+          const clone = { ...order, items: [...(order.items || [])] };
           tableOrdersMap.set(tableKey, clone);
           result.push(clone);
         }
       } else {
-        result.push(order);
+        result.push({ ...order, items: [...(order.items || [])] });
       }
     }
 
@@ -184,9 +185,9 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
       // 1. Filter by order type (Multi-select)
       if (selectedTypes.length < 3) {
         const matches = (
-          (selectedTypes.includes('delivery') && order.type === 'delivery') ||
+          (selectedTypes.includes('delivery') && (order.type === 'delivery')) ||
           (selectedTypes.includes('takeout') && (order.type === 'takeout' || order.type === 'counter')) ||
-          (selectedTypes.includes('table') && (order.type === 'table' || (!order.type && !['delivery', 'takeout', 'counter'].includes(order.type))))
+          (selectedTypes.includes('table') && (order.type === 'table' || order.type === 'dine_in' || (!order.type && !['delivery', 'takeout', 'counter'].includes(order.type))))
         );
         if (!matches) return false;
       }
@@ -194,7 +195,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
       // 2. Filter by station (category)
       if (selectedStation !== 'all') {
         // Only show order if it contains at least one item from the selected category/station
-        const hasMatchingItem = order.items.some(item => {
+        const hasMatchingItem = (order.items || []).some(item => {
           const prod = products.find(p => p.id === item.productId || p.name.toLowerCase() === item.name.split(' (')[0].trim().toLowerCase());
           return prod?.category === selectedStation;
         });
@@ -205,8 +206,10 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
     });
 
     return list.sort((a, b) => {
-      const timeA = safeParseDate(a.createdAt).getTime();
-      const timeB = safeParseDate(b.createdAt).getTime();
+      const dateA = safeParseDate(a.createdAt);
+      const dateB = safeParseDate(b.createdAt);
+      const timeA = dateA ? dateA.getTime() : 0;
+      const timeB = dateB ? dateB.getTime() : 0;
       if (timeA !== timeB) return timeA - timeB;
       const dailyA = a.dailyNumber || 0;
       const dailyB = b.dailyNumber || 0;
@@ -502,7 +505,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
               {filteredKitchenOrders.map(order => {
                 const isPreparing = order.status === 'preparing';
                 
-                const itemsToDisplay = order.items;
+                const itemsToDisplay = order.items || [];
                 if (itemsToDisplay.length === 0) return null;
 
                 const orderCheckedState = checkedItems[order.id] || {};

@@ -45,41 +45,49 @@ export const getCanonicalTenantId = (
   viewingTenantId?: string | null,
   tenantData?: any
 ): string => {
+  // Helper to map legacy/demo placeholder IDs to the active database tenant
+  const normalize = (id?: string | null): string | null => {
+    if (!id || typeof id !== 'string') return null;
+    const clean = id.trim();
+    if (!clean || clean === 'GLOBAL') return null;
+    if (clean === 't1') {
+      return 'lojista';
+    }
+    return clean;
+  };
+
   // 1. Explicit viewing tenant (Admin Support / Multi-Tenant selector)
-  if (viewingTenantId && viewingTenantId.trim()) {
-    return viewingTenantId.trim();
-  }
+  const normViewing = normalize(viewingTenantId);
+  if (normViewing) return normViewing;
 
   // 2. User's assigned tenant
-  if (currentUserData?.tenantId && currentUserData.tenantId !== 'GLOBAL' && currentUserData.tenantId.trim()) {
-    return currentUserData.tenantId.trim();
-  }
+  const normUser = normalize(currentUserData?.tenantId);
+  if (normUser) return normUser;
 
   // 3. Loaded tenant data
-  if (tenantData?.id && tenantData.id.trim()) {
-    return tenantData.id.trim();
-  }
+  const normTenant = normalize(tenantData?.id);
+  if (normTenant) return normTenant;
 
   // 4. Cached tenant from localStorage
   try {
     const cachedTenant = localStorage.getItem('kitchenflow_cached_tenant_data');
     if (cachedTenant) {
       const parsed = JSON.parse(cachedTenant);
-      if (parsed?.id && parsed.id.trim()) return parsed.id.trim();
+      const normCachedTenant = normalize(parsed?.id);
+      if (normCachedTenant) return normCachedTenant;
     }
     const cachedUser = localStorage.getItem('kitchenflow_cached_user');
     if (cachedUser) {
       const parsed = JSON.parse(cachedUser);
-      if (parsed?.tenantId && parsed.tenantId !== 'GLOBAL' && parsed.tenantId.trim()) {
-        return parsed.tenantId.trim();
-      }
+      const normCachedUser = normalize(parsed?.tenantId);
+      if (normCachedUser) return normCachedUser;
     }
   } catch (e) {
     console.warn("[OrderService] Erro ao ler tenant do cache:", e);
   }
 
-  // 5. Default production merchant ID
-  return 'lojista';
+  // 5. Default production merchant ID in Firestore
+  return 'default-tenant';
 };
 
 export const getCanonicalStoreId = (tenantId: string, storeId?: string | null): string => {
@@ -397,13 +405,7 @@ export const createOrUpdateOrderAtBackend = async (
     userName: params.userName,
     userRole: params.userRole,
     source: params.source,
-    payload: {
-      orderId,
-      status: orderData.status,
-      kitchenStatus: orderData.kitchenStatus,
-      total: orderData.total,
-      itemsCount: preparedItems.length
-    }
+    payload: orderData
   });
 
   return orderData;

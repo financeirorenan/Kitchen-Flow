@@ -110,7 +110,7 @@ export const INITIAL_RAW_MATERIALS: RawMaterial[] = [
 export const INITIAL_TABLES: Table[] = Array.from({ length: 12 }, (_, i) => ({
   id: i + 1,
   number: i + 1,
-  tenantId: 't1',
+  tenantId: 'default-tenant',
   status: 'available',
   items: [],
   total: 0
@@ -119,7 +119,7 @@ export const INITIAL_TABLES: Table[] = Array.from({ length: 12 }, (_, i) => ({
 export const INITIAL_COUNTER_ORDERS: Table[] = Array.from({ length: 5 }, (_, i) => ({
   id: i + 1000, // IDs a partir de 1000 para balcão para correta identificação no KDS
   number: i + 1,
-  tenantId: 't1',
+  tenantId: 'default-tenant',
   status: 'available',
   items: [],
   total: 0
@@ -127,36 +127,36 @@ export const INITIAL_COUNTER_ORDERS: Table[] = Array.from({ length: 5 }, (_, i) 
 
 // Added missing createdAt property to Courier initial data
 export const INITIAL_COURIERS: Courier[] = [
-  { id: 'c1', tenantId: 't1', name: 'João Silva', status: 'available', phone: '(11) 98888-7777', active: true, createdAt: new Date() },
-  { id: 'c2', tenantId: 't1', name: 'Marcos Oliveira', status: 'delivering', phone: '(11) 97777-6666', active: true, createdAt: new Date() },
+  { id: 'c1', tenantId: 'default-tenant', name: 'João Silva', status: 'available', phone: '(11) 98888-7777', active: true, createdAt: new Date() },
+  { id: 'c2', tenantId: 'default-tenant', name: 'Marcos Oliveira', status: 'delivering', phone: '(11) 97777-6666', active: true, createdAt: new Date() },
 ];
 
 export const ROLE_DEFAULT_PERMISSIONS: Record<string, Permission[]> = {
-  ADMIN: ['dashboard_view', 'pos_access', 'tables_manage', 'kds_view', 'delivery_manage', 'inventory_edit', 'finance_view', 'cmv_analysis', 'users_manage', 'digital_menu_manage', 'admin_settings_manage', 'fiscal_manage', 'customers_manage'],
-  MANAGER: ['dashboard_view', 'pos_access', 'tables_manage', 'kds_view', 'delivery_manage', 'inventory_edit', 'cmv_analysis'],
-  WAITER: ['pos_access', 'tables_manage'],
-  CASHIER: ['pos_access', 'tables_manage', 'delivery_manage'],
-  CHEF: ['kds_view', 'inventory_edit'],
-  KDS: ['kds_kitchen_only_view'],
+  ADMIN: ['dashboard_view', 'pos_access', 'tables_manage', 'kds_view', 'kds_kitchen_only_view', 'delivery_manage', 'inventory_edit', 'finance_view', 'cmv_analysis', 'users_manage', 'digital_menu_manage', 'admin_settings_manage', 'fiscal_manage', 'customers_manage'],
+  MANAGER: ['dashboard_view', 'pos_access', 'tables_manage', 'kds_view', 'kds_kitchen_only_view', 'delivery_manage', 'inventory_edit', 'cmv_analysis'],
+  WAITER: ['pos_access', 'tables_manage', 'kds_view'],
+  CASHIER: ['pos_access', 'tables_manage', 'delivery_manage', 'kds_view', 'kds_kitchen_only_view'],
+  CHEF: ['kds_view', 'kds_kitchen_only_view', 'inventory_edit'],
+  KDS: ['kds_kitchen_only_view', 'kds_view'],
   COURIER: ['courier_app_access'],
-  OWNER: ['dashboard_view', 'pos_access', 'tables_manage', 'kds_view', 'delivery_manage', 'inventory_edit', 'finance_view', 'cmv_analysis', 'users_manage', 'digital_menu_manage', 'admin_settings_manage', 'fiscal_manage', 'customers_manage'],
+  OWNER: ['dashboard_view', 'pos_access', 'tables_manage', 'kds_view', 'kds_kitchen_only_view', 'delivery_manage', 'inventory_edit', 'finance_view', 'cmv_analysis', 'users_manage', 'digital_menu_manage', 'admin_settings_manage', 'fiscal_manage', 'customers_manage'],
   SAAS_ADMIN: ['dashboard_view', 'pos_access', 'tables_manage', 'kds_view', 'kds_kitchen_only_view', 'delivery_manage', 'inventory_edit', 'finance_view', 'cmv_analysis', 'users_manage', 'digital_menu_manage', 'admin_settings_manage', 'fiscal_manage', 'customers_manage'],
   CUSTOMER: [],
   STOCK_ANALYST: ['dashboard_view', 'inventory_edit', 'cmv_analysis'],
 };
 
 export const INITIAL_USERS: User[] = [
-  { id: 'u1', tenantId: 'lojista', name: 'Julia Silva', email: 'julia@kitchenflowai.com', role: 'ADMIN', status: 'online', permissions: ROLE_DEFAULT_PERMISSIONS.ADMIN, createdAt: new Date('2024-01-10'), active: true },
-  { id: 'u2', tenantId: 'lojista', name: 'Carlos Santos', email: 'carlos@kitchenflowai.com', role: 'MANAGER', status: 'online', permissions: ROLE_DEFAULT_PERMISSIONS.MANAGER, createdAt: new Date('2024-01-15'), active: true },
-  { id: 'u3', tenantId: 'lojista', name: 'Ricardo Chef', email: 'ricardo@kitchenflowai.com', role: 'CHEF', status: 'offline', permissions: ROLE_DEFAULT_PERMISSIONS.CHEF, createdAt: new Date('2024-02-01'), active: true },
-  { id: 'u4', tenantId: 'lojista', name: 'Maria Garçom', email: 'maria@kitchenflowai.com', role: 'WAITER', status: 'online', permissions: ROLE_DEFAULT_PERMISSIONS.WAITER, createdAt: new Date('2024-02-10'), active: true },
-  { id: 'u5', tenantId: 'lojista', name: 'Paulo Caixa', email: 'paulo@kitchenflowai.com', role: 'CASHIER', status: 'offline', permissions: ROLE_DEFAULT_PERMISSIONS.CASHIER, createdAt: new Date('2024-02-15'), active: true },
+  { id: 'u1', tenantId: 'default-tenant', name: 'Julia Silva', email: 'julia@kitchenflowai.com', role: 'ADMIN', status: 'online', permissions: ROLE_DEFAULT_PERMISSIONS.ADMIN, createdAt: new Date('2024-01-10'), active: true },
+  { id: 'u2', tenantId: 'default-tenant', name: 'Carlos Santos', email: 'carlos@kitchenflowai.com', role: 'MANAGER', status: 'online', permissions: ROLE_DEFAULT_PERMISSIONS.MANAGER, createdAt: new Date('2024-01-15'), active: true },
+  { id: 'u3', tenantId: 'default-tenant', name: 'Ricardo Chef', email: 'ricardo@kitchenflowai.com', role: 'CHEF', status: 'offline', permissions: ROLE_DEFAULT_PERMISSIONS.CHEF, createdAt: new Date('2024-02-01'), active: true },
+  { id: 'u4', tenantId: 'default-tenant', name: 'Maria Garçom', email: 'maria@kitchenflowai.com', role: 'WAITER', status: 'online', permissions: ROLE_DEFAULT_PERMISSIONS.WAITER, createdAt: new Date('2024-02-10'), active: true },
+  { id: 'u5', tenantId: 'default-tenant', name: 'Paulo Caixa', email: 'paulo@kitchenflowai.com', role: 'CASHIER', status: 'offline', permissions: ROLE_DEFAULT_PERMISSIONS.CASHIER, createdAt: new Date('2024-02-15'), active: true },
 ];
 
 export const INITIAL_AUDIT_LOGS: AuditLog[] = [
-  { id: '1', tenantId: 't1', userId: 'u1', userName: 'Julia Silva', userRole: 'ADMIN', action: 'LOGIN', description: 'Realizou login no sistema', timestamp: new Date(Date.now() - 1000 * 60 * 15) },
-  { id: '2', tenantId: 't1', userId: 'u5', userName: 'Paulo Caixa', userRole: 'CASHIER', action: 'VENDA', description: 'Finalizou pedido #34a1 (R$ 142.50)', timestamp: new Date(Date.now() - 1000 * 60 * 45) },
-  { id: '3', tenantId: 't1', userId: 'u2', userName: 'Carlos Santos', userRole: 'MANAGER', action: 'ESTOQUE', description: 'Ajustou estoque de Cerveja IPA (+24 un)', timestamp: new Date(Date.now() - 1000 * 60 * 120) },
-  { id: '4', tenantId: 't1', userId: 'u3', userName: 'Ricardo Chef', userRole: 'CHEF', action: 'KDS', description: 'Marcou pedido #bc22 como PRONTO', timestamp: new Date(Date.now() - 1000 * 60 * 180) },
-  { id: '5', tenantId: 't1', userId: 'u4', userName: 'Maria Garçom', userRole: 'WAITER', action: 'MESA', description: 'Abriu mesa #04', timestamp: new Date(Date.now() - 1000 * 60 * 240) },
+  { id: '1', tenantId: 'default-tenant', userId: 'u1', userName: 'Julia Silva', userRole: 'ADMIN', action: 'LOGIN', description: 'Realizou login no sistema', timestamp: new Date(Date.now() - 1000 * 60 * 15) },
+  { id: '2', tenantId: 'default-tenant', userId: 'u5', userName: 'Paulo Caixa', userRole: 'CASHIER', action: 'VENDA', description: 'Finalizou pedido #34a1 (R$ 142.50)', timestamp: new Date(Date.now() - 1000 * 60 * 45) },
+  { id: '3', tenantId: 'default-tenant', userId: 'u2', userName: 'Carlos Santos', userRole: 'MANAGER', action: 'ESTOQUE', description: 'Ajustou estoque de Cerveja IPA (+24 un)', timestamp: new Date(Date.now() - 1000 * 60 * 120) },
+  { id: '4', tenantId: 'default-tenant', userId: 'u3', userName: 'Ricardo Chef', userRole: 'CHEF', action: 'KDS', description: 'Marcou pedido #bc22 como PRONTO', timestamp: new Date(Date.now() - 1000 * 60 * 180) },
+  { id: '5', tenantId: 'default-tenant', userId: 'u4', userName: 'Maria Garçom', userRole: 'WAITER', action: 'MESA', description: 'Abriu mesa #04', timestamp: new Date(Date.now() - 1000 * 60 * 240) },
 ];

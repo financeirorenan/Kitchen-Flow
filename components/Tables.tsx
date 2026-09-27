@@ -1356,7 +1356,7 @@ const Tables: React.FC<TablesProps> = memo(
             quantity: newItems[existingIndex].quantity + qty,
           };
         } else {
-          // Validate category conflict
+          // Validate category conflict (log warning instead of blocking window.confirm)
           const nameConflict = selectedTable.items.find((item) => {
             const otherProduct = products.find((p) => p.id === item.productId);
             return (
@@ -1366,11 +1366,7 @@ const Tables: React.FC<TablesProps> = memo(
             );
           });
           if (nameConflict) {
-            const otherCat = products.find((p) => p.id === nameConflict.productId)?.category || "Outra";
-            const confirmAdd = window.confirm(
-              `Atenção: Você está lançando "${product.name}" da categoria "${product.category}", mas já existe um item com o mesmo nome na categoria "${otherCat}" no pedido. Deseja realmente lançar este item?`
-            );
-            if (!confirmAdd) return;
+            console.log(`[PDV] Lançando item com mesmo nome em categorias distintas: ${product.name}`);
           }
 
           newItems = [
@@ -1640,10 +1636,8 @@ const Tables: React.FC<TablesProps> = memo(
       if (!selectedTable || selectedTable.items.length === 0) return;
 
       const unsentItems = selectedTable.items.filter((i) => !i.sentToKitchen);
-      if (unsentItems.length === 0) {
-        alert("Todos os itens já foram enviados para a cozinha.");
-        return;
-      }
+      // Se não houver itens pendentes, reenviamos todos os itens da comanda/mesa para garantir sincronização no KDS
+      const itemsToSend = unsentItems.length > 0 ? unsentItems : selectedTable.items;
 
       const deliveryFeeVal = isDeliveryOrder && isCounterContext ? parseCurrency(deliveryFeeInput) : 0;
       const customerData = {
@@ -1658,7 +1652,7 @@ const Tables: React.FC<TablesProps> = memo(
       setIsSendingToKitchen(true);
       // Se estivermos em modo de edição de pedido (pdvEditOrder), usar o ID do pedido diretamente
       const targetId = pdvEditOrder ? pdvEditOrder.id : selectedTable.id;
-      onSendToKitchen(targetId, unsentItems, isCounterContext, customerData);
+      onSendToKitchen(targetId, itemsToSend, isCounterContext, customerData);
 
       // Marcar itens como enviados no estado local
       const updatedItems = selectedTable.items.map((item) => ({
