@@ -1519,6 +1519,46 @@ const App: React.FC = () => {
             });
             return deduplicateOrders(updated);
           });
+
+          // Sincronizar comandas de balcão ativas em tempo real para múltiplos terminais e servidor
+          setCounterOrders(prev => {
+            const activeUnsettled = items.filter((o: any) =>
+              o && 
+              (o.type === 'takeout' || o.type === 'delivery' || o.type === 'counter' || o.counterId || (!o.tableNumber && o.type !== 'table')) &&
+              o.status !== 'cancelled' && 
+              o.status !== 'finished' && 
+              !o.isSettled && 
+              o.paymentStatus !== 'paid'
+            );
+            if (activeUnsettled.length === 0) return prev;
+            const updatedCounters = [...prev];
+            activeUnsettled.forEach((ord: any) => {
+              const counterId = ord.counterId || ord.id;
+              const idx = updatedCounters.findIndex(c => c && (c.id === counterId || String(c.id) === String(counterId) || c.currentOrderId === ord.id));
+              const counterObj: Table = {
+                id: counterId,
+                number: ord.dailyNumber || (typeof counterId === 'number' ? counterId : 1),
+                status: 'occupied',
+                items: ord.items || [],
+                total: ord.total || 0,
+                tenantId: ord.tenantId,
+                currentOrderId: ord.id,
+                customerName: ord.customerName,
+                customerPhone: ord.customerPhone,
+                customerAddress: ord.customerAddress,
+                deliveryFee: ord.deliveryFee,
+                isDelivery: ord.type === 'delivery',
+                customerId: ord.customerId,
+                partialPayments: ord.partialPayments
+              };
+              if (idx > -1) {
+                updatedCounters[idx] = { ...updatedCounters[idx], ...counterObj };
+              } else {
+                updatedCounters.push(counterObj);
+              }
+            });
+            return updatedCounters;
+          });
         } else if (col.name === 'users') {
           const seenEmails = new Set<string>();
           const seenIds = new Set<string>();
@@ -2534,12 +2574,22 @@ const App: React.FC = () => {
       return;
     }
 
-    // Query estritamente isolada por tenantId do lojista para sincronização em tempo real de todos os pedidos operacionais
-    const q = query(
-      collection(db, 'orders'),
-      where('tenantId', '==', effectiveTenantId),
-      limit(100)
-    );
+    // Query estritamente isolada por tenantId do lojista para sincronização em tempo real de todos os pedidos operacionais ordenados pelos mais recentes
+    let q;
+    try {
+      q = query(
+        collection(db, 'orders'),
+        where('tenantId', '==', effectiveTenantId),
+        orderBy('createdAt', 'desc'),
+        limit(150)
+      );
+    } catch (_qErr) {
+      q = query(
+        collection(db, 'orders'),
+        where('tenantId', '==', effectiveTenantId),
+        limit(150)
+      );
+    }
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       snapshot.docChanges().forEach(async (change) => {
@@ -3362,6 +3412,9 @@ const App: React.FC = () => {
       const updates: Partial<Order> = {
         tenantId: effectiveTenantId,
         storeId: canonicalStoreId,
+        tableNumber: activeExistingOrder.tableNumber || (isCounter 
+          ? (effectiveCustomerName ? `Balcão (${effectiveCustomerName})` : (tableInfo?.number ? `Balcão ${tableInfo.number}` : 'Balcão')) 
+          : displayTableNumber),
         items: existingItems,
         total: finalOrderTotal,
         status: activeExistingOrder.status === 'ready' ? 'preparing' : activeExistingOrder.status,
@@ -3458,7 +3511,9 @@ const App: React.FC = () => {
     // Criar pedido KDS inicial se não houver nenhum pedido ativo
     const rawKitchenOrder: Order = {
       id: `KDS-${Math.random().toString(36).substr(2, 4).toUpperCase()}`,
-      tableNumber: isCounter ? undefined : displayTableNumber,
+      tableNumber: isCounter 
+        ? (effectiveCustomerName ? `Balcão (${effectiveCustomerName})` : (tableInfo?.number ? `Balcão ${tableInfo.number}` : 'Balcão')) 
+        : displayTableNumber,
       type: isCounter ? (effectiveIsDelivery ? 'delivery' : 'takeout') : 'table',
       deliveryMethod: effectiveIsDelivery ? 'entrega' : (isCounter ? 'retirada' : undefined),
       customerName: effectiveCustomerName,
@@ -3488,7 +3543,7 @@ const App: React.FC = () => {
       tenant_id: effectiveTenantId,
       store_id: canonicalStoreId,
       order_id: kitchenOrder.id,
-      table_number: displayTableNumber,
+      table_number: kitchenOrder.tableNumber,
       type: kitchenOrder.type,
       status: kitchenOrder.status,
       kitchen_status: kitchenOrder.kitchenStatus,
@@ -3499,17 +3554,29 @@ const App: React.FC = () => {
 
     // 1. Instant optimistic state updates
     if (isCounter) {
-      setCounterOrders(prev => prev.map(t => (t.id === tableId || String(t.id) === String(tableId)) ? { 
-        ...t, 
-        currentOrderId: kitchenOrder.id,
-        customerName: effectiveCustomerName || t.customerName,
-        customerPhone: effectiveCustomerPhone || t.customerPhone,
-        customerAddress: effectiveCustomerAddress || t.customerAddress,
-        customerId: effectiveCustomerId || t.customerId,
-        deliveryFee: effectiveDeliveryFee,
-        isDelivery: effectiveIsDelivery,
-        items: t.items.map(i => ({ ...i, sentToKitchen: true }))
-      } : t));
+      setCounterOrders(prev => {
+        const targetCounterId = tableInfo?.id || tableId;
+        const exists = prev.some(t => t.id === targetCounterId || String(t.id) === String(targetCounterId));
+        const updatedTableObj: Table = {
+          id: targetCounterId,
+          number: tableInfo?.number || (typeof targetCounterId === 'number' ? targetCounterId : prev.length + 1),
+          status: 'occupied',
+          currentOrderId: kitchenOrder.id,
+          customerName: effectiveCustomerName,
+          customerPhone: effectiveCustomerPhone,
+          customerAddress: effectiveCustomerAddress,
+          customerId: effectiveCustomerId,
+          deliveryFee: effectiveDeliveryFee,
+          isDelivery: effectiveIsDelivery,
+          items: items.map(i => ({ ...i, sentToKitchen: true })),
+          total: kitchenOrder.total,
+          tenantId: effectiveTenantId
+        };
+        if (exists) {
+          return prev.map(t => (t.id === targetCounterId || String(t.id) === String(targetCounterId)) ? { ...t, ...updatedTableObj } : t);
+        }
+        return [...prev, updatedTableObj];
+      });
     } else {
       setTables(prev => prev.map(t => (t.id === tableId || (t as any).docId === tableId || t.number === displayTableNumber) ? { 
         ...t, 
@@ -3626,11 +3693,11 @@ const App: React.FC = () => {
   };
 
   const handleUpdateOrderStatus = async (id: string, status: Order['status']) => {
-    const order = orders.find(o => o.id === id);
+    const order = orders.find(o => o.id === id || o.docId === id);
     if (!order) return;
 
-    // Se o status já é o mesmo, nada a fazer
-    if (order.status === status) return;
+    // Se o status já é o mesmo e o kitchenStatus já está sincronizado, nada a fazer
+    if (order.status === status && (order.kitchenStatus === status || (!order.kitchenStatus && status === 'ready'))) return;
 
     // Permitir restauração de pedidos cancelados (para pending ou preparing)
     // Para pedidos finalizados/entregues, apenas bloquear alterações acidentais a menos que seja cancelamento ou restauração explícita
@@ -3642,23 +3709,56 @@ const App: React.FC = () => {
     // Transição permitida para qualquer status em pedidos não-terminais (ex: retornar pedido 'ready' ou 'delivering' para a cozinha 'preparing')
 
     const now = new Date();
-    const updates: Partial<Order> = { 
+    const updates: Partial<Order> & { kitchen_status?: string } = { 
       status, 
       updatedAt: now 
     };
 
-    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || 'default-tenant';
 
-    // Add specific timestamps for lifecycle tracking
-    if (status === 'preparing') updates.acceptedAt = now;
-    if (status === 'ready') updates.readyAt = now;
-    if (status === 'delivering') updates.dispatchedAt = now;
-    if (status === 'delivered') updates.deliveredAt = now;
+    // Add specific timestamps and synchronized kitchenStatus for lifecycle tracking
+    if (status === 'preparing') {
+      updates.acceptedAt = now;
+      updates.kitchenStatus = 'preparing';
+      updates.kitchen_status = 'preparing';
+      updates.productionStatus = 'in_production';
+    } else if (status === 'ready') {
+      updates.readyAt = now;
+      updates.kitchenStatus = 'ready';
+      updates.kitchen_status = 'ready';
+      updates.productionStatus = 'ready';
+    } else if (status === 'delivering') {
+      updates.dispatchedAt = now;
+      updates.kitchenStatus = 'ready';
+      updates.kitchen_status = 'ready';
+    } else if (status === 'delivered' || status === 'finished') {
+      updates.deliveredAt = now;
+      updates.kitchenStatus = 'delivered';
+      updates.kitchen_status = 'delivered';
+      updates.productionStatus = 'delivered';
+    } else if (status === 'pending') {
+      updates.kitchenStatus = 'pending';
+      updates.kitchen_status = 'pending';
+      updates.productionStatus = 'pending';
+    }
+
     // 1. Instant optimistic state update (0ms latency for UI response)
-    setOrders(prev => prev.map(o => o.id === id ? { ...o, ...updates } as Order : o));
+    setOrders(prev => prev.map(o => (o.id === id || o.docId === id || o.id === order.id) ? { ...o, ...updates } as Order : o));
+
+    if (status === 'ready') {
+      showToast(`Pedido #${(order.id || '').slice(-4)} marcado como Pronto!`, 'success');
+    }
 
     // 2. Persist to local IndexedDB immediately
-    localDb.orders.update(id, updates).catch(e => console.warn("LocalDb order update error:", e));
+    localDb.orders.update(order.id, updates).catch(e => console.warn("LocalDb order update error:", e));
+
+    publishDomainEvent('ORDER_STATUS_CHANGED', {
+      tenantId: effectiveTenantId,
+      orderId: order.id,
+      tableNumber: order.tableNumber,
+      source: 'kds',
+      payload: { status, kitchenStatus: updates.kitchenStatus }
+    });
 
     // 3. Side effects and cloud sync asynchronously in background
     (async () => {
@@ -4274,11 +4374,32 @@ const App: React.FC = () => {
     }
 
     if (isCounter) {
-      setCounterOrders(prev => prev.map(t => t.id === id || t.id === numericId ? { ...t, ...tableUpdates } : t));
-      if (effectiveTenantId) {
-        try {
-          const docId = `counter-${id}`; 
-        } catch (e) {}
+      setCounterOrders(prev => {
+        const match = prev.find(t => t.id === id || t.id === numericId);
+        if (match) {
+          return prev.map(t => (t.id === id || t.id === numericId) ? { ...t, ...tableUpdates } : t);
+        }
+        return [...prev, {
+          id: id,
+          number: typeof id === 'number' ? id : prev.length + 1,
+          status: status || 'occupied',
+          items: items || [],
+          total: total || 0,
+          tenantId: effectiveTenantId || '',
+          ...tableUpdates
+        }];
+      });
+
+      // Se houver pedido vinculado a esta comanda de balcão, atualiza no Firestore para o servidor reconhecer
+      if (effectiveTenantId && existingTable?.currentOrderId) {
+        setDoc(doc(db, 'orders', existingTable.currentOrderId), cleanObject({
+          items,
+          total,
+          updatedAt: new Date(),
+          customerName: tableUpdates.customerName,
+          customerPhone: tableUpdates.customerPhone,
+          customerAddress: tableUpdates.customerAddress
+        }), { merge: true }).catch(e => console.warn("Erro ao sincronizar comanda de balcão no Firestore:", e));
       }
     } else {
       // Local update
@@ -4721,7 +4842,9 @@ const App: React.FC = () => {
       id: targetOrderId,
       docId: activeOrderObj?.docId || (pdvEditOrder ? pdvEditOrder.docId : undefined),
       dailyNumber: activeOrderObj?.dailyNumber || (pdvEditOrder ? pdvEditOrder.dailyNumber : undefined),
-      tableNumber: isCounter ? undefined : tableNumber,
+      tableNumber: isCounter 
+        ? (activeOrderObj?.tableNumber || (deliveryInfo?.name ? `Balcão (${deliveryInfo.name})` : (deliveryInfo?.phone ? `Balcão (${deliveryInfo.phone})` : 'Balcão'))) 
+        : tableNumber,
       items: preparedItems,
       total: finalTotal,
       type: isRealDelivery ? 'delivery' : (isCounter ? 'takeout' : 'table'),
@@ -4793,7 +4916,7 @@ const App: React.FC = () => {
     if (!isCounter) {
       setTables(prev => prev.map(t => (String(t.id) === String(tableId) || String(t.number) === String(tableNumber) || (t as any).docId === docId) ? { ...t, ...resetData } : t));
     } else {
-      setCounterOrders(prev => prev.filter(t => String(t.id) !== strTableId && (!isNaN(numTableId) ? t.id !== numTableId : true)));
+      setCounterOrders(prev => prev.filter(t => String(t.id) !== strTableId && (!isNaN(numTableId) ? t.id !== numTableId : true) && t.currentOrderId !== targetOrderId && (!newOrder.id || t.currentOrderId !== newOrder.id)));
     }
 
     if (pdvEditOrder) {

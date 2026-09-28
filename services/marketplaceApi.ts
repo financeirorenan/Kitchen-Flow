@@ -10,7 +10,8 @@ import {
   getDoc as getClientDoc,
   setDoc as clientSetDoc,
   updateDoc as clientUpdateDoc,
-  limit as clientLimit
+  limit as clientLimit,
+  orderBy as clientOrderBy
 } from "firebase/firestore";
 import path from "path";
 import fs from "fs";
@@ -607,38 +608,78 @@ marketplaceApiRouter.get("/orders", async (req: AuthenticatedRequest, res: Respo
 
     if (customerPhone && typeof customerPhone === "string") {
       // Filtrar por telefone do cliente (Tela 'Meus Pedidos' no Zupi Delivery)
-      q = clientQuery(
-        ordersRef,
-        clientWhere("customerPhone", "==", customerPhone),
-        clientLimit(Number(queryLimit) || 20)
-      );
+      try {
+        q = clientQuery(
+          ordersRef,
+          clientWhere("customerPhone", "==", customerPhone),
+          clientOrderBy("createdAt", "desc"),
+          clientLimit(Number(queryLimit) || 30)
+        );
+      } catch {
+        q = clientQuery(
+          ordersRef,
+          clientWhere("customerPhone", "==", customerPhone),
+          clientLimit(Number(queryLimit) || 30)
+        );
+      }
     } else if (merchantId) {
-      // Filtrar por estabelecimento
-      q = clientQuery(
-        ordersRef,
-        clientWhere("tenantId", "==", merchantId),
-        clientLimit(Number(queryLimit) || 30)
-      );
+      // Filtrar por estabelecimento com ordenação cronológica decrescente para retornar os mais recentes
+      try {
+        q = clientQuery(
+          ordersRef,
+          clientWhere("tenantId", "==", merchantId),
+          clientOrderBy("createdAt", "desc"),
+          clientLimit(Number(queryLimit) || 150)
+        );
+      } catch {
+        q = clientQuery(
+          ordersRef,
+          clientWhere("tenantId", "==", merchantId),
+          clientLimit(Number(queryLimit) || 150)
+        );
+      }
     } else {
       return res.status(400).json({ error: "Informe 'customerPhone' ou 'merchantId' para consultar os pedidos." });
     }
 
-    const snapshot = await getClientDocs(q);
+    let snapshot;
+    try {
+      snapshot = await getClientDocs(q);
+    } catch (queryErr: any) {
+      console.warn("[Marketplace API] Falha na busca ordenada por createdAt, tentando query fallback:", queryErr?.message);
+      const fallbackQ = customerPhone && typeof customerPhone === "string"
+        ? clientQuery(ordersRef, clientWhere("customerPhone", "==", customerPhone), clientLimit(Number(queryLimit) || 30))
+        : clientQuery(ordersRef, clientWhere("tenantId", "==", merchantId), clientLimit(Number(queryLimit) || 150));
+      snapshot = await getClientDocs(fallbackQ);
+    }
     const orders = snapshot.docs.map(d => {
       const data = d.data();
+      const rawCreated = data.createdAt;
+      const createdAtIso = rawCreated?.toDate 
+        ? rawCreated.toDate().toISOString() 
+        : (rawCreated instanceof Date ? rawCreated.toISOString() : (rawCreated || new Date().toISOString()));
       return {
         id: d.id,
-        displayId: data.displayId || `#${d.id.slice(-4)}`,
+        displayId: data.displayId || (data.dailyNumber ? `#${data.dailyNumber}` : `#${d.id.slice(-4)}`),
+        dailyNumber: data.dailyNumber,
+        tableNumber: data.tableNumber || (data.type === 'takeout' ? 'Balcão' : (data.type === 'delivery' ? 'Delivery' : undefined)),
         status: data.status,
+        kitchenStatus: data.kitchenStatus || (data.status === 'ready' ? 'ready' : (data.status === 'delivered' || data.status === 'finished' ? 'delivered' : 'preparing')),
         total: data.total,
-        type: data.type,
-        createdAt: data.createdAt,
+        type: data.type || (data.tableNumber ? 'table' : 'takeout'),
+        createdAt: createdAtIso,
         customerName: data.customerName,
         customerPhone: data.customerPhone,
+        customerAddress: data.customerAddress,
         itemsCount: (data.items || []).length,
-        items: data.items || []
+        items: data.items || [],
+        paymentMethod: data.paymentMethod,
+        paymentStatus: data.paymentStatus
       };
     });
+
+    // Ordenar pedidos decrescente por data para garantir que pedidos recentes sempre apareçam
+    orders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     return res.json({
       success: true,

@@ -1,5 +1,5 @@
 import { db } from '../firebase';
-import { doc, setDoc, collection, query, where, getDocs, onSnapshot, writeBatch } from 'firebase/firestore';
+import { doc, setDoc, collection, query, where, getDocs, onSnapshot, writeBatch, orderBy, limit } from 'firebase/firestore';
 import { localDb } from './db';
 import { Order, OrderStatus, OrderItem, PaymentMethod } from '../types';
 
@@ -436,12 +436,22 @@ export const subscribeToOrdersRealtime = (
     }
   }).catch(e => console.warn("[OrderService] Erro ao ler Dexie inicial:", e));
 
-  // 2. Ouvinte Firestore em tempo real
-  const q = query(
-    collection(db, 'orders'),
-    where('tenantId', '==', canonicalTenant),
-    limit(150)
-  );
+  // 2. Ouvinte Firestore em tempo real ordenado por data de criação descrescente
+  let q;
+  try {
+    q = query(
+      collection(db, 'orders'),
+      where('tenantId', '==', canonicalTenant),
+      orderBy('createdAt', 'desc'),
+      limit(150)
+    );
+  } catch {
+    q = query(
+      collection(db, 'orders'),
+      where('tenantId', '==', canonicalTenant),
+      limit(150)
+    );
+  }
 
   const unsubscribe = onSnapshot(q, (snapshot) => {
     const orders: Order[] = snapshot.docs.map(doc => {
@@ -466,7 +476,29 @@ export const subscribeToOrdersRealtime = (
 
     callbacks.onOrdersUpdated(orders);
   }, (err) => {
-    console.error("[OrderService] Erro no listener realtime de pedidos:", err);
+    console.warn("[OrderService] Erro no listener realtime ordenado, tentando fallback sem orderBy:", err);
+    // Fallback gracioso se índice composto falhar
+    if (q) {
+      const fallbackQ = query(
+        collection(db, 'orders'),
+        where('tenantId', '==', canonicalTenant),
+        limit(150)
+      );
+      onSnapshot(fallbackQ, (snapshot) => {
+        const fallbackOrders = snapshot.docs.map(d => ({
+          ...d.data(),
+          id: d.id,
+          docId: d.id,
+          createdAt: d.data().createdAt?.toDate ? d.data().createdAt.toDate() : (d.data().createdAt ? new Date(d.data().createdAt) : new Date())
+        } as Order));
+        fallbackOrders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        callbacks.onOrdersUpdated(fallbackOrders);
+      }, (fallbackErr) => {
+        console.error("[OrderService] Erro no listener realtime de pedidos (fallback):", fallbackErr);
+        if (callbacks.onError) callbacks.onError(fallbackErr);
+      });
+      return;
+    }
     if (callbacks.onError) callbacks.onError(err);
   });
 

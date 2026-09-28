@@ -1,10 +1,9 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Order, OrderItem, Product, Table } from '../types';
+import { Order, Product, Table } from '../types';
 import { 
-  ChefHat, Clock, CheckCircle2, AlertTriangle, Play, Check, 
-  Sparkles, Coffee, Flame, Utensils, Award, RefreshCw, Volume2, VolumeX, Grid, Smartphone, ShoppingBag, Bike, LogOut,
-  Maximize2, Minimize2, Sun, Moon
+  ChefHat, Clock, CheckCircle2, Volume2, VolumeX, 
+  Maximize2, Minimize2, Sun, Moon, LogOut
 } from 'lucide-react';
 import { formatOrderNumber, getOrderNumericId, deduplicateOrders } from '../utils/deduplicate';
 import { logDiagnostic } from '../services/orderService';
@@ -18,6 +17,30 @@ interface KDSKitchenOnlyProps {
   showLogoutButton?: boolean;
 }
 
+type FilterType = 'all' | 'table' | 'takeout' | 'delivery' | 'retirada';
+
+// Helper seguro para converter datas (Date, string, Firestore Timestamp) para Date
+const safeParseDate = (raw: any): Date => {
+  if (!raw) return new Date();
+  if (raw instanceof Date) return isNaN(raw.getTime()) ? new Date() : raw;
+  if (typeof raw === 'object' && typeof raw.seconds === 'number') {
+    return new Date(raw.seconds * 1000);
+  }
+  if (typeof raw?.toDate === 'function') {
+    return raw.toDate();
+  }
+  const d = new Date(raw);
+  return isNaN(d.getTime()) ? new Date() : d;
+};
+
+const isToday = (date: any): boolean => {
+  const d = safeParseDate(date);
+  const today = new Date();
+  return d.getDate() === today.getDate() &&
+         d.getMonth() === today.getMonth() &&
+         d.getFullYear() === today.getFullYear();
+};
+
 export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({ 
   orders, 
   products, 
@@ -26,8 +49,8 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
   onLogout,
   showLogoutButton = false
 }) => {
+  const [filterType, setFilterType] = useState<FilterType>('all');
   const [selectedStation, setSelectedStation] = useState<string>('all');
-  const [selectedTypes, setSelectedTypes] = useState<('delivery' | 'takeout' | 'table')[]>(['delivery', 'takeout', 'table']);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(() => typeof document !== 'undefined' && Boolean(document.fullscreenElement));
   const [themeMode, setThemeMode] = useState<'light' | 'dark'>(() => {
@@ -35,7 +58,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
       const saved = localStorage.getItem('kds_theme');
       if (saved === 'dark' || saved === 'light') return saved;
     }
-    return 'light'; // Padrão Modo Diurno (fundo claro/branco)
+    return 'light';
   });
 
   const isLight = themeMode === 'light';
@@ -69,42 +92,30 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
       }
     }
   };
-  
-  // Safe helper to convert any date representation (Date, string, Firestore Timestamp) to Date
-  const safeParseDate = (raw: any): Date => {
-    if (!raw) return new Date();
-    if (raw instanceof Date) return isNaN(raw.getTime()) ? new Date() : raw;
-    if (typeof raw === 'object' && typeof raw.seconds === 'number') {
-      return new Date(raw.seconds * 1000);
-    }
-    if (typeof raw?.toDate === 'function') {
-      return raw.toDate();
-    }
-    const d = new Date(raw);
-    return isNaN(d.getTime()) ? new Date() : d;
-  };
 
-  // Track checked items per order in local state so cooks can mark specific dishes as completed
-  const [checkedItems, setCheckedItems] = useState<Record<string, Record<string, boolean>>>({});
-  
   // Keep track of order count to trigger chime on new orders
   const prevOrdersCountRef = useRef<number>(0);
 
-  // Filter orders to only pending/preparing (to-be-produced)
+  // 1. Filtrar apenas pedidos ativos em produção na cozinha (exclui cancelados, prontos, entregues e finalizados)
   const kitchenOrders = useMemo(() => {
-    // Filtro: apenas pedidos pendentes/preparando e sem sub-comandas
     const validOrders = deduplicateOrders(orders).filter(o => {
       if (!o) return false;
       if (o.isSubTicket || o.mergedIntoOrderId) return false;
-      if (o.status === 'cancelled' || o.status === 'delivered') return false;
+      // Pedidos já prontos, despachados, entregues ou cancelados NÃO ficam na cozinha de produção
+      if (o.status === 'ready' || o.status === 'delivering' || o.status === 'delivered' || o.status === 'finished' || o.status === 'cancelled') {
+        return false;
+      }
+      if (o.kitchenStatus === 'ready' || o.kitchenStatus === 'delivered') {
+        return false;
+      }
       const isKitchenStatus = o.status === 'pending' || o.status === 'preparing' || o.kitchenStatus === 'pending' || o.kitchenStatus === 'preparing';
       return isKitchenStatus;
     });
 
     // Se houver múltiplos registros de pedidos abertos para a mesma mesa no mesmo dia,
     // consolidamos em um único cartão na cozinha para visualização unificada e sem duplicidade!
-    const tableOrdersMap = new Map<string, Order>();
-    const result: Order[] = [];
+    const tableOrdersMap = new Map<string, Order & { mergedOrderIds?: string[] }>();
+    const result: (Order & { mergedOrderIds?: string[] })[] = [];
 
     for (const order of validOrders) {
       if (order.type === 'table' && order.tableNumber) {
@@ -122,18 +133,32 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
           }
           existing.items = mergedItems;
           existing.total = mergedItems.reduce((acc, i) => acc + (i.price * i.quantity), 0);
+          if (!existing.mergedOrderIds) {
+            existing.mergedOrderIds = [existing.id];
+          }
+          if (!existing.mergedOrderIds.includes(order.id)) {
+            existing.mergedOrderIds.push(order.id);
+          }
           continue;
         } else {
-          const clone = { ...order, items: [...(order.items || [])] };
+          const clone = { ...order, items: [...(order.items || [])], mergedOrderIds: [order.id] };
           tableOrdersMap.set(tableKey, clone);
           result.push(clone);
         }
       } else {
-        result.push({ ...order, items: [...(order.items || [])] });
+        result.push({ ...order, items: [...(order.items || [])], mergedOrderIds: [order.id] });
       }
     }
 
     return result;
+  }, [orders]);
+
+  // Contadores para o cabeçalho compacto
+  const readyTodayCount = useMemo(() => {
+    return orders.filter(o => 
+      (o.status === 'ready' || o.status === 'delivering' || o.status === 'delivered' || o.status === 'finished') &&
+      isToday(o.createdAt)
+    ).length;
   }, [orders]);
 
   // Log de diagnóstico de pedidos renderizados no KDS Cozinha
@@ -153,7 +178,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
     }
   }, [kitchenOrders]);
 
-  // Extract all available product categories to serve as Kitchen Stations
+  // Estações / Praças da cozinha baseadas nas categorias de produtos
   const stations = useMemo(() => {
     const categories = new Set<string>();
     products.forEach(p => {
@@ -164,47 +189,38 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
     return ['all', ...Array.from(categories)];
   }, [products]);
 
-  // Alternador com suporte a seleção múltipla para Delivery, Balcão e Mesa
-  const toggleTypeFilter = (type: 'delivery' | 'takeout' | 'table') => {
-    setSelectedTypes(prev => {
-      if (prev.length === 3) {
-        return [type];
-      }
-      if (prev.includes(type)) {
-        const next = prev.filter(t => t !== type);
-        return next.length === 0 ? ['delivery', 'takeout', 'table'] : next;
-      } else {
-        return [...prev, type];
-      }
-    });
-  };
-
-  // Filter orders based on active filters (type) and selected station (category), sorted by FIFO launch order
+  // Filtro de pedidos por tipo e estação
   const filteredKitchenOrders = useMemo(() => {
     const list = kitchenOrders.filter(order => {
-      // 1. Filter by order type (Multi-select)
-      if (selectedTypes.length < 3) {
-        const matches = (
-          (selectedTypes.includes('delivery') && (order.type === 'delivery')) ||
-          (selectedTypes.includes('takeout') && (order.type === 'takeout' || order.type === 'counter')) ||
-          (selectedTypes.includes('table') && (order.type === 'table' || order.type === 'dine_in' || (!order.type && !['delivery', 'takeout', 'counter'].includes(order.type))))
-        );
-        if (!matches) return false;
+      // 1. Filtro por tipo (TODOS, SALÃO, BALCÃO, DELIVERY, RETIRADA)
+      if (filterType !== 'all') {
+        const isRetirada = (order.deliveryMethod === 'retirada') || 
+                           (typeof order.tableNumber === 'string' && order.tableNumber.toLowerCase().includes('retirada'));
+        
+        if (filterType === 'retirada') {
+          if (!isRetirada) return false;
+        } else if (filterType === 'table') {
+          if (order.type !== 'table' && order.type !== 'dine_in') return false;
+        } else if (filterType === 'delivery') {
+          if (order.type !== 'delivery') return false;
+        } else if (filterType === 'takeout') {
+          if ((order.type !== 'takeout' && order.type !== 'counter') || isRetirada) return false;
+        }
       }
 
-      // 2. Filter by station (category)
+      // 2. Filtro por praça / estação
       if (selectedStation !== 'all') {
-        // Only show order if it contains at least one item from the selected category/station
         const hasMatchingItem = (order.items || []).some(item => {
           const prod = products.find(p => p.id === item.productId || p.name.toLowerCase() === item.name.split(' (')[0].trim().toLowerCase());
           return prod?.category === selectedStation;
         });
-        return hasMatchingItem;
+        if (!hasMatchingItem) return false;
       }
 
       return true;
     });
 
+    // Ordenação FIFO (primeiro que entra é o primeiro a ser produzido)
     return list.sort((a, b) => {
       const dateA = safeParseDate(a.createdAt);
       const dateB = safeParseDate(b.createdAt);
@@ -216,9 +232,9 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
       if (dailyA !== dailyB) return dailyA - dailyB;
       return String(a.id).localeCompare(String(b.id));
     });
-  }, [kitchenOrders, selectedTypes, selectedStation, products]);
+  }, [kitchenOrders, filterType, selectedStation, products]);
 
-  // Trigger sound alert when a new kitchen order arrives
+  // Alerta sonoro quando um novo pedido entra na cozinha
   useEffect(() => {
     const currentCount = kitchenOrders.length;
     if (currentCount > prevOrdersCountRef.current && prevOrdersCountRef.current > 0) {
@@ -245,7 +261,6 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
         osc.stop(startTime + duration);
       };
       const now = audioCtx.currentTime;
-      // High chime sequence for kitchen
       playTone(523.25, now, 0.15); // C5
       playTone(659.25, now + 0.15, 0.15); // E5
       playTone(783.99, now + 0.3, 0.3); // G5
@@ -254,507 +269,448 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
     }
   };
 
-  // Toggle checklist status of an item
-  const toggleItemChecked = (orderId: string, itemKey: string) => {
-    setCheckedItems(prev => {
-      const orderChecked = prev[orderId] || {};
+  // Helper para resolver a etiqueta visual de Mesa ou Destino com alto destaque
+  const getDestinationInfo = (order: Order) => {
+    const isRetirada = (order.deliveryMethod === 'retirada') || 
+                       (typeof order.tableNumber === 'string' && order.tableNumber.toLowerCase().includes('retirada'));
+
+    if (isRetirada) {
       return {
-        ...prev,
-        [orderId]: {
-          ...orderChecked,
-          [itemKey]: !orderChecked[itemKey]
-        }
+        label: '📦 RETIRADA',
+        sub: order.customerName ? order.customerName.toUpperCase() : null
       };
-    });
-  };
-
-  // Get elapsed minutes for color-coding prep time
-  const getElapsedTimeInfo = (createdAt: any) => {
-    const createdDate = safeParseDate(createdAt);
-    const minutes = Math.floor((Date.now() - createdDate.getTime()) / 60000);
-    let colorClass = isLight 
-      ? 'text-emerald-700 bg-emerald-50 border-emerald-200' 
-      : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
-    let label = 'Recém enviado';
-
-    if (minutes >= 10 && minutes < 20) {
-      colorClass = isLight 
-        ? 'text-amber-800 bg-amber-50 border-amber-200 font-bold' 
-        : 'text-amber-400 bg-amber-500/10 border-amber-500/20';
-      label = 'Alerta de Tempo';
-    } else if (minutes >= 20) {
-      colorClass = isLight
-        ? 'text-rose-700 bg-rose-50 border-rose-200 font-black animate-pulse'
-        : 'text-rose-400 bg-rose-500/10 border-rose-500/20 animate-pulse';
-      label = 'CRÍTICO / ATRASADO';
     }
 
-    return { minutes, colorClass, label };
+    if (order.type === 'table' || order.type === 'dine_in' || (!order.type && order.tableNumber)) {
+      const tNum = String(order.tableNumber || '');
+      let tableNumStr = tNum;
+      if (tNum.length < 5 && !isNaN(Number(tNum))) {
+        const n = parseInt(tNum, 10);
+        tableNumStr = isNaN(n) ? tNum : (n < 10 ? `0${n}` : `${n}`);
+      } else {
+        const tableRef = tables.find(t => t.id === order.tableNumber || (t as any).docId === order.tableNumber);
+        if (tableRef) {
+          const n = Number(tableRef.number);
+          tableNumStr = !isNaN(n) ? (n < 10 ? `0${n}` : `${n}`) : String(tableRef.number);
+        } else if (tNum.length > 4) {
+          tableNumStr = tNum.slice(-2);
+        }
+      }
+      return {
+        label: `🪑 MESA ${tableNumStr}`,
+        sub: order.customerName ? order.customerName.toUpperCase() : null
+      };
+    }
+
+    if (order.type === 'delivery') {
+      return {
+        label: '🛵 DELIVERY',
+        sub: order.customerName ? order.customerName.toUpperCase() : null
+      };
+    }
+
+    // Balcão
+    return {
+      label: '🛍️ BALCÃO',
+      sub: order.customerName ? order.customerName.toUpperCase() : null
+    };
   };
 
-  // Resolve Table label beautifully
-  const getTableLabel = (order: Order) => {
-    if (order.type !== 'table') return null;
-    const tNum = String(order.tableNumber);
-    if (tNum.length < 5 && !isNaN(Number(tNum))) return `Mesa ${tNum}`;
-    const tableRef = tables.find(t => t.id === order.tableNumber || (t as any).docId === order.tableNumber);
-    return tableRef ? `Mesa ${tableRef.number}` : `Mesa ${tNum.slice(-4)}`;
-  };
-
-  // Render order name cleanly
-  const getOrderIdentifier = (order: Order) => {
-    if (order.type === 'table') return getTableLabel(order);
-    if (order.customerName) return order.customerName.toUpperCase().slice(0, 15);
-    return `PEDIDO ${formatOrderNumber(order)}`;
-  };
-
-  // Custom component for the elapsed timer (live updates)
-  const TimerBadge: React.FC<{ createdAt: Date }> = React.memo(({ createdAt }) => {
+  // Componente de Tempo Decorrido com semáforo progressivo
+  const ElapsedTimer: React.FC<{ createdAt: Date }> = React.memo(({ createdAt }) => {
     const [, setTick] = useState(0);
 
     useEffect(() => {
       const interval = setInterval(() => {
         setTick(t => t + 1);
-      }, 10000); // update color stats every 10 seconds safely
+      }, 10000); // Atualiza o cronômetro a cada 10s
       return () => clearInterval(interval);
     }, []);
 
-    const { minutes, colorClass } = getElapsedTimeInfo(createdAt);
+    const createdDate = safeParseDate(createdAt);
+    const minutes = Math.max(0, Math.floor((Date.now() - createdDate.getTime()) / 60000));
+
+    // Semáforo visual: normal (<10 min) -> amarelo/atenção (10-20 min) -> vermelho/atrasado (>20 min)
+    let badgeClass = isLight 
+      ? 'bg-slate-100 text-slate-900 border-slate-300 font-black' 
+      : 'bg-zinc-800 text-zinc-100 border-zinc-700 font-black';
+
+    if (minutes >= 10 && minutes < 20) {
+      badgeClass = isLight 
+        ? 'bg-amber-100 text-amber-950 border-amber-300 font-black' 
+        : 'bg-amber-950/70 text-amber-300 border-amber-700/80 font-bold';
+    } else if (minutes >= 20) {
+      badgeClass = isLight
+        ? 'bg-rose-100 text-rose-950 border-rose-300 font-black'
+        : 'bg-rose-950/80 text-rose-300 border-rose-700 font-black';
+    }
 
     return (
-      <div className={`flex items-center gap-1 p-1 px-2.5 rounded-full border text-[10px] font-black tracking-wider ${colorClass}`}>
-        <Clock size={11} />
-        <span>{minutes} MIN</span>
+      <div className={`flex items-center gap-1.5 px-3 py-1 rounded-lg border text-xs sm:text-sm font-black tabular-nums tracking-wide shadow-xs ${badgeClass}`}>
+        <Clock size={13} className="shrink-0 stroke-[2.5]" />
+        <span>{minutes} min</span>
       </div>
     );
   });
 
+  // Ação operacional única: DESPACHAR o pedido
+  const handleDispatch = (order: Order & { mergedOrderIds?: string[] }) => {
+    const idsToUpdate = order.mergedOrderIds && Array.isArray(order.mergedOrderIds)
+      ? order.mergedOrderIds
+      : [order.id];
+
+    idsToUpdate.forEach((oid: string) => {
+      onUpdateStatus(oid, 'ready');
+    });
+  };
+
   return (
     <div 
       style={{ touchAction: 'manipulation' }}
-      className={`flex flex-col flex-1 rounded-3xl border shadow-2xl overflow-hidden h-full min-h-0 select-none transition-colors duration-300 touch-manipulation overscroll-contain ${
-      isLight ? 'bg-slate-100 text-slate-800 border-slate-200' : 'bg-slate-950 text-slate-100 border-slate-900'
-    }`}>
+      className={`flex flex-col flex-1 rounded-2xl border shadow-xl overflow-hidden h-full min-h-0 select-none transition-colors duration-200 touch-manipulation overscroll-contain ${
+        isLight ? 'bg-slate-100 text-slate-950 border-slate-200' : 'bg-zinc-950 text-zinc-100 border-zinc-900'
+      }`}
+    >
       
-      {/* Top Header Panel */}
-      <div className={`p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4 border-b transition-colors ${
-        isLight ? 'bg-white border-slate-200 text-slate-900' : 'bg-slate-900 border-slate-800 text-slate-100'
+      {/* ─────────────────────────────────────────────────────────────
+          1. CABEÇALHO COMPACTO
+          Ocupa espaço vertical mínimo, priorizando a visibilidade dos cards
+      ───────────────────────────────────────────────────────────── */}
+      <header className={`px-4 py-2.5 sm:px-6 flex items-center justify-between border-b gap-3 shrink-0 ${
+        isLight ? 'bg-white border-slate-200' : 'bg-zinc-900 border-zinc-800'
       }`}>
-        <div className="flex items-center gap-3">
-          <div className={`p-3 rounded-2xl border shadow-lg ${
-            isLight ? 'bg-rose-50 text-rose-600 border-rose-200' : 'bg-rose-500/10 text-rose-500 border-rose-500/20'
-          }`}>
-            <ChefHat size={24} />
-          </div>
-          <div>
-            <h1 className={`text-lg sm:text-xl font-black uppercase tracking-wider flex items-center gap-2 ${
-              isLight ? 'text-slate-900' : 'text-slate-100'
+        {/* Título & Métricas de Produção */}
+        <div className="flex items-center gap-4 sm:gap-6 min-w-0">
+          <div className="flex items-center gap-2 shrink-0">
+            <div className={`p-2 rounded-xl flex items-center justify-center ${
+              isLight ? 'bg-emerald-100 text-emerald-900' : 'bg-emerald-950/60 text-emerald-400'
             }`}>
-              KDS Cozinha (Módulo Produção)
-              <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-extrabold tracking-widest animate-pulse border ${
-                isLight ? 'bg-rose-100 border-rose-200 text-rose-700' : 'bg-rose-500/10 border-rose-500/25 text-rose-400'
-              }`}>
-                ÁREA QUENTE
-              </span>
+              <ChefHat size={20} className="stroke-[2.2]" />
+            </div>
+            <h1 className={`text-base sm:text-lg font-black tracking-tight uppercase ${
+              isLight ? 'text-slate-950' : 'text-zinc-50'
+            }`}>
+              Cozinha
             </h1>
-            <p className={`text-[10px] font-bold uppercase tracking-tight ${
-              isLight ? 'text-slate-500' : 'text-slate-400'
+          </div>
+
+          {/* Contadores da Cozinha */}
+          <div className="flex items-center gap-2 sm:gap-3 text-xs font-bold">
+            <div className={`flex items-center gap-1.5 px-3 py-1 rounded-lg border ${
+              kitchenOrders.length > 0
+                ? isLight 
+                  ? 'bg-amber-100 text-amber-950 border-amber-300 font-black' 
+                  : 'bg-amber-950/50 text-amber-300 border-amber-800/60'
+                : isLight
+                  ? 'bg-slate-50 text-slate-700 border-slate-200'
+                  : 'bg-zinc-850 text-zinc-400 border-zinc-700/60'
             }`}>
-              Foco total na produção — Apenas pedidos pendentes e em preparo, livres de logística
-            </p>
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
+              <span>{kitchenOrders.length} em produção</span>
+            </div>
+
+            <div className={`hidden md:flex items-center gap-1.5 px-3 py-1 rounded-lg border ${
+              isLight ? 'bg-slate-50 text-slate-700 border-slate-200' : 'bg-zinc-800 text-zinc-300 border-zinc-700'
+            }`}>
+              <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
+              <span>{readyTodayCount} prontos hoje</span>
+            </div>
           </div>
         </div>
 
-        {/* Action Toggles */}
-        <div className="flex items-center gap-3">
-          {/* Theme Mode Toggle (Modo Diurno / Noturno) */}
-          <button
-            onClick={toggleTheme}
-            className={`p-2 px-3.5 rounded-xl border text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
-              isLight 
-                ? 'bg-amber-100 text-amber-900 border-amber-300 font-black shadow-md hover:bg-amber-200' 
-                : 'bg-indigo-950 text-indigo-300 border-indigo-800 hover:bg-indigo-900'
-            }`}
-            title="Alternar entre Modo Diurno (Claro) e Modo Noturno (Escuro)"
-          >
-            {isLight ? <Sun size={13} className="text-amber-600" /> : <Moon size={13} className="text-indigo-400" />}
-            {isLight ? 'Modo Diurno' : 'Modo Noturno'}
-          </button>
-
-          {/* Sounds */}
-          <button
-            onClick={() => setSoundEnabled(!soundEnabled)}
-            className={`p-2 px-3.5 rounded-xl border text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
-              soundEnabled 
-                ? isLight
-                  ? 'bg-amber-500 text-white border-amber-600 font-black shadow-md'
-                  : 'bg-amber-500 text-slate-950 border-amber-400 font-black shadow-lg shadow-amber-500/10' 
-                : isLight
-                  ? 'bg-slate-100 text-slate-500 border-slate-300 hover:bg-slate-200'
-                  : 'bg-slate-800 text-slate-400 border-slate-700/50 hover:bg-slate-700'
-            }`}
-          >
-            {soundEnabled ? <Volume2 size={13} /> : <VolumeX size={13} />}
-            {soundEnabled ? 'Sons Ativos' : 'Sons Mudos'}
-          </button>
-
-          {/* Fullscreen Mode */}
-          <button
-            onClick={toggleFullscreen}
-            className={`p-2 px-3.5 rounded-xl border text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
-              isFullscreen 
-                ? 'bg-indigo-600 text-white border-indigo-400 font-black shadow-lg shadow-indigo-600/30' 
-                : isLight
-                  ? 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200'
-                  : 'bg-slate-800 text-slate-200 border-slate-700/50 hover:bg-slate-700'
-            }`}
-            title={isFullscreen ? "Sair da Tela Cheia" : "Modo Tela Cheia (Ideal para Cozinha/TVs)"}
-          >
-            {isFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-            {isFullscreen ? 'Sair Tela Cheia' : 'Tela Cheia'}
-          </button>
-
-          {showLogoutButton && onLogout && (
-            <button
-              onClick={onLogout}
-              className="p-2 px-3.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl border border-rose-500/30 text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 shadow-lg shadow-rose-950/20 active:scale-[0.98]"
-            >
-              <LogOut size={13} />
-              Sair da Conta
-            </button>
-          )}
-
-          {/* Mini Stats Banner */}
-          <div className={`flex items-center gap-2 border p-1.5 px-3 rounded-xl shadow-inner font-mono text-xs font-black ${
-            isLight ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-slate-950 border-slate-800 text-rose-400'
-          }`}>
-            <Flame size={14} className="text-rose-500 animate-pulse" />
-            <span>{kitchenOrders.length} FILA</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Subheader: Order Type Filters */}
-      <div className={`border-b p-3 px-5 flex items-center justify-between gap-3 ${
-        isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-900/60 border-slate-800/60'
-      }`}>
-        <div className="flex items-center gap-2">
-          <Utensils size={16} className={isLight ? 'text-rose-600' : 'text-rose-400'} />
-          <span className={`text-xs font-black uppercase tracking-wider ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
-            Fila de Produção da Cozinha
-          </span>
-        </div>
-
-        {/* Order Type Filters com Seleção Múltipla */}
-        <div className={`flex gap-1.5 p-1 rounded-xl border ${
-          isLight ? 'bg-white border-slate-200' : 'bg-slate-950/80 border-slate-800'
-        }`}>
+        {/* Controles do Operador: Som, Modo Claro/Escuro, Tela Cheia, Sair */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* Som Ativo/Mudo */}
           <button
             type="button"
-            onClick={() => setSelectedTypes(['table', 'takeout', 'delivery'])}
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
-              selectedTypes.length === 3
-                ? 'bg-rose-600 text-white font-black shadow-md' 
+            onClick={() => setSoundEnabled(!soundEnabled)}
+            className={`min-h-[44px] min-w-[44px] px-3 rounded-xl border text-xs font-bold transition-colors flex items-center gap-2 cursor-pointer ${
+              soundEnabled
+                ? isLight
+                  ? 'bg-slate-100 text-slate-950 border-slate-300 hover:bg-slate-200'
+                  : 'bg-zinc-800 text-zinc-200 border-zinc-700 hover:bg-zinc-700'
                 : isLight
-                  ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                  ? 'bg-slate-50 text-slate-400 border-slate-200 line-through'
+                  : 'bg-zinc-900 text-zinc-500 border-zinc-800 line-through'
             }`}
-            title="Exibir todos os pedidos"
+            title={soundEnabled ? 'Sons de novos pedidos ativados' : 'Sons silenciados'}
           >
-            <Grid size={13} />
-            Todos os Pedidos
+            {soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
+            <span className="hidden lg:inline">{soundEnabled ? 'Som' : 'Mudo'}</span>
           </button>
+
+          {/* Alternar Modo Claro / Noturno */}
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className={`min-h-[44px] min-w-[44px] px-3 rounded-xl border text-xs font-bold transition-colors flex items-center gap-2 cursor-pointer ${
+              isLight 
+                ? 'bg-slate-100 text-slate-950 border-slate-300 hover:bg-slate-200 font-black' 
+                : 'bg-zinc-800 text-zinc-200 border-zinc-700 hover:bg-zinc-700'
+            }`}
+            title={isLight ? 'Ativar modo noturno' : 'Ativar modo diurno'}
+          >
+            {isLight ? <Moon size={16} className="text-indigo-600" /> : <Sun size={16} className="text-amber-400" />}
+            <span className="hidden lg:inline">{isLight ? 'Escuro' : 'Claro'}</span>
+          </button>
+
+          {/* Modo Tela Cheia */}
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            className={`min-h-[44px] min-w-[44px] px-3 rounded-xl border text-xs font-bold transition-colors flex items-center gap-2 cursor-pointer ${
+              isFullscreen
+                ? 'bg-emerald-600 text-white border-emerald-500 font-black'
+                : isLight
+                  ? 'bg-slate-100 text-slate-950 border-slate-300 hover:bg-slate-200'
+                  : 'bg-zinc-800 text-zinc-200 border-zinc-700 hover:bg-zinc-700'
+            }`}
+            title={isFullscreen ? 'Sair da tela cheia' : 'Entrar em tela cheia'}
+          >
+            {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+            <span className="hidden lg:inline">{isFullscreen ? 'Janela' : 'Tela cheia'}</span>
+          </button>
+
+          {/* Sair da Conta (Se exibido em KDS isolado de tablet) */}
+          {showLogoutButton && onLogout && (
+            <button
+              type="button"
+              onClick={onLogout}
+              className="min-h-[44px] px-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-colors flex items-center gap-2 cursor-pointer"
+              title="Sair da Conta"
+            >
+              <LogOut size={16} />
+              <span className="hidden sm:inline">Sair</span>
+            </button>
+          )}
+        </div>
+      </header>
+
+      {/* ─────────────────────────────────────────────────────────────
+          2. FILTROS COMPACTOS (TODOS | SALÃO | BALCÃO | DELIVERY | RETIRADA)
+      ───────────────────────────────────────────────────────────── */}
+      <div className={`px-4 py-2 sm:px-6 flex flex-wrap items-center justify-between gap-2 border-b shrink-0 ${
+        isLight ? 'bg-slate-50 border-slate-200' : 'bg-zinc-900/60 border-zinc-800/80'
+      }`}>
+        {/* Segmented Control de Destino */}
+        <div className={`inline-flex p-1 rounded-xl border gap-1 max-w-full overflow-x-auto ${
+          isLight ? 'bg-white border-slate-200' : 'bg-zinc-900 border-zinc-800'
+        }`}>
           {[
-            { id: 'table' as const, label: 'Mesa / Salão', icon: Smartphone },
-            { id: 'takeout' as const, label: 'Balcão', icon: ShoppingBag },
-            { id: 'delivery' as const, label: 'Delivery', icon: Bike }
-          ].map(item => {
-            const isSelected = selectedTypes.includes(item.id);
+            { id: 'all' as const, label: 'TODOS' },
+            { id: 'table' as const, label: '🪑 SALÃO' },
+            { id: 'takeout' as const, label: '🛍️ BALCÃO' },
+            { id: 'delivery' as const, label: '🛵 DELIVERY' },
+            { id: 'retirada' as const, label: '📦 RETIRADA' }
+          ].map(f => {
+            const isActive = filterType === f.id;
             return (
               <button
-                key={item.id}
+                key={f.id}
                 type="button"
-                onClick={() => toggleTypeFilter(item.id)}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
-                  isSelected
-                    ? 'bg-rose-600 text-white font-black shadow-md ring-2 ring-rose-300/30' 
+                onClick={() => setFilterType(f.id)}
+                className={`min-h-[38px] px-3.5 py-1.5 rounded-lg text-xs font-black tracking-wider transition-all whitespace-nowrap cursor-pointer ${
+                  isActive
+                    ? isLight
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'bg-zinc-100 text-zinc-950 shadow-xs'
                     : isLight
-                      ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                      ? 'text-slate-700 hover:text-slate-950 hover:bg-slate-100 font-bold'
+                      : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800'
                 }`}
-                title={isSelected && selectedTypes.length < 3 ? `${item.label} (Ativo - clique para remover)` : `Filtrar ${item.label}`}
               >
-                <item.icon size={13} />
-                {item.label}
-                {isSelected && selectedTypes.length < 3 && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                )}
+                {f.label}
               </button>
             );
           })}
         </div>
+
+        {/* Seletor Compacto de Praça / Estação (caso haja mais de uma categoria cadastrada) */}
+        {stations.length > 2 && (
+          <div className="flex items-center gap-2">
+            <label htmlFor="station-select" className={`text-xs font-bold uppercase tracking-wider hidden sm:inline ${
+              isLight ? 'text-slate-700' : 'text-zinc-300'
+            }`}>
+              Praça:
+            </label>
+            <select
+              id="station-select"
+              value={selectedStation}
+              onChange={(e) => setSelectedStation(e.target.value)}
+              className={`min-h-[38px] px-3 py-1 rounded-xl border text-xs font-bold cursor-pointer transition-colors ${
+                isLight 
+                  ? 'bg-white border-slate-300 text-slate-950' 
+                  : 'bg-zinc-900 border-zinc-700 text-zinc-200'
+              }`}
+            >
+              <option value="all">Todas as Praças</option>
+              {stations.filter(s => s !== 'all').map(st => (
+                <option key={st} value={st}>{st}</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
-      {/* Main Production Board Grid */}
-      <div className={`flex-1 p-4 sm:p-6 overflow-y-auto custom-scrollbar relative min-h-0 ${
-        isLight ? 'bg-slate-100/90' : 'bg-slate-950'
-      }`}>
+      {/* ─────────────────────────────────────────────────────────────
+          3. GRID RESPONSIVO DE PEDIDOS
+          Desktop grande: 4 colunas
+          Notebook: 3 colunas
+          Tablet horizontal: 2 colunas
+          Tablet vertical / mobile: 1 coluna
+      ───────────────────────────────────────────────────────────── */}
+      <main className="flex-1 p-3 sm:p-5 overflow-y-auto custom-scrollbar relative min-h-0">
         {filteredKitchenOrders.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             <AnimatePresence>
               {filteredKitchenOrders.map(order => {
-                const isPreparing = order.status === 'preparing';
-                
                 const itemsToDisplay = order.items || [];
                 if (itemsToDisplay.length === 0) return null;
 
-                const orderCheckedState = checkedItems[order.id] || {};
-                const allItemsChecked = itemsToDisplay.length > 0 && itemsToDisplay.every((_, idx) => orderCheckedState[`${order.id}-${idx}`]);
+                const destInfo = getDestinationInfo(order);
 
                 return (
-                  <motion.div
+                  <motion.article
                     key={order.id}
-                    initial={{ opacity: 0, scale: 0.95 }}
+                    initial={{ opacity: 0, scale: 0.96 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
+                    exit={{ opacity: 0, scale: 0.94 }}
                     transition={{ duration: 0.15 }}
-                    className={`border rounded-3xl flex flex-col overflow-hidden shadow-xl transition-all relative h-[420px] ${
-                      isLight
-                        ? isPreparing
-                          ? 'bg-white border-indigo-300 shadow-indigo-100'
-                          : 'bg-white border-slate-200 shadow-slate-200/60'
-                        : isPreparing 
-                          ? 'bg-slate-900 border-indigo-500/50 shadow-indigo-950/20' 
-                          : 'bg-slate-900 border-slate-800 shadow-slate-950/40'
+                    className={`rounded-2xl border shadow-sm flex flex-col h-[480px] max-h-[520px] overflow-hidden transition-all ${
+                      isLight 
+                        ? 'bg-white border-slate-200 hover:border-slate-300 text-slate-950' 
+                        : 'bg-zinc-900 border-zinc-800 hover:border-zinc-700 text-zinc-50'
                     }`}
                   >
-                    {/* Glowing Accent strip on left side */}
-                    <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${isPreparing ? 'bg-indigo-500' : 'bg-rose-500'}`} />
-
-                    {/* Ticket Header */}
-                    <div className={`p-4 border-b flex flex-col gap-2 pl-6 shrink-0 ${
-                      isLight ? 'bg-slate-50/80 border-slate-200' : 'bg-slate-900/40 border-slate-800/80'
+                    {/* ─────────────────────────────────────────────
+                        TOPO DO CARD: HIERARQUIA VISUAL
+                        1. NÚMERO DO PEDIDO (#1024) - Tipografia gigante
+                        2. MESA / DESTINO (🪑 MESA 03) - Destaque equivalente
+                        3. TEMPO (18 min) - Semáforo progressivo
+                    ───────────────────────────────────────────── */}
+                    <header className={`p-4 border-b flex flex-col gap-2 shrink-0 ${
+                      isLight ? 'bg-slate-50 border-slate-200' : 'bg-zinc-850/60 border-zinc-800'
                     }`}>
-                      <div className="flex items-center justify-between">
-                        <span className={`text-xs font-black uppercase tracking-wider flex items-center gap-1.5 ${
-                          isLight ? 'text-slate-500' : 'text-slate-400'
-                        }`}>
-                          {order.type === 'table' ? '🍽️ SALÃO' : order.type === 'takeout' ? '🛍️ BALCÃO' : '🛵 DELIVERY'}
-                          <span className={isLight ? 'text-slate-300' : 'text-slate-700'}>•</span>
-                          {formatOrderNumber(order)}
-                          {order.isSettled ? (
-                            <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-600 border border-emerald-500/30">
-                              ✓ PAGO
-                            </span>
-                          ) : (
-                            <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-600 border border-amber-500/30">
-                              ⏳ A PAGAR
+                      {/* Linha 1: Número do Pedido + Tempo Decorrido */}
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-baseline gap-1.5">
+                          <span className={`text-xs font-black uppercase tracking-wider ${
+                            isLight ? 'text-slate-600' : 'text-zinc-400'
+                          }`}>
+                            PEDIDO
+                          </span>
+                          <span className={`text-2xl sm:text-3xl font-black font-mono tracking-tight ${
+                            isLight ? 'text-slate-950 font-black' : 'text-zinc-50'
+                          }`}>
+                            {formatOrderNumber(order)}
+                          </span>
+                        </div>
+
+                        {/* Cronômetro com semáforo */}
+                        <ElapsedTimer createdAt={order.createdAt} />
+                      </div>
+
+                      {/* Linha 2: Mesa / Destino em grande destaque */}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <h2 className={`text-lg sm:text-xl font-black tracking-tight truncate uppercase ${
+                            isLight ? 'text-slate-950' : 'text-zinc-50'
+                          }`}>
+                            {destInfo.label}
+                          </h2>
+                          {destInfo.sub && (
+                            <span className={`text-xs font-bold truncate uppercase ${
+                              isLight ? 'text-slate-700 font-extrabold' : 'text-zinc-300'
+                            }`}>
+                              · {destInfo.sub}
                             </span>
                           )}
-                        </span>
-                        <TimerBadge createdAt={order.createdAt} />
-                      </div>
+                        </div>
 
-                      <div className="flex items-center justify-between">
-                        <h3 className={`text-lg font-black tracking-tight uppercase truncate max-w-[70%] ${
-                          isLight ? 'text-slate-900' : 'text-slate-100'
-                        }`}>
-                          {getOrderIdentifier(order)}
-                        </h3>
-                        <span className={`text-xs font-mono font-bold ${
-                          isLight ? 'text-slate-500' : 'text-slate-400'
-                        }`}>
-                          {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Cooking Checklist items with internal scrollable container */}
-                    <div className="flex-1 min-h-0 p-3 sm:p-4 overflow-y-auto custom-scrollbar flex flex-col gap-3">
-                      <div className={`flex items-center justify-between text-[10px] font-black uppercase tracking-widest border-b pb-1.5 sticky top-0 z-10 py-1 ${
-                        isLight ? 'text-slate-400 border-slate-200 bg-white' : 'text-slate-500 border-slate-800/50 bg-slate-900'
-                      }`}>
-                        <span className="flex items-center gap-1.5">
-                          PRATOS / INGREDIENTES
-                          <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-bold ${
-                            isLight ? 'bg-slate-100 text-slate-600' : 'bg-slate-800 text-slate-300'
+                        {/* Status de pagamento discreto */}
+                        {order.isSettled ? (
+                          <span className={`text-[10px] font-black uppercase tracking-wider shrink-0 ${
+                            isLight ? 'text-emerald-800 font-extrabold' : 'text-emerald-400'
                           }`}>
-                            {itemsToDisplay.length}
+                            ✓ PAGO
                           </span>
-                        </span>
-                        <span>QTD</span>
+                        ) : (
+                          <span className={`text-[10px] font-black uppercase tracking-wider shrink-0 ${
+                            isLight ? 'text-amber-800 font-extrabold' : 'text-amber-400'
+                          }`}>
+                            A RECEBER
+                          </span>
+                        )}
                       </div>
+                    </header>
 
-                      {/* Order level observation if present */}
-                      {(order.observations || order.notes) && (
-                        <div className={`p-2.5 rounded-xl border text-xs font-black flex items-start gap-2 ${
-                          isLight
-                            ? 'bg-amber-50/80 border-amber-200 text-amber-900'
-                            : 'bg-amber-950/40 border-amber-800/50 text-amber-300'
+                    {/* ─────────────────────────────────────────────
+                        CORPO DO CARD: ITENS DO PEDIDO
+                        Legibilidade máxima: "1× LA ITALIANO"
+                        Sem checkboxes, sem confirmações individuais
+                    ───────────────────────────────────────────── */}
+                    <div className="flex-1 min-h-0 p-4 overflow-y-auto custom-scrollbar flex flex-col gap-3">
+                      {/* Observação Geral do Pedido (se houver) */}
+                      {(order.notes || order.observation) && (
+                        <div className={`p-2.5 rounded-xl border text-xs font-bold leading-relaxed ${
+                          isLight 
+                            ? 'bg-amber-100 text-amber-950 border-amber-300' 
+                            : 'bg-amber-950/50 text-amber-200 border-amber-800/60'
                         }`}>
-                          <span className="shrink-0 text-sm">📝</span>
-                          <span className="whitespace-pre-line leading-tight">
-                            OBS GERAL: {order.observations || order.notes}
-                          </span>
+                          <span className={`font-black mr-1 ${isLight ? 'text-amber-900' : 'text-amber-300'}`}>OBS:</span>
+                          {order.notes || order.observation}
                         </div>
                       )}
 
-                      <div className="space-y-2.5">
+                      {/* Lista de Itens */}
+                      <div className="space-y-3">
                         {itemsToDisplay.map((item, idx) => {
-                          const itemKey = `${order.id}-${idx}`;
-                          const isChecked = !!orderCheckedState[itemKey];
-
-                          // Resolve product category accurately
-                          let category = item.category;
-                          if (!category && products && products.length > 0) {
-                            let prod = products.find(p => p.id === item.productId);
-                            if (!prod) {
-                              const rawName = item.name || '';
-                              const cleanName = rawName.split(' (')[0].split(' - ')[0].trim().toLowerCase();
-                              const fullName = rawName.trim().toLowerCase();
-                              prod = products.find(p => {
-                                const pn = p.name.trim().toLowerCase();
-                                return pn === cleanName || pn === fullName || cleanName.startsWith(pn) || fullName.includes(pn);
-                              });
-                            }
-                            category = prod?.category;
-                          }
+                          const isMulti = item.quantity > 1;
 
                           return (
-                            <div 
-                              key={idx}
-                              onClick={() => toggleItemChecked(order.id, itemKey)}
-                              className={`flex items-start justify-between p-3 rounded-2xl cursor-pointer transition-all border text-sm gap-3 ${
-                                isChecked 
-                                  ? isLight
-                                    ? 'bg-emerald-50 border-emerald-200 text-slate-400 line-through decoration-emerald-500/50'
-                                    : 'bg-emerald-950/20 border-emerald-900/40 text-slate-400 line-through decoration-emerald-500/50' 
-                                  : isLight
-                                    ? 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-900'
-                                    : 'bg-slate-950/60 border-slate-800/90 hover:bg-slate-850 hover:border-slate-700 text-slate-100'
-                              }`}
-                            >
-                              <div className="flex items-start gap-2.5 flex-1">
-                                {/* Checkbox */}
-                                <div className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 mt-1 transition-all ${
-                                  isChecked 
-                                    ? 'bg-emerald-500 border-emerald-400 text-white' 
-                                    : isLight
-                                      ? 'border-slate-300 text-transparent bg-white'
-                                      : 'border-slate-700 text-transparent'
+                            <div key={item.id || `${order.id}-${idx}`} className="flex flex-col">
+                              {/* Linha Principal do Item: 1× NOME DO PRATO */}
+                              <div className="flex items-start gap-2">
+                                <span className={`text-base sm:text-lg font-black shrink-0 select-none ${
+                                  isMulti 
+                                    ? isLight ? 'text-amber-800' : 'text-amber-400' 
+                                    : isLight ? 'text-emerald-700' : 'text-emerald-400'
                                 }`}>
-                                  <Check size={13} strokeWidth={3} />
-                                </div>
-
-                                {/* Quantidade à esquerda, antes do nome do produto */}
-                                <span className={`font-black text-sm sm:text-base px-2 py-0.5 rounded-lg shrink-0 border mt-0.5 ${
-                                  isChecked 
-                                    ? isLight 
-                                      ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
-                                      : 'bg-emerald-950/40 text-emerald-400 border-emerald-900/40' 
-                                    : isLight
-                                      ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                                      : 'bg-indigo-950/80 text-indigo-300 border-indigo-500/30 shadow'
-                                }`}>
-                                  {item.quantity}x
+                                  {item.quantity}×
                                 </span>
+                                
+                                <div className="flex-1 min-w-0">
+                                  <span className={`text-base sm:text-lg font-black tracking-tight uppercase leading-snug break-words ${
+                                    isLight ? 'text-slate-950' : 'text-zinc-50'
+                                  }`}>
+                                    {item.name}
+                                  </span>
 
-                                {/* Conteúdo do item */}
-                                <div className="flex flex-col gap-0.5 flex-1 min-w-0">
-                                  {/* Categoria exibida ABOVE os produtos */}
-                                  {(category || (item as any).batchNumber > 1 || (item as any).isNew) && (
-                                    <div className="flex flex-wrap items-center gap-1.5 mb-0.5">
-                                      {category && (
-                                        <span className={`px-2 py-0.5 rounded-md text-[9px] sm:text-[10px] font-black uppercase tracking-wider shrink-0 border ${
-                                          isLight 
-                                            ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
-                                            : 'bg-indigo-500/15 border-indigo-500/30 text-indigo-300'
-                                        }`}>
-                                          {category}
-                                        </span>
-                                      )}
-                                      {((item as any).batchNumber > 1 || (item as any).isNew) && (
-                                        <span className="px-2 py-0.5 rounded-md text-[9px] sm:text-[10px] font-black uppercase tracking-wider shrink-0 bg-amber-500 text-white animate-pulse shadow-md">
-                                          ⚡ NOVO ITEM
-                                        </span>
-                                      )}
+                                  {/* Opções e Adicionais do Prato */}
+                                  {item.options && item.options.length > 0 && (
+                                    <div className="mt-1 pl-1 space-y-0.5">
+                                      {item.options.map((opt, oIdx) => (
+                                        <div 
+                                          key={oIdx} 
+                                          className={`text-xs font-bold flex items-center gap-1.5 ${
+                                            isLight ? 'text-slate-800' : 'text-zinc-300'
+                                          }`}
+                                        >
+                                          <span>+ {opt.quantity && opt.quantity > 1 ? `${opt.quantity}× ` : ''}{opt.name}</span>
+                                        </div>
+                                      ))}
                                     </div>
                                   )}
 
-                                  {/* Nome do Produto e Opções Consolidadas */}
-                                  {(() => {
-                                    const consolidatedOptions: { name: string; quantity: number; category?: string }[] = [];
-                                    if (item.selectedOptions && item.selectedOptions.length > 0) {
-                                      item.selectedOptions.forEach(opt => {
-                                        const existing = consolidatedOptions.find(o => o.name.trim().toLowerCase() === opt.name.trim().toLowerCase());
-                                        const q = opt.quantity || 1;
-                                        if (existing) {
-                                          existing.quantity += q;
-                                        } else {
-                                          consolidatedOptions.push({ name: opt.name, quantity: q, category: opt.category });
-                                        }
-                                      });
-                                    }
-
-                                    let displayName = item.name || '';
-                                    if (consolidatedOptions.length > 0 && displayName.includes('(')) {
-                                      // Remove as opções entre parênteses do nome do prato para manter apenas o nome padrão, sem duplicidade
-                                      displayName = displayName.replace(/\s*\(([^)]+)\)/g, (match, inner) => {
-                                        const innerLower = inner.toLowerCase();
-                                        const hasMatchingOption = consolidatedOptions.some(opt =>
-                                          opt.name && innerLower.includes(opt.name.trim().toLowerCase())
-                                        );
-                                        return hasMatchingOption ? '' : match;
-                                      }).trim();
-                                    }
-
-                                    return (
-                                      <>
-                                        {/* Nome do Produto */}
-                                        <span className={`text-base sm:text-lg font-black tracking-tight leading-snug ${
-                                          isChecked ? 'text-slate-400 font-semibold' : isLight ? 'text-slate-900' : 'text-slate-100'
-                                        }`}>
-                                          {displayName}
-                                        </span>
-
-                                        {/* Opções e Observações */}
-                                        {consolidatedOptions.length > 0 && (
-                                          <div className={`text-xs sm:text-sm space-y-1 font-bold pl-1 mt-1 ${
-                                            isLight ? 'text-slate-600' : 'text-slate-400'
-                                          }`}>
-                                            {consolidatedOptions.map((opt, oIdx) => {
-                                              const isMulti = opt.quantity > 1;
-                                              return (
-                                                <div key={oIdx} className="flex items-center gap-1.5 flex-wrap">
-                                                  <span className={`leading-tight ${isMulti ? (isLight ? 'text-amber-700 font-black' : 'text-amber-300 font-black') : ''}`}>
-                                                    + {isMulti ? `${opt.quantity}x ` : ''}{opt.name}
-                                                  </span>
-                                                  {isMulti && (
-                                                    <span className={`text-[10px] uppercase font-black px-1.5 py-0.5 rounded shadow-xs ${
-                                                      isLight 
-                                                        ? 'bg-amber-100 text-amber-900 border border-amber-300' 
-                                                        : 'bg-amber-500/25 text-amber-300 border border-amber-500/40'
-                                                    }`}>
-                                                      {opt.quantity} UNID
-                                                    </span>
-                                                  )}
-                                                </div>
-                                              );
-                                            })}
-                                          </div>
-                                        )}
-                                      </>
-                                    );
-                                  })()}
-
+                                  {/* Observação Específica do Item */}
                                   {item.observation && (
-                                    <p className={`text-xs sm:text-sm font-black border px-2.5 py-1 rounded-xl w-fit mt-1.5 shadow-sm whitespace-pre-line ${
+                                    <div className={`mt-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold w-fit ${
                                       isLight 
-                                        ? 'text-rose-700 bg-rose-50 border-rose-200' 
-                                        : 'text-rose-300 bg-rose-950/40 border-rose-500/40'
+                                        ? 'bg-amber-100 text-amber-950 border-amber-300' 
+                                        : 'bg-amber-950/50 text-amber-200 border-amber-800/60'
                                     }`}>
                                       OBS: {item.observation}
-                                    </p>
+                                    </div>
                                   )}
                                 </div>
                               </div>
@@ -764,55 +720,50 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                       </div>
                     </div>
 
-                    {/* Actions Panel */}
-                    <div className={`p-2.5 border-t shrink-0 ${
-                      isLight ? 'bg-slate-50/80 border-slate-200' : 'bg-slate-900/30 border-slate-800/80'
+                    {/* ─────────────────────────────────────────────
+                        RODAPÉ DO CARD: BOTÃO DESPACHAR
+                        Área de toque ampla (h-14 / 56px), confortável para tablet
+                        Única ação operacional do card
+                    ───────────────────────────────────────────── */}
+                    <footer className={`p-3 border-t shrink-0 ${
+                      isLight ? 'bg-slate-50 border-slate-200' : 'bg-zinc-850/60 border-zinc-800'
                     }`}>
-                      {/* Finish Production Action */}
                       <button
-                        onClick={() => {
-                          // Complete cooking order - promote to ready
-                          onUpdateStatus(order.id, 'ready');
-                        }}
-                        className={`w-full py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 shadow-lg ${
-                          allItemsChecked
-                            ? 'bg-emerald-600 text-white hover:bg-emerald-700 hover:scale-[1.01] active:scale-[0.99]'
-                            : isLight
-                              ? 'bg-slate-200 text-slate-600 border border-slate-300 hover:bg-slate-300'
-                              : 'bg-slate-800 text-slate-400 border border-slate-700/50 hover:bg-slate-750'
-                        }`}
+                        type="button"
+                        onClick={() => handleDispatch(order)}
+                        className="w-full h-14 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-black text-sm sm:text-base uppercase tracking-widest rounded-xl flex items-center justify-center gap-2.5 shadow-sm transition-all cursor-pointer"
+                        title="Marcar pedido como pronto e despachar para retirada/entrega"
                       >
-                        <CheckCircle2 size={13} />
-                        Pronto (Despachar)
+                        <CheckCircle2 size={22} className="stroke-[2.5]" />
+                        <span>DESPACHAR</span>
                       </button>
-                    </div>
-                  </motion.div>
+                    </footer>
+                  </motion.article>
                 );
               })}
             </AnimatePresence>
           </div>
         ) : (
-          <div className={`absolute inset-0 flex flex-col items-center justify-center opacity-40 pointer-events-none ${
-            isLight ? 'text-slate-400' : 'text-slate-500'
-          }`}>
-            <ChefHat size={64} className="mb-4 stroke-1 animate-pulse" />
-            <p className="text-[10px] font-black uppercase tracking-[0.2em]">Cozinha livre! Nenhum pedido na fila</p>
+          /* Estado Vazio: Cozinha limpa e sem pedidos pendentes */
+          <div className="h-full flex flex-col items-center justify-center p-8 text-center">
+            <div className={`w-20 h-20 rounded-3xl flex items-center justify-center mb-4 ${
+              isLight ? 'bg-slate-200 text-slate-600' : 'bg-zinc-800/80 text-zinc-400'
+            }`}>
+              <ChefHat size={44} className="stroke-[1.8] animate-pulse" />
+            </div>
+            <h2 className={`text-xl sm:text-2xl font-black uppercase tracking-tight ${
+              isLight ? 'text-slate-950' : 'text-zinc-50'
+            }`}>
+              Cozinha em Dia
+            </h2>
+            <p className={`text-xs sm:text-sm font-bold uppercase tracking-wider mt-1 max-w-sm ${
+              isLight ? 'text-slate-600' : 'text-zinc-400'
+            }`}>
+              Nenhum pedido aguardando produção no momento. Novos pedidos entrarão automaticamente na tela.
+            </p>
           </div>
         )}
-      </div>
-
-      {/* Footer Instruction Label */}
-      <div className={`border-t p-3 px-5 flex items-center justify-between text-[10px] font-black uppercase tracking-wider ${
-        isLight ? 'bg-white border-slate-200 text-slate-500' : 'bg-slate-900 border-slate-800 text-slate-500'
-      }`}>
-        <span className="flex items-center gap-1.5">
-          <AlertTriangle size={13} className="text-rose-500 animate-pulse" />
-          Marque os itens à medida que são cozidos. Clique em "Pronto" para enviar ao painel de retiradas!
-        </span>
-        <span className="font-mono text-[9px]">
-          KitchenFlow AI Cozinha v1.2
-        </span>
-      </div>
+      </main>
     </div>
   );
 };

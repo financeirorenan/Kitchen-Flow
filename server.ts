@@ -128,6 +128,7 @@ import {
   getDoc as getClientDoc,
   runTransaction as clientRunTransaction,
   limit as clientLimit,
+  orderBy as clientOrderBy,
   doc as clientDoc,
   setDoc as clientSetDoc,
   deleteDoc as clientDeleteDoc
@@ -1329,12 +1330,23 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
       // Sincronizar pedidos com emissão fiscal para garantir que documentos reais sempre apareçam
       try {
         const ordersRef = getClientCollection(clientDb, "orders");
-        const ordersQ = clientQuery(
-          ordersRef,
-          clientWhere("tenantId", "==", tenantId),
-          clientLimit(100)
-        );
-        const ordersSnap = await getClientDocs(ordersQ);
+        let ordersSnap;
+        try {
+          const ordersQ = clientQuery(
+            ordersRef,
+            clientWhere("tenantId", "==", tenantId),
+            clientOrderBy("createdAt", "desc"),
+            clientLimit(150)
+          );
+          ordersSnap = await getClientDocs(ordersQ);
+        } catch (_qErr) {
+          const fallbackQ = clientQuery(
+            ordersRef,
+            clientWhere("tenantId", "==", tenantId),
+            clientLimit(150)
+          );
+          ordersSnap = await getClientDocs(fallbackQ);
+        }
         const existingOrderIds = new Set(documents.map(d => d.orderId || d.id));
         const existingKeys = new Set(documents.map(d => d.fiscalKey).filter(Boolean));
 
@@ -1348,7 +1360,7 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
             tenantId: ord.tenantId,
             orderId: ord.id,
             orderDisplayId: ord.id.slice(-4),
-            tableNumber: ord.tableNumber,
+            tableNumber: ord.tableNumber || (ord.type === 'takeout' ? 'Balcão' : (ord.type === 'delivery' ? 'Delivery' : undefined)),
             orderType: ord.type,
             nfceNumber: ord.metadata?.nfceNumber || 1,
             series: ord.metadata?.series || 1,
