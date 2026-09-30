@@ -48,6 +48,7 @@ import {
 } from "lucide-react";
 import { StockAnalyst } from "./StockAnalyst";
 import { FiscalEngineModule } from "./FiscalEngineModule";
+import { CentralDeComandoKAI } from "./CentralDeComandoKAI";
 import {
   AreaChart,
   Area,
@@ -381,7 +382,7 @@ Como posso te ajudar a lucrar mais hoje? Pergunte abaixo ou clique em uma das su
   const [userQuery, setUserQuery] = useState("");
   const [isChatLoading, setIsChatLoading] = useState(false);
 
-  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'copilot' | 'cmv-cardapio' | 'chatbot' | 'analista-estoque' | 'fiscal'>('copilot');
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'copilot' | 'alertas' | 'cmv-cardapio' | 'chatbot' | 'analista-estoque' | 'fiscal'>('copilot');
   const [isMobileAppMode, setIsMobileAppMode] = useState(false);
 
   const chatEndRef = React.useRef<HTMLDivElement>(null);
@@ -463,7 +464,7 @@ Como posso te ajudar a lucrar mais hoje? Pergunte abaixo ou clique em uma das su
       const matchedProd = products.find(p => p.id === topId || p.name.toLowerCase() === topInfo.name.toLowerCase());
       return {
         name: matchedProd?.name || topInfo.name,
-        price: matchedProd?.price || (topInfo.qty > 0 ? topInfo.revenue / topInfo.qty : 0),
+        price: Number(matchedProd?.price ?? (topInfo.qty > 0 ? topInfo.revenue / topInfo.qty : 0)),
         image: matchedProd?.image || 'https://picsum.photos/seed/food/200/200',
         qtySold: topInfo.qty,
         revenue: topInfo.revenue
@@ -472,7 +473,7 @@ Como posso te ajudar a lucrar mais hoje? Pergunte abaixo ou clique em uma das su
     if (products.length > 0) {
       return {
         name: products[0].name,
-        price: products[0].price || 0,
+        price: Number(products[0].price || 0),
         image: products[0].image || 'https://picsum.photos/seed/food/200/200',
         qtySold: 0,
         revenue: 0
@@ -1749,107 +1750,147 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
   return (
     <div id="merchant-copilot-module" className="p-4 md:p-6 lg:p-8 space-y-6 w-full">
       
-      {/* Upper header action bar with Command Center style */}
-      <div className="bg-[#121214] border border-slate-800 p-5 md:p-6 rounded-[2rem] text-white shadow-xl flex flex-col lg:flex-row lg:items-center justify-between gap-5 relative overflow-hidden">
-        {/* Subtle background glow */}
-        <div className="absolute top-0 right-0 w-80 h-32 bg-indigo-600/10 blur-3xl pointer-events-none rounded-full" />
-
-        <div className="max-w-xl z-10">
-          <div className="flex items-center gap-2">
-            <span className="p-0.5 px-3 rounded-full text-[9px] bg-[#00B7FF]/15 text-[#00B7FF] font-black flex items-center gap-1.5 uppercase tracking-widest border border-[#00B7FF]/30 shadow-sm">
-              <Sparkles size={11} className="animate-spin text-[#00B7FF]" /> Analista Residente Kai
+      {/* 1. NOVO HEADER COMPACTO: MENU SIMPLIFICADO */}
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-3 md:p-4 shadow-xs flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+        {/* Lado Esquerdo: Marca & Abas de Navegação */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2 pr-3 border-r border-slate-200 mr-1 shrink-0">
+            <div className="w-8 h-8 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black">
+              <BrainCircuit size={17} className="text-sky-400" />
+            </div>
+            <span className="text-sm font-black tracking-tight text-slate-900">
+              CENTRAL KAI
             </span>
           </div>
-          <h1 className="text-2xl md:text-3xl font-black text-white tracking-tight mt-2 flex items-center gap-2">
-            Módulo Lojista
-          </h1>
-          <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-            Acompanhe o raio-x operacional e financeiro da sua loja gerado em tempo real com inteligência artificial.
-          </p>
+
+          <div className="flex flex-wrap items-center gap-1">
+            <button 
+              onClick={() => setActiveSubTab('copilot')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                activeSubTab === 'copilot'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              }`}
+            >
+              Central KAI
+            </button>
+            <button 
+              onClick={() => setActiveSubTab('overview')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                activeSubTab === 'overview'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              }`}
+            >
+              Visão Geral
+            </button>
+            <button 
+              onClick={() => setActiveSubTab('alertas')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                activeSubTab === 'alertas'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              }`}
+            >
+              Alertas
+            </button>
+            <button 
+              onClick={() => setActiveSubTab('analista-estoque')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                activeSubTab === 'analista-estoque'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              }`}
+            >
+              Estoque
+            </button>
+            <button 
+              onClick={() => setActiveSubTab('cmv-cardapio')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                activeSubTab === 'cmv-cardapio'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              }`}
+            >
+              CMV
+            </button>
+            <button 
+              onClick={() => setActiveSubTab('fiscal')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                activeSubTab === 'fiscal'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              }`}
+            >
+              Tributário
+            </button>
+          </div>
         </div>
 
-        {/* Action Controls */}
-        <div className="flex flex-col sm:flex-row flex-wrap items-start sm:items-center gap-3 z-10">
-          <button
-            onClick={() => setIsConfigOpen(true)}
-            className="px-4 py-2 bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/80 text-slate-200 rounded-xl transition-all flex items-center gap-2 font-bold text-xs shadow-sm cursor-pointer active:scale-95"
-          >
-            <Sliders size={14} className="text-indigo-400 animate-pulse" />
-            <span>Configurar Custos Fixos</span>
-          </button>
-
-          <button
-            onClick={() => setIsMobileAppMode(!isMobileAppMode)}
-            className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white rounded-xl transition-all flex items-center gap-2 font-bold text-xs shadow-md shadow-indigo-600/20 cursor-pointer active:scale-95"
-          >
-            <Smartphone size={14} />
-            <span>{isMobileAppMode ? "Ver Painel Web" : "Simular App Lojista 📱"}</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Navigation Subtabs Bar */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white border border-slate-200/80 p-2 rounded-2xl shadow-sm">
-        <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto">
-          <button 
-            onClick={() => setActiveSubTab('copilot')}
-            className={`px-3.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-2 ${activeSubTab === 'copilot' ? 'bg-[#0F172A] text-white shadow-md shadow-slate-900/20' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/80'}`}
-          >
-            <BrainCircuit size={15} className={activeSubTab === 'copilot' ? 'text-[#00B7FF]' : 'text-indigo-500'} /> Central de Comando KAI (Painel do Dono)
-          </button>
-          <button 
-            onClick={() => setActiveSubTab('overview')}
-            className={`px-3.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-2 ${activeSubTab === 'overview' ? 'bg-[#0F172A] text-white shadow-md shadow-slate-900/20' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'}`}
-          >
-            <LayoutDashboard size={14} /> Alertas & Insights
-          </button>
-          <button 
-            onClick={() => setActiveSubTab('analista-estoque')}
-            className={`px-3.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-2 ${activeSubTab === 'analista-estoque' ? 'bg-[#0F172A] text-white shadow-md shadow-slate-900/20' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'}`}
-          >
-            <Package size={14} className={activeSubTab === 'analista-estoque' ? 'text-white' : 'text-amber-500'} /> Estoque
-          </button>
-          <button 
-            onClick={() => setActiveSubTab('cmv-cardapio')}
-            className={`px-3.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-2 ${activeSubTab === 'cmv-cardapio' ? 'bg-[#0F172A] text-white shadow-md shadow-slate-900/20' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'}`}
-          >
-            <TrendingUp size={14} className={activeSubTab === 'cmv-cardapio' ? 'text-white' : 'text-emerald-500'} /> Assistente CMV
-          </button>
-          <button 
-            onClick={() => setActiveSubTab('chatbot')}
-            className={`px-3.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-2 ${activeSubTab === 'chatbot' ? 'bg-[#0F172A] text-white shadow-md shadow-slate-900/20' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'}`}
-          >
-            <MessageSquare size={14} className={activeSubTab === 'chatbot' ? 'text-white' : 'text-indigo-500'} /> Chatbot Kai
-          </button>
-          <button 
-            onClick={() => setActiveSubTab('fiscal')}
-            className={`px-3.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-2 ${activeSubTab === 'fiscal' ? 'bg-[#0F172A] text-white shadow-md shadow-slate-900/20' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'}`}
-          >
-            <Receipt size={14} className={activeSubTab === 'fiscal' ? 'text-white' : 'text-purple-500'} /> Motor Tributário CBS/IBS
-          </button>
-        </div>
-
-        {/* Filters shown inside Central de Comando KAI and Alertas */}
-        {(activeSubTab === 'copilot' || activeSubTab === 'overview') && (
-          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl w-full sm:w-auto justify-end">
+        {/* Lado Direito: Seletor de Período & Ações Secundárias */}
+        <div className="flex flex-wrap items-center gap-2 justify-end">
+          {/* Seletor de Período Compacto */}
+          <div className="flex items-center gap-0.5 bg-slate-100 p-1 rounded-xl">
             {(["today", "last7", "thisMonth", "lastMonth"] as PeriodType[]).map((p) => (
               <button
                 key={p}
                 onClick={() => setSelectedPeriod(p)}
-                className={`px-3 py-1.5 rounded-lg font-bold text-[10px] transition-all ${
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
                   selectedPeriod === p
-                    ? "bg-white text-indigo-600 shadow-sm font-black"
-                    : "text-slate-500 hover:text-slate-700"
+                    ? "bg-white text-slate-900 shadow-xs"
+                    : "text-slate-500 hover:text-slate-800"
                 }`}
               >
-                {p === "today" ? "Hoje" : p === "last7" ? "7D" : p === "thisMonth" ? "Mês" : "Mês Ant."}
+                {p === "today" ? "Hoje" : p === "last7" ? "7 Dias" : p === "thisMonth" ? "Mês" : "Mês Ant."}
               </button>
             ))}
           </div>
-        )}
+
+          {/* Botão Secundário: Auditoria KAI */}
+          <button
+            onClick={handleExplainOperation}
+            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+            title="Abrir Auditoria Avançada KAI"
+          >
+            <Sparkles size={13} className="text-orange-500" />
+            <span className="hidden sm:inline">Auditoria KAI</span>
+          </button>
+
+          {/* Botão Secundário: Chatbot KAI */}
+          <button
+            onClick={() => setIsAiDrawerOpen(true)}
+            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+            title="Abrir Chatbot KAI"
+          >
+            <MessageSquare size={13} className="text-sky-600" />
+            <span className="hidden sm:inline">Chatbot KAI</span>
+          </button>
+
+          {/* Botão Secundário: Custos Fixos */}
+          <button
+            onClick={() => setIsConfigOpen(true)}
+            className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all flex items-center gap-1 cursor-pointer"
+            title="Configurar Custos Fixos"
+          >
+            <Sliders size={13} />
+            <span className="hidden md:inline">Custos</span>
+          </button>
+        </div>
       </div>
 
       {/* RENDER ACTIVE TAB SEPARATORS */}
+      {activeSubTab === 'alertas' && (
+        <div className="space-y-6 animate-in fade-in duration-300 w-full">
+          <DashboardAlerts 
+            products={products} 
+            rawMaterials={rawMaterials}
+            onNavigateToInventory={onNavigateToInventory} 
+            maxItems={100}
+          />
+          <AIInsights sales={filteredData.currentOrders} inventory={products} />
+        </div>
+      )}
+
       {activeSubTab === 'overview' && (
         <div className="space-y-6 animate-in fade-in duration-500 w-full">
           <AIInsights sales={filteredData.currentOrders} inventory={products} />
@@ -2194,8 +2235,8 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                 <div className="p-4 space-y-4">
                   {[
                     { label: 'Pedidos Hoje:', value: dailyStats.count, color: 'text-slate-800' },
-                    { label: 'Vendas Hoje:', value: `R$ ${dailyStats.total.toFixed(2)}`, color: 'text-emerald-600', bold: true },
-                    { label: 'Ticket Médio:', value: `R$ ${dailyStats.average.toFixed(2)}`, color: 'text-indigo-600', bold: true },
+                    { label: 'Vendas Hoje:', value: `R$ ${Number(dailyStats?.total || 0).toFixed(2)}`, color: 'text-emerald-600', bold: true },
+                    { label: 'Ticket Médio:', value: `R$ ${Number(dailyStats?.average || 0).toFixed(2)}`, color: 'text-indigo-600', bold: true },
                     { label: 'Em preparo:', value: orders.filter(o => o.status === 'preparing').length, color: 'text-amber-600' },
                     { label: 'Prontos:', value: orders.filter(o => o.status === 'ready').length, color: 'text-emerald-600' },
                   ].map((stat, i) => (
@@ -2220,7 +2261,7 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                       <span className="inline-block px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 text-[8px] font-black uppercase mt-1">
                         {topSellingProduct.qtySold > 0 ? `${topSellingProduct.qtySold} vendidos` : 'Estrela de Vendas'}
                       </span>
-                      <p className="text-base font-black text-indigo-600 mt-1">R$ {topSellingProduct.price.toFixed(2)}</p>
+                      <p className="text-base font-black text-indigo-600 mt-1">R$ {Number(topSellingProduct?.price || 0).toFixed(2)}</p>
                     </div>
                   </div>
                 ) : (
@@ -2414,944 +2455,31 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
 
       {/* RESULTADO REAL DA OPERAÇÃO - CENTRAL DE COMANDO KAI (PAINEL DO DONO) */}
       {activeSubTab === 'copilot' && (
-        <div className="space-y-6 w-full animate-in fade-in duration-500">
-          
-          {/* BANNER PRINCIPAL DO DONO - VISÃO COMPACTA E DIRETA DE CAIXA E SOBRA */}
-          <div className="w-full bg-[#0F172A] text-white rounded-[2.5rem] p-6 shadow-xl relative overflow-hidden border border-slate-800">
-            {/* Glow decorativo */}
-            <div className="absolute -top-10 -right-10 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
-            <div className="absolute -bottom-10 -left-10 w-64 h-64 bg-[#00B7FF]/10 rounded-full blur-3xl pointer-events-none" />
-
-            <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-800/80">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-2xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-[#00B7FF]">
-                  <BrainCircuit size={26} />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-md bg-indigo-500/20 text-[#00B7FF] border border-indigo-500/30">
-                      Painel do Dono
-                    </span>
-                    <span className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                      Tempo Real
-                    </span>
-                    <span className="text-[10px] font-bold text-slate-400">
-                      • {dateRange.periodName} ({dateRange.daysCount}d)
-                    </span>
-                  </div>
-                  <h2 className="text-xl md:text-2xl font-black tracking-tight text-white mt-1">
-                    Central de Comando KAI
-                  </h2>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="flex items-center gap-1 bg-slate-900/90 border border-slate-800 p-1 rounded-xl">
-                  {(["today", "last7", "thisMonth", "lastMonth"] as PeriodType[]).map((p) => (
-                    <button
-                      key={p}
-                      onClick={() => setSelectedPeriod(p)}
-                      className={`px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition-all cursor-pointer ${
-                        selectedPeriod === p
-                          ? "bg-indigo-600 text-white shadow-md font-black"
-                          : "text-slate-400 hover:text-white hover:bg-slate-800/60"
-                      }`}
-                    >
-                      {p === "today" ? "Hoje" : p === "last7" ? "7 Dias" : p === "thisMonth" ? "Este Mês" : "Mês Ant."}
-                    </button>
-                  ))}
-                </div>
-
-                <button
-                  onClick={handleExplainOperation}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-extrabold text-[10px] uppercase tracking-wider rounded-xl transition-all shadow-lg shadow-indigo-600/20 flex items-center gap-2 cursor-pointer"
-                >
-                  <Sparkles size={14} className="animate-pulse text-amber-300" />
-                  Auditoria KAI
-                </button>
-              </div>
-            </div>
-
-            {/* 6 CARDS PRINCIPAIS DO DONO (MÉTRICAS VITAIS DE CAIXA, ESTOQUE E LOGÍSTICA) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mt-6 relative z-10">
-              
-              {/* Card 1: Faturamento Bruto Real */}
-              <div className="bg-slate-900/90 border border-slate-800/80 p-4 rounded-2xl flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                      <DollarSign size={12} className="text-emerald-400" /> Faturamento
-                    </span>
-                    <span className="text-[9px] font-bold text-slate-400 font-mono">
-                      {filteredData.currentOrders.length} ped.
-                    </span>
-                  </div>
-                  <span className="text-2xl font-black text-white tracking-tight block">
-                    R$ {stats.faturamento.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-                <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between">
-                  <span className="text-[9px] text-slate-400 font-bold uppercase">Variância:</span>
-                  {getPercentageVariation(stats.faturamento, stats.faturamentoPrev) >= 0 ? (
-                    <span className="text-[9.5px] font-black text-emerald-400 flex items-center gap-0.5">
-                      <TrendingUp size={11} /> +{getPercentageVariation(stats.faturamento, stats.faturamentoPrev).toFixed(1)}%
-                    </span>
-                  ) : (
-                    <span className="text-[9.5px] font-black text-rose-400 flex items-center gap-0.5">
-                      <TrendingDown size={11} /> {getPercentageVariation(stats.faturamento, stats.faturamentoPrev).toFixed(1)}%
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Card 2: Sobra Limpa no Bolso (Lucro Real) */}
-              <div className="bg-slate-900/90 border border-slate-800/80 p-4 rounded-2xl flex flex-col justify-between relative overflow-hidden">
-                <div className={`absolute top-0 right-0 w-2 h-full ${stats.lucroReal >= 0 ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                      <Wallet size={12} className="text-[#00B7FF]" /> Sobra Limpa (Bolso)
-                    </span>
-                    <span className={`text-[9px] font-black px-1.5 py-0.5 rounded text-white ${stats.margem >= 15 ? 'bg-emerald-600' : stats.margem >= 8 ? 'bg-amber-600' : 'bg-rose-600'}`}>
-                      {stats.margem.toFixed(1)}% Margem
-                    </span>
-                  </div>
-                  <span className={`text-2xl font-black tracking-tight block ${stats.lucroReal >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    R$ {stats.lucroReal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-                <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[9px] font-bold text-slate-400 uppercase">
-                  <span>Status:</span>
-                  <span className={stats.lucroReal >= 0 ? 'text-emerald-400 font-extrabold' : 'text-rose-400 font-extrabold'}>
-                    {stats.lucroReal >= 0 ? '🟢 Lucro no Bolso' : '🔴 Operação em Déficit'}
-                  </span>
-                </div>
-              </div>
-
-              {/* Card 3: Termômetro 0 a 0 do Período */}
-              <div className="bg-slate-900/90 border border-slate-800/80 p-4 rounded-2xl flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                      <Target size={12} className="text-amber-400" /> Meta 0a0 ({selectedPeriod === 'today' ? 'Equilíbrio Hoje' : selectedPeriod === 'last7' ? 'Equilíbrio 7D' : selectedPeriod === 'thisMonth' ? 'Equilíbrio Mês' : 'Equilíbrio Mês Ant.'})
-                    </span>
-                    <span className="text-[9px] font-extrabold text-amber-400">
-                      R$ {stats.pontoEquilibrio.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}{selectedPeriod === 'today' ? '/dia' : ''}
-                    </span>
-                  </div>
-                  <div className="flex items-baseline justify-between mt-1">
-                    <span className="text-xl font-black text-white">
-                      R$ {stats.faturamento.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                    <span className={`text-[10px] font-black ${stats.faturamento >= stats.pontoEquilibrio ? 'text-emerald-400' : 'text-amber-400'}`}>
-                      {stats.pontoEquilibrio > 0 ? Math.round((stats.faturamento / stats.pontoEquilibrio) * 100) : 0}%
-                    </span>
-                  </div>
-                </div>
-                {/* Barra de progresso do 0a0 */}
-                <div className="mt-3">
-                  <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700/50">
-                    <div 
-                      className={`h-full transition-all duration-500 rounded-full ${stats.faturamento >= stats.pontoEquilibrio ? 'bg-emerald-500' : 'bg-amber-400'}`}
-                      style={{ width: `${Math.min(100, stats.pontoEquilibrio > 0 ? (stats.faturamento / stats.pontoEquilibrio) * 100 : 0)}%` }}
-                    />
-                  </div>
-                  <span className="text-[8.5px] text-slate-400 font-bold block mt-1">
-                    {stats.faturamento >= stats.pontoEquilibrio 
-                      ? "🟢 Contas do período cobertas! Sobra ativa." 
-                      : `Faltam R$ ${Math.max(0, stats.pontoEquilibrio - stats.faturamento).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} para equilibrar.`}
-                  </span>
-                </div>
-              </div>
-
-              {/* Card 4: Ticket Médio x Desempenho */}
-              <div className="bg-slate-900/90 border border-slate-800/80 p-4 rounded-2xl flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                      <ShoppingBag size={12} className="text-indigo-400" /> Ticket Médio
-                    </span>
-                    <span className="text-[9px] font-mono text-slate-400 font-bold">Por Pedido</span>
-                  </div>
-                  <span className="text-2xl font-black text-white tracking-tight block">
-                    R$ {stats.ticketMedio.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-                <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[8.5px] font-semibold text-slate-400">
-                  <span>Impacto de +R$ 3 no ticket:</span>
-                  <span className="font-extrabold text-[#00B7FF]">
-                    +R$ {(filteredData.currentOrders.length * 3).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}
-                  </span>
-                </div>
-              </div>
-
-              {/* Card 5: Estoque Adormecido (Dinheiro Parado) */}
-              <div 
-                onClick={() => setActiveSubTab('analista-estoque')}
-                className="bg-slate-900/90 border border-slate-800/80 p-4 rounded-2xl flex flex-col justify-between hover:border-amber-500/50 cursor-pointer transition-all group relative overflow-hidden"
-              >
-                <div className="absolute top-0 right-0 w-1.5 h-full bg-amber-500" />
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                      <Package size={12} className="text-amber-400" /> Capital Parado
-                    </span>
-                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono">
-                      {stockStats.dormantItemsCount} itens
-                    </span>
-                  </div>
-                  <span className="text-2xl font-black text-amber-300 tracking-tight block">
-                    R$ {stockStats.dormantStockValue.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-                <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[8.5px] font-semibold text-slate-400">
-                  <span>Parado 15+ dias:</span>
-                  <span className="font-extrabold text-amber-400 flex items-center gap-0.5 group-hover:underline">
-                    Girar Estoque <ChevronRight size={10} />
-                  </span>
-                </div>
-              </div>
-
-              {/* Card 6: Repasse aos Entregadores */}
-              <div className="bg-slate-900/90 border border-slate-800/80 p-4 rounded-2xl flex flex-col justify-between relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-1.5 h-full bg-indigo-500" />
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                      <Bike size={12} className="text-indigo-400" /> Repasse Motoboys
-                    </span>
-                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${courierStats.pendingCourierFee > 0 ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'}`}>
-                      {courierStats.pendingCourierFee > 0 ? 'A Acertar' : 'Quitado'}
-                    </span>
-                  </div>
-                  <span className="text-2xl font-black text-white tracking-tight block">
-                    R$ {courierStats.totalCourierFee.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-                <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[8.5px] font-semibold text-slate-400">
-                  <span>Pendente de acerto:</span>
-                  <span className={`font-extrabold ${courierStats.pendingCourierFee > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
-                    R$ {courierStats.pendingCourierFee.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-              </div>
-
-            </div>
-          </div>
-
-          {/* SEÇÃO ESPECIAL KAI: CAPITAL PARADO EM ESTOQUE & BALANÇO DE ENTREGADORES */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            
-            {/* CARD DETALHADO DE ESTOQUE ADORMECIDO */}
-            <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col justify-between hover:border-amber-300 transition-all relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full blur-2xl pointer-events-none" />
-              <div>
-                <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
-                  <div className="flex items-center gap-2">
-                    <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-black">
-                      <Package size={18} />
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-black uppercase text-slate-800 tracking-wider">
-                        Estoque Adormecido (Capital Imobilizado)
-                      </h4>
-                      <span className="text-[9.5px] font-bold text-slate-400">
-                        Ingredientes e produtos sem movimentação há mais de 15 dias
-                      </span>
-                    </div>
-                  </div>
-                  <span className="text-[10px] font-black px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
-                    {stockStats.dormantItemsCount} itens parados
-                  </span>
-                </div>
-
-                <div className="flex items-baseline justify-between mb-2">
-                  <div>
-                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Dinheiro Parado em Prateleira</span>
-                    <span className="text-2xl font-black text-amber-600 tracking-tight">
-                      R$ {stockStats.dormantStockValue.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase block">Total do Estoque</span>
-                    <span className="text-xs font-black text-slate-700">
-                      R$ {stockStats.totalStockValue.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Barra de Proporção de Estoque Imobilizado */}
-                <div className="mt-3">
-                  <div className="flex justify-between items-center text-[8.5px] font-extrabold uppercase text-slate-400 mb-1">
-                    <span>Proporção do Estoque Total</span>
-                    <span className="text-amber-600">
-                      {stockStats.totalStockValue > 0 ? ((stockStats.dormantStockValue / stockStats.totalStockValue) * 100).toFixed(1) : 0}% Imobilizado
-                    </span>
-                  </div>
-                  <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden flex border border-slate-200/50">
-                    <div 
-                      className="bg-amber-500 h-full rounded-full transition-all" 
-                      style={{ width: `${Math.min(100, stockStats.totalStockValue > 0 ? (stockStats.dormantStockValue / stockStats.totalStockValue) * 100 : 0)}%` }} 
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between">
-                <p className="text-[9.5px] text-slate-500 font-medium leading-tight">
-                  💡 <strong>Dica Kai:</strong> Crie um combo promocional no PDV com esses itens para liberar capital de giro e evitar desperdício.
-                </p>
-                <button
-                  onClick={() => setActiveSubTab('analista-estoque')}
-                  className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-[10px] uppercase tracking-wider rounded-xl transition-all shrink-0 ml-3 flex items-center gap-1 cursor-pointer shadow-sm"
-                >
-                  Girar Estoque <ChevronRight size={12} />
-                </button>
-              </div>
-            </div>
-
-            {/* CARD DETALHADO DE REPASSES E LOGÍSTICA DE ENTREGADORES */}
-            <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col justify-between hover:border-indigo-300 transition-all relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-2xl pointer-events-none" />
-              <div>
-                <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
-                  <div className="flex items-center gap-2">
-                    <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-black">
-                      <Bike size={18} />
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-black uppercase text-slate-800 tracking-wider">
-                        Repasse & Balanço de Entregadores
-                      </h4>
-                      <span className="text-[9.5px] font-bold text-slate-400">
-                        Taxa de frete dos clientes vs. Payouts de motoboys
-                      </span>
-                    </div>
-                  </div>
-                  <span className={`text-[10px] font-black px-2.5 py-1 rounded-full border ${courierStats.pendingCourierFee > 0 ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
-                    {courierStats.pendingCourierFee > 0 ? `Pendente: R$ ${courierStats.pendingCourierFee.toFixed(2)}` : 'Sem Pendências'}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3 mb-3">
-                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
-                    <span className="text-[8.5px] font-extrabold text-slate-400 uppercase tracking-wider block">Total Repassado aos Motoboys</span>
-                    <span className="text-lg font-black text-slate-800 mt-0.5 block">
-                      R$ {courierStats.totalCourierFee.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
-                    <span className="text-[8.5px] font-extrabold text-slate-400 uppercase tracking-wider block">Taxa de Entrega Cobrada</span>
-                    <span className="text-lg font-black text-indigo-600 mt-0.5 block">
-                      R$ {courierStats.totalDeliveryFee.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between text-[9.5px] bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                  <span className="font-bold text-slate-500">Saldo Logístico (Frete Cobrado vs Pago):</span>
-                  <span className={`font-black ${courierStats.totalDeliveryFee - courierStats.totalCourierFee >= 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
-                    {courierStats.totalDeliveryFee - courierStats.totalCourierFee >= 0 ? '+' : ''}
-                    R$ {(courierStats.totalDeliveryFee - courierStats.totalCourierFee).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-              </div>
-
-              <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between">
-                <div className="flex items-center gap-2 text-[9px] text-slate-400 font-bold">
-                  <span>Quitados: R$ {courierStats.settledCourierFee.toFixed(2)}</span>
-                  <span>•</span>
-                  <span className="text-amber-600">A Acertar: R$ {courierStats.pendingCourierFee.toFixed(2)}</span>
-                </div>
-                <span className="text-[9.5px] font-extrabold text-indigo-600">
-                  Sincronizado com Módulo Delivery
-                </span>
-              </div>
-            </div>
-
-          </div>
-
-          {/* OS 3 PILARES FUNDAMENTAIS DA OPERAÇÃO DE ALIMENTAÇÃO */}
-          <div>
-            <div className="flex items-center justify-between mb-3 px-1">
-              <div>
-                <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                  <ShieldCheck size={16} className="text-indigo-600" /> Os 3 Pilares Vitais da Sua Operação
-                </h3>
-                <p className="text-[10px] text-slate-400 font-bold">Diagnóstico em tempo real dos fatores que diretamente afetam o lucro do restaurante.</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-              
-              {/* PILAR 1: CMV (Custos de Insumos & Ingredientes) */}
-              <div className="bg-white border border-slate-200/80 rounded-3xl p-5 shadow-sm flex flex-col justify-between hover:border-slate-300 transition-all">
-                <div>
-                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                      <Utensils size={14} className="text-rose-500" /> Pilar 1: CMV (Insumos)
-                    </span>
-                    {(() => {
-                      const cmvPct = stats.faturamento > 0 ? (stats.cmv / stats.faturamento) * 100 : 0;
-                      return (
-                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-md ${cmvPct <= 33 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : cmvPct <= 38 ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-rose-50 text-rose-700 border border-rose-200'}`}>
-                          {cmvPct.toFixed(1)}% ({cmvPct <= 33 ? 'Saudável' : cmvPct <= 38 ? 'Atenção' : 'Alto'})
-                        </span>
-                      );
-                    })()}
-                  </div>
-
-                  <div className="mt-4">
-                    <span className="text-2xl font-black text-slate-800 block">
-                      R$ {stats.cmv.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                    <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
-                      Custo total estimado de ingredientes nos pratos vendidos.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-5 p-3 rounded-2xl bg-slate-50 border border-slate-100/80 text-[10px] leading-relaxed text-slate-600 font-medium">
-                  {(() => {
-                    const cmvPct = stats.faturamento > 0 ? (stats.cmv / stats.faturamento) * 100 : 0;
-                    if (cmvPct <= 33) {
-                      return "🟢 Seu custo de ingredientes está dentro da meta ideal (até 33%). Mantenha a disciplina de porcionamento na cozinha.";
-                    } else if (cmvPct <= 38) {
-                      return "🟡 Seu CMV está levemente pressionado. Verifique os insumos de maior peso e padronize a pesagem de ingredientes.";
-                    } else {
-                      return "🔴 CMV crítico acima de 38%! Custo de ingredientes corroendo a sobra. Revise os preços de pratos principais ou negocie fornecedores.";
-                    }
-                  })()}
-                </div>
-              </div>
-
-              {/* PILAR 2: Dependência de Marketplace vs Canal Próprio */}
-              <div className="bg-white border border-slate-200/80 rounded-3xl p-5 shadow-sm flex flex-col justify-between hover:border-slate-300 transition-all">
-                <div>
-                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                      <Bike size={14} className="text-amber-500" /> Pilar 2: Taxas de Delivery
-                    </span>
-                    <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200">
-                      {stats.faturamento > 0 ? ((stats.taxasDelivery / stats.faturamento) * 100).toFixed(1) : 0}% do Fat.
-                    </span>
-                  </div>
-
-                  <div className="mt-4">
-                    <span className="text-2xl font-black text-slate-800 block">
-                      R$ {stats.taxasDelivery.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                    <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
-                      Valor retido em comissões de aplicativos e logística.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-5 p-3 rounded-2xl bg-amber-50/50 border border-amber-100 text-[10px] leading-relaxed text-amber-900 font-medium flex items-start gap-2">
-                  <Zap size={14} className="text-amber-600 shrink-0 mt-0.5" />
-                  <div>
-                    <strong className="font-extrabold uppercase block text-[9px] text-amber-800">Economia Potencial KAI:</strong>
-                    Se você migrar 15% das vendas dos apps para seu WhatsApp / Cardápio Próprio, economizará aproximadamente <strong>R$ {(stats.taxasDelivery * 0.15).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> que entram direto na sobra!
-                  </div>
-                </div>
-              </div>
-
-              {/* PILAR 3: Impostos & Retenção do Split Payment (CBS/IBS) */}
-              <div className="bg-white border border-slate-200/80 rounded-3xl p-5 shadow-sm flex flex-col justify-between hover:border-slate-300 transition-all">
-                <div>
-                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                      <Receipt size={14} className="text-indigo-600" /> Pilar 3: Retenção Tributária
-                    </span>
-                    <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200">
-                      Split Payment
-                    </span>
-                  </div>
-
-                  <div className="mt-4">
-                    <span className="text-2xl font-black text-slate-800 block">
-                      R$ {(stats.faturamento * 0.038).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                    <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
-                      Estimativa de CBS/IBS retido na adquirente (Reforma Tributária).
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-5 p-3 rounded-2xl bg-indigo-50/50 border border-indigo-100 text-[10px] leading-relaxed text-indigo-900 font-medium flex items-start gap-2">
-                  <ShieldCheck size={14} className="text-indigo-600 shrink-0 mt-0.5" />
-                  <div>
-                    <strong className="font-extrabold uppercase block text-[9px] text-indigo-800">Conformidade Fiscal Garantida:</strong>
-                    Sua "Sobra Limpa" calculada neste painel já considers as dedutibilidades e você não terá surpresas com o fisco no final do mês.
-                  </div>
-                </div>
-              </div>
-
-            </div>
-          </div>
-
-          {/* 3 ALERTAS E AÇÕES PRÁTICAS DO DIA PARA O DONO */}
-          <div className="bg-gradient-to-br from-slate-900 to-slate-950 text-white rounded-[2.5rem] p-6 shadow-xl border border-slate-800">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-5">
-              <div className="flex items-center gap-2">
-                <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                  <AlertTriangle size={18} />
-                </div>
-                <div>
-                  <h3 className="text-sm font-black uppercase tracking-wider text-white">
-                    3 Ações Imediatas Sugeridas pelo Kai
-                  </h3>
-                  <p className="text-[10px] text-slate-400 font-bold">
-                    Otimizações diretas e sem enrolação para aplicar ainda hoje no seu estabelecimento.
-                  </p>
-                </div>
-              </div>
-              <span className="text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
-                Ações do Dia
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              
-              {/* Card Ação 1: Ajuste de Cardápio */}
-              <div className="bg-slate-900/90 border border-slate-800 p-4.5 rounded-2xl flex flex-col justify-between">
-                <div>
-                  <span className="text-[9px] font-black uppercase tracking-wider text-amber-400 block mb-1">
-                    1. Proteção de Margem de Item
-                  </span>
-                  <h4 className="text-xs font-black text-white">
-                    {productProfitMap.leastProfitable[0] ? `Revisar item: ${productProfitMap.leastProfitable[0].name}` : 'Ajuste Fixo de Fichas'}
-                  </h4>
-                  <p className="text-[10.5px] text-slate-300 font-medium leading-relaxed mt-2">
-                    {productProfitMap.leastProfitable[0]
-                      ? `Este item está rodando com margem menor que o ideal. Reajustar R$ 1,50 no valor de venda ou ajustar a porção equilibra a margem imediatamente.`
-                      : `Monitore os insumos com variação de preço de mercado nos fornecedores para não perder rentabilidade nos itens do cardápio.`}
-                  </p>
-                </div>
-                <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between">
-                  <span className="text-[9px] font-bold text-slate-400 uppercase">Impacto Esperado:</span>
-                  <span className="text-[9.5px] font-black text-emerald-400">+ R$ 350,00/mês</span>
-                </div>
-              </div>
-
-              {/* Card Ação 2: Giro de Estoque Parado */}
-              <div className="bg-slate-900/90 border border-slate-800 p-4.5 rounded-2xl flex flex-col justify-between">
-                <div>
-                  <span className="text-[9px] font-black uppercase tracking-wider text-[#00B7FF] block mb-1">
-                    2. Combos & Giro de Estoque
-                  </span>
-                  <h4 className="text-xs font-black text-white">
-                    Criar Combo "Âncora + Acompanhamento"
-                  </h4>
-                  <p className="text-[10.5px] text-slate-300 font-medium leading-relaxed mt-2">
-                    Crie ofertas combinando seu prato principal de maior saída com acompanhamentos ou bebidas de baixíssimo custo para acelerar o giro de ingredientes.
-                  </p>
-                </div>
-                <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between">
-                  <span className="text-[9px] font-bold text-slate-400 uppercase">Impacto Esperado:</span>
-                  <span className="text-[9.5px] font-black text-[#00B7FF]">+ 18% Vendas Totais</span>
-                </div>
-              </div>
-
-              {/* Card Ação 3: Alavanca de Ticket Médio */}
-              <div className="bg-slate-900/90 border border-slate-800 p-4.5 rounded-2xl flex flex-col justify-between">
-                <div>
-                  <span className="text-[9px] font-black uppercase tracking-wider text-emerald-400 block mb-1">
-                    3. Elevação do Ticket no Atendimento
-                  </span>
-                  <h4 className="text-xs font-black text-white">
-                    Sugestão Ativa de Sobremesas / Bebidas
-                  </h4>
-                  <p className="text-[10.5px] text-slate-300 font-medium leading-relaxed mt-2">
-                    Estimule o atendimento a oferecer adicionais ou sobremesas. Um incremento médio de R$ 3,00 por comanda gera um aporte limpo direto para o caixa.
-                  </p>
-                </div>
-                <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between">
-                  <span className="text-[9px] font-bold text-slate-400 uppercase">Ganho no Período:</span>
-                  <span className="text-[9.5px] font-black text-emerald-400">
-                    + R$ {(filteredData.currentOrders.length * 3).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}
-                  </span>
-                </div>
-              </div>
-
-            </div>
-          </div>
-
-          {/* SIMULADOR DE ALAVANCAS DE LUCRO (E SE...?) */}
-          <div className="bg-white border border-slate-200/80 rounded-[2.5rem] p-6 shadow-sm">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-4 border-b border-slate-100 mb-6">
-              <div>
-                <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 flex items-center gap-2">
-                  <Sliders size={16} className="text-indigo-600" /> Simulador de Alavancas de Lucro
-                </h3>
-                <p className="text-[10px] text-slate-400 font-bold mt-0.5">
-                  Arraste os controles para ver instantaneamente quanto dinheiro a mais entra no seu bolso ao otimizar a operação.
-                </p>
-              </div>
-
-              {/* Resultado da Simulação */}
-              {(() => {
-                const cmvGain = stats.cmv * (simCmvReduction / 100);
-                const feeGain = stats.taxasDelivery * (simFeeReduction / 100);
-                const totalExtraProfit = cmvGain + feeGain;
-                return (
-                  <div className="bg-emerald-50 border border-emerald-200 p-2.5 px-4 rounded-2xl flex items-center gap-3">
-                    <span className="text-base">💰</span>
-                    <div>
-                      <span className="text-[8.5px] font-extrabold uppercase text-emerald-800 tracking-wider block">Sobra Adicional Estimada:</span>
-                      <span className="text-base font-black text-emerald-700">
-                        + R$ {totalExtraProfit.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              
-              {/* Slider 1: Redução de CMV / Desperdício */}
-              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3">
-                <div className="flex justify-between items-center">
-                  <label className="text-xs font-black text-slate-800 uppercase tracking-tight flex items-center gap-1.5">
-                    <Utensils size={14} className="text-rose-500" /> Redução de CMV / Desperdício
-                  </label>
-                  <span className="text-xs font-black text-indigo-600 bg-indigo-50 border px-2 py-0.5 rounded-lg">
-                    -{simCmvReduction}%
-                  </span>
-                </div>
-                <input 
-                  type="range" 
-                  min="0" 
-                  max="15" 
-                  step="1"
-                  value={simCmvReduction}
-                  onChange={(e) => setSimCmvReduction(parseFloat(e.target.value))}
-                  className="w-full accent-indigo-600 h-2 bg-slate-200 rounded-lg cursor-pointer"
-                />
-                <div className="flex justify-between text-[9px] text-slate-400 font-bold">
-                  <span>0% (Atual)</span>
-                  <span>Ganho: +R$ {(stats.cmv * (simCmvReduction / 100)).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}</span>
-                  <span>-15% (Otimizado)</span>
-                </div>
-              </div>
-
-              {/* Slider 2: Migração de Apps p/ Canal Próprio */}
-              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3">
-                <div className="flex justify-between items-center">
-                  <label className="text-xs font-black text-slate-800 uppercase tracking-tight flex items-center gap-1.5">
-                    <Bike size={14} className="text-amber-500" /> Migração de App p/ Cardápio Próprio
-                  </label>
-                  <span className="text-xs font-black text-indigo-600 bg-indigo-50 border px-2 py-0.5 rounded-lg">
-                    {simFeeReduction}% das Vendas
-                  </span>
-                </div>
-                <input 
-                  type="range" 
-                  min="0" 
-                  max="30" 
-                  step="5"
-                  value={simFeeReduction}
-                  onChange={(e) => setSimFeeReduction(parseFloat(e.target.value))}
-                  className="w-full accent-indigo-600 h-2 bg-slate-200 rounded-lg cursor-pointer"
-                />
-                <div className="flex justify-between text-[9px] text-slate-400 font-bold">
-                  <span>0% (Sem mudança)</span>
-                  <span>Economia: +R$ {(stats.taxasDelivery * (simFeeReduction / 100)).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}</span>
-                  <span>30% Convertidos</span>
-                </div>
-              </div>
-
-            </div>
-          </div>
-
-          {/* DEMONSTRATIVO FINANCEIRO COMPLETO (DRE RESUMIDO) */}
-          <div id="stripe-summary-card" className="w-full bg-white border border-slate-200/80 rounded-[2.5rem] p-6 shadow-sm flex flex-col justify-between">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-5">
-              <div>
-                <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider">
-                  Demonstrativo Consolidado de Resultados (DRE Resumido)
-                </h3>
-                <p className="text-[10px] text-slate-400 font-bold mt-0.5">
-                  Decomposição detalhada do fluxo financeiro do período selecionado.
-                </p>
-              </div>
-              <span className="text-[10px] text-slate-400 font-bold bg-slate-50 border px-2.5 py-1 rounded-lg">
-                Proporcional para {dateRange.daysCount} dias
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {/* Items do DRE */}
-              <div className="p-4 bg-slate-50/70 rounded-2xl border border-slate-100">
-                <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest block mb-1">1. Faturamento Bruto</span>
-                <span className="text-xl font-black text-slate-800">R$ {stats.faturamento.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                <span className="text-[8.5px] font-bold text-slate-400 block mt-1">Vendas reais no sistema</span>
-              </div>
-
-              <div className="p-4 bg-slate-50/70 rounded-2xl border border-slate-100">
-                <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest block mb-1">2. Custo de Insumos (CMV)</span>
-                <span className="text-xl font-black text-rose-600">- R$ {stats.cmv.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                <span className="text-[8.5px] font-bold text-slate-400 block mt-1">{stats.faturamento > 0 ? ((stats.cmv / stats.faturamento) * 100).toFixed(1) : 0}% da receita em insumos</span>
-              </div>
-
-              <div className="p-4 bg-slate-50/70 rounded-2xl border border-slate-100">
-                <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest block mb-1">3. Taxas de Apps & Delivery</span>
-                <span className="text-xl font-black text-amber-600">- R$ {stats.taxasDelivery.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                <span className="text-[8.5px] font-bold text-slate-400 block mt-1">Comissões e taxas de marketplace</span>
-              </div>
-
-              <div className="p-4 bg-slate-50/70 rounded-2xl border border-slate-100">
-                <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest block mb-1">4. Folha de Pagamento</span>
-                <span className="text-xl font-black text-slate-700">- R$ {stats.folha.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                <span className="text-[8.5px] font-bold text-slate-400 block mt-1">Proporcional de salários e pró-labore</span>
-              </div>
-
-              <div className="p-4 bg-slate-50/70 rounded-2xl border border-slate-100">
-                <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest block mb-1">5. Despesas Fixas (Aluguel/Contas)</span>
-                <span className="text-xl font-black text-slate-700">- R$ {stats.despesasFixas.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                <span className="text-[8.5px] font-bold text-slate-400 block mt-1">Estrutura operacional proporcional</span>
-              </div>
-
-              <div className="p-4 bg-emerald-50 border border-emerald-200/80 rounded-2xl">
-                <span className="text-[9.5px] font-black text-emerald-800 uppercase tracking-widest block mb-1">6. Sobra Limpa Final</span>
-                <span className={`text-xl font-black ${stats.lucroReal >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
-                  R$ {stats.lucroReal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </span>
-                <span className="text-[8.5px] font-black text-emerald-700 block mt-1">{stats.margem.toFixed(1)}% de margem líquida real</span>
-              </div>
-            </div>
-          </div>
-
-      {/* OPERATIONAL VISUAL CHART & INSIGHTS ROW */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        
-        {/* Weekly Chart */}
-        <div className="lg:col-span-8 bg-white border border-slate-200/80 rounded-[2.5rem] p-6 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider">Flutuação Diária de Lucro</h3>
-              <p className="text-[10px] text-slate-400 font-semibold">Volume de faturamento vs sobra líquida no decorrer do período.</p>
-            </div>
-          </div>
-          <div className="h-64 mt-2">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={dailyPerformanceChartData} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="colorFav" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.15}/>
-                    <stop offset="95%" stopColor="#4f46e5" stopOpacity={0}/>
-                  </linearGradient>
-                  <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.15}/>
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="label" stroke="#94a3b8" fontSize={9} fontWeight="bold" tickLine={false} />
-                <YAxis stroke="#94a3b8" fontSize={9} fontWeight="bold" tickLine={false} />
-                <Tooltip 
-                  contentStyle={{ background: "#0f172a", border: "none", borderRadius: "16px", color: "#f8fafc" }}
-                  labelStyle={{ fontSize: "10px", fontWeight: "black", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "4px" }}
-                  itemStyle={{ fontSize: "11px", fontWeight: "bold" }}
-                />
-                <Area type="monotone" dataKey="Faturamento" stroke="#4f46e5" strokeWidth={2.5} fillOpacity={1} fill="url(#colorFav)" name="Faturamento (R$)" />
-                <Area type="monotone" dataKey="Lucro" stroke="#10b981" strokeWidth={2.5} fillOpacity={1} fill="url(#colorProfit)" name="Sobra de Lucro (R$)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Dynamic autogenerated copilot insight bullets */}
-        <div className="lg:col-span-4 bg-[#00B7FF]/5 border border-[#00B7FF]/10 rounded-[2.5rem] p-6 shadow-sm flex flex-col justify-between">
-          <div>
-            <div className="flex items-center gap-2 mb-4">
-              <span className="p-1 px-2.5 rounded-full text-[9px] bg-[#14171C] text-white font-extrabold flex items-center gap-1 uppercase tracking-wider border border-white/5">
-                Diretrizes do Kai
-              </span>
-            </div>
-            <h3 className="text-base font-black text-slate-800 tracking-tight">Recomendações de Gestão</h3>
-            <p className="text-[11px] text-slate-400 mt-0.5 mb-5 font-bold">Auditoria operacional residente instantânea:</p>
-            
-            <div className="space-y-4">
-              {copilotInsights.map((insight, idx) => (
-                <div key={idx} className="flex gap-3 items-start bg-white p-3.5 rounded-2xl border border-slate-100 shadow-sm transition-all hover:translate-x-1">
-                  <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl font-bold text-xs shrink-0 mt-0.5">
-                    {idx + 1}
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-bold text-slate-700 leading-relaxed">
-                      {insight}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="mt-6 pt-4 border-t border-indigo-200/40 text-center">
-            <span className="text-[9px] text-indigo-500 font-extrabold uppercase tracking-wider">
-              Análise baseada em {filteredData.currentOrders.length} pedidos reais no período
-            </span>
-          </div>
-        </div>
-
-      </div>
-
-      {/* PRODUCT PROFIT MAP (Mapa de lucro por produto) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-
-        {/* Rank of most profitable items */}
-        <div className="lg:col-span-6 bg-white border border-slate-200/80 rounded-[2.5rem] p-6 shadow-sm">
-          <div className="flex items-center justify-between mb-5 border-b border-slate-50 pb-3">
-            <div>
-              <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider">Top 5 Ítens de Maior Sobra Líquida</h3>
-              <p className="text-[10px] text-slate-400 font-semibold">Os produtos que verdadeiramente geraram mais lucro no caixa.</p>
-            </div>
-            <span className="text-[10px] font-extrabold uppercase tracking-widest bg-emerald-50 text-emerald-600 border border-emerald-100 py-1 px-2.5 rounded-full">
-              Estrelas
-            </span>
-          </div>
-
-          <div className="space-y-3.5">
-            {productProfitMap.topProfitable.length > 0 ? (
-              productProfitMap.topProfitable.map((item, idx) => (
-                <div key={item.id} className="flex items-center justify-between p-3 bg-slate-50/50 rounded-2xl border border-slate-100 hover:bg-slate-50 transition-all">
-                  <div className="flex items-center gap-3">
-                    <span className="w-6 h-6 flex items-center justify-center bg-indigo-50 text-indigo-600 rounded-lg text-xs font-black">
-                      #{idx + 1}
-                    </span>
-                    <div>
-                      <h4 className="text-xs font-bold text-slate-800">{item.name}</h4>
-                      <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wide">
-                        {item.qty} un vendidas • Margem {item.margin.toFixed(0)}%
-                      </p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-xs font-black text-emerald-600 block">
-                      + R$ {item.profit.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                    <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">
-                      {(item.shareOfRevenue).toFixed(1)}% de part.
-                    </span>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <p className="text-xs text-slate-400 text-center py-8 font-semibold">Nenhum produto vendido no período.</p>
-            )}
-          </div>
-        </div>
-
-        {/* Rank of least profitable items */}
-        <div className="lg:col-span-6 bg-white border border-slate-200/80 rounded-[2.5rem] p-6 shadow-sm">
-          <div className="flex items-center justify-between mb-5 border-b border-slate-50 pb-3">
-            <div>
-              <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider">Alerta: Ítens de Menor Margem Líquida</h3>
-              <p className="text-[10px] text-slate-400 font-semibold">Produtos que estão gerando baixo retorno ou apenas girando estoque.</p>
-            </div>
-            <span className="text-[10px] font-extrabold uppercase tracking-widest bg-rose-50 text-rose-600 border border-rose-100 py-1 px-2.5 rounded-full">
-              Foco de Auditoria
-            </span>
-          </div>
-
-          <div className="space-y-3.5">
-            {productProfitMap.leastProfitable.length > 0 ? (
-              productProfitMap.leastProfitable.map((item, idx) => (
-                <div key={item.id} className="flex items-center justify-between p-3 bg-slate-50/50 rounded-2xl border border-slate-100 hover:bg-slate-50 transition-all">
-                  <div className="flex items-center gap-3">
-                    <span className="w-6 h-6 flex items-center justify-center bg-rose-50 text-rose-600 rounded-lg text-xs font-black">
-                      #{idx + 1}
-                    </span>
-                    <div>
-                      <h4 className="text-xs font-bold text-slate-850">{item.name}</h4>
-                      <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wide">
-                        Venda: R$ {item.price.toFixed(2)} • Custo: R$ {item.cost.toFixed(2)}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-xs font-black text-rose-550 block">
-                      Margem {item.margin.toFixed(0)}%
-                    </span>
-                    <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">
-                      Sobrou R$ {item.profit.toFixed(0)} limpo
-                    </span>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <p className="text-xs text-slate-400 text-center py-8 font-semibold">Nenhum produto com margem crítica.</p>
-            )}
-          </div>
-        </div>
-
-      </div>
-
-      {/* FINANCES PREVISION MODULE (Previsão Lojista) */}
-      <div className="bg-slate-900 border border-slate-800 rounded-[2.5rem] p-6 shadow-xl text-white">
-        <div id="lojista-forecasting-section" className="border-b border-slate-800 pb-4 mb-5">
-          <span className="text-[10.5px] font-extrabold uppercase tracking-widest text-indigo-400 block mb-1">
-            Simulador de Sobrevivência e Previsão
-          </span>
-          <h3 className="text-lg font-black tracking-tight text-white">Previsões Financeiras Automáticas</h3>
-          <p className="text-[11px] text-slate-400 font-semibold mt-0.5">
-            Calculado estatisticamente com base no seu ritmo operacional atual e configurações de custos fixos.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          
-          {/* Revenue Prevision */}
-          <div className="p-4 bg-slate-800/40 rounded-2xl border border-slate-800/80">
-            <span className="text-[9.5px] font-black uppercase tracking-wider text-slate-400 block mb-1">Previsão de Faturamento Mensal</span>
-            <span className="text-xl font-black text-white">
-              R$ {((stats.faturamento / (dateRange.daysCount || 1)) * 30).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}
-            </span>
-            <span className="text-[9px] font-black bg-indigo-500/10 border border-indigo-400/20 text-indigo-400 px-2 py-0.5 rounded-md block mt-3 max-w-max">
-              Tendência de +12% de Estatura
-            </span>
-          </div>
-
-          {/* Business survival days (Caixa de sobrevivência) */}
-          <div className="p-4 bg-slate-800/40 rounded-2xl border border-slate-800/80">
-            <span className="text-[9.5px] font-black uppercase tracking-wider text-slate-400 block mb-1">Dias de Sobrevivência de Caixa</span>
-            <span className="text-xl font-black text-emerald-400">
-              ~ 45 Dias
-            </span>
-            <p className="text-[10px] text-slate-400 mt-2 font-semibold">
-              Sua sobra operacional atual cobre seus custos fixos planejados com folga saudável.
-            </p>
-          </div>
-
-          {/* Dynamic Break even point month projection */}
-          <div className="p-4 bg-slate-800/40 rounded-2xl border border-slate-800/80">
-            <span className="text-[9.5px] font-black uppercase tracking-wider text-slate-400 block mb-1">Ponto de Equilíbrio Mensal</span>
-            <span className="text-xl font-black text-white">
-              R$ {stats.pontoEquilibrioMensal.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}
-            </span>
-            <p className="text-[10px] text-slate-400 mt-2 font-semibold">
-              Você precisa faturar isso por mês para zerar sua estrutura de despesas.
-            </p>
-          </div>
-
-          {/* Safety margin simulator */}
-          <div className="p-4 bg-slate-800/40 rounded-2xl border border-slate-800/80">
-            <span className="text-[9.5px] font-black uppercase tracking-wider text-slate-400 block mb-1">Análise de Risco Sensível</span>
-            <span className="text-xl font-black text-rose-400">
-              Risco Moderado
-            </span>
-            <p className="text-[10px] text-slate-400 mt-2 font-semibold">
-              Se os custos de insumos aumentarem 10%, sua margem líquida encurtará para {(Math.max(0, stats.margem - 4.5)).toFixed(0)}%.
-            </p>
-          </div>
-
-        </div>
-      </div>
-    </div>
-  )}
+        <CentralDeComandoKAI 
+          stats={stats}
+          filteredData={filteredData}
+          selectedPeriod={selectedPeriod}
+          setSelectedPeriod={setSelectedPeriod}
+          dateRange={dateRange}
+          handleExplainOperation={handleExplainOperation}
+          setIsConfigOpen={setIsConfigOpen}
+          setActiveSubTab={setActiveSubTab}
+          stockStats={stockStats}
+          courierStats={courierStats}
+          productProfitMap={productProfitMap}
+          copilotInsights={copilotInsights}
+          dailyPerformanceChartData={dailyPerformanceChartData}
+          simCmvReduction={simCmvReduction}
+          setSimCmvReduction={setSimCmvReduction}
+          simFeeReduction={simFeeReduction}
+          setSimFeeReduction={setSimFeeReduction}
+          getPercentageVariation={getPercentageVariation}
+          rawMaterials={rawMaterials}
+          products={products}
+          onNavigateToInventory={onNavigateToInventory}
+          subscriptionStats={subscriptionStats}
+        />
+      )}
 
   {activeSubTab === 'analista-estoque' && (
     <div className="animate-in fade-in duration-500 w-full space-y-6">

@@ -61,8 +61,9 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
     localStorage.setItem('kf_target_margins', JSON.stringify(targetMargins));
   }, [targetMargins]);
 
-  const calculateProductCost = (product: Product, channel: 'all' | 'dine_in' | 'takeout_delivery' | 'delivery' | 'takeout' = 'all') => {
-    if (!product.technicalSheet || product.technicalSheet.length === 0) return product.cost;
+  const calculateProductCost = (product: Product | null | undefined, channel: 'all' | 'dine_in' | 'takeout_delivery' | 'delivery' | 'takeout' = 'all'): number => {
+    if (!product) return 0;
+    if (!product.technicalSheet || product.technicalSheet.length === 0) return Number(product.cost || 0);
     return product.technicalSheet.reduce((total, item) => {
       const ch = item.channel || 'all';
       if (channel !== 'all') {
@@ -75,11 +76,12 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
         if (!isMatch) return total;
       }
       const material = rawMaterials.find(rm => rm.id === item.rawMaterialId);
-      return total + (material ? material.costPerUnit * item.quantity : 0);
+      return total + (material ? Number(material.costPerUnit || 0) * Number(item.quantity || 0) : 0);
     }, 0);
   };
 
   const getProductTargetMargin = (product: Product) => {
+    if (!product) return targetMargins.default || 60;
     const cat = product.category || 'Geral';
     const productOverride = targetMargins.products[product.id] || targetMargins.products[product.name];
     if (productOverride !== undefined) return productOverride;
@@ -87,7 +89,7 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
     const categoryOverride = targetMargins.categories[cat];
     if (categoryOverride !== undefined) return categoryOverride;
     
-    return targetMargins.default;
+    return targetMargins.default || 60;
   };
 
   // Pizza simulation states
@@ -207,14 +209,15 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
     const cost1 = calculateProductCost(pizzaSabor1);
     const cost2 = calculateProductCost(pizzaSabor2);
     
-    const price1 = pizzaSabor1.price;
-    const price2 = pizzaSabor2.price;
+    const price1 = Number(pizzaSabor1.price || 0);
+    const price2 = Number(pizzaSabor2.price || 0);
 
     const toppingCost1 = cost1 * 0.5;
     const toppingCost2 = cost2 * 0.5;
+    const baseCost = Number(pizzaBaseCost || 0);
     
     // Total combined cost is 50% of flavor 1 toppings cost + 50% of flavor 2 toppings cost + specified base cost (dough, box, gas, sauce)
-    const totalCost = toppingCost1 + toppingCost2 + pizzaBaseCost;
+    const totalCost = toppingCost1 + toppingCost2 + baseCost;
 
     let totalPrice = 0;
     if (pizzaPricingRule === 'highest') {
@@ -230,8 +233,8 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
     const realizedCMV = totalPrice > 0 ? (totalCost / totalPrice) * 100 : 0;
     const realizedMargin = totalPrice > 0 ? (netProfit / totalPrice) * 100 : 0;
 
-    const target1 = getProductTargetMargin(pizzaSabor1);
-    const target2 = getProductTargetMargin(pizzaSabor2);
+    const target1 = Number(getProductTargetMargin(pizzaSabor1) || 0);
+    const target2 = Number(getProductTargetMargin(pizzaSabor2) || 0);
     const averageTargetMargin = (target1 + target2) / 2;
     const targetCMV = 100 - averageTargetMargin;
 
@@ -263,10 +266,11 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
 
     products.forEach(p => {
       const cost = calculateProductCost(p);
-      const cmv = (cost / p.price) * 100;
+      const price = Number(p.price || 0);
+      const cmv = price > 0 ? (cost / price) * 100 : 0;
       totalCMV += cmv;
       
-      const targetMargin = getProductTargetMargin(p);
+      const targetMargin = Number(getProductTargetMargin(p) || 0);
       const targetCMV = 100 - targetMargin;
 
       if (cmv > targetCMV) critical++;
@@ -274,7 +278,7 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
       else healthy++;
     });
 
-    return { healthy, critical, warning, total, avgCMV: totalCMV / total };
+    return { healthy, critical, warning, total, avgCMV: total > 0 ? totalCMV / total : 0 };
   }, [products, rawMaterials, targetMargins]);
 
   const runAnalysis = async () => {
@@ -605,14 +609,16 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
               {results.map((res, idx) => {
                 const product = products.find(p => p.name === res.productName);
                 if (!product) return null;
-                const calculatedCost = calculateProductCost(product);
-                const currentCMV = (calculatedCost / product.price) * 100;
+                const calculatedCost = Number(calculateProductCost(product) || 0);
+                const price = Number(product.price || 0);
+                const currentCMV = price > 0 ? (calculatedCost / price) * 100 : 0;
                 
-                const targetMargin = getProductTargetMargin(product);
+                const targetMargin = Number(getProductTargetMargin(product) || 0);
                 const targetCMV = 100 - targetMargin;
                 const isCritical = currentCMV > targetCMV;
-                const idealPrice = calculatedCost / (1 - targetMargin / 100);
+                const idealPrice = calculatedCost / Math.max(0.01, (1 - targetMargin / 100));
                 const isApplied = appliedProducts.includes(res.productName);
+                const newPrice = Number(res.newPrice ?? (idealPrice > 0 && isFinite(idealPrice) ? idealPrice : price) ?? 0);
                 
                 return (
                   <div key={idx} className={`bg-white rounded-2xl border-2 shadow-sm flex flex-col group hover:shadow-xl transition-all duration-300 ${isApplied ? 'border-emerald-200 bg-emerald-50/10' : isCritical ? 'border-rose-100 bg-rose-50/5' : 'border-slate-100 hover:border-indigo-200'}`}>
@@ -621,7 +627,7 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                         <div className="space-y-0.5">
                           <h4 className="font-black text-base text-slate-800 tracking-tight group-hover:text-indigo-600 transition-colors truncate max-w-[190px]">{res.productName}</h4>
                           <span className="inline-block text-[8px] font-black tracking-widest uppercase bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded-md">
-                            {product.category || 'Geral'} • {targetMargin}% Lucro Desejado
+                            {product.category || 'Geral'} • {Number(targetMargin || 0).toFixed(0)}% Lucro Desejado
                           </span>
                         </div>
                         {isApplied ? (
@@ -650,7 +656,7 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                           <div className="flex items-center gap-1">
                             <Percent size={12} className={isCritical ? 'text-rose-500' : 'text-emerald-500'} />
                             <span className={`text-xs font-black ${isCritical ? 'text-rose-600' : 'text-slate-700'}`}>
-                              {currentCMV.toFixed(1)}% / {targetCMV.toFixed(0)}%
+                              {Number(currentCMV || 0).toFixed(1)}% / {Number(targetCMV || 0).toFixed(0)}%
                             </span>
                           </div>
                         </div>
@@ -668,7 +674,7 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                       <div className="bg-indigo-50/40 p-3 rounded-xl border border-indigo-100/50 flex items-center justify-between">
                         <div>
                           <p className="text-[8px] font-black text-indigo-500 uppercase">Preço Recomendado (IA)</p>
-                          <p className="text-lg font-black text-indigo-600">R$ {res.newPrice.toFixed(2)}</p>
+                          <p className="text-lg font-black text-indigo-600">R$ {Number(newPrice || 0).toFixed(2)}</p>
                         </div>
                         <span className="text-[8px] font-black bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full uppercase">Sugerido</span>
                       </div>
@@ -678,12 +684,12 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                       <div className="space-y-0.5">
                         <p className="text-[8px] font-black text-slate-400 uppercase">Preço Atual / Custo</p>
                         <p className="text-xs font-black text-slate-700">
-                          R$ {product.price.toFixed(2)} / R$ {calculatedCost.toFixed(2)}
+                          R$ {Number(price || 0).toFixed(2)} / R$ {Number(calculatedCost || 0).toFixed(2)}
                         </p>
                       </div>
                       {!isApplied ? (
                         <button 
-                          onClick={() => handleApplyAdjustment(res)}
+                          onClick={() => handleApplyAdjustment({ ...res, newPrice })}
                           className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-black text-[9px] uppercase tracking-widest hover:bg-indigo-700 hover:shadow-lg transition-all flex items-center gap-1.5"
                         >
                           <Save size={12} /> Aplicar
@@ -756,11 +762,11 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                   <div className="flex items-center gap-6 text-right">
                     <div>
                       <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Custo Mesa (Salão)</p>
-                      <p className="text-sm font-black text-slate-700">R$ {calculateProductCost(editingSheetProduct, 'dine_in').toFixed(2)}</p>
+                      <p className="text-sm font-black text-slate-700">R$ {Number(calculateProductCost(editingSheetProduct, 'dine_in') || 0).toFixed(2)}</p>
                     </div>
                     <div>
                       <p className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">Custo Balcão / Delivery</p>
-                      <p className="text-2xl font-black text-indigo-600 tracking-tighter">R$ {calculateProductCost(editingSheetProduct, 'takeout_delivery').toFixed(2)}</p>
+                      <p className="text-2xl font-black text-indigo-600 tracking-tighter">R$ {Number(calculateProductCost(editingSheetProduct, 'takeout_delivery') || 0).toFixed(2)}</p>
                     </div>
                   </div>
                 </div>
@@ -780,7 +786,7 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                           <div key={idx} className="flex flex-wrap md:flex-nowrap items-center gap-4 p-3 bg-slate-50 rounded-2xl border border-slate-100 group">
                             <div className="flex-1 min-w-[150px]">
                               <p className="text-sm font-black text-slate-800">{material.name}</p>
-                              <p className="text-[9px] font-bold text-slate-400 uppercase">Custo: R$ {material.costPerUnit.toFixed(2)} / {material.unit}</p>
+                              <p className="text-[9px] font-bold text-slate-400 uppercase">Custo: R$ {Number(material.costPerUnit || 0).toFixed(2)} / {material.unit}</p>
                             </div>
 
                             {/* Canal Selector */}
@@ -810,7 +816,7 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
 
                             <div className="w-20 text-right shrink-0">
                               <p className="text-[9px] font-black text-slate-400 uppercase">Subtotal</p>
-                              <p className="text-sm font-black text-slate-800">R$ {(material.costPerUnit * item.quantity).toFixed(2)}</p>
+                              <p className="text-sm font-black text-slate-800">R$ {(Number(material.costPerUnit || 0) * Number(item.quantity || 0)).toFixed(2)}</p>
                             </div>
 
                             <button 
@@ -890,15 +896,18 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
 
               <div className="space-y-4">
                 {products.sort((a, b) => {
-                  const cmvA = a.price > 0 ? (calculateProductCost(a) / a.price) * 100 : 0;
-                  const cmvB = b.price > 0 ? (calculateProductCost(b) / b.price) * 100 : 0;
+                  const prA = Number(a?.price || 0);
+                  const prB = Number(b?.price || 0);
+                  const cmvA = prA > 0 ? (Number(calculateProductCost(a) || 0) / prA) * 100 : 0;
+                  const cmvB = prB > 0 ? (Number(calculateProductCost(b) || 0) / prB) * 100 : 0;
                   return cmvB - cmvA;
                 }).map(p => {
-                  const cost = calculateProductCost(p);
-                  const cmv = p.price > 0 ? (cost / p.price) * 100 : 0;
-                  const profit = (p.price || 0) - cost;
+                  const pr = Number(p?.price || 0);
+                  const cost = Number(calculateProductCost(p) || 0);
+                  const cmv = pr > 0 ? (cost / pr) * 100 : 0;
+                  const profit = pr - cost;
                   
-                  const targetMargin = getProductTargetMargin(p);
+                  const targetMargin = Number(getProductTargetMargin(p) || 0);
                   const targetCMV = 100 - targetMargin;
                   const isCritical = cmv > targetCMV;
                   const isWarning = cmv > targetCMV - 3 && cmv <= targetCMV;
@@ -918,23 +927,23 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                       <div className="grid grid-cols-3 gap-4 w-full md:w-auto shrink-0">
                         <div className="text-center md:text-right">
                            <p className="text-[8px] font-black text-slate-400 uppercase">Preço</p>
-                           <p className="text-sm font-black text-slate-800">R$ {(p.price || 0).toFixed(2)}</p>
+                           <p className="text-sm font-black text-slate-800">R$ {pr.toFixed(2)}</p>
                         </div>
                         <div className="text-center md:text-right">
                            <p className="text-[8px] font-black text-slate-400 uppercase">Custo</p>
-                           <p className="text-sm font-black text-slate-600">R$ {(cost || 0).toFixed(2)}</p>
+                           <p className="text-sm font-black text-slate-600">R$ {cost.toFixed(2)}</p>
                         </div>
                         <div className="text-center md:text-right">
                            <p className="text-[8px] font-black text-slate-400 uppercase">CMV Real / Alvo</p>
                            <p className={`text-sm font-black ${isCritical ? 'text-rose-600' : isWarning ? 'text-amber-600' : 'text-emerald-600'}`}>
-                             {(cmv || 0).toFixed(1)}% / {(targetCMV || 0)}%
+                             {cmv.toFixed(1)}% / {targetCMV}%
                            </p>
                         </div>
                       </div>
 
                       <div className="w-full md:w-32 bg-white p-2 rounded-xl border border-slate-100 text-center">
                         <p className="text-[8px] font-black text-slate-400 uppercase">Lucro Bruto</p>
-                        <p className="text-sm font-black text-indigo-600">R$ {(profit || 0).toFixed(2)}</p>
+                        <p className="text-sm font-black text-indigo-600">R$ {profit.toFixed(2)}</p>
                       </div>
                     </div>
                   );
@@ -952,22 +961,32 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                 <div className="space-y-4">
                   <div className="p-4 bg-white/10 rounded-2xl backdrop-blur-md border border-white/10">
                     <p className="text-[8px] font-black text-indigo-200 uppercase tracking-widest mb-1">Oportunidade de Promoção</p>
-                    {products.filter(p => (calculateProductCost(p) / p.price) * 100 < 25).slice(0, 1).map(p => (
-                      <div key={p.id}>
-                        <p className="text-sm font-black">{p.name}</p>
-                        <p className="text-[10px] opacity-80 mt-1">Este item tem uma margem excelente ({((1 - calculateProductCost(p)/p.price)*100).toFixed(0)}%). Considere criar um combo para aumentar o ticket médio.</p>
-                      </div>
-                    ))}
+                    {products.filter(p => Number(p?.price || 0) > 0 && (Number(calculateProductCost(p) || 0) / Number(p.price || 0)) * 100 < 25).slice(0, 1).map(p => {
+                      const pr = Number(p?.price || 0);
+                      const cst = Number(calculateProductCost(p) || 0);
+                      const marginPct = pr > 0 ? ((1 - cst / pr) * 100) : 0;
+                      return (
+                        <div key={p.id}>
+                          <p className="text-sm font-black">{p.name}</p>
+                          <p className="text-[10px] opacity-80 mt-1">Este item tem uma margem excelente ({marginPct.toFixed(0)}%). Considere criar um combo para aumentar o ticket médio.</p>
+                        </div>
+                      );
+                    })}
                   </div>
 
                   <div className="p-4 bg-rose-500/20 rounded-2xl backdrop-blur-md border border-rose-500/20">
                     <p className="text-[8px] font-black text-rose-200 uppercase tracking-widest mb-1">Alerta de Prejuízo</p>
-                    {products.filter(p => (calculateProductCost(p) / p.price) * 100 > 40).slice(0, 1).map(p => (
-                      <div key={p.id}>
-                        <p className="text-sm font-black">{p.name}</p>
-                        <p className="text-[10px] opacity-80 mt-1">CMV crítico de {((calculateProductCost(p)/p.price)*100).toFixed(0)}%. Verifique desperdícios ou reajuste o preço imediatamente.</p>
-                      </div>
-                    ))}
+                    {products.filter(p => Number(p?.price || 0) > 0 && (Number(calculateProductCost(p) || 0) / Number(p.price || 0)) * 100 > 40).slice(0, 1).map(p => {
+                      const pr = Number(p?.price || 0);
+                      const cst = Number(calculateProductCost(p) || 0);
+                      const cmvPct = pr > 0 ? ((cst / pr) * 100) : 0;
+                      return (
+                        <div key={p.id}>
+                          <p className="text-sm font-black">{p.name}</p>
+                          <p className="text-[10px] opacity-80 mt-1">CMV crítico de {cmvPct.toFixed(0)}%. Verifique desperdícios ou reajuste o preço imediatamente.</p>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
@@ -1040,11 +1059,15 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                       }}
                       className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none"
                     >
-                      {combinedPizzaProducts.map(p => (
-                        <option key={p.id} value={p.id}>
-                          {p.name} (Venda: R$ {p.price.toFixed(2)} | Custo: R$ {calculateProductCost(p).toFixed(2)})
-                        </option>
-                      ))}
+                      {combinedPizzaProducts.map(p => {
+                        const pr = Number(p?.price || 0);
+                        const cst = Number(calculateProductCost(p) || 0);
+                        return (
+                          <option key={p.id} value={p.id}>
+                            {p.name} (Venda: R$ {pr.toFixed(2)} | Custo: R$ {cst.toFixed(2)})
+                          </option>
+                        );
+                      })}
                     </select>
                   </div>
 
@@ -1059,11 +1082,15 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                       }}
                       className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none"
                     >
-                      {combinedPizzaProducts.map(p => (
-                        <option key={p.id} value={p.id}>
-                          {p.name} (Venda: R$ {p.price.toFixed(2)} | Custo: R$ {calculateProductCost(p).toFixed(2)})
-                        </option>
-                      ))}
+                      {combinedPizzaProducts.map(p => {
+                        const pr = Number(p?.price || 0);
+                        const cst = Number(calculateProductCost(p) || 0);
+                        return (
+                          <option key={p.id} value={p.id}>
+                            {p.name} (Venda: R$ {pr.toFixed(2)} | Custo: R$ {cst.toFixed(2)})
+                          </option>
+                        );
+                      })}
                     </select>
                   </div>
 
@@ -1087,7 +1114,7 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                     <div className="space-y-1">
                       <label className="text-[10px] font-extrabold text-slate-500 uppercase">Diferença de Margem</label>
                       <div className="p-2 bg-white rounded-xl border flex items-center justify-center font-bold text-xs text-slate-600 h-[34px]">
-                        R$ {Math.abs((pizzaSabor1?.price || 0) - (pizzaSabor2?.price || 0)).toFixed(2)} dif.
+                        R$ {Math.abs(Number(pizzaSabor1?.price || 0) - Number(pizzaSabor2?.price || 0)).toFixed(2)} dif.
                       </div>
                     </div>
                   </div>
@@ -1163,7 +1190,7 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                           <div className="relative text-center z-10">
                             <span className="bg-amber-900 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase">Lado A</span>
                             <p className="font-extrabold text-[10px] text-amber-950 mt-1 uppercase leading-tight truncate max-w-[70px]" title={pizzaSabor1.name}>{pizzaSabor1.name.split(' ').slice(1).join(' ') || pizzaSabor1.name}</p>
-                            <p className="font-black text-amber-900 text-[11px] mt-0.5">R$ {calcActivePizza.toppingCost1.toFixed(2)}c</p>
+                            <p className="font-black text-amber-900 text-[11px] mt-0.5">R$ {Number(calcActivePizza.toppingCost1 || 0).toFixed(2)}c</p>
                           </div>
                         </div>
                         {/* Right Half (Sabor B) */}
@@ -1172,7 +1199,7 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                           <div className="relative text-center z-10">
                             <span className="bg-yellow-900 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase">Lado B</span>
                             <p className="font-extrabold text-[10px] text-yellow-950 mt-1 uppercase leading-tight truncate max-w-[70px]" title={pizzaSabor2.name}>{pizzaSabor2.name.split(' ').slice(1).join(' ') || pizzaSabor2.name}</p>
-                            <p className="font-black text-yellow-900 text-[11px] mt-0.5">R$ {calcActivePizza.toppingCost2.toFixed(2)}c</p>
+                            <p className="font-black text-yellow-900 text-[11px] mt-0.5">R$ {Number(calcActivePizza.toppingCost2 || 0).toFixed(2)}c</p>
                           </div>
                         </div>
                         {/* Center Hub */}
@@ -1187,7 +1214,7 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                           <p className={`text-sm font-black tracking-tight leading-none mt-1 ${
                             calcActivePizza.realizedCMV > calcActivePizza.targetCMV ? 'text-rose-600 animate-pulse' : calcActivePizza.realizedCMV > calcActivePizza.targetCMV - 3 ? 'text-amber-600' : 'text-emerald-600'
                           }`}>
-                            {calcActivePizza.realizedCMV.toFixed(1)}%
+                            {Number(calcActivePizza.realizedCMV || 0).toFixed(1)}%
                           </p>
                           <span className={`text-[6px] font-black uppercase mt-1 px-1 py-0.5 rounded ${
                             calcActivePizza.realizedCMV > calcActivePizza.targetCMV ? 'bg-rose-100 text-rose-700' : calcActivePizza.realizedCMV > calcActivePizza.targetCMV - 3 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
@@ -1203,19 +1230,19 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                         <div className="space-y-1.5 text-xs text-slate-500 font-medium">
                           <div className="flex justify-between">
                             <span>50% Recheio de {pizzaSabor1.name}</span>
-                            <span className="font-black text-slate-700">R$ {calcActivePizza.toppingCost1.toFixed(2)}</span>
+                            <span className="font-black text-slate-700">R$ {Number(calcActivePizza.toppingCost1 || 0).toFixed(2)}</span>
                           </div>
                           <div className="flex justify-between">
                             <span>50% Recheio de {pizzaSabor2.name}</span>
-                            <span className="font-black text-slate-700">R$ {calcActivePizza.toppingCost2.toFixed(2)}</span>
+                            <span className="font-black text-slate-700">R$ {Number(calcActivePizza.toppingCost2 || 0).toFixed(2)}</span>
                           </div>
                           <div className="flex justify-between">
                             <span>Massa Base + Embalagem + Forno</span>
-                            <span className="font-black text-slate-700">R$ {pizzaBaseCost.toFixed(2)}</span>
+                            <span className="font-black text-slate-700">R$ {Number(pizzaBaseCost || 0).toFixed(2)}</span>
                           </div>
                           <div className="border-t pt-1.5 flex justify-between font-black text-slate-800 text-sm">
                             <span>Custo Produção Integral</span>
-                            <span className="text-indigo-600">R$ {calcActivePizza.totalCost.toFixed(2)}</span>
+                            <span className="text-indigo-600">R$ {Number(calcActivePizza.totalCost || 0).toFixed(2)}</span>
                           </div>
                         </div>
                       </div>
@@ -1226,7 +1253,7 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                       <div className="bg-white p-4 rounded-2xl border flex flex-col justify-between">
                         <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1">Preço Consumidor</span>
                         <div className="flex flex-col">
-                          <span className="text-xl font-black text-slate-800">R$ {calcActivePizza.totalPrice.toFixed(2)}</span>
+                          <span className="text-xl font-black text-slate-800">R$ {Number(calcActivePizza.totalPrice || 0).toFixed(2)}</span>
                           <span className="text-[8.5px] text-slate-400 font-bold mt-0.5">Regra: {pizzaPricingRule === 'highest' ? 'Mais Cara' : 'Média Cobrada'}</span>
                         </div>
                       </div>
@@ -1234,7 +1261,7 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                       <div className="bg-white p-4 rounded-2xl border flex flex-col justify-between">
                         <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1">Custo Combinado</span>
                         <div className="flex flex-col">
-                          <span className="text-xl font-black text-slate-800">R$ {calcActivePizza.totalCost.toFixed(2)}</span>
+                          <span className="text-xl font-black text-slate-800">R$ {Number(calcActivePizza.totalCost || 0).toFixed(2)}</span>
                           <span className="text-[8.5px] text-slate-400 font-bold mt-0.5">Toppings + Massa Base</span>
                         </div>
                       </div>
@@ -1242,16 +1269,16 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                       <div className="bg-white p-4 rounded-2xl border flex flex-col justify-between">
                         <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1">Lucro Líquido</span>
                         <div className="flex flex-col">
-                          <span className="text-xl font-black text-emerald-600">R$ {calcActivePizza.netProfit.toFixed(2)}</span>
-                          <span className="text-[8.5px] text-emerald-500 font-bold mt-0.5">Margem: {calcActivePizza.realizedMargin.toFixed(1)}%</span>
+                          <span className="text-xl font-black text-emerald-600">R$ {Number(calcActivePizza.netProfit || 0).toFixed(2)}</span>
+                          <span className="text-[8.5px] text-emerald-500 font-bold mt-0.5">Margem: {Number(calcActivePizza.realizedMargin || 0).toFixed(1)}%</span>
                         </div>
                       </div>
 
                       <div className="bg-white p-4 rounded-2xl border flex flex-col justify-between">
                         <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1">Margem Alvo / Meio</span>
                         <div className="flex flex-col">
-                          <span className="text-xl font-black text-indigo-600">{calcActivePizza.averageTargetMargin.toFixed(0)}%</span>
-                          <span className="text-[8.5px] text-indigo-500 font-bold mt-0.5">CMV Alvo: {calcActivePizza.targetCMV.toFixed(0)}%</span>
+                          <span className="text-xl font-black text-indigo-600">{Number(calcActivePizza.averageTargetMargin || 0).toFixed(0)}%</span>
+                          <span className="text-[8.5px] text-indigo-500 font-bold mt-0.5">CMV Alvo: {Number(calcActivePizza.targetCMV || 0).toFixed(0)}%</span>
                         </div>
                       </div>
                     </div>
@@ -1263,11 +1290,11 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                         <div className="space-y-1">
                           <p className="font-extrabold uppercase text-[9px] tracking-wider text-rose-700">Dissonância de Margem Cruzada (Alerta IA)</p>
                           <p className="font-medium leading-relaxed">
-                            A combinação selecionada apresenta um CMV de <span className="font-bold">{calcActivePizza.realizedCMV.toFixed(1)}%</span>, o que ultrapassa o limite saudável recomendado ({calcActivePizza.targetCMV.toFixed(0)}%). Isso ocorre porque os insumos de recheio do sabor <span className="font-bold">"{calcActivePizza.cost1 > calcActivePizza.cost2 ? pizzaSabor1.name : pizzaSabor2.name}"</span> são significativamente mais caros.
+                            A combinação selecionada apresenta um CMV de <span className="font-bold">{Number(calcActivePizza.realizedCMV || 0).toFixed(1)}%</span>, o que ultrapassa o limite saudável recomendado ({Number(calcActivePizza.targetCMV || 0).toFixed(0)}%). Isso ocorre porque os insumos de recheio do sabor <span className="font-bold">"{calcActivePizza.cost1 > calcActivePizza.cost2 ? pizzaSabor1.name : pizzaSabor2.name}"</span> são significativamente mais caros.
                           </p>
                           {pizzaPricingRule === 'average' && (
                             <p className="font-bold text-rose-900 border-t border-rose-100/30 pt-1.5 mt-1.5 flex items-center gap-1.5">
-                              🚀 Solução Recomendada: Mude a regra de cobrança para "Preço da Mais Cara" ou reajuste o preço base do sabor mais caro para R$ { (calcActivePizza.totalCost / (1 - calcActivePizza.averageTargetMargin / 100)).toFixed(2) } para recuperar a margem de contribuição.
+                              🚀 Solução Recomendada: Mude a regra de cobrança para "Preço da Mais Cara" ou reajuste o preço base do sabor mais caro para R$ { Number(calcActivePizza.totalCost / Math.max(0.01, (1 - calcActivePizza.averageTargetMargin / 100)) || 0).toFixed(2) } para recuperar a margem de contribuição.
                             </p>
                           )}
                         </div>
@@ -1278,7 +1305,7 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                         <div className="space-y-1">
                           <p className="font-extrabold uppercase text-[9px] tracking-wider text-emerald-700">Equilíbrio Saudável de Margem (Aprovado IA)</p>
                           <p className="font-medium leading-relaxed">
-                            Excelente! Esta combinação de sabores resulta em um CMV operacional de <span className="font-bold">{calcActivePizza.realizedCMV.toFixed(1)}%</span>, dentro da meta de rentabilidade estabelecida do estabelecimento. O lucro de <span className="font-bold">R$ {calcActivePizza.netProfit.toFixed(2)}</span> por unidade cobrada protege a operação gastronômica de vazamento de margem comum em pizzarias fracionadas.
+                            Excelente! Esta combinação de sabores resulta em um CMV operacional de <span className="font-bold">{Number(calcActivePizza.realizedCMV || 0).toFixed(1)}%</span>, dentro da meta de rentabilidade estabelecida do estabelecimento. O lucro de <span className="font-bold">R$ {Number(calcActivePizza.netProfit || 0).toFixed(2)}</span> por unidade cobrada protege a operação gastronômica de vazamento de margem comum em pizzarias fracionadas.
                           </p>
                         </div>
                       </div>
@@ -1337,14 +1364,14 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
                               {s.rule}
                             </span>
                           </td>
-                          <td className="p-3 text-right font-black text-slate-800 font-mono">R$ {s.price.toFixed(2)}</td>
-                          <td className="p-3 text-right font-bold text-slate-500 font-mono">R$ {s.cost.toFixed(2)}</td>
+                          <td className="p-3 text-right font-black text-slate-800 font-mono">R$ {Number(s?.price || 0).toFixed(2)}</td>
+                          <td className="p-3 text-right font-bold text-slate-500 font-mono">R$ {Number(s?.cost || 0).toFixed(2)}</td>
                           <td className="p-3 text-center font-black">
                             <span className={`px-2 py-0.5 rounded-full text-[10px] ${s.cmv > 35 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                              {s.cmv.toFixed(1)}%
+                              {Number(s?.cmv || 0).toFixed(1)}%
                             </span>
                           </td>
-                          <td className="p-3 text-right font-black text-indigo-600 font-mono">R$ {s.profit.toFixed(2)}</td>
+                          <td className="p-3 text-right font-black text-indigo-600 font-mono">R$ {Number(s?.profit || 0).toFixed(2)}</td>
                           <td className="p-3 text-center">
                             <button
                               onClick={() => setSimulatedPizzas(prev => prev.filter(x => x.id !== s.id))}

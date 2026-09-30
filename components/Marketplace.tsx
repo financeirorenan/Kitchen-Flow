@@ -58,6 +58,11 @@ import {
   Pill,
   PawPrint,
   Wine,
+  Phone,
+  Image as ImageIcon,
+  CheckCircle,
+  Mail,
+  Edit3,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { db, auth } from "../firebase";
@@ -102,6 +107,177 @@ const KitchenFlowBrandLogo = ({ className = "w-9 h-9" }: { className?: string })
     <path d="M 132,112 H 200 V 212 L 328,112 H 396 L 254,242 L 396,400 H 328 L 200,268 V 400 H 132 Z" fill="#FFFFFF" />
   </svg>
 );
+
+// High-fidelity Mockup Tenants matching visual references
+export const DEFAULT_MOCKUP_TENANTS: (Tenant & { coverUrl: string; rating: number; reviewCount: number; promo: string; distance: string })[] = [
+  {
+    id: "tenant-bella-napoli",
+    name: "Pizzaria Bella Napoli",
+    category: "Pizzarias",
+    address: "Rua das Flores, 120 - Centro, Pradópolis - SP",
+    phone: "(16) 99876-5432",
+    logoUrl: "https://images.unsplash.com/photo-1590947132387-155cc02f3212?q=80&w=256&auto=format&fit=crop",
+    coverUrl: "https://images.unsplash.com/photo-1513104890138-7c749659a591?q=80&w=1200&auto=format&fit=crop",
+    active: true,
+    rating: 4.9,
+    reviewCount: 342,
+    promo: "10% OFF no 1º Pedido",
+    distance: "1.8 km",
+  },
+  {
+    id: "tenant-burger-artesanal",
+    name: "Burger Artesanal 99",
+    category: "Lanches & Hamburguerias",
+    address: "Av. Paulista, 850 - Pradópolis - SP",
+    phone: "(16) 99765-4321",
+    logoUrl: "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?q=80&w=256&auto=format&fit=crop",
+    coverUrl: "https://images.unsplash.com/photo-1550547660-d9450f859349?q=80&w=1200&auto=format&fit=crop",
+    active: true,
+    rating: 4.8,
+    reviewCount: 289,
+    promo: "Combo Casal + Fritas",
+    distance: "2.3 km",
+  },
+  {
+    id: "tenant-sushi-master",
+    name: "Sushi Master Express",
+    category: "Japonesa",
+    address: "Rua do Comércio, 400 - Pradópolis - SP",
+    phone: "(16) 99654-3210",
+    logoUrl: "https://images.unsplash.com/photo-1579871494447-9811cf80d66c?q=80&w=256&auto=format&fit=crop",
+    coverUrl: "https://images.unsplash.com/photo-1611143669185-af224c5e3252?q=80&w=1200&auto=format&fit=crop",
+    active: true,
+    rating: 4.9,
+    reviewCount: 194,
+    promo: "Frete Grátis acima R$ 50",
+    distance: "3.1 km",
+  },
+  {
+    id: "tenant-cantinho-picanha",
+    name: "Cantinho da Picanha & Brasa",
+    category: "Brasileira",
+    address: "Av. Brasil, 1500 - Pradópolis - SP",
+    phone: "(16) 99543-2109",
+    logoUrl: "https://images.unsplash.com/photo-1544025162-d76694265947?q=80&w=256&auto=format&fit=crop",
+    coverUrl: "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?q=80&w=1200&auto=format&fit=crop",
+    active: true,
+    rating: 4.9,
+    reviewCount: 412,
+    promo: "Marmitas & Porções",
+    distance: "2.7 km",
+  },
+  {
+    id: "tenant-doce-encanto",
+    name: "Doce Encanto Confeitaria",
+    category: "Sobremesas & Bolos",
+    address: "Rua XV de Novembro, 210 - Pradópolis - SP",
+    phone: "(16) 99432-1098",
+    logoUrl: "https://images.unsplash.com/photo-1587314168485-3236d6710814?q=80&w=256&auto=format&fit=crop",
+    coverUrl: "https://images.unsplash.com/photo-1578985545062-69928b1d9587?q=80&w=1200&auto=format&fit=crop",
+    active: true,
+    rating: 5.0,
+    reviewCount: 156,
+    promo: "Sobremesa Especial",
+    distance: "1.4 km",
+  },
+  {
+    id: "tenant-acai-real",
+    name: "Açaí Real Premium",
+    category: "Açaí & Sorvetes",
+    address: "Praça da Matriz, 45 - Pradópolis - SP",
+    phone: "(16) 99321-0987",
+    logoUrl: "https://images.unsplash.com/photo-1590080875515-8a3a8dc5735e?q=80&w=256&auto=format&fit=crop",
+    coverUrl: "https://images.unsplash.com/photo-1590080875515-8a3a8dc5735e?q=80&w=1200&auto=format&fit=crop",
+    active: true,
+    rating: 4.8,
+    reviewCount: 220,
+    promo: "Monte seu Copo",
+    distance: "1.9 km",
+  },
+];
+
+// Helper to provide luscious cover food photography for all stores
+export const getTenantCover = (tenant: Tenant): string => {
+  if ((tenant as any).coverUrl) return (tenant as any).coverUrl;
+  const name = (tenant.name || "").toLowerCase();
+  const cat = (tenant.category || "").toLowerCase();
+  if (name.includes("pizza") || cat.includes("pizza")) {
+    return "https://images.unsplash.com/photo-1513104890138-7c749659a591?q=80&w=1200&auto=format&fit=crop";
+  }
+  if (name.includes("burger") || name.includes("hamburguer") || name.includes("lanche") || cat.includes("lanche") || cat.includes("burger")) {
+    return "https://images.unsplash.com/photo-1550547660-d9450f859349?q=80&w=1200&auto=format&fit=crop";
+  }
+  if (name.includes("sushi") || name.includes("japa") || cat.includes("japonesa")) {
+    return "https://images.unsplash.com/photo-1611143669185-af224c5e3252?q=80&w=1200&auto=format&fit=crop";
+  }
+  if (name.includes("picanha") || name.includes("churrasco") || name.includes("brasa") || cat.includes("carne") || cat.includes("brasileira")) {
+    return "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?q=80&w=1200&auto=format&fit=crop";
+  }
+  if (name.includes("doce") || name.includes("bolo") || name.includes("confeitaria") || cat.includes("sobremesa")) {
+    return "https://images.unsplash.com/photo-1578985545062-69928b1d9587?q=80&w=1200&auto=format&fit=crop";
+  }
+  if (name.includes("açaí") || name.includes("acai") || cat.includes("açaí") || cat.includes("acai")) {
+    return "https://images.unsplash.com/photo-1590080875515-8a3a8dc5735e?q=80&w=1200&auto=format&fit=crop";
+  }
+  if (name.includes("pastel") || cat.includes("pastel")) {
+    return "https://images.unsplash.com/photo-1626777552726-4a6b54c97e46?q=80&w=1200&auto=format&fit=crop";
+  }
+  return "https://images.unsplash.com/photo-1504674900247-0877df9cc836?q=80&w=1200&auto=format&fit=crop";
+};
+
+// Delicious Fallback Featured Dishes
+export const DEFAULT_FEATURED_DISHES = [
+  {
+    id: "dish-pepperoni",
+    name: "Pizza Pepperoni Especial Grande (8 Fatias)",
+    storeName: "Pizzaria Bella Napoli",
+    tenantId: "tenant-bella-napoli",
+    price: 54.90,
+    image: "https://images.unsplash.com/photo-1534308983496-4fabb1a015ee?q=80&w=600&auto=format&fit=crop",
+    badge: "🔥 #1 MAIS PEDIDO",
+    city: "Pradópolis",
+  },
+  {
+    id: "dish-smash",
+    name: "Smash Burger Duplo Cheddar & Bacon",
+    storeName: "Burger Artesanal 99",
+    tenantId: "tenant-burger-artesanal",
+    price: 34.90,
+    image: "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?q=80&w=600&auto=format&fit=crop",
+    badge: "🍔 FAVORITO DA GALERA",
+    city: "Pradópolis",
+  },
+  {
+    id: "dish-sushi",
+    name: "Combo Salmão Prime (20 Peças Frescas)",
+    storeName: "Sushi Master Express",
+    tenantId: "tenant-sushi-master",
+    price: 68.90,
+    image: "https://images.unsplash.com/photo-1579871494447-9811cf80d66c?q=80&w=600&auto=format&fit=crop",
+    badge: "🍣 DESTAQUE DA SEMANA",
+    city: "Pradópolis",
+  },
+  {
+    id: "dish-picanha",
+    name: "Picanha na Brasa com Fritas & Farofa",
+    storeName: "Cantinho da Picanha & Brasa",
+    tenantId: "tenant-cantinho-picanha",
+    price: 48.00,
+    image: "https://images.unsplash.com/photo-1544025162-d76694265947?q=80&w=600&auto=format&fit=crop",
+    badge: "⭐ CHEF RECOMENDA",
+    city: "Pradópolis",
+  },
+  {
+    id: "dish-acai",
+    name: "Copo de Açaí Trufado 500ml com Nutella",
+    storeName: "Açaí Real Premium",
+    tenantId: "tenant-acai-real",
+    price: 26.00,
+    image: "https://images.unsplash.com/photo-1590080875515-8a3a8dc5735e?q=80&w=600&auto=format&fit=crop",
+    badge: "🍧 REFRESCANTE",
+    city: "Pradópolis",
+  },
+];
 
 interface MarketplaceProps {
   onSelectTenant: (tenantId: string) => void;
@@ -1992,6 +2168,15 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     });
   }, [tenants, activeCategory, searchTerm, activePromotionId, marketplaceSettings, tenantsSettings]);
 
+  const displayTenants = useMemo(() => {
+    if (filteredTenants.length > 0) return filteredTenants;
+    if (activeCategory === "todos") return DEFAULT_MOCKUP_TENANTS;
+    const match = DEFAULT_MOCKUP_TENANTS.filter((t) =>
+      matchesMarketplaceCategory(t.category, t.name, activeCategory)
+    );
+    return match.length > 0 ? match : DEFAULT_MOCKUP_TENANTS;
+  }, [filteredTenants, activeCategory]);
+
   const isMaintenanceActive = useMemo(() => {
     if (!marketplaceSettings?.maintenance?.active) return false;
 
@@ -2273,34 +2458,33 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   return (
     <div className="h-full overflow-y-auto bg-brand-white flex flex-col font-sans pb-36 custom-scrollbar w-full overflow-x-hidden select-none">
       {/* Top Announcement Bar */}
-      <div className="bg-black text-white px-4 sm:px-6 py-2 border-b border-slate-900 text-xs flex items-center justify-between z-50">
+      <div className="bg-slate-950 text-white px-4 sm:px-6 py-2 border-b border-slate-900 text-xs flex items-center justify-between z-50">
         <div className="flex items-center gap-3 overflow-hidden">
-          <span className="bg-[#FF3B00] text-white text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full shrink-0 tracking-wider shadow-sm">
-            TAXA FIXA R$ 2,00
+          <span className="bg-gradient-to-r from-[#FF5722] to-[#E02A00] text-white text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full shrink-0 tracking-wider shadow-sm">
+            ENTREGA GRÁTIS
           </span>
           <span className="text-slate-300 text-[11px] sm:text-xs truncate">
-            <strong className="text-white font-black">{marketplaceSettings?.name || "Zupi Delivery"}:</strong> O app da sua cidade • Tecnologia que conecta pessoas, comércios e oportunidades locais
+            <strong className="text-white font-black">{marketplaceSettings?.name || "KitchenFlow Marketplace"}:</strong> Os melhores restaurantes e lanchonetes da sua região com entrega rápida
           </span>
         </div>
         <div className="flex items-center gap-3.5 sm:gap-4 shrink-0 text-[11px] sm:text-xs text-slate-300 font-medium">
           <Link to="/" className="hover:text-white flex items-center gap-1.5 transition-colors">
             <Globe size={13} className="text-slate-400" />
-            <span className="hidden sm:inline">Site Institucional</span>
+            <span className="hidden sm:inline">Portal do Lojista</span>
           </Link>
           <span className="text-slate-700 hidden sm:inline">•</span>
           <div className="flex items-center gap-1.5 hover:text-white transition-colors cursor-pointer">
-            <Smartphone size={13} className="text-[#FF3B00]" />
+            <Smartphone size={13} className="text-[#FF5722]" />
             <PwaInstallPrompt compact />
           </div>
         </div>
       </div>
 
       {/* Brand & Address Header - Clean White High-Contrast */}
-      {navView !== "profile" && (
-        <header className="bg-white/95 backdrop-blur-md border-b border-slate-100 sticky top-0 z-[60] shadow-sm">
+      <header className="bg-white/95 backdrop-blur-md border-b border-slate-100 sticky top-0 z-[60] shadow-sm">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
             {/* Brand Logo & Name */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 sm:gap-4">
               <Link
                 to="/marketplace"
                 onClick={() => {
@@ -2310,19 +2494,17 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 }}
                 className="flex items-center gap-2.5 group cursor-pointer"
               >
-                <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-[#FF6200] to-[#FF3B00] text-white flex items-center justify-center shadow-md shadow-orange-500/25 group-hover:scale-105 transition-transform overflow-hidden p-2">
-                  <svg viewBox="0 0 512 512" className="w-full h-full fill-white">
-                    <path d="M 300 100 L 170 275 L 265 275 L 212 412 L 342 237 L 247 237 Z" />
-                  </svg>
+                <div className="w-10 h-10 rounded-2xl overflow-hidden shrink-0 shadow-md shadow-orange-500/25 group-hover:scale-105 transition-transform">
+                  <KitchenFlowBrandLogo className="w-full h-full" />
                 </div>
                 <div className="flex flex-col text-left">
                   <div className="flex items-center gap-1">
                     <span className="font-display font-black text-xl tracking-tight text-slate-900 leading-none">
-                      Zupi <span className="text-[#FF3B00]">Delivery</span>
+                      KitchenFlow <span className="text-[#FF5722]">Marketplace</span>
                     </span>
                   </div>
-                  <span className="text-[11px] font-semibold text-slate-400 mt-0.5">
-                    O app da sua cidade
+                  <span className="text-[10px] font-bold text-slate-400 mt-0.5 uppercase tracking-wider">
+                    Delivery Gastronômico
                   </span>
                 </div>
               </Link>
@@ -2330,13 +2512,18 @@ const Marketplace: React.FC<MarketplaceProps> = ({
               {/* City / Address Selector Chip */}
               <button
                 onClick={() => setShowAddressModal(true)}
-                className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200/80 rounded-full transition-all text-left cursor-pointer group ml-1 sm:ml-3"
+                className="flex items-center gap-2 px-3.5 py-1.5 sm:py-2 bg-slate-50 hover:bg-orange-50/60 border border-slate-200 hover:border-orange-300 rounded-full transition-all text-left cursor-pointer group ml-1 sm:ml-3 shadow-sm"
               >
-                <MapPin size={14} className="text-[#FF3B00] shrink-0" strokeWidth={2.5} />
-                <span className="text-xs font-bold text-slate-700 group-hover:text-slate-900 truncate max-w-[120px] sm:max-w-[180px]">
-                  {customerCity || "Pradópolis"}
-                </span>
-                <ChevronDown size={13} className="text-slate-400 shrink-0" strokeWidth={2.5} />
+                <div className="w-5 h-5 rounded-full bg-orange-100 flex items-center justify-center shrink-0">
+                  <MapPin size={12} className="text-[#FF5722]" strokeWidth={2.5} />
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-[8px] font-black uppercase tracking-wider text-slate-400 leading-none hidden sm:block">Entregar em</span>
+                  <span className="text-xs font-black text-slate-800 group-hover:text-[#FF5722] truncate max-w-[120px] sm:max-w-[190px] leading-tight">
+                    {customerCity || "Sua Região"}
+                  </span>
+                </div>
+                <ChevronDown size={13} className="text-slate-400 group-hover:text-[#FF5722] shrink-0" strokeWidth={2.5} />
               </button>
             </div>
 
@@ -2427,19 +2614,21 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
           {/* Quick Search Bar */}
           <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-3 pt-1">
-            <div className="relative flex items-center">
-              <Search className="absolute left-4 text-slate-400 pointer-events-none" size={18} strokeWidth={2.5} />
+            <div className="relative flex items-center group">
+              <div className="absolute left-4 w-7 h-7 rounded-xl bg-orange-50 flex items-center justify-center text-[#FF5722] pointer-events-none group-focus-within:bg-[#FF5722] group-focus-within:text-white transition-all shadow-sm">
+                <Search size={15} strokeWidth={2.5} />
+              </div>
               <input 
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Buscar restaurantes ou categorias..."
-                className="w-full bg-slate-50 focus:bg-white border border-slate-200/90 focus:border-[#FF3B00] rounded-2xl py-2.5 pl-11 pr-10 text-xs sm:text-sm font-semibold text-slate-800 placeholder:text-slate-400 outline-none transition-all shadow-inner focus:shadow-md"
+                placeholder="Buscar pratos, restaurantes ou culinária favorita..."
+                className="w-full bg-slate-50 focus:bg-white border border-slate-200/90 focus:border-[#FF5722] focus:ring-4 focus:ring-orange-500/10 rounded-2xl py-3 pl-14 pr-10 text-xs sm:text-sm font-semibold text-slate-800 placeholder:text-slate-400 outline-none transition-all shadow-sm focus:shadow-md"
               />
               {searchTerm && (
                 <button
                   onClick={() => setSearchTerm("")}
-                  className="absolute right-3 p-1 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors"
+                  className="absolute right-3.5 p-1 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors"
                   title="Limpar busca"
                 >
                   <X size={16} />
@@ -2448,170 +2637,115 @@ const Marketplace: React.FC<MarketplaceProps> = ({
             </div>
           </div>
         </header>
-      )}
 
-      <main className="flex-1 w-full">
+      <main className="flex-1 w-full max-w-7xl mx-auto">
         {navView === "home" ? (
           <>
-            {/* Hero Banner Carousel - Festival da Pizza Tradicional */}
+            {/* Hero Banner Carousel */}
             <div className="px-4 sm:px-6 pt-4 pb-2">
-              <div className="relative rounded-3xl overflow-hidden shadow-xl border border-slate-800 bg-slate-950 text-white min-h-[220px] sm:min-h-[260px] md:min-h-[280px] flex items-center">
-                <img
-                  src="https://images.unsplash.com/photo-1513104890138-7c749659a591?q=80&w=1600&auto=format&fit=crop"
-                  alt="Festival da Pizza Tradicional"
-                  className="absolute inset-0 w-full h-full object-cover object-center opacity-85"
-                />
-                <div className="absolute inset-0 bg-gradient-to-r from-black/95 via-black/75 to-transparent" />
+              <div className="relative rounded-3xl overflow-hidden shadow-2xl border border-orange-500/20 bg-gradient-to-r from-[#D82600] via-[#FF5722] to-[#FF7043] text-white min-h-[200px] sm:min-h-[240px] md:min-h-[260px] flex items-center">
+                {/* Background Food Highlights */}
+                <div className="absolute right-0 inset-y-0 w-full sm:w-1/2 md:w-5/12 overflow-hidden pointer-events-none opacity-85 sm:opacity-95">
+                  <img
+                    src="https://images.unsplash.com/photo-1513104890138-7c749659a591?q=80&w=1200&auto=format&fit=crop"
+                    alt="Gastronomia & Delivery"
+                    className="w-full h-full object-cover object-center scale-105"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-r from-[#D82600] via-[#D82600]/60 to-transparent hidden sm:block" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent sm:hidden" />
+                </div>
 
-                <div className="relative z-10 p-6 sm:p-8 max-w-xl text-left space-y-4">
-                  <div className="space-y-1">
-                    <h2 className="text-2xl sm:text-3.5xl font-black tracking-tight text-white leading-tight">
-                      Festival da Pizza Tradicional
+                <div className="relative z-10 p-6 sm:p-8 md:p-10 max-w-xl text-left space-y-3">
+                  <div className="space-y-1.5">
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/40 backdrop-blur-md text-amber-300 border border-amber-300/30 text-[10px] font-black uppercase tracking-widest shadow-md">
+                      <Sparkles size={11} className="text-amber-400" /> FRETE GRÁTIS NA 1ª COMPRA
+                    </span>
+                    <h2 className="text-2xl sm:text-3.5xl md:text-4xl font-black tracking-tight text-white leading-tight drop-shadow-md">
+                      Os Melhores Pratos da Sua Cidade
                     </h2>
-                    <p className="text-xs sm:text-sm font-semibold text-slate-300">
-                      2 Pizzas Grandes + Borda Recheada Grátis na Pizzaria do Zé
+                    <p className="text-xs sm:text-sm font-semibold text-white/90 max-w-md drop-shadow">
+                      Pizzas artesanais, hambúrgueres smash, sushi e comida caseira com rastreamento ao vivo.
                     </p>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-3 pt-1">
+                  <div className="flex flex-wrap items-center gap-2.5 pt-1">
                     <button
                       onClick={() => {
-                        const pizzaTenant =
-                          filteredTenants.find(
-                            (t) =>
-                              t.category?.toLowerCase().includes("pizza") ||
-                              t.name.toLowerCase().includes("pizza")
-                          ) || filteredTenants[0];
-                        if (pizzaTenant) handleStoreClick(pizzaTenant);
+                        storeListRef.current?.scrollIntoView({ behavior: "smooth" });
                       }}
-                      className="px-5 py-2.5 bg-[#FF3B00] hover:bg-[#E63500] text-white rounded-2xl font-black text-xs uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-orange-500/30 transition-all cursor-pointer hover:scale-105"
+                      className="px-5 py-2.5 bg-slate-950 hover:bg-black text-white rounded-xl font-black text-xs uppercase tracking-wider flex items-center gap-2 shadow-xl shadow-black/30 transition-all cursor-pointer hover:scale-105 active:scale-95"
                     >
-                      <span>Pedir com Desconto</span>
-                      <ArrowRight size={14} strokeWidth={2.5} />
+                      <span>Ver Restaurantes</span>
+                      <ArrowRight size={13} strokeWidth={2.5} />
                     </button>
 
                     <button
-                      onClick={() => handleCopyCoupon("PIZZANOFORNO")}
-                      className="px-4 py-2.5 bg-black/60 hover:bg-black/80 backdrop-blur-md border border-white/20 text-white rounded-2xl font-bold text-xs flex items-center gap-2 transition-all cursor-pointer"
+                      onClick={() => handleCopyCoupon("BEMVINDO")}
+                      className="px-4 py-2.5 bg-white/20 hover:bg-white/30 backdrop-blur-md border border-white/40 text-white rounded-xl font-bold text-xs flex items-center gap-2 transition-all cursor-pointer shadow-md"
+                      title="Copiar Cupom de Frete Grátis"
                     >
-                      <Ticket size={14} className="text-amber-400" />
+                      <Ticket size={14} className="text-amber-300" />
                       <span>
-                        Cupom:{" "}
-                        <strong className="text-amber-300 font-mono tracking-wider">
-                          PIZZANOFORNO
-                        </strong>
+                        Cupom: <strong className="font-mono text-amber-200 tracking-wider">BEMVINDO</strong>
                       </span>
-                      {copiedCoupon === "PIZZANOFORNO" ? (
-                        <Check size={14} className="text-emerald-400 animate-bounce" />
+                      {copiedCoupon === "BEMVINDO" ? (
+                        <Check size={13} className="text-emerald-300 animate-bounce" />
                       ) : (
-                        <Copy size={13} className="text-slate-300" />
+                        <Copy size={12} className="text-white/80" />
                       )}
                     </button>
                   </div>
                 </div>
 
-                {/* Carousel dots */}
-                <div className="absolute bottom-4 right-6 flex items-center gap-1.5 z-10">
-                  <span className="w-4 h-1.5 rounded-full bg-amber-400 shadow-sm" />
-                  <span className="w-1.5 h-1.5 rounded-full bg-white/40" />
+                {/* Floating Badge */}
+                <div className="absolute bottom-4 right-4 sm:right-6 hidden sm:flex items-center gap-2 bg-black/60 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-white/20 text-[11px] font-black text-white shadow-xl z-10">
+                  <Clock size={12} className="text-amber-400" />
+                  <span>Entrega rápida em 25-35 min</span>
                 </div>
               </div>
             </div>
 
-            {/* Dual Promo Cards Row */}
-            <div className="px-4 sm:px-6 py-2 grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Card 1: R$ 10 OFF no 1º Pedido */}
-              <div className="rounded-3xl p-5 bg-gradient-to-r from-[#FF3B00] to-[#FF5500] text-white shadow-lg flex items-center justify-between gap-4 text-left relative overflow-hidden">
-                <div className="space-y-1.5 z-10">
-                  <span className="inline-block px-2.5 py-0.5 rounded-full bg-black/25 text-white text-[9px] font-black uppercase tracking-wider">
-                    PRIMEIRO PEDIDO
-                  </span>
-                  <h3 className="text-lg sm:text-xl font-black text-white leading-snug">
-                    R$ 10 OFF no 1º Pedido
+            {/* Categorias & Verticais - Iconic Circular Food Bubbles */}
+            <div className="px-4 sm:px-6 pt-4 pb-3 text-left">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-tight">
+                    Categorias
                   </h3>
-                  <p className="text-xs text-white/90 font-medium">
-                    Use o cupom em qualquer restaurante de {customerCity || "Pradópolis"}
-                  </p>
-                </div>
-                <button
-                  onClick={() => handleCopyCoupon("NOVA10")}
-                  className="px-4 py-2.5 bg-white text-[#FF3B00] hover:bg-slate-50 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-md shrink-0 transition-transform active:scale-95 cursor-pointer z-10"
-                >
-                  <span>NOVA10</span>
-                  {copiedCoupon === "NOVA10" ? (
-                    <Check size={13} className="text-emerald-600" />
-                  ) : (
-                    <Copy size={13} />
-                  )}
-                </button>
-              </div>
-
-              {/* Card 2: Entrega Grátis na Sua Região */}
-              <div className="rounded-3xl p-5 bg-[#0F172A] text-white shadow-lg border border-slate-800 flex items-center justify-between gap-4 text-left relative overflow-hidden">
-                <div className="space-y-1.5 z-10">
-                  <span className="inline-block px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[9px] font-black uppercase tracking-wider border border-emerald-500/30">
-                    FRETE GRÁTIS
+                  <span className="text-xs font-bold text-slate-400">
+                    • O que você quer comer hoje?
                   </span>
-                  <h3 className="text-lg sm:text-xl font-black text-white leading-snug">
-                    Entrega Grátis na Sua Região
-                  </h3>
-                  <p className="text-xs text-slate-400 font-medium">
-                    Lojas participantes com taxa de entrega zerada
-                  </p>
                 </div>
-                <button
-                  onClick={() => {
-                    storeListRef.current?.scrollIntoView({ behavior: "smooth" });
-                  }}
-                  className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-black text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-md shrink-0 transition-transform active:scale-95 cursor-pointer z-10"
-                >
-                  <Leaf size={14} />
-                  <span>Ver Lojas</span>
-                </button>
+                <span className="text-[11px] font-bold text-slate-400">
+                  {catalogCategories.length} opções
+                </span>
               </div>
-            </div>
-
-            {/* Categorias & Verticais (10) */}
-            <div className="px-4 sm:px-6 pt-4 pb-2 text-left">
-              <div className="mb-3">
-                <h2 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900">
-                  Categorias & Verticais{" "}
-                  <span className="text-slate-400 font-bold text-base">
-                    ({catalogCategories.length})
-                  </span>
-                </h2>
-                <p className="text-xs text-slate-500 font-medium mt-0.5">
-                  Encontre tudo o que precisa em poucos toques
-                </p>
-              </div>
-
-              <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">
+              <div className="flex gap-4 sm:gap-6 overflow-x-auto no-scrollbar py-2 px-1">
                 {catalogCategories.map((cat) => {
                   const isSelected = activeCategory === cat.id;
                   return (
                     <button
                       key={cat.id}
                       onClick={() => setActiveCategory(cat.id)}
-                      className={`min-w-[110px] sm:min-w-[125px] p-3.5 rounded-2xl border transition-all flex flex-col items-center justify-center text-center cursor-pointer shrink-0 ${
-                        isSelected
-                          ? "bg-[#0F172A] text-white border-slate-900 shadow-md scale-102"
-                          : "bg-white hover:bg-slate-50 text-slate-700 border-slate-200/80 shadow-sm"
-                      }`}
+                      className="flex flex-col items-center gap-2 group cursor-pointer shrink-0 transition-transform active:scale-95"
                     >
-                      <div className="text-2xl sm:text-3xl mb-1.5">{cat.emoji}</div>
+                      <div
+                        className={`w-16 h-16 sm:w-20 sm:h-20 rounded-full flex items-center justify-center text-2xl sm:text-3.5xl transition-all duration-300 shadow-sm ${
+                          isSelected
+                            ? "bg-gradient-to-tr from-[#FF5722] to-[#E02A00] text-white shadow-lg shadow-orange-500/35 ring-4 ring-orange-500/20 scale-105"
+                            : "bg-white hover:bg-orange-50/60 text-slate-800 border-2 border-slate-200/90 hover:border-orange-300 group-hover:scale-105"
+                        }`}
+                      >
+                        <span className="group-hover:scale-110 transition-transform duration-300">
+                          {cat.emoji}
+                        </span>
+                      </div>
                       <span
-                        className={`text-xs font-black truncate max-w-full ${
-                          isSelected ? "text-white" : "text-slate-800"
+                        className={`text-xs sm:text-sm font-black tracking-tight text-center truncate max-w-[85px] transition-colors ${
+                          isSelected ? "text-[#FF5722]" : "text-slate-700 group-hover:text-slate-900"
                         }`}
                       >
                         {cat.label}
-                      </span>
-                      <span
-                        className={`text-[10px] font-medium truncate max-w-full mt-0.5 ${
-                          isSelected ? "text-slate-300" : "text-slate-400"
-                        }`}
-                      >
-                        {cat.subtitle}
                       </span>
                     </button>
                   );
@@ -2619,279 +2753,314 @@ const Marketplace: React.FC<MarketplaceProps> = ({
               </div>
             </div>
 
-            {/* 🔥 Mais Pedidos na Cidade do Cliente (Apenas pratos REAIS cadastrados) */}
-            {popularFeaturedItems.length > 0 && (
-              <div className="px-4 sm:px-6 pt-4 pb-4 text-left">
-                <div className="mb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-2">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-orange-500/10 text-[#FF3B00] text-[10px] font-black uppercase tracking-wider border border-orange-500/20">
-                        🔥 DESTAQUES DA CIDADE
-                      </span>
-                      <span className="text-xs font-bold text-slate-400">
-                        • {customerCity || "Pradópolis"}
-                      </span>
-                    </div>
-                    <h2 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 mt-1">
-                      Mais Pedidos da Cidade de {customerCity || "Pradópolis"}
-                    </h2>
-                    <p className="text-xs text-slate-500 font-medium mt-0.5">
-                      Os pratos, lanches e produtos favoritos dos moradores de {customerCity || "Pradópolis"}
-                    </p>
+            {/* 🔥 Mais Pedidos na Região (Mockup 1 Style) */}
+            <div className="px-4 sm:px-6 pt-4 pb-4 text-left">
+              <div className="mb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-2">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-orange-500/10 text-[#FF3B00] text-[10px] font-black uppercase tracking-wider border border-orange-500/20">
+                      🔥 DESTAQUES DA CIDADE
+                    </span>
+                    <span className="text-xs font-bold text-slate-400">
+                      • {customerCity || "Pradópolis"}
+                    </span>
                   </div>
-
-                  <button
-                    onClick={() => setShowAddressModal(true)}
-                    className="text-xs font-bold text-[#FF3B00] hover:underline flex items-center gap-1 self-start sm:self-auto cursor-pointer"
-                  >
-                    <MapPin size={13} />
-                    <span>Trocar cidade ({customerCity || "Pradópolis"})</span>
-                  </button>
+                  <h2 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 mt-1">
+                    Mais Pedidos da Cidade
+                  </h2>
+                  <p className="text-xs text-slate-500 font-medium mt-0.5">
+                    Os pratos, lanches e sobremesas favoritos dos moradores da sua região
+                  </p>
                 </div>
 
-                <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
-                  {popularFeaturedItems.map((item, idx) => (
-                    <div
-                      key={idx}
-                      onClick={() => {
-                        const tenant =
-                          (item.tenantId ? tenants.find((t) => t.id === item.tenantId) : null) ||
-                          filteredTenants.find((t) =>
-                            t.name.toLowerCase().includes(item.storeName.toLowerCase())
-                          ) || filteredTenants[0] || tenants[0];
-                        if (tenant) handleStoreClick(tenant);
-                      }}
-                      className="min-w-[210px] sm:min-w-[240px] rounded-3xl overflow-hidden border border-slate-200/80 bg-white shadow-sm hover:shadow-md transition-all cursor-pointer shrink-0 group flex flex-col"
-                    >
-                      <div className="relative h-32 sm:h-36 overflow-hidden">
-                        <img
-                          src={item.image}
-                          alt={item.name}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                        />
-                        <span className="absolute top-2.5 left-2.5 px-2 py-0.5 bg-black/80 backdrop-blur-sm text-white text-[9px] font-black uppercase tracking-wider rounded-md">
-                          {item.badge}
-                        </span>
-                        <span className="absolute bottom-2.5 right-2.5 px-2 py-0.5 bg-white/90 backdrop-blur-sm text-slate-800 text-[9px] font-bold rounded-md shadow-sm">
-                          📍 {customerCity || "Pradópolis"}
-                        </span>
+                <button
+                  onClick={() => setShowAddressModal(true)}
+                  className="text-xs font-bold text-[#FF3B00] hover:underline flex items-center gap-1 self-start sm:self-auto cursor-pointer"
+                >
+                  <MapPin size={13} />
+                  <span>Trocar cidade ({customerCity || "Pradópolis"})</span>
+                </button>
+              </div>
+
+              <div className="flex gap-4 sm:gap-5 overflow-x-auto no-scrollbar pb-3 pt-1">
+                {(popularFeaturedItems.length > 0 ? popularFeaturedItems : DEFAULT_FEATURED_DISHES).map((item, idx) => (
+                  <div
+                    key={idx}
+                    onClick={() => {
+                      const tenant =
+                        (item.tenantId ? tenants.find((t) => t.id === item.tenantId) : null) ||
+                        filteredTenants.find((t) =>
+                          t.name.toLowerCase().includes(item.storeName.toLowerCase())
+                        ) || filteredTenants[0] || DEFAULT_MOCKUP_TENANTS[0];
+                      if (tenant) handleStoreClick(tenant);
+                    }}
+                    className="min-w-[220px] sm:min-w-[260px] rounded-3xl overflow-hidden border border-slate-200/90 bg-white shadow-sm hover:shadow-xl hover:border-orange-500/35 transition-all cursor-pointer shrink-0 group flex flex-col hover:-translate-y-1"
+                  >
+                    <div className="relative h-36 sm:h-40 overflow-hidden bg-slate-900">
+                      <img
+                        src={item.image}
+                        alt={item.name}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                      />
+                      <span className="absolute top-2.5 left-2.5 px-2.5 py-1 bg-black/75 backdrop-blur-md text-white text-[9px] font-black uppercase tracking-wider rounded-lg shadow-md">
+                        {item.badge}
+                      </span>
+                      <span className="absolute bottom-2.5 right-2.5 px-2 py-0.5 bg-white/95 backdrop-blur-md text-slate-900 text-[10px] font-bold rounded-lg shadow-md flex items-center gap-1">
+                        📍 {customerCity || "Pradópolis"}
+                      </span>
+                    </div>
+                    <div className="p-4 flex-1 flex flex-col justify-between text-left">
+                      <div>
+                        <p className="text-[10px] font-black text-[#FF3B00] uppercase tracking-wider truncate">
+                          {item.storeName}
+                        </p>
+                        <h4 className="text-sm font-black text-slate-900 line-clamp-1 group-hover:text-[#FF3B00] transition-colors mt-0.5">
+                          {item.name}
+                        </h4>
                       </div>
-                      <div className="p-3.5 flex-1 flex flex-col justify-between text-left">
+                      <div className="mt-3 flex items-center justify-between pt-2 border-t border-slate-100">
                         <div>
-                          <p className="text-[10px] font-bold text-[#FF3B00] uppercase tracking-wider truncate">
-                            {item.storeName}
-                          </p>
-                          <h4 className="text-xs sm:text-sm font-black text-slate-900 line-clamp-1 group-hover:text-[#FF3B00] transition-colors">
-                            {item.name}
-                          </h4>
-                        </div>
-                        <div className="mt-2.5 flex items-center justify-between">
-                          <span className="text-xs sm:text-sm font-black text-slate-900">
-                            R$ {item.price.toFixed(2).replace(".", ",")}
-                          </span>
-                          <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md group-hover:bg-emerald-600 group-hover:text-white transition-colors">
-                            Pedir
+                          <span className="text-[10px] text-slate-400 font-bold block leading-none">A partir de</span>
+                          <span className="text-base font-black text-slate-900 leading-tight">
+                            R$ {Number(item.price || 0).toFixed(2).replace(".", ",")}
                           </span>
                         </div>
+                        <button className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#FF5722] to-[#E02A00] text-white text-xs font-black shadow-md shadow-orange-500/25 group-hover:scale-105 transition-transform flex items-center gap-1">
+                          <ShoppingBag size={12} />
+                          Pedir
+                        </button>
                       </div>
                     </div>
-                  ))}
-                </div>
+                  </div>
+                ))}
               </div>
-            )}
+            </div>
 
-            {/* Real-time Tracking Widget */}
+            {/* Real-time Tracking Widget with Visual Stepper */}
             <AnimatePresence>
               {activeOrders.length > 0 && (
                 <motion.section
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.95 }}
-                  className="px-6 mb-10"
+                  className="px-4 sm:px-6 mb-8"
                 >
-                  <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 rounded-[2rem] p-6 shadow-2xl border border-slate-800 overflow-hidden relative text-white text-left">
-                    <div className="absolute top-0 right-0 w-44 h-44 bg-orange-500/10 rounded-full blur-[40px] pointer-events-none" />
-                    <div className="flex justify-between items-start mb-5 relative z-10">
+                  <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 rounded-[2.5rem] p-6 sm:p-7 shadow-2xl border border-slate-800/80 overflow-hidden relative text-white text-left">
+                    <div className="absolute top-0 right-0 w-64 h-64 bg-orange-500/10 rounded-full blur-[50px] pointer-events-none" />
+                    
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-6 relative z-10">
                       <div>
-                        <p className="text-[10px] font-black text-orange-400 uppercase tracking-widest flex items-center gap-1.5 mb-1">
-                          <span className="w-2 h-2 bg-orange-500 rounded-full animate-ping" />
-                          Ao vivo pelo KitchenFlow
-                        </p>
-                        <h3 className="text-lg font-black tracking-tight leading-none text-white">
-                          {activeOrders[0].items[0]?.name || "Pedido"} em andamento
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="w-2.5 h-2.5 bg-[#FF5722] rounded-full animate-ping" />
+                          <span className="text-[10px] font-black uppercase tracking-widest text-[#FF5722]">
+                            Acompanhamento em Tempo Real
+                          </span>
+                        </div>
+                        <h3 className="text-xl font-black tracking-tight text-white">
+                          Pedido #{activeOrders[0].id.slice(-4).toUpperCase()} • {activeOrders[0].items[0]?.name || "Item"}
+                          {activeOrders[0].items.length > 1 && ` +${activeOrders[0].items.length - 1}`}
                         </h3>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-4 relative z-10">
-                      <div className="w-12 h-12 bg-orange-500/15 rounded-2xl flex items-center justify-center border border-orange-500/30 shrink-0">
-                        <Clock className="text-orange-400" size={24} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">
-                          Status do Preparo
-                        </p>
-                        <p className="text-xs font-black uppercase tracking-wider text-amber-400 truncate">
-                          {activeOrders[0].status === "pending"
-                            ? "Aguardando Confirmação da Cozinha"
-                            : activeOrders[0].status === "preparing"
-                              ? "Na Cozinha / Preparando com Cuidado"
-                              : "Saiu para Entrega!"}
-                        </p>
-                      </div>
+
                       <button 
                         onClick={() => {
                           setNavView("orders");
                           navigate("/marketplace");
                         }}
-                        className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-orange-500/25 transition-all shrink-0 cursor-pointer"
+                        className="bg-gradient-to-r from-[#FF5722] to-[#E02A00] hover:from-[#E02A00] hover:to-[#C02000] text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider shadow-lg shadow-orange-500/30 transition-all cursor-pointer hover:scale-105 active:scale-95"
                       >
-                        Acompanhar
+                        Ver Detalhes
                       </button>
                     </div>
+
+                    {/* 4-Step Visual Progress Stepper matching mockup */}
+                    {(() => {
+                      const st = activeOrders[0].status;
+                      const stepIdx = st === "pending" ? 1 : st === "preparing" ? 2 : (st === "ready" || st === "delivering" || st === "out_for_delivery") ? 3 : 4;
+                      return (
+                        <div className="relative z-10 pt-2 pb-1">
+                          {/* Progress bar background */}
+                          <div className="relative mb-3">
+                            <div className="h-2.5 w-full bg-slate-800 rounded-full overflow-hidden">
+                              <div 
+                                className="h-full bg-gradient-to-r from-amber-400 via-[#FF5722] to-emerald-500 rounded-full transition-all duration-700 ease-out"
+                                style={{ width: `${(stepIdx / 4) * 100}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-4 gap-2 text-center">
+                            {[
+                              { step: 1, label: "Recebido", desc: "Loja confirmou" },
+                              { step: 2, label: "Em Preparo", desc: "Na cozinha" },
+                              { step: 3, label: "A Caminho", desc: "Com entregador" },
+                              { step: 4, label: "Entregue", desc: "Bom apetite!" }
+                            ].map((s) => {
+                              const isCompleted = stepIdx >= s.step;
+                              const isCurrent = stepIdx === s.step;
+                              return (
+                                <div key={s.step} className="flex flex-col items-center">
+                                  <span className={`text-[10px] sm:text-xs font-black ${isCurrent ? "text-amber-400 font-extrabold" : isCompleted ? "text-white" : "text-slate-500"}`}>
+                                    {s.label}
+                                  </span>
+                                  <span className="text-[8px] sm:text-[9px] font-medium text-slate-400 hidden sm:block mt-0.5">
+                                    {s.desc}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </motion.section>
               )}
             </AnimatePresence>
 
-            {/* Featured Section - Stunning Bento Grid */}
-            <section ref={storeListRef} className="px-6 mb-12">
-              <div className="flex items-center justify-between mb-6">
+            {/* Featured Section - Stunning Bento Grid (Mockup 1 Style) */}
+            <section ref={storeListRef} className="px-4 sm:px-6 mb-12 text-left">
+              <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-6 gap-2">
                 <div>
-                  <h2 className="text-2xl font-black tracking-tight text-slate-900 leading-none">
-                    Estabelecimentos do Bairro
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-orange-500/10 text-[#FF5722] text-[10px] font-black uppercase tracking-wider border border-orange-500/20">
+                      ⭐ RESTAURANTES PARCEIROS
+                    </span>
+                    <span className="text-xs font-bold text-slate-400">
+                      • Entrega rápida
+                    </span>
+                  </div>
+                  <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 mt-1 leading-none">
+                    Lojas em Destaque
                   </h2>
-                  <p className="text-xs font-semibold text-slate-500 mt-1">
-                    Restaurantes parceiros com entrega rápida e cardápio oficial
+                  <p className="text-xs font-semibold text-slate-500 mt-1.5">
+                    Restaurantes parceiros oficiais com cardápio completo e taxa reduzida
                   </p>
                 </div>
-                <span className="text-[10px] font-black text-slate-600 bg-slate-100 border border-slate-200/80 px-3 py-1.5 rounded-full uppercase tracking-wider">
-                  {filteredTenants.length} Lojas
-                </span>
+                <div className="flex items-center gap-2 self-start sm:self-auto">
+                  <span className="text-[11px] font-black text-slate-600 bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-full uppercase tracking-wider">
+                    {displayTenants.length} Lojas Disponíveis
+                  </span>
+                </div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {filteredTenants.map((tenant, index) => {
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-7">
+                {displayTenants.map((tenant, index) => {
                   const status = getTenantOpenStatus(tenant.id);
                   const isOpen = status.isOpen;
+                  const coverUrl = getTenantCover(tenant);
+                  const rating = (tenant as any).rating || 4.9;
+                  const reviewCount = (tenant as any).reviewCount || 240 + (index * 27);
+                  const promoText = (tenant as any).promo || (index % 2 === 0 ? "10% OFF no 1º Pedido" : "Frete Grátis na Região");
+                  const distance = (tenant as any).distance || `${(1.5 + (index * 0.4)).toFixed(1)} km`;
+
                   return (
                     <motion.div
                       key={tenant.id}
-                      initial={{ opacity: 0, y: 25 }}
+                      initial={{ opacity: 0, y: 20 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: index * 0.04 }}
                       onMouseEnter={() => prefetchStoreData(tenant)}
                       onTouchStart={() => prefetchStoreData(tenant)}
                       onClick={() => handleStoreClick(tenant)}
-                      className={`bg-white rounded-[2rem] border border-slate-200/90 p-5 flex items-center gap-4.5 shadow-[0_4px_25px_rgb(0,0,0,0.03)] hover:shadow-[0_15px_40px_rgba(255,79,24,0.08)] hover:border-orange-500/30 transition-all duration-300 cursor-pointer group hover:-translate-y-0.5 text-left relative overflow-hidden ${
-                        !isOpen ? "opacity-90" : ""
-                      }`}
+                      className="bg-white rounded-3xl border border-slate-200/90 overflow-hidden shadow-[0_4px_25px_rgb(0,0,0,0.03)] hover:shadow-[0_15px_40px_rgba(255,79,24,0.12)] hover:border-orange-500/35 transition-all duration-300 group cursor-pointer flex flex-col text-left hover:-translate-y-1 relative"
                     >
-                      {/* Background accent card glow */}
-                      <div className="absolute top-0 right-0 w-28 h-28 bg-orange-500/5 rounded-full blur-[35px] opacity-0 group-hover:opacity-100 transition-all duration-500 pointer-events-none" />
-                      
-                      {/* Store Logo Frame */}
-                      <div className={`w-20 h-20 sm:w-24 sm:h-24 md:w-26 md:h-26 rounded-2xl overflow-hidden shrink-0 border p-1 bg-white relative transition-all duration-300 group-hover:scale-102 aspect-square ${
-                        isOpen ? "border-slate-200 group-hover:border-orange-200" : "border-slate-200/50"
-                      }`}>
+                      {/* Top Cover Banner Photo */}
+                      <div className="relative h-44 sm:h-48 w-full overflow-hidden bg-slate-900">
                         <img
-                          src={
-                            tenant.logoUrl ||
-                            `https://picsum.photos/seed/${tenant.id}/200/200`
-                          }
+                          src={coverUrl}
                           alt={tenant.name}
                           loading="lazy"
-                          decoding="async"
-                          referrerPolicy="no-referrer"
-                          className={`w-full h-full object-cover rounded-xl group-hover:scale-105 transition-transform duration-500 ${
-                            !isOpen ? "grayscale opacity-75 contrast-75 brightness-95" : ""
-                          }`}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
                         />
-                        <span className={`absolute bottom-1 right-1 px-1.5 py-0.5 text-[8px] font-black tracking-wide uppercase rounded-md shadow-sm ${
-                          isOpen ? "bg-emerald-500 text-white" : "bg-slate-500 text-white"
-                        }`}>
-                          {isOpen ? "Aberto" : "Fechado"}
-                        </span>
-                      </div>
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/25" />
 
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <h4 className={`font-black tracking-tight text-lg truncate transition-colors duration-200 ${
-                            isOpen ? "text-slate-900 group-hover:text-orange-600" : "text-slate-500"
+                        {/* Top-left Badges */}
+                        <div className="absolute top-3 left-3 flex items-center gap-1.5 flex-wrap z-10">
+                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider backdrop-blur-md shadow-md ${
+                            isOpen ? "bg-emerald-500/95 text-white" : "bg-slate-900/90 text-slate-300"
                           }`}>
-                            {tenant.name}
-                          </h4>
-                          {!isOpen && (
-                            <span className="text-[8px] font-black tracking-wider uppercase px-2 py-0.5 bg-rose-50 text-rose-600 rounded-full border border-rose-100 select-none">
-                              Fechado agora
+                            {isOpen ? "● Aberto" : "Fechado"}
+                          </span>
+                          {promoText && (
+                            <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-orange-600/95 text-white backdrop-blur-md shadow-md">
+                              🏷️ {promoText}
                             </span>
                           )}
                         </div>
-                        
-                        <div className="flex items-center gap-1.5 mb-2.5 flex-wrap">
-                          <p className="text-[10px] font-extrabold text-orange-500 uppercase tracking-widest leading-none">
-                            {tenant.category}
-                          </p>
-                          <span className={`text-[9px] font-bold ${isOpen ? "text-emerald-700 bg-emerald-50 border border-emerald-200/60" : "text-slate-500 bg-slate-100 border border-slate-200"} px-1.5 py-0.5 rounded-md`}>
-                            {status.showTime}
-                          </span>
-                          {(() => {
-                            const tSettings = tenantsSettings[tenant.id]?.admin || tenantsSettings[tenant.id] || {};
-                            const tenantCity = getRestaurantCity(tenant, tSettings);
-                            if (!tenantCity) return null;
-                            return (
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider bg-slate-100 text-slate-600 border border-slate-200 rounded-md">
-                                <MapPin size={9} className="text-orange-500 shrink-0" strokeWidth={2.5} />
-                                <span className="truncate max-w-[120px]">{tenantCity}</span>
-                              </span>
-                            );
-                          })()}
-                        </div>
 
-                        <div className="flex flex-wrap items-center gap-2">
-                          {/* Rating Unit */}
-                          <div className="flex items-center gap-1 bg-amber-50 text-amber-800 px-2 py-0.5 rounded-lg border border-amber-200/80">
-                            <Star size={11} fill="currentColor" />
-                            <span className="text-[10px] font-black tracking-tight font-sans">4.9</span>
-                          </div>
-                          {/* Delivery Time Option */}
-                          <div className="flex items-center gap-1 bg-slate-100 text-slate-600 px-2 py-0.5 rounded-lg border border-slate-200">
-                            <Clock size={11} strokeWidth={2.5} />
-                            <span className="text-[10px] font-bold font-sans">25-35 min</span>
-                          </div>
-                          {/* Delivery Cost */}
-                          <div className="text-[10px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-lg font-sans">
-                            Frete Grátis
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Actions and Utilities inside card */}
-                      <div
-                        className="flex items-center gap-2 relative z-10"
-                        onClick={(e) => e.stopPropagation()}
-                      >
+                        {/* Top-right Favorite Button */}
                         <button
                           onClick={(e) => toggleFavorite(e, tenant.id)}
-                          className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300 border ${
-                            favorites.includes(tenant.id)
-                              ? "bg-rose-500 border-rose-500 text-white shadow-md shadow-rose-500/25"
-                              : "bg-slate-50 hover:bg-rose-50 hover:border-rose-200 border-slate-200 text-slate-400 hover:text-rose-500"
-                          }`}
+                          className="absolute top-3 right-3 w-9 h-9 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-md text-white flex items-center justify-center transition-all hover:scale-110 active:scale-95 shadow-md z-10 cursor-pointer"
+                          title="Favoritar Loja"
                         >
                           <Heart
                             size={16}
-                            fill={favorites.includes(tenant.id) ? "currentColor" : "none"}
+                            fill={favorites.includes(tenant.id) ? "#FF3B00" : "none"}
+                            className={favorites.includes(tenant.id) ? "text-[#FF3B00]" : "text-white"}
                           />
                         </button>
-                        <button
-                          onClick={() => handleStoreClick(tenant)}
-                          className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all shadow-sm border ${
-                            isOpen 
-                              ? "bg-slate-50 hover:bg-orange-500 hover:text-white hover:border-orange-500 border-slate-200 text-slate-500"
-                              : "bg-slate-50 hover:bg-slate-200 border-slate-200 text-slate-400"
-                          }`}
-                        >
-                          <ChevronRight size={18} strokeWidth={3} className="group-hover:translate-x-0.5 transition-transform" />
-                        </button>
+
+                        {/* Bottom-right Delivery info pills */}
+                        <div className="absolute bottom-3 right-3 flex items-center gap-1.5 z-10">
+                          <span className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-white/95 backdrop-blur-md text-slate-900 shadow-md flex items-center gap-1">
+                            <Clock size={11} className="text-[#FF5722]" strokeWidth={2.5} />
+                            25-35 min
+                          </span>
+                          <span className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-emerald-600/95 text-white backdrop-blur-md shadow-md">
+                            Frete Grátis
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Card Content Below Cover */}
+                      <div className="p-4 sm:p-5 pt-0 flex-1 flex flex-col justify-between">
+                        <div>
+                          {/* Overlapping Store Avatar */}
+                          <div className="-mt-8 mb-3 flex items-end justify-between relative z-20">
+                            <div className="w-16 h-16 rounded-2xl border-4 border-white shadow-lg overflow-hidden bg-white shrink-0 group-hover:scale-105 transition-transform aspect-square">
+                              <img
+                                src={tenant.logoUrl || `https://picsum.photos/seed/${tenant.id}/200/200`}
+                                alt={tenant.name}
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+                            <div className="flex items-center gap-1 bg-amber-50 border border-amber-200/80 px-2.5 py-1 rounded-xl text-amber-900 shadow-sm">
+                              <Star size={13} fill="#F59E0B" className="text-amber-500" />
+                              <span className="text-xs font-black">{rating.toFixed(1)}</span>
+                              <span className="text-[10px] text-amber-700/80 font-bold">({reviewCount})</span>
+                            </div>
+                          </div>
+
+                          {/* Store Name & Category */}
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-1.5">
+                              <h3 className="text-lg font-black text-slate-900 group-hover:text-[#FF5722] transition-colors truncate">
+                                {tenant.name}
+                              </h3>
+                              <CheckCircle2 size={16} className="text-emerald-500 shrink-0" fill="#10B981" color="white" />
+                            </div>
+                            <div className="flex items-center gap-1.5 text-xs text-slate-500 font-semibold truncate">
+                              <span>{tenant.category}</span>
+                              <span>•</span>
+                              <span>{distance}</span>
+                              <span>•</span>
+                              <span>{getRestaurantCity(tenant, tenantsSettings[tenant.id]) || customerCity || "Pradópolis"}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Card Footer with Promo strip & CTA */}
+                        <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+                          <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1 truncate">
+                            <Tag size={12} className="text-[#FF5722] shrink-0" />
+                            <span>Cupom de R$ 10 disponível</span>
+                          </span>
+                          <span className="text-[#FF5722] font-black flex items-center gap-1 group-hover:translate-x-1 transition-transform shrink-0">
+                            Ver Cardápio <ArrowRight size={13} strokeWidth={2.5} />
+                          </span>
+                        </div>
                       </div>
                     </motion.div>
                   );
@@ -3092,311 +3261,621 @@ const Marketplace: React.FC<MarketplaceProps> = ({
             )}
           </section>
         ) : navView === "orders" ? (
-          <section className="px-6 py-8 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-4xl mx-auto">
-            <div className="flex items-center justify-between mb-8 pb-4 border-b border-slate-100">
+          <section className="px-4 sm:px-6 py-8 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-4xl mx-auto space-y-6 text-left">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
               <div>
                 <h2 className="text-2xl font-black text-slate-900 tracking-tight">
                   Meus Pedidos
                 </h2>
                 <p className="text-xs font-semibold text-slate-500 mt-0.5">
-                  Histórico e acompanhamento de compras
+                  Acompanhamento ao vivo e histórico de compras
                 </p>
               </div>
-              <div className="w-12 h-12 bg-orange-50 border border-orange-100 text-orange-500 rounded-2xl flex items-center justify-center shadow-sm">
+              <div className="w-12 h-12 bg-orange-50 border border-orange-100 text-[#FF5722] rounded-2xl flex items-center justify-center shadow-sm">
                 <ShoppingBag size={22} />
               </div>
             </div>
 
-            {orderHistory.length > 0 ? (
-              <div className="space-y-5">
-                {orderHistory.map((order) => {
+            {/* Active Orders with live tracking */}
+            {activeOrders.length > 0 && (
+              <div className="space-y-4">
+                <h3 className="text-xs font-black uppercase tracking-wider text-[#FF5722] flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-[#FF5722] animate-ping" />
+                  Pedido em Andamento
+                </h3>
+                {activeOrders.map((order) => {
                   const tenant = tenants.find((t) => t.id === order.tenantId);
+                  const st = order.status;
+                  const stepIdx = st === "pending" ? 1 : st === "preparing" ? 2 : (st === "ready" || st === "delivering" || st === "out_for_delivery") ? 3 : 4;
                   return (
                     <div
                       key={order.id}
-                      onClick={() => tenant && handleStoreClick(tenant)}
-                      className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/80 shadow-[0_4px_25px_rgb(0,0,0,0.02)] cursor-pointer hover:shadow-lg hover:border-orange-500/30 active:scale-[0.99] transition-all group text-left"
+                      className="bg-white rounded-3xl p-6 border border-slate-200/90 shadow-lg space-y-5 text-left"
                     >
-                      <div className="flex items-center gap-4 mb-4 pb-4 border-b border-slate-100">
-                        <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl overflow-hidden bg-slate-50 shrink-0 aspect-square border border-slate-200 group-hover:scale-105 transition-transform duration-300">
-                          <img
-                            src={
-                              tenant?.logoUrl ||
-                              `https://picsum.photos/seed/${order.tenantId}/100/100`
-                            }
-                            alt="Logo"
-                            className="w-full h-full object-cover"
-                          />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between gap-2">
-                            <h4 className="font-black text-slate-900 tracking-tight text-base truncate group-hover:text-orange-600 transition-colors">
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+                        <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 rounded-2xl overflow-hidden bg-slate-50 border border-slate-200 shrink-0">
+                            <img
+                              src={tenant?.logoUrl || `https://picsum.photos/seed/${order.tenantId}/100/100`}
+                              alt={tenant?.name || "Loja"}
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                          <div>
+                            <h4 className="font-black text-slate-900 text-base">
                               {tenant?.name || "Restaurante Parceiro"}
                             </h4>
-                            <span
-                              className={`text-[9px] font-black uppercase tracking-wider px-2.5 py-1 rounded-lg shrink-0 ${
-                                order.status === "delivered"
-                                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200/70"
-                                  : order.status === "cancelled"
-                                    ? "bg-rose-50 text-rose-600 border border-rose-200/70"
-                                    : "bg-orange-50 text-orange-600 border border-orange-200/70"
-                              }`}
-                            >
-                              {order.status === "delivered"
-                                ? "Entregue"
-                                : order.status === "cancelled"
-                                  ? "Cancelado"
-                                  : order.status === "pending"
-                                    ? "Pendente"
-                                    : order.status === "preparing"
-                                      ? "Em Preparo"
-                                      : order.status === "ready"
-                                        ? "Saiu pra Entrega"
-                                        : "Concluído"}
-                            </span>
+                            <p className="text-xs text-slate-500 font-semibold">
+                              Pedido #{order.id.slice(-6).toUpperCase()} • {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </p>
                           </div>
-                          <p className="text-[11px] font-bold text-slate-500 mt-1">
-                            {order.items.length}{" "}
-                            {order.items.length === 1 ? "item" : "itens"} • Total:{" "}
-                            <span className="text-slate-900 font-extrabold">R$ {order.total.toFixed(2)}</span>
-                          </p>
+                        </div>
+
+                        <span className="px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-orange-50 text-[#FF5722] border border-orange-200/80">
+                          {st === "pending" ? "Recebido" : st === "preparing" ? "Em Preparo" : (st === "ready" || st === "delivering" || st === "out_for_delivery") ? "A Caminho" : "Entregue"}
+                        </span>
+                      </div>
+
+                      {/* Stepper */}
+                      <div className="space-y-3">
+                        <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-amber-400 via-[#FF5722] to-emerald-500 rounded-full transition-all duration-700"
+                            style={{ width: `${(stepIdx / 4) * 100}%` }}
+                          />
+                        </div>
+                        <div className="grid grid-cols-4 gap-1 text-center text-[10px] sm:text-xs font-black">
+                          <span className={stepIdx >= 1 ? "text-slate-900 font-bold" : "text-slate-400"}>1. Confirmado</span>
+                          <span className={stepIdx >= 2 ? "text-[#FF5722] font-bold" : "text-slate-400"}>2. Cozinha</span>
+                          <span className={stepIdx >= 3 ? "text-amber-600 font-bold" : "text-slate-400"}>3. A Caminho</span>
+                          <span className={stepIdx >= 4 ? "text-emerald-600 font-bold" : "text-slate-400"}>4. Entregue</span>
                         </div>
                       </div>
 
-                      <div className="flex gap-2.5" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          onClick={() => tenant && handleStoreClick(tenant)}
-                          className="flex-1 py-3 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white rounded-xl font-black text-[10px] uppercase tracking-widest shadow-md shadow-orange-500/20 transition-all cursor-pointer"
-                        >
-                          Pedir Novamente
-                        </button>
-                        <button
-                          onClick={() => {
-                            setSelectedOrderForHelp(order);
-                            setShowHelpModal(true);
-                          }}
-                          className="px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all cursor-pointer"
-                        >
-                          Ajuda
-                        </button>
+                      {/* Items */}
+                      <div className="py-2 border-y border-slate-100 space-y-1.5 text-xs text-slate-700">
+                        {order.items.map((item: any, i: number) => (
+                          <div key={i} className="flex justify-between">
+                            <span>{item.quantity}x {item.name}</span>
+                            <span className="font-bold">R$ {(item.price * item.quantity).toFixed(2).replace(".", ",")}</span>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="flex justify-between items-center text-sm font-black text-slate-900">
+                        <span>Total</span>
+                        <span className="text-base text-[#FF5722]">R$ {order.total.toFixed(2).replace(".", ",")}</span>
                       </div>
                     </div>
                   );
                 })}
               </div>
-            ) : (
+            )}
+
+            {/* Order History */}
+            {orderHistory.length > 0 ? (
+              <div className="space-y-4">
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-500">
+                  Histórico de Pedidos Anteriores
+                </h3>
+                <div className="space-y-3">
+                  {orderHistory.map((order) => {
+                    const tenant = tenants.find((t) => t.id === order.tenantId);
+                    return (
+                      <div
+                        key={order.id}
+                        onClick={() => tenant && handleStoreClick(tenant)}
+                        className="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-sm hover:shadow-md transition-all cursor-pointer flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-left"
+                      >
+                        <div className="flex items-center gap-3.5">
+                          <div className="w-12 h-12 rounded-2xl overflow-hidden bg-slate-100 border border-slate-200 shrink-0">
+                            <img
+                              src={tenant?.logoUrl || `https://picsum.photos/seed/${order.tenantId}/100/100`}
+                              alt={tenant?.name || "Loja"}
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-black text-slate-900 text-sm">
+                                {tenant?.name || "Restaurante Parceiro"}
+                              </h4>
+                              <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-slate-100 text-slate-600">
+                                {order.status === "delivered" ? "Concluído" : order.status === "cancelled" ? "Cancelado" : order.status}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 font-semibold mt-0.5">
+                              {order.items.length} {order.items.length === 1 ? "item" : "itens"} • Total: <strong className="text-slate-900">R$ {order.total.toFixed(2).replace(".", ",")}</strong>
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 w-full sm:w-auto" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => tenant && handleStoreClick(tenant)}
+                            className="flex-1 sm:flex-initial px-4 py-2 bg-gradient-to-r from-[#FF5722] to-[#E02A00] text-white text-xs font-black rounded-xl uppercase tracking-wider shadow-sm transition-all cursor-pointer"
+                          >
+                            Pedir Novamente
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSelectedOrderForHelp(order);
+                              setShowHelpModal(true);
+                            }}
+                            className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                          >
+                            Ajuda
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : activeOrders.length === 0 ? (
               <div className="py-20 text-center bg-white rounded-3xl border border-slate-200/80 p-8 shadow-sm">
-                <div className="w-20 h-20 bg-orange-50 border border-orange-100 rounded-3xl flex items-center justify-center mx-auto mb-5 text-orange-500">
-                  <ShoppingBag size={36} />
+                <div className="w-16 h-16 bg-orange-50 border border-orange-100 rounded-3xl flex items-center justify-center mx-auto mb-4 text-[#FF5722]">
+                  <ShoppingBag size={30} />
                 </div>
                 <h3 className="text-lg font-black text-slate-900 tracking-tight">
                   Sem pedidos ainda
                 </h3>
                 <p className="text-xs font-medium text-slate-500 mt-1 max-w-sm mx-auto">
-                  Seus pedidos e entregas em andamento aparecerão aqui!
+                  Seus pedidos realizados e entregas em andamento aparecerão aqui!
                 </p>
                 <button
                   onClick={() => setNavView("home")}
-                  className="mt-6 px-8 py-3.5 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-orange-500/25 cursor-pointer"
+                  className="mt-6 px-8 py-3 bg-gradient-to-r from-[#FF5722] to-[#E02A00] text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-orange-500/25 cursor-pointer hover:scale-105 active:scale-95 transition-all"
                 >
                   Começar a Comprar
                 </button>
               </div>
-            )}
+            ) : null}
           </section>
         ) : (
-          <section className="animate-in fade-in slide-in-from-bottom-5 duration-500 bg-slate-950 text-white flex-1 min-h-[500px]">
-            {/* Top Immersive Dark Gradient Header Area */}
-            <div className="bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 px-6 pt-8 pb-12 relative overflow-hidden">
-              {/* Blur Glowing Orbs */}
-              <div className="absolute top-0 right-0 w-52 h-52 bg-orange-500/15 rounded-full blur-3xl pointer-events-none" />
-              <div className="absolute top-10 left-10 w-40 h-40 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+          <section className="px-4 sm:px-6 py-6 animate-in fade-in slide-in-from-bottom-4 duration-400 max-w-4xl mx-auto space-y-6 pb-28 text-left">
+            {/* Top Navigation & Breadcrumb */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-200/80">
+              <div>
+                <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
+                  <button
+                    onClick={() => {
+                      setNavView("home");
+                      navigate("/marketplace");
+                    }}
+                    className="hover:text-[#FF5722] transition-colors cursor-pointer"
+                  >
+                    Início
+                  </button>
+                  <span>/</span>
+                  <span className="text-slate-700">Meu Perfil</span>
+                </div>
+                <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight mt-1">
+                  Minha Conta & Preferências
+                </h2>
+              </div>
 
-              {/* Header Top Row */}
-              <div className="flex justify-between items-center mb-6 relative z-10">
-                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Meu Painel KitchenFlow</span>
+              <div className="flex items-center gap-2 self-start sm:self-auto">
                 <button
-                  onClick={() => alert("Você não possui novas notificações no momento.")}
-                  className="w-9 h-9 bg-slate-900 hover:bg-slate-800 active:scale-95 transition-all rounded-xl flex items-center justify-center border border-slate-800 relative cursor-pointer"
+                  onClick={() => setShowNotifications(true)}
+                  className="px-3.5 py-1.5 rounded-xl bg-white border border-slate-200/90 hover:bg-slate-50 text-slate-700 text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
                 >
-                  <Bell size={16} className="text-slate-300" />
-                  <div className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border border-slate-950 animate-pulse" />
-                </button>
-              </div>
-
-              {/* Profile Main Info Card */}
-              <div className="flex items-center gap-4.5 relative z-10">
-                <div className="relative group">
-                  <div className="absolute inset-0 bg-orange-500/30 rounded-full blur-md opacity-70 group-hover:opacity-100 transition-opacity" />
-                  <img
-                    src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=256&auto=format&fit=crop"
-                    alt="Foto do Perfil"
-                    className="w-18 h-18 rounded-full border-2 border-orange-500 shadow-xl object-cover relative z-10"
-                    referrerPolicy="no-referrer"
-                  />
-                </div>
-                <div className="flex-1 text-left">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-lg font-black tracking-tight text-white">
-                      {profile?.name || "Lucas Silva"}
-                    </h3>
-                  </div>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    {currentUser?.email || "lucas.silva@email.com"}
-                  </p>
-                  
-                  {/* Dynamic Premium Gamified Badge */}
-                  <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-orange-500/15 border border-orange-500/30 text-orange-400 rounded-full text-[10px] font-black uppercase tracking-wider mt-2 shadow-sm">
-                    <Sparkles size={10} className="fill-orange-400" />
-                    <span>
-                      {orderHistory.length > 5 ? "Cliente Black" : orderHistory.length > 2 ? "Cliente VIP" : "Cliente Premium"}
+                  <Bell size={14} className="text-[#FF5722]" />
+                  <span>Notificações</span>
+                  {unreadCount > 0 && (
+                    <span className="px-1.5 py-0.2 bg-[#FF3B00] text-white text-[9px] font-black rounded-full">
+                      {unreadCount}
                     </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Follow Order Status Bar Card */}
-              <div 
-                onClick={() => {
-                  setNavView("orders");
-                  navigate("/marketplace");
-                }}
-                className="mt-8 bg-slate-900/90 hover:bg-slate-850 active:scale-[0.98] transition-all border border-slate-800 backdrop-blur-md rounded-2xl p-4.5 flex items-center justify-between cursor-pointer group shadow-lg"
-              >
-                <div className="flex items-center gap-3.5">
-                  <div className="w-11 h-11 bg-orange-500/15 text-orange-400 rounded-xl flex items-center justify-center border border-orange-500/25">
-                    <Package size={20} strokeWidth={2.5} />
-                  </div>
-                  <div className="text-left">
-                    <h4 className="text-xs font-black text-white uppercase tracking-wider">Acompanhe seus pedidos</h4>
-                    <p className="text-[10px] text-slate-400 font-bold mt-0.5">Confira o status dos seus pedidos</p>
-                  </div>
-                </div>
-                <ChevronRight size={18} className="text-slate-400 group-hover:text-orange-400 group-hover:translate-x-0.5 transition-all" />
+                  )}
+                </button>
+                <button
+                  onClick={() => setShowHelpModal(true)}
+                  className="px-3.5 py-1.5 rounded-xl bg-white border border-slate-200/90 hover:bg-slate-50 text-slate-700 text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                >
+                  <HelpCircle size={14} className="text-emerald-600" />
+                  <span>Ajuda</span>
+                </button>
               </div>
             </div>
 
-            {/* Overlapping White Rounded List Sheet */}
-            <div className="bg-slate-900/90 border-t border-slate-800 rounded-t-[2.5rem] px-6 py-8 -mt-6 relative z-20 shadow-2xl space-y-3 text-slate-200">
-              
-              {/* Option: Meus Pedidos */}
+            {/* Main Profile Card */}
+            <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden">
+              {/* Gourmet Gradient Banner */}
+              <div className="h-28 sm:h-32 bg-gradient-to-r from-[#D82600] via-[#FF5722] to-[#FF8A65] relative overflow-hidden flex items-end p-6">
+                <div className="absolute right-0 top-0 w-80 h-full opacity-20 pointer-events-none flex items-center justify-end pr-8">
+                  <UtensilsCrossed size={120} className="text-white" />
+                </div>
+                <div className="relative z-10 flex items-center gap-2">
+                  <span className="px-3 py-1 bg-black/40 backdrop-blur-md rounded-full text-amber-300 border border-amber-300/30 text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-sm">
+                    <Sparkles size={11} className="text-amber-400" /> CLIENTE KITCHENFLOW
+                  </span>
+                </div>
+              </div>
+
+              {/* Profile Body */}
+              <div className="px-6 pb-6 pt-0">
+                <div className="flex flex-col sm:flex-row items-start sm:items-end justify-between gap-4 -mt-12 sm:-mt-14 mb-4">
+                  {/* Avatar */}
+                  <div className="relative group">
+                    {currentUser?.photoURL ? (
+                      <img
+                        src={currentUser.photoURL}
+                        alt="Foto do Perfil"
+                        className="w-24 h-24 sm:w-28 sm:h-28 rounded-3xl border-4 border-white shadow-xl object-cover bg-white"
+                      />
+                    ) : (
+                      <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-3xl border-4 border-white shadow-xl bg-gradient-to-tr from-[#FF5722] to-[#E02A00] text-white font-black text-3xl sm:text-4xl flex items-center justify-center">
+                        {(profile?.name || currentUser?.displayName || "Cliente")[0]?.toUpperCase()}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => setShowProfileModal(true)}
+                      className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-slate-900 hover:bg-black text-white flex items-center justify-center border-2 border-white shadow-md transition-all cursor-pointer hover:scale-110 active:scale-95"
+                      title="Editar Perfil"
+                    >
+                      <Edit3 size={13} />
+                    </button>
+                  </div>
+
+                  {/* Edit Profile Button */}
+                  <button
+                    onClick={() => setShowProfileModal(true)}
+                    className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-orange-50/80 text-slate-800 hover:text-[#FF5722] border border-slate-200/90 hover:border-orange-300 text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-sm self-stretch sm:self-auto justify-center"
+                  >
+                    <Edit3 size={14} />
+                    <span>Editar Dados Pessoais</span>
+                  </button>
+                </div>
+
+                {/* Identity info */}
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+                      {profile?.name || currentUser?.displayName || "Cliente KitchenFlow"}
+                    </h3>
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-black uppercase tracking-wider">
+                      <CheckCircle2 size={12} className="text-emerald-600" /> Verificado
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-xs font-semibold text-slate-500 pt-1">
+                    <div className="flex items-center gap-1.5">
+                      <Mail size={13} className="text-[#FF5722]" />
+                      <span>{currentUser?.email || "Sem e-mail cadastrado"}</span>
+                    </div>
+                    <span>•</span>
+                    <div className="flex items-center gap-1.5">
+                      <Phone size={13} className="text-emerald-600" />
+                      <span>{profile?.phone || "Cadastrar telefone celular"}</span>
+                    </div>
+                    <span>•</span>
+                    <div className="flex items-center gap-1.5">
+                      <MapPin size={13} className="text-amber-500" />
+                      <span>{customerCity || "Pradópolis - SP"}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Activity & Loyalty Metrics Strip */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
               <button
                 onClick={() => {
                   setNavView("orders");
                   navigate("/marketplace");
                 }}
-                className="flex items-center justify-between w-full p-4.5 bg-slate-950/80 hover:bg-slate-800 active:scale-[0.99] transition-all rounded-2xl group border border-slate-800 text-left cursor-pointer"
+                className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-sm hover:border-orange-300 hover:shadow-md transition-all text-left cursor-pointer group flex flex-col justify-between"
               >
-                <div className="flex items-center gap-4">
-                  <div className="w-11 h-11 bg-orange-500/15 text-orange-400 border border-orange-500/25 rounded-xl flex items-center justify-center shadow-sm">
-                    <ShoppingBag size={20} />
-                  </div>
-                  <div className="text-left">
-                    <h4 className="text-xs font-black text-white tracking-tight uppercase">Meus Pedidos</h4>
-                    <p className="text-[10px] text-slate-400 font-bold mt-0.5">Acompanhe e veja todos os seus pedidos</p>
-                  </div>
+                <div className="w-9 h-9 rounded-xl bg-orange-50 text-[#FF5722] flex items-center justify-center mb-2 group-hover:scale-105 transition-transform">
+                  <ShoppingBag size={18} strokeWidth={2.5} />
                 </div>
-                <ChevronRight size={16} className="text-slate-400 group-hover:text-orange-400 group-hover:translate-x-0.5 transition-all" />
+                <div>
+                  <span className="text-xl sm:text-2xl font-black text-slate-900 block leading-tight">
+                    {orderHistory.length}
+                  </span>
+                  <span className="text-[11px] font-bold text-slate-500 group-hover:text-[#FF5722] transition-colors">
+                    Pedidos Realizados
+                  </span>
+                </div>
               </button>
 
-              {/* Option: Endereços */}
-              <button
-                onClick={() => setShowAddressModal(true)}
-                className="flex items-center justify-between w-full p-4.5 bg-slate-950/80 hover:bg-slate-800 active:scale-[0.99] transition-all rounded-2xl group border border-slate-800 text-left cursor-pointer"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-11 h-11 bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 rounded-xl flex items-center justify-center shadow-sm">
-                    <MapPin size={20} />
-                  </div>
-                  <div className="text-left">
-                    <h4 className="text-xs font-black text-white tracking-tight uppercase">Endereços</h4>
-                    <p className="text-[10px] text-slate-400 font-bold mt-0.5">Gerencie seus endereços de entrega</p>
-                  </div>
-                </div>
-                <ChevronRight size={16} className="text-slate-400 group-hover:text-emerald-400 group-hover:translate-x-0.5 transition-all" />
-              </button>
-
-              {/* Option: Formas de Pagamento */}
-              <button
-                onClick={() => setShowPaymentModal(true)}
-                className="flex items-center justify-between w-full p-4.5 bg-slate-950/80 hover:bg-slate-800 active:scale-[0.99] transition-all rounded-2xl group border border-slate-800 text-left cursor-pointer"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-11 h-11 bg-amber-500/15 text-amber-400 border border-amber-500/25 rounded-xl flex items-center justify-center shadow-sm">
-                    <CreditCard size={20} />
-                  </div>
-                  <div className="text-left">
-                    <h4 className="text-xs font-black text-white tracking-tight uppercase">Formas de Pagamento</h4>
-                    <p className="text-[10px] text-slate-400 font-bold mt-0.5">Gerencie seus cartões e pagamentos</p>
-                  </div>
-                </div>
-                <ChevronRight size={16} className="text-slate-400 group-hover:text-amber-400 group-hover:translate-x-0.5 transition-all" />
-              </button>
-
-              {/* Option: Favoritos */}
               <button
                 onClick={() => {
                   setNavView("favorites");
                   navigate("/marketplace");
                 }}
-                className="flex items-center justify-between w-full p-4.5 bg-slate-950/80 hover:bg-slate-800 active:scale-[0.99] transition-all rounded-2xl group border border-slate-800 text-left cursor-pointer"
+                className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-sm hover:border-orange-300 hover:shadow-md transition-all text-left cursor-pointer group flex flex-col justify-between"
               >
-                <div className="flex items-center gap-4">
-                  <div className="w-11 h-11 bg-rose-500/15 text-rose-400 border border-rose-500/25 rounded-xl flex items-center justify-center shadow-sm">
-                    <Heart size={20} />
-                  </div>
-                  <div className="text-left">
-                    <h4 className="text-xs font-black text-white tracking-tight uppercase">Favoritos</h4>
-                    <p className="text-[10px] text-slate-400 font-bold mt-0.5">Veja seus restaurantes favoritos</p>
-                  </div>
+                <div className="w-9 h-9 rounded-xl bg-rose-50 text-rose-500 flex items-center justify-center mb-2 group-hover:scale-105 transition-transform">
+                  <Heart size={18} strokeWidth={2.5} />
                 </div>
-                <ChevronRight size={16} className="text-slate-400 group-hover:text-rose-400 group-hover:translate-x-0.5 transition-all" />
+                <div>
+                  <span className="text-xl sm:text-2xl font-black text-slate-900 block leading-tight">
+                    {favorites.length}
+                  </span>
+                  <span className="text-[11px] font-bold text-slate-500 group-hover:text-rose-600 transition-colors">
+                    Restaurantes Favoritos
+                  </span>
+                </div>
               </button>
 
-              {/* Option: Configurações */}
-              <button
-                onClick={() => setShowProfileModal(true)}
-                className="flex items-center justify-between w-full p-4.5 bg-slate-950/80 hover:bg-slate-800 active:scale-[0.99] transition-all rounded-2xl group border border-slate-800 text-left cursor-pointer"
+              <div
+                onClick={() => handleCopyCoupon("BEMVINDO")}
+                className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-sm hover:border-orange-300 hover:shadow-md transition-all text-left cursor-pointer group flex flex-col justify-between"
               >
-                <div className="flex items-center gap-4">
-                  <div className="w-11 h-11 bg-purple-500/15 text-purple-400 border border-purple-500/25 rounded-xl flex items-center justify-center shadow-sm">
-                    <Settings size={20} />
-                  </div>
-                  <div className="text-left">
-                    <h4 className="text-xs font-black text-white tracking-tight uppercase">Configurações</h4>
-                    <p className="text-[10px] text-slate-400 font-bold mt-0.5">Preferências do app e da conta</p>
-                  </div>
+                <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center mb-2 group-hover:scale-105 transition-transform">
+                  <Ticket size={18} strokeWidth={2.5} />
                 </div>
-                <ChevronRight size={16} className="text-slate-400 group-hover:text-purple-400 group-hover:translate-x-0.5 transition-all" />
-              </button>
-
-              {/* Option: Ajuda */}
-              <button
-                onClick={() => setShowHelpModal(true)}
-                className="flex items-center justify-between w-full p-4.5 bg-slate-950/80 hover:bg-slate-800 active:scale-[0.99] transition-all rounded-2xl group border border-slate-800 text-left cursor-pointer"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-11 h-11 bg-sky-500/15 text-sky-400 border border-sky-500/25 rounded-xl flex items-center justify-center shadow-sm">
-                    <HelpCircle size={20} />
-                  </div>
-                  <div className="text-left">
-                    <h4 className="text-xs font-black text-white tracking-tight uppercase">Ajuda</h4>
-                    <p className="text-[10px] text-slate-400 font-bold mt-0.5">Central de ajuda e suporte</p>
-                  </div>
+                <div>
+                  <span className="text-xl sm:text-2xl font-black text-slate-900 block leading-tight">
+                    1 Cupom
+                  </span>
+                  <span className="text-[11px] font-bold text-amber-600 group-hover:text-amber-700 transition-colors truncate block">
+                    {copiedCoupon === "BEMVINDO" ? "Copiado!" : "BEMVINDO (R$ 10 OFF)"}
+                  </span>
                 </div>
-                <ChevronRight size={16} className="text-slate-400 group-hover:text-sky-400 group-hover:translate-x-0.5 transition-all" />
-              </button>
-
-              {/* Logout Button */}
-              <div className="pt-4">
-                <button
-                  onClick={() => alert("Para sair da conta atual, utilize as configurações globais do aplicativo na barra lateral.")}
-                  className="w-full py-4 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/25 active:scale-[0.98] transition-all text-rose-400 rounded-2xl font-black text-[10px] uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <LogOut size={14} /> Sair da Conta
-                </button>
               </div>
 
+              <button
+                onClick={() => setShowAddressModal(true)}
+                className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-sm hover:border-orange-300 hover:shadow-md transition-all text-left cursor-pointer group flex flex-col justify-between"
+              >
+                <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center mb-2 group-hover:scale-105 transition-transform">
+                  <MapPin size={18} strokeWidth={2.5} />
+                </div>
+                <div>
+                  <span className="text-base sm:text-lg font-black text-slate-900 block leading-tight truncate">
+                    {customerCity || "Pradópolis"}
+                  </span>
+                  <span className="text-[11px] font-bold text-slate-500 group-hover:text-emerald-700 transition-colors">
+                    Trocar Endereço
+                  </span>
+                </div>
+              </button>
+            </div>
+
+            {/* Section 1: Pedidos & Entregas */}
+            <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/90 shadow-sm space-y-3">
+              <h4 className="text-xs font-black uppercase tracking-wider text-slate-400 pb-1 flex items-center gap-1.5">
+                <ShoppingBag size={14} className="text-[#FF5722]" />
+                <span>Pedidos & Entregas</span>
+              </h4>
+
+              <div className="divide-y divide-slate-100">
+                <button
+                  onClick={() => {
+                    setNavView("orders");
+                    navigate("/marketplace");
+                  }}
+                  className="w-full py-3.5 flex items-center justify-between gap-4 hover:bg-slate-50/80 rounded-2xl px-2 transition-colors cursor-pointer group text-left"
+                >
+                  <div className="flex items-center gap-3.5">
+                    <div className="w-10 h-10 rounded-xl bg-orange-50 text-[#FF5722] flex items-center justify-center shrink-0">
+                      <Package size={18} strokeWidth={2.5} />
+                    </div>
+                    <div>
+                      <h5 className="text-sm font-black text-slate-900 group-hover:text-[#FF5722] transition-colors">
+                        Histórico de Pedidos
+                      </h5>
+                      <p className="text-xs text-slate-500 font-medium">
+                        {activeOrders.length > 0
+                          ? `${activeOrders.length} pedido em andamento com rastreamento ao vivo`
+                          : "Veja todos os seus pedidos anteriores e notas fiscais"}
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight size={18} className="text-slate-400 group-hover:text-[#FF5722] group-hover:translate-x-0.5 transition-all shrink-0" />
+                </button>
+
+                <button
+                  onClick={() => setShowAddressModal(true)}
+                  className="w-full py-3.5 flex items-center justify-between gap-4 hover:bg-slate-50/80 rounded-2xl px-2 transition-colors cursor-pointer group text-left"
+                >
+                  <div className="flex items-center gap-3.5">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                      <MapPin size={18} strokeWidth={2.5} />
+                    </div>
+                    <div>
+                      <h5 className="text-sm font-black text-slate-900 group-hover:text-emerald-700 transition-colors">
+                        Endereços de Entrega
+                      </h5>
+                      <p className="text-xs text-slate-500 font-medium truncate max-w-[240px] sm:max-w-md">
+                        {currentAddress || "Selecione ou adicione um endereço principal"}
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight size={18} className="text-slate-400 group-hover:text-emerald-700 group-hover:translate-x-0.5 transition-all shrink-0" />
+                </button>
+
+                <button
+                  onClick={() => setShowPaymentModal(true)}
+                  className="w-full py-3.5 flex items-center justify-between gap-4 hover:bg-slate-50/80 rounded-2xl px-2 transition-colors cursor-pointer group text-left"
+                >
+                  <div className="flex items-center gap-3.5">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                      <CreditCard size={18} strokeWidth={2.5} />
+                    </div>
+                    <div>
+                      <h5 className="text-sm font-black text-slate-900 group-hover:text-indigo-700 transition-colors">
+                        Formas de Pagamento & Carteira
+                      </h5>
+                      <p className="text-xs text-slate-500 font-medium">
+                        Gerenciar cartões de crédito salvos e Pix Instantâneo
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight size={18} className="text-slate-400 group-hover:text-indigo-700 group-hover:translate-x-0.5 transition-all shrink-0" />
+                </button>
+              </div>
+            </div>
+
+            {/* Section 2: Vantagens & Favoritos */}
+            <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/90 shadow-sm space-y-3">
+              <h4 className="text-xs font-black uppercase tracking-wider text-slate-400 pb-1 flex items-center gap-1.5">
+                <Ticket size={14} className="text-amber-500" />
+                <span>Vantagens & Favoritos</span>
+              </h4>
+
+              <div className="divide-y divide-slate-100">
+                <div className="py-3.5 flex items-center justify-between gap-4 px-2">
+                  <div className="flex items-center gap-3.5">
+                    <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+                      <Ticket size={18} strokeWidth={2.5} />
+                    </div>
+                    <div>
+                      <h5 className="text-sm font-black text-slate-900">
+                        Cupom de Boas-Vindas: <span className="font-mono text-[#FF5722]">BEMVINDO</span>
+                      </h5>
+                      <p className="text-xs text-slate-500 font-medium">
+                        R$ 10 OFF no 1º pedido em qualquer restaurante parceiro
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleCopyCoupon("BEMVINDO")}
+                    className="px-3.5 py-1.5 bg-[#FF5722] hover:bg-[#E02A00] text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-sm transition-all cursor-pointer shrink-0"
+                  >
+                    {copiedCoupon === "BEMVINDO" ? "Copiado!" : "Copiar"}
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => {
+                    setNavView("favorites");
+                    navigate("/marketplace");
+                  }}
+                  className="w-full py-3.5 flex items-center justify-between gap-4 hover:bg-slate-50/80 rounded-2xl px-2 transition-colors cursor-pointer group text-left"
+                >
+                  <div className="flex items-center gap-3.5">
+                    <div className="w-10 h-10 rounded-xl bg-rose-50 text-rose-500 flex items-center justify-center shrink-0">
+                      <Heart size={18} strokeWidth={2.5} />
+                    </div>
+                    <div>
+                      <h5 className="text-sm font-black text-slate-900 group-hover:text-rose-600 transition-colors">
+                        Restaurantes Favoritos
+                      </h5>
+                      <p className="text-xs text-slate-500 font-medium">
+                        {favorites.length > 0
+                          ? `${favorites.length} estabelecimentos salvos na sua lista pessoal`
+                          : "Acesse rapidamente os restaurantes que você mais ama"}
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight size={18} className="text-slate-400 group-hover:text-rose-600 group-hover:translate-x-0.5 transition-all shrink-0" />
+                </button>
+
+                <button
+                  onClick={() => setShowNotifications(true)}
+                  className="w-full py-3.5 flex items-center justify-between gap-4 hover:bg-slate-50/80 rounded-2xl px-2 transition-colors cursor-pointer group text-left"
+                >
+                  <div className="flex items-center gap-3.5">
+                    <div className="w-10 h-10 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center shrink-0">
+                      <Bell size={18} strokeWidth={2.5} />
+                    </div>
+                    <div>
+                      <h5 className="text-sm font-black text-slate-900 group-hover:text-sky-600 transition-colors">
+                        Notificações & Alertas de Cupons
+                      </h5>
+                      <p className="text-xs text-slate-500 font-medium">
+                        Promoções exclusivas, ofertas do dia e atualizações de status
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight size={18} className="text-slate-400 group-hover:text-sky-600 group-hover:translate-x-0.5 transition-all shrink-0" />
+                </button>
+              </div>
+            </div>
+
+            {/* Section 3: Conta & Suporte */}
+            <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/90 shadow-sm space-y-3">
+              <h4 className="text-xs font-black uppercase tracking-wider text-slate-400 pb-1 flex items-center gap-1.5">
+                <Settings size={14} className="text-slate-600" />
+                <span>Conta & Suporte</span>
+              </h4>
+
+              <div className="divide-y divide-slate-100">
+                <button
+                  onClick={() => setShowProfileModal(true)}
+                  className="w-full py-3.5 flex items-center justify-between gap-4 hover:bg-slate-50/80 rounded-2xl px-2 transition-colors cursor-pointer group text-left"
+                >
+                  <div className="flex items-center gap-3.5">
+                    <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
+                      <UserIcon size={18} strokeWidth={2.5} />
+                    </div>
+                    <div>
+                      <h5 className="text-sm font-black text-slate-900 group-hover:text-[#FF5722] transition-colors">
+                        Dados Cadastrais
+                      </h5>
+                      <p className="text-xs text-slate-500 font-medium">
+                        Atualize seu nome de exibição e número de telefone celular
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight size={18} className="text-slate-400 group-hover:text-[#FF5722] group-hover:translate-x-0.5 transition-all shrink-0" />
+                </button>
+
+                <button
+                  onClick={() => setShowHelpModal(true)}
+                  className="w-full py-3.5 flex items-center justify-between gap-4 hover:bg-slate-50/80 rounded-2xl px-2 transition-colors cursor-pointer group text-left"
+                >
+                  <div className="flex items-center gap-3.5">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                      <HelpCircle size={18} strokeWidth={2.5} />
+                    </div>
+                    <div>
+                      <h5 className="text-sm font-black text-slate-900 group-hover:text-emerald-700 transition-colors">
+                        Central de Ajuda & Atendimento
+                      </h5>
+                      <p className="text-xs text-slate-500 font-medium">
+                        Tire dúvidas sobre seus pedidos ou converse com o suporte no WhatsApp
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight size={18} className="text-slate-400 group-hover:text-emerald-700 group-hover:translate-x-0.5 transition-all shrink-0" />
+                </button>
+
+                <div className="py-3.5 flex items-center justify-between gap-4 px-2">
+                  <div className="flex items-center gap-3.5">
+                    <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
+                      {soundEnabled ? <Volume2 size={18} strokeWidth={2.5} /> : <VolumeX size={18} strokeWidth={2.5} />}
+                    </div>
+                    <div>
+                      <h5 className="text-sm font-black text-slate-900">
+                        Efeitos Sonoros do Aplicativo
+                      </h5>
+                      <p className="text-xs text-slate-500 font-medium">
+                        {soundEnabled ? "Sons de pedidos e notificações ativados" : "Sons desativados"}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={toggleSound}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                      soundEnabled
+                        ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        : "bg-slate-100 text-slate-500 border border-slate-200"
+                    }`}
+                  >
+                    {soundEnabled ? "Ligado" : "Desligado"}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Logout Card */}
+            <div className="pt-2">
+              <button
+                onClick={() => {
+                  if (window.confirm("Deseja realmente sair da sua conta?")) {
+                    auth.signOut();
+                  }
+                }}
+                className="w-full py-4 bg-rose-50 hover:bg-rose-100/80 border border-rose-200/90 text-rose-600 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer hover:scale-[1.01] active:scale-[0.99]"
+              >
+                <LogOut size={16} />
+                <span>Sair da Conta ({profile?.name || currentUser?.displayName || currentUser?.email || "Cliente"})</span>
+              </button>
             </div>
           </section>
         )}
