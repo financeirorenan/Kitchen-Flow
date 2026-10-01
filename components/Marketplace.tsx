@@ -63,6 +63,7 @@ import {
   CheckCircle,
   Mail,
   Edit3,
+  Award,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { db, auth } from "../firebase";
