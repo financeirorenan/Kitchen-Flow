@@ -261,28 +261,87 @@ const Finance: React.FC<FinanceProps> = memo(
     };
 
     const incomeFromOrders = useMemo(
-      () =>
-        deduplicateOrders(
+      () => {
+        const validOrders = deduplicateOrders(
           orders.filter(
             (o) =>
               o.status !== "cancelled" &&
               !o.isSubTicket &&
               !o.mergedIntoOrderId,
-          )
-        ).map((order) => ({
-          id: `order-${order.id}`,
-          tenantId: order.tenantId,
-          type: "income" as const,
-          amount: order.total,
-          category: "Vendas PDV",
-          description: `Pedido #${order.dailyNumber ? String(order.dailyNumber) : order.id.slice(-4)} (${order.type})`,
-          date: order.paidAt || order.createdAt,
-          status: "paid" as const,
-          dueDate: order.paidAt || order.createdAt,
-          orderId: order.id,
-          paymentMethod: order.paymentMethod || "dinheiro",
-        })),
-      [orders],
+          ),
+        );
+
+        const records: FinancialRecord[] = [];
+
+        validOrders.forEach((order) => {
+          const orderDate = order.paidAt || order.createdAt;
+          const orderTotal = Number(order.total) || 0;
+          const orderLabel = `Pedido #${order.dailyNumber ? String(order.dailyNumber) : order.id.slice(-4)} (${order.type === 'delivery' ? 'Entrega' : (order.type === 'table' ? `Mesa ${order.tableNumber || ''}` : 'Balcão')})`;
+
+          if (order.payments && order.payments.length > 0) {
+            let sumPayments = 0;
+            order.payments.forEach((p, idx) => {
+              const pAmt = Number(p.amount) || 0;
+              if (pAmt > 0) {
+                const normMethod = normalizePaymentMethod(p.method, adminSettings) as PaymentMethod;
+                records.push({
+                  id: `order-${order.id}-pay-${idx}`,
+                  tenantId: order.tenantId,
+                  type: "income",
+                  amount: pAmt,
+                  category: "Vendas PDV",
+                  description: `${orderLabel} - ${getPaymentMethodLabel(normMethod)}`,
+                  date: p.timestamp || orderDate,
+                  status: "paid",
+                  dueDate: p.timestamp || orderDate,
+                  orderId: order.id,
+                  paymentMethod: normMethod,
+                  shiftOpenedAt: (order as any).shiftOpenedAt,
+                });
+                sumPayments += pAmt;
+              }
+            });
+
+            if (orderTotal > sumPayments + 0.009) {
+              const diff = orderTotal - sumPayments;
+              const normFallback = normalizePaymentMethod(order.paymentMethod || "dinheiro", adminSettings) as PaymentMethod;
+              records.push({
+                id: `order-${order.id}-remainder`,
+                tenantId: order.tenantId,
+                type: "income",
+                amount: diff,
+                category: "Vendas PDV",
+                description: `${orderLabel} - Restante (${getPaymentMethodLabel(normFallback)})`,
+                date: orderDate,
+                status: "paid",
+                dueDate: orderDate,
+                orderId: order.id,
+                paymentMethod: normFallback,
+                shiftOpenedAt: (order as any).shiftOpenedAt,
+              });
+            }
+          } else {
+            const normMethod = normalizePaymentMethod(order.paymentMethod || "dinheiro", adminSettings) as PaymentMethod;
+            records.push({
+              id: `order-${order.id}`,
+              tenantId: order.tenantId,
+              type: "income",
+              amount: orderTotal,
+              category: "Vendas PDV",
+              description: orderLabel,
+              date: orderDate,
+              status: "paid",
+              dueDate: orderDate,
+              orderId: order.id,
+              paymentMethod: normMethod,
+              shiftOpenedAt: (order as any).shiftOpenedAt,
+            });
+          }
+        });
+
+        return records;
+      },
+      [orders, adminSettings],
     );
 
     const allRecords = useMemo(
@@ -543,14 +602,14 @@ const Finance: React.FC<FinanceProps> = memo(
         .reduce((acc, o) => {
           if (o.payments && o.payments.length > 0) {
             const cashFromPayments = o.payments
-              .filter((p) => p.method === "dinheiro")
-              .reduce((s, p) => s + p.amount, 0);
+              .filter((p) => normalizePaymentMethod(p.method, adminSettings) === "dinheiro")
+              .reduce((s, p) => s + (Number(p.amount) || 0), 0);
             return acc + cashFromPayments;
           } else if (
-            o.paymentMethod === "dinheiro" &&
+            normalizePaymentMethod(o.paymentMethod, adminSettings) === "dinheiro" &&
             (o.isSettled || o.paymentStatus === "paid" || o.status === "delivered" || o.status === "finished")
           ) {
-            return acc + o.total;
+            return acc + (Number(o.total) || 0);
           }
           return acc;
         }, 0);
@@ -796,22 +855,62 @@ const Finance: React.FC<FinanceProps> = memo(
           return o.isSettled || o.paymentStatus === "paid" || (o.payments && o.payments.length > 0) || o.status === "delivered" || o.status === "finished";
         })
         .forEach((order) => {
-          const paymentsList =
-            order.payments && order.payments.length > 0
-              ? order.payments
-              : [{ method: order.paymentMethod || "dinheiro", amount: order.total || 0 }];
+          const orderTotal = Number(order.total) || 0;
+          if (order.payments && order.payments.length > 0) {
+            let pSum = 0;
+            order.payments.forEach((p) => {
+              const method = normalizePaymentMethod(p.method, adminSettings);
+              const amt = Number(p.amount) || 0;
+              if (amt > 0) {
+                if (!methodCounts[method]) {
+                  methodCounts[method] = { count: 0, total: 0, fees: 0 };
+                }
 
-          paymentsList.forEach((p) => {
-            const method = p.method || "dinheiro";
-            const amt = p.amount || 0;
+                methodCounts[method].count += 1;
+                methodCounts[method].total += amt;
+
+                // Calculate fees based on adminSettings.paymentMethods
+                const config = adminSettings.paymentMethods?.find(
+                  (cfg) =>
+                    cfg.id === method ||
+                    cfg.name.toLowerCase() === method.toLowerCase() ||
+                    cfg.type === method,
+                );
+                if (config) {
+                  const fee =
+                    amt * (config.feePercentage / 100) +
+                    (config.fixedFee || 0);
+                  methodCounts[method].fees += fee;
+                } else {
+                  // Default fees if not configured (backwards compatibility)
+                  let fee = 0;
+                  if (method === "cartao_credito") fee = amt * 0.032;
+                  else if (method === "cartao_debito") fee = amt * 0.019;
+                  else if (method === "vale_refeicao") fee = amt * 0.05;
+                  methodCounts[method].fees += fee;
+                }
+                pSum += amt;
+              }
+            });
+
+            // Remainder allocation
+            if (orderTotal > pSum + 0.009) {
+              const diff = orderTotal - pSum;
+              const fallbackMethod = normalizePaymentMethod(order.paymentMethod || "dinheiro", adminSettings);
+              if (!methodCounts[fallbackMethod]) {
+                methodCounts[fallbackMethod] = { count: 0, total: 0, fees: 0 };
+              }
+              methodCounts[fallbackMethod].total += diff;
+            }
+          } else {
+            const method = normalizePaymentMethod(order.paymentMethod || "dinheiro", adminSettings);
             if (!methodCounts[method]) {
               methodCounts[method] = { count: 0, total: 0, fees: 0 };
             }
 
             methodCounts[method].count += 1;
-            methodCounts[method].total += amt;
+            methodCounts[method].total += orderTotal;
 
-            // Calculate fees based on adminSettings.paymentMethods
             const config = adminSettings.paymentMethods?.find(
               (cfg) =>
                 cfg.id === method ||
@@ -820,18 +919,17 @@ const Finance: React.FC<FinanceProps> = memo(
             );
             if (config) {
               const fee =
-                amt * (config.feePercentage / 100) +
+                orderTotal * (config.feePercentage / 100) +
                 (config.fixedFee || 0);
               methodCounts[method].fees += fee;
             } else {
-              // Default fees if not configured (backwards compatibility)
               let fee = 0;
-              if (method === "cartao_credito") fee = amt * 0.032;
-              else if (method === "cartao_debito") fee = amt * 0.019;
-              else if (method === "vale_refeicao") fee = amt * 0.05;
+              if (method === "cartao_credito") fee = orderTotal * 0.032;
+              else if (method === "cartao_debito") fee = orderTotal * 0.019;
+              else if (method === "vale_refeicao") fee = orderTotal * 0.05;
               methodCounts[method].fees += fee;
             }
-          });
+          }
         });
 
       return Object.entries(methodCounts)
@@ -844,7 +942,7 @@ const Finance: React.FC<FinanceProps> = memo(
           );
           const name = config
             ? config.name
-            : id.charAt(0).toUpperCase() + id.slice(1).replace("_", " ");
+            : getPaymentMethodLabel(id);
           return {
             id,
             name,
@@ -855,7 +953,7 @@ const Finance: React.FC<FinanceProps> = memo(
           };
         })
         .sort((a, b) => b.total - a.total);
-    }, [orders, adminSettings.paymentMethods]);
+    }, [orders, adminSettings]);
 
     const currentMonthName = new Intl.DateTimeFormat("pt-BR", {
       month: "long",

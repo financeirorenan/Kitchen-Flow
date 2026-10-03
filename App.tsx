@@ -2522,26 +2522,9 @@ const App: React.FC = () => {
       categorySums
     };
   }, [financialRecords]);
+  // Historical orders preservation: Keep finished orders in localDb and state for accounting and reporting
   useEffect(() => {
-    if (isDbLoaded) {
-      const clearOldOrders = async () => {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        
-        const oldFinishedOrders = await localDb.orders
-          .where('status')
-          .equals('finished')
-          .filter(o => new Date(o.createdAt) < today)
-          .toArray();
-          
-        if (oldFinishedOrders.length > 0) {
-          const ids = oldFinishedOrders.map(o => o.id);
-          await localDb.orders.bulkDelete(ids);
-          setOrders(prev => prev.filter(o => !ids.includes(o.id)));
-        }
-      };
-      clearOldOrders();
-    }
+    // Finished orders are preserved for financial history, CMV analysis, cash closures and reporting.
   }, [isDbLoaded]);
 
   // Real-time Cloud Order Listener (Strictly isolated per merchant/tenant and merchant view)
@@ -5337,7 +5320,7 @@ const App: React.FC = () => {
       const order = orders.find(o => o.id === id);
       if (order && !order.isSettled) {
         totalEarningsToDeduct += (order.courierEarnings || 0);
-        if (order.paymentMethod === 'dinheiro') {
+        if (normalizePaymentMethod(order.paymentMethod, adminSettings) === 'dinheiro') {
           totalCashToDeduct += (order.total || 0);
         }
       }
@@ -6359,54 +6342,63 @@ const App: React.FC = () => {
         // 3. Sync everything to Cloud
         if (effectiveTenantId) {
           try {
-            const batch = writeBatch(db);
+            // 3.1 Salvar Relatório de Fechamento com prioridade máxima e persistência garantida
+            await setDoc(doc(db, 'cashClosings', report.id), cleanObject(report));
             
-            // Saving Report
-            batch.set(doc(db, 'cashClosings', report.id), cleanObject(report));
-            
-            // Saving Financial Records
-            batch.set(doc(db, 'financialRecords', closureFinancialRec.id), cleanObject(closureFinancialRec));
-            if (diffRec) batch.set(doc(db, 'financialRecords', diffRec.id), cleanObject(diffRec));
-
-            // Settings Reset
-          batch.set(doc(db, 'settings', effectiveTenantId), {
-            cashSession: closedSession,
-            updatedAt: new Date()
-          }, { merge: true });
-          
-          // Tables Reset
-          updatedTables.forEach(t => {
-            const docId = (t as any).docId || (t as any)._firestoreId;
-            if (docId) {
-              batch.update(doc(db, 'diningTables', docId), {
-                status: 'available', items: [], total: 0, currentOrderId: null, updatedAt: new Date()
-              });
+            // 3.2 Salvar Lançamento no Extrato Financeiro
+            await setDoc(doc(db, 'financialRecords', closureFinancialRec.id), cleanObject(closureFinancialRec));
+            if (diffRec) {
+              await setDoc(doc(db, 'financialRecords', diffRec.id), cleanObject(diffRec));
             }
-          });
 
-          // Finalize pending orders - Better: query for ALL pending orders to be sure
-          const ordersToCloseSnapshot = await getDocs(query(
-            collection(db, 'orders'), 
-            where('tenantId', '==', effectiveTenantId)
-          ));
+            // 3.3 Atualizar Sessão de Caixa nas Configurações
+            await setDoc(doc(db, 'settings', effectiveTenantId), {
+              cashSession: closedSession,
+              updatedAt: new Date()
+            }, { merge: true });
           
-          ordersToCloseSnapshot.docs.forEach(oDoc => {
-            const data = oDoc.data();
-            if (data && ['pending', 'preparing', 'ready', 'delivered'].includes(data.status)) {
-              batch.update(oDoc.ref, { 
-                status: 'finished', 
-                finishedAt: new Date(), 
-                updatedAt: new Date() 
+            // 3.4 Resetar Mesas em lote seguro
+            if (updatedTables.length > 0) {
+              const tableBatch = writeBatch(db);
+              let hasTableWrites = false;
+              updatedTables.forEach(t => {
+                const docId = (t as any).docId || (t as any)._firestoreId;
+                if (docId) {
+                  tableBatch.update(doc(db, 'diningTables', docId), {
+                    status: 'available', items: [], total: 0, currentOrderId: null, updatedAt: new Date()
+                  });
+                  hasTableWrites = true;
+                }
               });
+              if (hasTableWrites) {
+                await tableBatch.commit().catch(e => console.warn("Aviso ao resetar mesas na nuvem:", e));
+              }
             }
-          });
 
-          await batch.commit();
-        } catch (cloudErr) {
-          console.error("Cloud sync error during closure:", cloudErr);
-          showToast("Caixa fechado offline. Alguns dados podem não ter sido sincronizados.", 'info');
+            // 3.5 Encerrar pedidos do turno atual com proteção contra limites de cota
+            const activeSessionOrderIds = salesSinceOpen.map(o => o.docId || o.id).filter(Boolean);
+            if (activeSessionOrderIds.length > 0) {
+              const orderChunks = [];
+              for (let i = 0; i < activeSessionOrderIds.length; i += 25) {
+                orderChunks.push(activeSessionOrderIds.slice(i, i + 25));
+              }
+              for (const chunk of orderChunks) {
+                const orderBatch = writeBatch(db);
+                chunk.forEach(orderId => {
+                  orderBatch.update(doc(db, 'orders', orderId), {
+                    status: 'finished',
+                    finishedAt: new Date(),
+                    updatedAt: new Date()
+                  });
+                });
+                await orderBatch.commit().catch(e => console.warn("Aviso ao encerrar pedidos do turno na nuvem:", e));
+              }
+            }
+          } catch (cloudErr) {
+            console.error("Cloud sync error during closure:", cloudErr);
+            showToast("Caixa fechado offline. Alguns dados podem não ter sido sincronizados.", 'info');
+          }
         }
-      }
     } catch (localErr) {
       console.error("Error during local closure operations:", localErr);
     }

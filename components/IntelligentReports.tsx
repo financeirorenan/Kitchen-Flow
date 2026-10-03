@@ -1,6 +1,7 @@
 
 import React, { useState, useMemo, memo } from 'react';
 import { deduplicateOrders, deduplicateFinancialRecords } from '../utils/deduplicate';
+import { normalizePaymentMethod, getPaymentMethodLabel } from '../utils/paymentUtils';
 import { motion } from 'framer-motion';
 import { 
   Order, 
@@ -186,31 +187,66 @@ const IntelligentReports: React.FC<IntelligentReportsProps> = memo(({
     const methodCounts: Record<string, { count: number, total: number, fees: number }> = {};
     
     filteredOrders.filter(o => o.status !== 'cancelled').forEach(order => {
-      const method = order.paymentMethod || 'dinheiro';
-      if (!methodCounts[method]) {
-        methodCounts[method] = { count: 0, total: 0, fees: 0 };
-      }
-      
-      methodCounts[method].count += 1;
-      methodCounts[method].total += order.total;
-      
-      const config = adminSettings.paymentMethods?.find(p => p.id === method || p.name.toLowerCase() === method.toLowerCase() || p.type === method);
-      if (config) {
-        const fee = (order.total * (config.feePercentage / 100)) + (config.fixedFee || 0);
-        methodCounts[method].fees += fee;
+      const orderTotal = Number(order.total) || 0;
+      if (order.payments && order.payments.length > 0) {
+        let pSum = 0;
+        order.payments.forEach(p => {
+          const pAmt = Number(p.amount) || 0;
+          if (pAmt > 0) {
+            const method = normalizePaymentMethod(p.method, adminSettings);
+            if (!methodCounts[method]) {
+              methodCounts[method] = { count: 0, total: 0, fees: 0 };
+            }
+            methodCounts[method].count += 1;
+            methodCounts[method].total += pAmt;
+            
+            const config = adminSettings.paymentMethods?.find(cfg => cfg.id === method || cfg.name.toLowerCase() === method.toLowerCase() || cfg.type === method);
+            if (config) {
+              const fee = (pAmt * (config.feePercentage / 100)) + (config.fixedFee || 0);
+              methodCounts[method].fees += fee;
+            } else {
+              let fee = 0;
+              if (method === 'cartao_credito') fee = pAmt * 0.032;
+              else if (method === 'cartao_debito') fee = pAmt * 0.019;
+              else if (method === 'vale_refeicao') fee = pAmt * 0.05;
+              methodCounts[method].fees += fee;
+            }
+            pSum += pAmt;
+          }
+        });
+        if (orderTotal > pSum + 0.009) {
+          const diff = orderTotal - pSum;
+          const method = normalizePaymentMethod(order.paymentMethod || 'dinheiro', adminSettings);
+          if (!methodCounts[method]) {
+            methodCounts[method] = { count: 0, total: 0, fees: 0 };
+          }
+          methodCounts[method].total += diff;
+        }
       } else {
-        // Default fees if not configured
-        let fee = 0;
-        if (method === 'cartao_credito') fee = order.total * 0.032;
-        else if (method === 'cartao_debito') fee = order.total * 0.019;
-        else if (method === 'vale_refeicao') fee = order.total * 0.05;
-        methodCounts[method].fees += fee;
+        const method = normalizePaymentMethod(order.paymentMethod || 'dinheiro', adminSettings);
+        if (!methodCounts[method]) {
+          methodCounts[method] = { count: 0, total: 0, fees: 0 };
+        }
+        methodCounts[method].count += 1;
+        methodCounts[method].total += orderTotal;
+        
+        const config = adminSettings.paymentMethods?.find(p => p.id === method || p.name.toLowerCase() === method.toLowerCase() || p.type === method);
+        if (config) {
+          const fee = (orderTotal * (config.feePercentage / 100)) + (config.fixedFee || 0);
+          methodCounts[method].fees += fee;
+        } else {
+          let fee = 0;
+          if (method === 'cartao_credito') fee = orderTotal * 0.032;
+          else if (method === 'cartao_debito') fee = orderTotal * 0.019;
+          else if (method === 'vale_refeicao') fee = orderTotal * 0.05;
+          methodCounts[method].fees += fee;
+        }
       }
     });
 
     return Object.entries(methodCounts).map(([id, data]) => {
       const config = adminSettings.paymentMethods?.find(p => p.id === id || p.name.toLowerCase() === id.toLowerCase() || p.type === id);
-      const name = config ? config.name : id.charAt(0).toUpperCase() + id.slice(1).replace('_', ' ');
+      const name = config ? config.name : getPaymentMethodLabel(id);
       return {
         id,
         name,
@@ -220,7 +256,7 @@ const IntelligentReports: React.FC<IntelligentReportsProps> = memo(({
         balance: data.total - data.fees
       };
     }).sort((a, b) => b.total - a.total);
-  }, [filteredOrders, adminSettings.paymentMethods]);
+  }, [filteredOrders, adminSettings]);
 
   return (
     <div className="space-y-6 pb-20 animate-in fade-in duration-500">
