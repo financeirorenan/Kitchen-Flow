@@ -89,9 +89,9 @@ export const AuditFinancialRecordsTab: React.FC<AuditFinancialRecordsTabProps> =
     }
 
     if (supervisorPin !== '1234' && supervisorPin !== '0000' && supervisorPin !== 'admin') {
-      const supervisorMatch = users.find(u => (u.role === 'SAAS_ADMIN' || u.role === 'OWNER' || u.role === 'GERENTE') && u.password === supervisorPin);
+      const supervisorMatch = users.find(u => (u.role === 'SAAS_ADMIN' || u.role === 'OWNER' || u.role === 'GERENTE') && (u as any).pin === supervisorPin);
       if (!supervisorMatch && supervisorPin.length > 0) {
-        setErrorMessage('PIN / Senha de supervisor inválida.');
+        setErrorMessage('PIN de supervisor inválido.');
         return;
       }
     }

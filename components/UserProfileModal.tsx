@@ -129,17 +129,12 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         throw new Error('Nenhum usuário autenticado encontrado');
       }
 
-      // If user is staff, validate current password locally against Firestore first
-      const isStaff = currentUserData && currentUserData.role !== 'CUSTOMER';
-      if (isStaff && currentUserData && currentUserData.password && currentUserData.password !== currentPasswordForReauth) {
-        throw { code: 'auth/invalid-credential', message: 'Senha atual incorreta.' };
-      }
-
-      // Tenta reautenticar com a senha real digitada, e caso falhe tenta a determinística legado (fallback)
+      // Tenta reautenticar com a senha real digitada no Firebase Auth, e caso falhe tenta a determinística legado (fallback)
       try {
         const credential = EmailAuthProvider.credential(fbUser.email, currentPasswordForReauth);
         await reauthenticateWithCredential(fbUser, credential);
       } catch (err: any) {
+        const isStaff = currentUserData && currentUserData.role !== 'CUSTOMER';
         if (isStaff) {
           try {
             const legacyPass = getDeterministicPassword(fbUser.email);
@@ -243,7 +238,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         }
       }
 
-      // 4. Update user document on Firestore
+      // 4. Update user document on Firestore (never persist plaintext password)
       if (currentUserData) {
         const userDocRef = doc(db, 'users', fbUser.uid);
         const updatedData: any = {
@@ -253,10 +248,6 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           photoURL: selectedAvatar || '',
           updatedAt: new Date()
         };
-
-        if (password) {
-          updatedData.password = password;
-        }
 
         await updateDoc(userDocRef, updatedData);
         onUpdateUser({

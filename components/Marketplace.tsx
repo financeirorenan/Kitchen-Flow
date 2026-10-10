@@ -1351,7 +1351,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     }
 
     try {
-      const settingsRef = doc(db, "settings", tenant.id);
+      const settingsRef = doc(db, "publicStorefronts", tenant.id);
       const productsQ = query(
         collection(db, "products"),
         where("tenantId", "==", tenant.id),
@@ -1660,7 +1660,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       },
     );
 
-    const qSettings = query(collection(db, "settings"), limit(50));
+    const qSettings = query(collection(db, "publicStorefronts"), limit(50));
     const unsubscribeSettings = onSnapshot(
       qSettings,
       (snapshot) => {
@@ -1674,7 +1674,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
         } catch {}
       },
       (error) => {
-        console.warn("Erro ao carregar configurações de inquilinos:", error);
+        console.warn("Erro ao carregar configurações públicas de vitrines:", error);
       },
     );
 
@@ -1705,13 +1705,13 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     };
   }, []);
 
-  // Monitor active orders for tracking
+  // Monitor active orders for tracking (only when authenticated)
   useEffect(() => {
-    if (!profile?.phone) return;
+    if (!currentUser?.uid) return;
 
     const q = query(
       collection(db, "orders"),
-      where("customerPhone", "==", profile.phone),
+      where("customerId", "==", currentUser.uid),
       where("status", "in", ["pending", "preparing", "ready", "delivering"]),
     );
 
@@ -1725,15 +1725,15 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     });
 
     return () => unsubscribe();
-  }, [profile?.phone]);
+  }, [currentUser?.uid]);
 
-  // Fetch full order history (including finished/delivered)
+  // Fetch full order history (including finished/delivered, only when authenticated)
   useEffect(() => {
-    if (!profile?.phone || navView !== "orders") return;
+    if (!currentUser?.uid || navView !== "orders") return;
 
     const q = query(
       collection(db, "orders"),
-      where("customerPhone", "==", profile.phone),
+      where("customerId", "==", currentUser.uid),
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -1872,7 +1872,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       }
 
       try {
-        const settingsRef = doc(db, "settings", tenant.id);
+        const settingsRef = doc(db, "publicStorefronts", tenant.id);
         const productsQ = query(
           collection(db, "products"),
           where("tenantId", "==", tenant.id),
@@ -2317,21 +2317,22 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 return cleaned;
               };
 
-              const isAutoAccept = storeAdminSettings?.autoAcceptOrders === true;
-              const initialStatus = isAutoAccept ? "preparing" : "pending";
+              // Pedidos criados pelo cliente no Marketplace sempre entram como 'pending' por segurança das regras do Firestore;
+              // o painel do lojista aplica o auto-aceite assim que recebe o pedido se configurado.
+              const initialStatus = "pending";
               const mFeePercent = marketplaceSettings?.serviceFee || 0;
               const marketplaceFeeAmount = (order.total * mFeePercent) / 100;
               const normalizedPaymentMethod = normalizePaymentMethod(order.paymentMethod, storeAdminSettings);
 
               const orderWithTenant = sanitize({
                 ...order,
+                customerId: currentUser?.uid || undefined,
                 paymentMethod: normalizedPaymentMethod,
                 status: initialStatus,
                 tenantId: selectedTenant.id,
                 source: "marketplace",
                 marketplaceFee: marketplaceFeeAmount,
                 createdAt: new Date(),
-                acceptedAt: isAutoAccept ? new Date() : undefined,
               });
 
               // Salvar o pedido no Firestore usando o ID do pedido para consistência absoluta entre todos os painéis (KDS, Admin, etc.)
@@ -2420,9 +2421,9 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 }
               }
 
-              // Registrar fatura de serviço do marketplace
+              // Registrar fatura de serviço do marketplace (idempotente por pedido)
               try {
-                await addDoc(collection(db, "marketplaceInvoices"), {
+                await setDoc(doc(db, "marketplaceInvoices", `inv_${order.id}`), {
                   tenantId: selectedTenant.id,
                   orderId: order.id,
                   amount: marketplaceFeeAmount,
@@ -4942,7 +4943,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
                       const settingsRef = doc(
                         db,
-                        "settings",
+                        "publicStorefronts",
                         selectedOrderForHelp.tenantId,
                       );
                       const settingsSnap = await getDoc(settingsRef);

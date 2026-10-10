@@ -1377,7 +1377,8 @@ const App: React.FC = () => {
     // PRIORIDADE: Primeiro o ID canônico consolidado para todos os módulos (Caixa, KDS, Salão, Delivery)
     const effectiveTenantId = getCanonicalTenantId(currentUserData, viewingTenantId, tenantData);
     const canonicalStoreId = getCanonicalStoreId(effectiveTenantId);
-    if (!effectiveTenantId) {
+    const isRemoteAuthValid = Boolean(auth.currentUser?.uid) && !user?.isLocalSession && user?.uid !== 'demo-admin-uid';
+    if (!effectiveTenantId || !isRemoteAuthValid) {
       setTenantData(null);
       setAdminSettings(prev => ({
         ...prev,
@@ -2338,6 +2339,15 @@ const App: React.FC = () => {
       // Limpar campos de estado interno que não devem ir para o Firestore admin settings
       const adminToSync = { ...updatedAdmin };
       if ((adminToSync as any).cashSession) delete (adminToSync as any).cashSession;
+      if (adminToSync.fiscal?.certificate?.password) {
+        adminToSync.fiscal = {
+          ...adminToSync.fiscal,
+          certificate: {
+            ...adminToSync.fiscal.certificate,
+            password: ''
+          }
+        };
+      }
 
       await localDb.settings.put({
         id: effectiveTenantId || 'global',
@@ -2352,13 +2362,41 @@ const App: React.FC = () => {
       if (effectiveTenantId) {
         const batch = writeBatch(db);
         
-        // Sync Settings
+        // Sync Settings (Private to tenant)
         batch.set(doc(db, 'settings', effectiveTenantId), {
           admin: cleanObject(adminToSync),
           digitalMenu: cleanObject(updatedDigitalMenu),
           cashSession: cashSession, // MANDATORY: Use active React state, never fall back to other-tenant s?.cashSession!
           productCategories,
           rawMaterialCategories,
+          updatedAt: new Date()
+        }, { merge: true });
+
+        // Sync Public Storefront (Safe non-sensitive subset for Marketplace / Digital Menu)
+        const publicAdminSubset = {
+          companyName: updatedAdmin.companyName || '',
+          address: updatedAdmin.address || '',
+          city: (updatedAdmin as any).city || updatedAdmin.fiscal?.address?.municipio || '',
+          phone: updatedAdmin.phone || '',
+          deliveryFee: updatedAdmin.deliveryFee ?? 0,
+          minOrderValue: updatedAdmin.minOrderValue ?? 0,
+          isDeliveryEnabled: updatedAdmin.isDeliveryEnabled ?? true,
+          isPickupEnabled: updatedAdmin.isPickupEnabled ?? true,
+          estimatedDeliveryTime: updatedAdmin.estimatedDeliveryTime || '30-45 min',
+          estimatedPickupTime: updatedAdmin.estimatedPickupTime || '15-20 min',
+          autoAcceptOrders: updatedAdmin.autoAcceptOrders ?? false,
+          businessHours: updatedAdmin.businessHours || [],
+          isStoreForceClosed: updatedAdmin.isStoreForceClosed ?? false,
+          isStoreForceOpen: updatedAdmin.isStoreForceOpen ?? false,
+          socialMedia: updatedAdmin.socialMedia || {},
+          category: updatedAdmin.category || tenantData?.category || ''
+        };
+
+        batch.set(doc(db, 'publicStorefronts', effectiveTenantId), {
+          tenantId: effectiveTenantId,
+          admin: cleanObject(publicAdminSubset),
+          digitalMenu: cleanObject(updatedDigitalMenu),
+          productCategories,
           updatedAt: new Date()
         }, { merge: true });
         
@@ -5179,7 +5217,7 @@ const App: React.FC = () => {
         for (let i = 0; i < payments.length; i++) {
           const p = payments[i];
           const currentCustomerId = p.customerId || customerId;
-          const paymentRecordId = (p as any).id || `fin-${newOrder.id}-${p.method}-${p.amount}-${i}-${Date.now()}`;
+          const paymentRecordId = (p as any).id || `fin-${newOrder.id}-${p.method}-${p.amount}-${i}`;
 
           const targetCustomer = currentCustomerId ? customers.find(c => c.id === currentCustomerId) : null;
           const originLabel = isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableNumber || tableId}`);
@@ -5237,7 +5275,7 @@ const App: React.FC = () => {
         }
       } else {
         // Pagamento único (legado/simples)
-        const paymentRecordId = `fin-${newOrder.id}-${method}-${finalTotal}-${Date.now()}`;
+        const paymentRecordId = `fin-${newOrder.id}-${method}-${finalTotal}`;
         const singleCustomer = customerId ? customers.find(c => c.id === customerId) : null;
         const originLabel = isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableNumber || tableId}`);
 
@@ -5454,13 +5492,11 @@ const App: React.FC = () => {
     }
 
     const trimmedEmail = (user.email || '').trim().toLowerCase();
-    const trimmedPassword = (user.password || '').trim();
     const newUser: User = {
       id: user.id || `u${Date.now()}`,
       tenantId: effectiveTenantId || 't1',
       name: (user.name || '').trim(),
       email: trimmedEmail,
-      password: trimmedPassword, // Salva a senha informada pelo lojista
       role: user.role || 'WAITER',
       permissions: user.permissions || [],
       status: 'offline',
@@ -5471,7 +5507,7 @@ const App: React.FC = () => {
       presets: []
     };
 
-    if (effectiveTenantId) {
+    if (effectiveTenantId && auth.currentUser?.uid) {
       try {
         // Validação ativa de duplicidade de e-mail na plataforma
         const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', trimmedEmail));
@@ -5488,8 +5524,9 @@ const App: React.FC = () => {
           throw new Error(`O e-mail "${trimmedEmail}" já está cadastrado como entregador.`);
         }
 
+        const { password: _discardPass, ...safeNewUser } = newUser as any;
         await setDoc(doc(db, 'users', newUser.id), {
-          ...newUser,
+          ...safeNewUser,
           updatedAt: new Date()
         });
 
@@ -5527,19 +5564,15 @@ const App: React.FC = () => {
       throw new Error("Não é permitido definir o cargo de usuários como SaaS Admin ou Cliente dentro do painel do lojista.");
     }
 
-    // Se a senha estiver vazia, remove das atualizações para não sobreescrever
+    // Nunca persistir senha em texto puro no Firestore
     const finalUpdates = { ...updates };
+    const requestedNewPassword = finalUpdates.password ? finalUpdates.password.trim() : '';
+    delete finalUpdates.password;
     if (finalUpdates.email) {
       finalUpdates.email = finalUpdates.email.trim().toLowerCase();
     }
-    if (finalUpdates.password !== undefined) {
-      finalUpdates.password = finalUpdates.password.trim();
-    }
-    if (finalUpdates.password === '') {
-      delete finalUpdates.password;
-    }
 
-    if (effectiveTenantId) {
+    if (effectiveTenantId && auth.currentUser?.uid) {
       // Dobra check se alterou e-mail para um duplicado de outra pessoa
       if (finalUpdates.email) {
         const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', finalUpdates.email));
@@ -5583,16 +5616,16 @@ const App: React.FC = () => {
           if (finalUpdates.email && finalUpdates.email !== auth.currentUser.email) {
             await updateEmail(auth.currentUser, finalUpdates.email);
           }
-          if (finalUpdates.password) {
-            await updatePassword(auth.currentUser, finalUpdates.password);
+          if (requestedNewPassword) {
+            await updatePassword(auth.currentUser, requestedNewPassword);
           }
         } catch (authErr) {
           console.warn("Could not sync current user auth credentials directly:", authErr);
         }
       }
     } else {
-      await localDb.users.update(id, updates);
-      setUsers(prev => prev.map(u => u.id === id ? { ...u, ...updates } : u));
+      await localDb.users.update(id, finalUpdates);
+      setUsers(prev => prev.map(u => u.id === id ? { ...u, ...finalUpdates } : u));
     }
     showToast("Usuário atualizado com sucesso!");
     addLog('u1', 'USUARIOS', `Usuário atualizado: ${id}`);

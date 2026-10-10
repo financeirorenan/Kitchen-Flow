@@ -689,6 +689,44 @@ async function startServer() {
     }
   });
 
+  // Endpoint seguro para atualização de senha no Firebase Auth sem persistir texto puro no Firestore
+  app.post("/api/auth/update-password", async (req, res) => {
+    try {
+      const { userId, email, newPassword } = req.body;
+      if ((!userId && !email) || !newPassword || String(newPassword).trim().length < 6) {
+        return res.status(400).json({ error: "Identificador do usuário e nova senha (mínimo 6 caracteres) são obrigatórios." });
+      }
+
+      const trimmedPassword = String(newPassword).trim();
+      let targetUid = userId ? String(userId).trim() : '';
+
+      if (email) {
+        try {
+          const fbUser = await adminAuth.getUserByEmail(String(email).trim().toLowerCase());
+          targetUid = fbUser.uid;
+        } catch (err: any) {
+          if (err.code === 'auth/user-not-found') {
+            const created = await adminAuth.createUser({
+              email: String(email).trim().toLowerCase(),
+              password: trimmedPassword
+            });
+            return res.json({ success: true, uid: created.uid, created: true });
+          }
+        }
+      }
+
+      if (!targetUid) {
+        return res.status(404).json({ error: "Usuário não localizado no Firebase Auth." });
+      }
+
+      await adminAuth.updateUser(targetUid, { password: trimmedPassword });
+      return res.json({ success: true, uid: targetUid });
+    } catch (err: any) {
+      console.warn("[Auth Update Password] Aviso ao atualizar senha no Firebase Admin Auth:", err?.message || err);
+      return res.status(500).json({ error: "Não foi possível atualizar a senha no provedor de autenticação." });
+    }
+  });
+
   // Servir arquivos estáticos da pasta public (manifest.json, ícones, sw.js, etc)
   app.use(express.static(path.join(process.cwd(), "public")));
 

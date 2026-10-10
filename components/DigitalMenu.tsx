@@ -86,6 +86,9 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
   const [selectedProductForModal, setSelectedProductForModal] = useState<Product | null>(null);
   const [checkoutStep, setCheckoutStep] = useState<'cart' | 'details' | 'payment' | 'success'>('cart');
   const [currentOrderId, setCurrentOrderId] = useState<string | null>(null);
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+  const isSubmittingOrderRef = useRef(false);
+  const pendingOrderIdRef = useRef<string | null>(null);
   const [showTotemUpsell, setShowTotemUpsell] = useState(false);
   const [totemUpsellViewed, setTotemUpsellViewed] = useState(false);
   const [totemActiveTab, setTotemActiveTab] = useState<'sides' | 'drinks' | 'desserts'>('sides');
@@ -804,88 +807,103 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
     }).filter(item => item.quantity > 0));
   };
 
-  const handleFinishOrder = () => {
-    const orderId = `DIG-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
-    const normalizedMethod = normalizePaymentMethod(paymentMethod);
-    const orderData = {
-      id: orderId,
-      items: cart.map(item => ({
-        productId: item.product.id,
-        name: item.product.name,
-        price: item.product.price + (item.selectedOptions?.reduce((sum, opt) => sum + ((opt.price || 0) * (opt.quantity || 1)), 0) || 0),
-        quantity: item.quantity,
-        category: item.product.category,
-        selectedOptions: item.selectedOptions
-      })),
-      total: finalTotal,
-      deliveryFee: orderType === 'delivery' ? effectiveDeliveryFee : 0,
-      originalDeliveryFee: orderType === 'delivery' ? deliveryFee : 0,
-      freeDeliveryApplied: orderType === 'delivery' && isFreeDeliveryEligible && (deliveryFee > 0),
-      appliedPromotion: (orderType === 'delivery' && isFreeDeliveryEligible && deliveryFee > 0)
-        ? (freeDeliveryPromo?.title || 'Entrega Grátis')
-        : (autoDiscountPromo?.title || (appliedCoupon ? `Cupom ${appliedCoupon.code}` : undefined)),
-      coupon: appliedCoupon ? appliedCoupon.code : undefined,
-      discount: discountAmount > 0 ? discountAmount : undefined,
-      customerName,
-      customerPhone,
-      customerAddress: orderType === 'delivery' ? customerAddress : undefined,
-      tableNumber: orderType === 'table' ? parseInt(tableNumber) : undefined,
-      paymentMethod: normalizedMethod,
-      changeFor: normalizedMethod === 'dinheiro' ? parseFloat(changeFor) || undefined : undefined,
-      type: orderType,
-      notes: notes || undefined,
-      status: 'pending',
-      source: isMarketplace ? 'marketplace' : 'digital_menu',
-      createdAt: new Date()
-    };
+  const handleFinishOrder = async () => {
+    if (isSubmittingOrderRef.current || isSubmittingOrder || cart.length === 0) return;
+    isSubmittingOrderRef.current = true;
+    setIsSubmittingOrder(true);
 
-    if (onPlaceOrder) {
-      onPlaceOrder(orderData);
-    }
-
-    // Save profile and latest address to localStorage for effortless future checkouts
     try {
-      localStorage.setItem('marketplace_profile', JSON.stringify({ name: customerName, phone: customerPhone }));
-      if (orderType === 'delivery' && customerAddress) {
-        localStorage.setItem('marketplace_customer_address', customerAddress);
+      if (!pendingOrderIdRef.current) {
+        pendingOrderIdRef.current = `DIG-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
       }
-    } catch (err) {
-      console.warn("Could not save profile details to localStorage", err);
+      const orderId = pendingOrderIdRef.current;
+      const normalizedMethod = normalizePaymentMethod(paymentMethod);
+      const orderData = {
+        id: orderId,
+        clientOrderId: orderId,
+        items: cart.map(item => ({
+          productId: item.product.id,
+          name: item.product.name,
+          price: item.product.price + (item.selectedOptions?.reduce((sum, opt) => sum + ((opt.price || 0) * (opt.quantity || 1)), 0) || 0),
+          quantity: item.quantity,
+          category: item.product.category,
+          selectedOptions: item.selectedOptions
+        })),
+        total: finalTotal,
+        deliveryFee: orderType === 'delivery' ? effectiveDeliveryFee : 0,
+        originalDeliveryFee: orderType === 'delivery' ? deliveryFee : 0,
+        freeDeliveryApplied: orderType === 'delivery' && isFreeDeliveryEligible && (deliveryFee > 0),
+        appliedPromotion: (orderType === 'delivery' && isFreeDeliveryEligible && deliveryFee > 0)
+          ? (freeDeliveryPromo?.title || 'Entrega Grátis')
+          : (autoDiscountPromo?.title || (appliedCoupon ? `Cupom ${appliedCoupon.code}` : undefined)),
+        coupon: appliedCoupon ? appliedCoupon.code : undefined,
+        discount: discountAmount > 0 ? discountAmount : undefined,
+        customerName,
+        customerPhone,
+        customerAddress: orderType === 'delivery' ? customerAddress : undefined,
+        tableNumber: orderType === 'table' ? parseInt(tableNumber) : undefined,
+        paymentMethod: normalizedMethod,
+        changeFor: normalizedMethod === 'dinheiro' ? parseFloat(changeFor) || undefined : undefined,
+        type: orderType,
+        notes: notes || undefined,
+        status: 'pending',
+        source: isMarketplace ? 'marketplace' : 'digital_menu',
+        createdAt: new Date()
+      };
+
+      if (onPlaceOrder) {
+        await onPlaceOrder(orderData);
+      }
+
+      pendingOrderIdRef.current = null;
+
+      // Save profile and latest address to localStorage for effortless future checkouts
+      try {
+        localStorage.setItem('marketplace_profile', JSON.stringify({ name: customerName, phone: customerPhone }));
+        if (orderType === 'delivery' && customerAddress) {
+          localStorage.setItem('marketplace_customer_address', customerAddress);
+        }
+      } catch (err) {
+        console.warn("Could not save profile details to localStorage", err);
+      }
+
+      localStorage.setItem(`last_order_${settings.restaurantName}`, JSON.stringify({
+        id: orderId,
+        time: new Date().getTime()
+      }));
+      setCurrentOrderId(orderId);
+
+      // WhatsApp Redirection logic
+      if (whatsappNumber && !initialTable) {
+        const message = encodeURIComponent(
+          `📌 *PEDIDO NOVO - ${orderId}*\n\n` +
+          `👤 *Cliente:* ${customerName}\n` +
+          `📞 *Telefone:* ${customerPhone}\n` +
+          `📍 *Tipo:* ${orderType === 'delivery' ? 'Entrega' : 'Retirada'}\n` +
+          (orderType === 'delivery' ? `🏠 *Endereço:* ${customerAddress}\n` : '') +
+          (notes ? `📝 *Observação:* ${notes}\n` : '') +
+          `💳 *Pagamento:* ${getPaymentMethodLabel(normalizedMethod).toUpperCase()}\n` +
+          (normalizedMethod === 'dinheiro' && changeFor ? `💵 *Troco para:* R$ ${parseFloat(changeFor).toFixed(2)}\n` : '') +
+          `\n🛒 *ITENS:*\n` +
+          cart.map(item => 
+            `- ${item.quantity}x ${item.product.name} (R$ ${(item.product.price + (item.selectedOptions?.reduce((sum, opt) => sum + ((opt.price || 0) * (opt.quantity || 1)), 0) || 0)).toFixed(2)})\n` +
+            (item.selectedOptions?.length ? `  _Adicionais: ${item.selectedOptions.map(o => `${(o.quantity && o.quantity > 1) ? `${o.quantity}x ` : ''}${o.name}`).join(', ')}_\n` : '')
+          ).join('') +
+          (orderType === 'delivery' && isFreeDeliveryEligible && deliveryFee > 0 
+            ? `\n🚚 *Entrega:* GRÁTIS (Promoção - economia de R$ ${deliveryFee.toFixed(2)})` 
+            : (orderType === 'delivery' && deliveryFee > 0 ? `\n🚚 *Entrega:* R$ ${deliveryFee.toFixed(2)}` : '')) +
+          (discountAmount > 0 ? `\n🏷️ *Desconto:* -R$ ${discountAmount.toFixed(2)}` : '') +
+          `\n💰 *TOTAL A PAGAR: R$ ${finalTotal.toFixed(2)}*`
+        );
+        window.open(`https://wa.me/55${whatsappNumber.replace(/\D/g, '')}?text=${message}`, '_blank');
+      }
+
+      setCart([]); // Clear the cart so the bottom bar disappears immediately
+      setCheckoutStep('success');
+    } finally {
+      isSubmittingOrderRef.current = false;
+      setIsSubmittingOrder(false);
     }
-
-    localStorage.setItem(`last_order_${settings.restaurantName}`, JSON.stringify({
-      id: orderId,
-      time: new Date().getTime()
-    }));
-    setCurrentOrderId(orderId);
-
-    // WhatsApp Redirection logic
-    if (whatsappNumber && !initialTable) {
-      const message = encodeURIComponent(
-        `📌 *PEDIDO NOVO - ${orderId}*\n\n` +
-        `👤 *Cliente:* ${customerName}\n` +
-        `📞 *Telefone:* ${customerPhone}\n` +
-        `📍 *Tipo:* ${orderType === 'delivery' ? 'Entrega' : 'Retirada'}\n` +
-        (orderType === 'delivery' ? `🏠 *Endereço:* ${customerAddress}\n` : '') +
-        (notes ? `📝 *Observação:* ${notes}\n` : '') +
-        `💳 *Pagamento:* ${getPaymentMethodLabel(normalizedMethod).toUpperCase()}\n` +
-        (normalizedMethod === 'dinheiro' && changeFor ? `💵 *Troco para:* R$ ${parseFloat(changeFor).toFixed(2)}\n` : '') +
-        `\n🛒 *ITENS:*\n` +
-        cart.map(item => 
-          `- ${item.quantity}x ${item.product.name} (R$ ${(item.product.price + (item.selectedOptions?.reduce((sum, opt) => sum + ((opt.price || 0) * (opt.quantity || 1)), 0) || 0)).toFixed(2)})\n` +
-          (item.selectedOptions?.length ? `  _Adicionais: ${item.selectedOptions.map(o => `${(o.quantity && o.quantity > 1) ? `${o.quantity}x ` : ''}${o.name}`).join(', ')}_\n` : '')
-        ).join('') +
-        (orderType === 'delivery' && isFreeDeliveryEligible && deliveryFee > 0 
-          ? `\n🚚 *Entrega:* GRÁTIS (Promoção - economia de R$ ${deliveryFee.toFixed(2)})` 
-          : (orderType === 'delivery' && deliveryFee > 0 ? `\n🚚 *Entrega:* R$ ${deliveryFee.toFixed(2)}` : '')) +
-        (discountAmount > 0 ? `\n🏷️ *Desconto:* -R$ ${discountAmount.toFixed(2)}` : '') +
-        `\n💰 *TOTAL A PAGAR: R$ ${finalTotal.toFixed(2)}*`
-      );
-      window.open(`https://wa.me/55${whatsappNumber.replace(/\D/g, '')}?text=${message}`, '_blank');
-    }
-
-    setCart([]); // Clear the cart so the bottom bar disappears immediately
-    setCheckoutStep('success');
   };
 
   const resetOrder = () => {
@@ -2100,6 +2118,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                   )}
                   <button 
                     disabled={
+                      isSubmittingOrder ||
                       (!isOpen && !isSimulation) ||
                       (checkoutStep === 'cart' && cartTotal < minOrderValue) ||
                       (checkoutStep === 'details' && (!customerName || !customerPhone || !paymentMethod || !orderType)) ||

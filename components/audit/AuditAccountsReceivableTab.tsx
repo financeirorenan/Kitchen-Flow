@@ -157,11 +157,11 @@ export const AuditAccountsReceivableTab: React.FC<AuditAccountsReceivableTabProp
       return;
     }
 
-    // Validação de PIN (se houver supervisores cadastrados com senha/pin)
+    // Validação de PIN de supervisor
     if (supervisorPin !== '1234' && supervisorPin !== '0000' && supervisorPin !== 'admin') {
-      const supervisorMatch = users.find(u => (u.role === 'SAAS_ADMIN' || u.role === 'OWNER' || u.role === 'GERENTE') && u.password === supervisorPin);
+      const supervisorMatch = users.find(u => (u.role === 'SAAS_ADMIN' || u.role === 'OWNER' || u.role === 'GERENTE') && (u as any).pin === supervisorPin);
       if (!supervisorMatch && supervisorPin.length > 0) {
-        setReversalError('PIN / Senha de supervisor inválida.');
+        setReversalError('PIN de supervisor inválido.');
         return;
       }
     }

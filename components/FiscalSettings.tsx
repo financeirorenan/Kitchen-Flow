@@ -247,8 +247,7 @@ const FiscalSettings: React.FC<FiscalSettingsProps> = ({ settings, onUpdate, onS
             certificateStatus: 'valid',
             certificateExpiry: result.validTo || '31/12/2026',
             certificate: {
-              pfxBase64: base64,
-              password: pfxPassword
+              pfxBase64: base64
             }
           });
           if (onSave) {

@@ -566,7 +566,13 @@ export const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout })
   };
 
   // Order State Transition (delivering -> delivered)
+  const updatingOrderIdsRef = useRef<Set<string>>(new Set());
   const updateOrderStatus = async (order: Order, nextStatus: 'delivering' | 'delivered') => {
+    if (!order?.id) return;
+    if (order.status === nextStatus) return;
+    if (updatingOrderIdsRef.current.has(order.id)) return;
+    updatingOrderIdsRef.current.add(order.id);
+
     try {
       const updates: any = {
         status: nextStatus,
@@ -575,7 +581,7 @@ export const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout })
 
       if (nextStatus === 'delivering') {
         updates.dispatchedAt = new Date();
-      } else if (nextStatus === 'delivered') {
+      } else if (nextStatus === 'delivered' && order.status !== 'delivered') {
         updates.deliveredAt = new Date();
         
         let totalReceived = order.courierEarnings || 0;
@@ -593,14 +599,16 @@ export const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout })
 
         const todayStr = today.toDateString();
         const lastFeeStr = lastFee ? lastFee.toDateString() : '';
+        const dateIsoKey = today.toISOString().split('T')[0];
 
-        // Daily Fee check
+        // Daily Fee check (idempotent document ID per courier + day)
         if (courierData?.dailyFee && lastFeeStr !== todayStr) {
           dailyFeeToAdd = courierData.dailyFee;
           totalReceived += dailyFeeToAdd;
           lastDailyFeeDate = new Date(); 
           
-          await addDoc(collection(db, 'financialRecords'), {
+          await setDoc(doc(db, 'financialRecords', `daily-fee-${currentUser.id}-${dateIsoKey}`), {
+             id: `daily-fee-${currentUser.id}-${dateIsoKey}`,
              tenantId: currentUser.tenantId,
              type: 'expense',
              amount: dailyFeeToAdd,
@@ -619,13 +627,16 @@ export const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout })
         });
 
         if ((order.courierEarnings || 0) > 0) {
-           await addDoc(collection(db, 'financialRecords'), {
+           const commissionDocId = `courier-comm-${order.id}`;
+           await setDoc(doc(db, 'financialRecords', commissionDocId), {
+             id: commissionDocId,
              tenantId: currentUser.tenantId,
              type: 'expense',
              amount: order.courierEarnings || 0,
              category: 'Entregas',
              description: `Comissão entrega pedido #${formatOrderNumber(order)} - ${currentUser.name}`,
              date: new Date(),
+             orderId: order.id,
              status: 'pending' 
            });
         }
@@ -652,6 +663,8 @@ export const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout })
     } catch (err) {
       console.error("Error updating order status:", err);
       setToast({ message: 'Erro ao atualizar status da entrega.', type: 'error' });
+    } finally {
+      updatingOrderIdsRef.current.delete(order.id);
     }
   };
 

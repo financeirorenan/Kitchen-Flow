@@ -1,4 +1,4 @@
-import { db } from '../firebase';
+import { auth, db } from '../firebase';
 import { doc, getDoc, setDoc, getDocs, collection, query, where, writeBatch } from 'firebase/firestore';
 import { INITIAL_PRODUCTS, INITIAL_TABLES, CATEGORIES } from '../constants';
 
@@ -41,6 +41,7 @@ export function restoreCategoryForProduct(p: { id?: string; name?: string; categ
 let isLojistaTenantEnsured = false;
 
 export async function ensureLojistaTenantWithData() {
+  if (!auth.currentUser?.uid) return;
   if (isLojistaTenantEnsured) return;
   if (typeof window !== 'undefined' && localStorage.getItem('kf_lojista_ensured_v2')) {
     isLojistaTenantEnsured = true;

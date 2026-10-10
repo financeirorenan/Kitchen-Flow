@@ -1700,7 +1700,6 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         name,
         role,
         tenantId: selectedTenantForUser.id,
-        password, // Em prod enviaria convite por email
         createdAt: new Date()
       });
       
@@ -1742,10 +1741,6 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
           updatedAt: new Date()
         };
 
-        if (password) {
-          updateData.password = password;
-        }
-
         await setDoc(doc(db, 'users', editingSaaSUser.id), updateData, { merge: true });
         
         setShowSaaSUserModal(false);
@@ -1769,7 +1764,6 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
           name,
           role: 'SAAS_ADMIN',
           permissions: selectedSaasPermissions,
-          password: finalPassword,
           createdAt: new Date(),
           active: true
         });
@@ -2139,31 +2133,38 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
           permissions: selectedPlan.modules,
           status: 'offline',
           active: true,
-          password: password,
           createdAt: new Date()
         };
         await setDoc(doc(db, 'users', ownerId), firstUser, { merge: true });
 
         // Inicializar configurações padrão para o novo tenant (Isso habilita o sistema para o cliente)
+        const defaultAdminConfig = {
+          companyName: name,
+          deliveryFee: 7.00,
+          isDeliveryEnabled: true,
+          isPickupEnabled: true,
+          minOrderValue: 20.00,
+          estimatedDeliveryTime: '30-45 min',
+          estimatedPickupTime: '15-20 min',
+          autoAcceptOrders: false,
+          notifications: true,
+          printing: { paperWidth: '80mm', autoPrintOrder: false },
+        };
+        const defaultDigitalMenuConfig = {
+          restaurantName: name,
+          welcomeMessage: `Bem-vindo ao ${name}!`,
+          themeColor: '#4f46e5',
+          logoUrl: logoUrl || ''
+        };
         await setDoc(doc(db, 'settings', tenantId), {
-          admin: {
-            companyName: name,
-            deliveryFee: 7.00,
-            isDeliveryEnabled: true,
-            isPickupEnabled: true,
-            minOrderValue: 20.00,
-            estimatedDeliveryTime: '30-45 min',
-            estimatedPickupTime: '15-20 min',
-            autoAcceptOrders: false,
-            notifications: true,
-            printing: { paperWidth: '80mm', autoPrintOrder: false },
-          },
-          digitalMenu: {
-            restaurantName: name,
-            welcomeMessage: `Bem-vindo ao ${name}!`,
-            themeColor: '#4f46e5',
-            logoUrl: logoUrl || ''
-          },
+          admin: defaultAdminConfig,
+          digitalMenu: defaultDigitalMenuConfig,
+          updatedAt: new Date()
+        });
+        await setDoc(doc(db, 'publicStorefronts', tenantId), {
+          tenantId,
+          admin: defaultAdminConfig,
+          digitalMenu: defaultDigitalMenuConfig,
           updatedAt: new Date()
         });
         
@@ -2293,7 +2294,6 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         permissions: permissions,
         status: 'offline',
         active: true,
-        password: password,
         createdAt: new Date(),
         updatedAt: new Date()
       };
