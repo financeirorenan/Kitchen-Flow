@@ -65,6 +65,7 @@ import AIInsights from "./AIInsights";
 import DashboardAlerts from "./DashboardAlerts";
 import CMVAnalysis from "./CMVAnalysis";
 import KaiAvatar, { KaiExpression, KaiPose } from "./KaiAvatar";
+import { maskCurrency, parseCurrency } from "../utils/masks";
 
 const getSafeDate = (val: any): Date | null => {
   if (!val) return null;
@@ -296,11 +297,11 @@ export default function LojistaCopilot({
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editType, setEditType] = useState<'rent' | 'staff'>('rent');
-  const [editAmount, setEditAmount] = useState(0);
+  const [editAmount, setEditAmount] = useState<string>("");
 
   const [newName, setNewName] = useState("");
   const [newType, setNewType] = useState<'rent' | 'staff'>('rent');
-  const [newAmount, setNewAmount] = useState<number | "">("");
+  const [newAmount, setNewAmount] = useState<string>("");
 
   const computedRentTotal = useMemo(() => {
     return fixedCostsList
@@ -2592,7 +2593,7 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                           setEditingItemId(item.id);
                           setEditName(item.name);
                           setEditType(item.type);
-                          setEditAmount(item.amount);
+                          setEditAmount(item.amount ? maskCurrency((item.amount * 100).toFixed(0)) : "");
                         };
                         const deleteItem = () => {
                           setFixedCostsList(prev => prev.filter(c => c.id !== item.id));
@@ -2619,17 +2620,22 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                                     <option value="staff">Folha / Salários</option>
                                   </select>
                                   <input
-                                    type="number"
-                                    className="w-20 px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold outline-none"
+                                    type="text"
+                                    inputMode="numeric"
+                                    className="w-24 px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold outline-none"
                                     value={editAmount}
-                                    onChange={(e) => setEditAmount(parseFloat(e.target.value) || 0)}
-                                    placeholder="Valor"
+                                    onChange={(e) => {
+                                      const digits = e.target.value.replace(/\D/g, "");
+                                      setEditAmount(digits ? maskCurrency(digits) : "");
+                                    }}
+                                    placeholder="0,00"
                                   />
                                   <div className="flex gap-1">
                                     <button
                                       type="button"
                                       onClick={() => {
-                                        setFixedCostsList(prev => prev.map(c => c.id === item.id ? { ...c, name: editName, type: editType, amount: editAmount } : c));
+                                        const val = parseCurrency(editAmount);
+                                        setFixedCostsList(prev => prev.map(c => c.id === item.id ? { ...c, name: editName, type: editType, amount: val } : c));
                                         setEditingItemId(null);
                                       }}
                                       className="p-1 bg-green-500 text-white hover:bg-green-600 rounded-lg shadow-sm transition-all text-xs"
@@ -2721,17 +2727,39 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                     </div>
                     <div className="md:col-span-3 flex gap-1 items-center">
                       <input
-                        type="number"
-                        placeholder="R$ Valor"
-                        className="w-full px-1.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none"
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="R$ 0,00"
+                        className="w-full px-1.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-100"
                         value={newAmount}
-                        onChange={(e) => setNewAmount(e.target.value === "" ? "" : parseFloat(e.target.value) || 0)}
+                        onChange={(e) => {
+                          const digits = e.target.value.replace(/\D/g, "");
+                          setNewAmount(digits ? maskCurrency(digits) : "");
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            if (!newName.trim()) return;
+                            const val = parseCurrency(newAmount);
+                            if (val <= 0) return;
+                            const newItem: FixedCostItem = {
+                              id: `fc-${Date.now()}`,
+                              name: newName,
+                              type: newType,
+                              amount: val
+                            };
+                            setFixedCostsList(prev => [...prev, newItem]);
+                            setNewName("");
+                            setNewAmount("");
+                          }
+                        }}
                       />
                       <button
                         type="button"
                         onClick={() => {
                           if (!newName.trim()) return;
-                          const val = typeof newAmount === "number" ? newAmount : 0;
+                          const val = parseCurrency(newAmount);
+                          if (val <= 0) return;
                           const newItem: FixedCostItem = {
                             id: `fc-${Date.now()}`,
                             name: newName,

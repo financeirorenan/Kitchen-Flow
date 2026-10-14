@@ -843,6 +843,7 @@ export interface Order {
   longitude?: number;
   routePosition?: number;
   courierEarnings?: number;
+  stockDeducted?: boolean;
   dailyNumber?: number;
   version?: number;
   lastEventId?: string;

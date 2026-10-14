@@ -888,7 +888,11 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   useEffect(() => {
     const qLeads = query(collection(db, 'leads'), orderBy('createdAt', 'desc'), limit(50));
     const unsubscribeLeads = onSnapshot(qLeads, (snapshot) => {
-      setLeads(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })));
+      setLeads(
+        snapshot.docs
+          .map(doc => ({ ...doc.data(), id: doc.id }) as any)
+          .filter(l => l.status !== 'Convertido' && l.status !== 'Perdido' && l.status !== 'convertido' && l.status !== 'perdido')
+      );
     }, (error) => {
       console.warn("SaaSAdmin leads error:", error);
     });
@@ -1788,30 +1792,72 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     }
   };
 
+  const [convertingLeadId, setConvertingLeadId] = useState<string | null>(null);
+
   const handleSaveLead = async (e: React.FormEvent) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget as HTMLFormElement);
+    const selectedStatus = (formData.get('status') as string) || editingLead?.status || 'Novo';
     const leadData = {
       name: formData.get('name') as string,
       email: formData.get('email') as string,
       phone: formData.get('phone') as string,
       companyName: formData.get('companyName') as string,
-      status: editingLead?.status || 'Novo',
+      status: selectedStatus,
       createdAt: editingLead?.createdAt || new Date(),
       updatedAt: new Date(),
     };
 
     try {
       if (editingLead) {
-        await setDoc(doc(db, 'leads', editingLead.id), leadData, { merge: true });
+        if (selectedStatus === 'Convertido' || selectedStatus === 'Perdido') {
+          setLeads(prev => prev.filter(l => l.id !== editingLead.id));
+          try {
+            await deleteDoc(doc(db, 'leads', editingLead.id));
+          } catch {
+            await setDoc(doc(db, 'leads', editingLead.id), leadData, { merge: true });
+          }
+          if (selectedStatus === 'Convertido') {
+            setName(leadData.companyName || leadData.name);
+            setOwnerId(leadData.email);
+            setEditingTenant(null);
+            setShowAddModal(true);
+          }
+        } else {
+          setLeads(prev => prev.map(l => l.id === editingLead.id ? { ...l, ...leadData } : l));
+          await setDoc(doc(db, 'leads', editingLead.id), leadData, { merge: true });
+        }
       } else {
-        await addDoc(collection(db, 'leads'), leadData);
+        const docRef = await addDoc(collection(db, 'leads'), leadData);
+        setLeads(prev => [{ ...leadData, id: docRef.id }, ...prev.filter(l => l.id !== docRef.id)]);
       }
       setShowLeadModal(false);
       setEditingLead(null);
     } catch (error) {
       console.error("Error saving lead:", error);
+      setShowLeadModal(false);
+      setEditingLead(null);
     }
+  };
+
+  const handleMarkLeadLost = (lead: any) => {
+    confirmAction(
+      "Marcar Lead como Perdido",
+      `Deseja marcar o lead "${lead.companyName || lead.name}" como perdido? Ele será removido do painel de leads.`,
+      async () => {
+        setLeads(prev => prev.filter(l => l.id !== lead.id));
+        try {
+          await deleteDoc(doc(db, 'leads', lead.id));
+        } catch {
+          try {
+            await setDoc(doc(db, 'leads', lead.id), { status: 'Perdido', updatedAt: new Date() }, { merge: true });
+          } catch (err) {
+            console.warn("Error updating lost lead in Firestore:", err);
+          }
+        }
+      },
+      'danger'
+    );
   };
 
   const handleReplyTicket = async (e: React.FormEvent) => {
@@ -2188,6 +2234,21 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
       setShowAddModal(false);
       setEditingTenant(null);
       resetForm();
+
+      if (convertingLeadId) {
+        const leadIdToRemove = convertingLeadId;
+        setConvertingLeadId(null);
+        setLeads(prev => prev.filter(l => l.id !== leadIdToRemove));
+        try {
+          await deleteDoc(doc(db, 'leads', leadIdToRemove));
+        } catch {
+          try {
+            await setDoc(doc(db, 'leads', leadIdToRemove), { status: 'Convertido', updatedAt: new Date() }, { merge: true });
+          } catch (err) {
+            console.warn("Error updating converted lead:", err);
+          }
+        }
+      }
     } catch (error) {
       console.error("Error saving tenant:", error);
     }
@@ -2309,7 +2370,8 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   };
 
   const handleAccessSystem = (tenant: Tenant) => {
-    onViewTenant(tenant.id, tenant.name, tenant.logoUrl);
+    const resolvedName = tenant.name || (tenant as any).companyName || `Lojista ${tenant.id}`;
+    onViewTenant(tenant.id, resolvedName, tenant.logoUrl);
   };
 
   const handleDeleteTenant = async (tenantId: string) => {
@@ -2626,48 +2688,6 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
 
         {/* Global Controls & Modes */}
         <div className="flex flex-wrap items-center gap-2.5">
-          {/* Experience Mode Switcher */}
-          <div className="bg-slate-100 p-1 rounded-xl flex items-center gap-1 border border-slate-200/80">
-            <button
-              onClick={() => setExperienceMode('superadmin')}
-              className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
-                experienceMode === 'superadmin' 
-                  ? 'bg-white text-slate-900 shadow-xs border border-slate-200/60' 
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-              title="Acesso irrestrito a todos os módulos, financeiro e banco de dados"
-            >
-              <Crown size={12} className="text-amber-500" />
-              <span>Super Admin</span>
-            </button>
-
-            <button
-              onClick={() => setExperienceMode('operation')}
-              className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
-                experienceMode === 'operation' 
-                  ? 'bg-white text-slate-900 shadow-xs border border-slate-200/60' 
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-              title="Modo Operação: Foco no suporte diário, marketplace e monitoramento de lojas"
-            >
-              <Zap size={12} className="text-indigo-500" />
-              <span>Operação</span>
-            </button>
-
-            <button
-              onClick={() => setExperienceMode('training')}
-              className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
-                experienceMode === 'training' 
-                  ? 'bg-amber-500 text-slate-950 shadow-xs font-black' 
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-              title="Modo Treinamento: Ativa guias, dicas de atalhos e tutoriais passo a passo"
-            >
-              <GraduationCap size={13} />
-              <span>Treinamento</span>
-            </button>
-          </div>
-
           {/* Quick Search Shortcut Button (Ctrl + K) */}
           <button
             onClick={() => setShowGlobalSearchModal(true)}
@@ -2679,25 +2699,6 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
             <kbd className="px-1.5 py-0.5 bg-white rounded text-[10px] font-mono text-slate-500 border border-slate-200">
               ⌘K
             </kbd>
-          </button>
-
-          {/* 1-Click Diagnostics Button */}
-          <button
-            onClick={() => setShowQuickDiagnosticModal(true)}
-            className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
-            title="Executar Diagnóstico Geral em 1 Clique (Atalho: D)"
-          >
-            <Zap size={14} className="text-amber-600" />
-            <span className="hidden sm:inline">Diagnóstico</span>
-          </button>
-
-          {/* Audit Logs Button */}
-          <button
-            onClick={() => setShowAuditLogsModal(true)}
-            className="p-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
-            title="Log de Auditoria & Compliance"
-          >
-            <ShieldCheck size={16} />
           </button>
 
           {/* Notification Bell */}
@@ -3575,7 +3576,20 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {leads.length > 0 ? leads.map(lead => (
+                  {(() => {
+                    const activePipelineLeads = leads.filter(lead => {
+                      const st = (lead.status || '').toLowerCase();
+                      if (st === 'convertido' || st === 'perdido') return false;
+                      const isAlreadyActiveTenant = tenants.some(t =>
+                        t.active !== false && (
+                          (lead.companyName && t.name.toLowerCase() === lead.companyName.toLowerCase()) ||
+                          (lead.name && t.name.toLowerCase() === lead.name.toLowerCase()) ||
+                          (lead.email && t.ownerId.toLowerCase() === lead.email.toLowerCase())
+                        )
+                      );
+                      return !isAlreadyActiveTenant;
+                    });
+                    return activePipelineLeads.length > 0 ? activePipelineLeads.map(lead => (
                     <tr key={lead.id} className="hover:bg-slate-50/50 transition-all">
                       <td className="px-6 py-4 font-black text-slate-800 text-sm">
                         {lead.companyName || lead.name}
@@ -3595,32 +3609,55 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                         </span>
                       </td>
                       <td className="px-6 py-4 text-xs text-slate-500 font-medium">
-                        {lead.createdAt?.toDate?.() ? lead.createdAt.toDate().toLocaleDateString() : 'N/A'}
+                        {lead.createdAt?.toDate?.() ? lead.createdAt.toDate().toLocaleDateString() : lead.createdAt instanceof Date ? lead.createdAt.toLocaleDateString() : 'N/A'}
                       </td>
                       <td className="px-6 py-4 text-right">
-                        <button 
-                          onClick={() => {
-                            setEditingLead(lead);
-                            setShowLeadModal(true);
-                          }}
-                          className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
-                        >
-                          <Edit3 size={16} />
-                        </button>
-                        <button 
-                          onClick={() => {
-                            confirmAction("Converter em Cliente", `Deseja converter ${lead.name} em um cliente ativo?`, () => {
-                              // Lógica para preencher o form de tenant com dados do lead
-                              setName(lead.companyName || lead.name);
-                              setOwnerId(lead.email); // Placeholder
-                              setShowLeadModal(false);
-                              setShowAddModal(true);
-                            }, 'info');
-                          }}
-                          className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
-                        >
-                          <CheckCircle2 size={16} />
-                        </button>
+                        <div className="inline-flex items-center justify-end gap-1">
+                          <button 
+                            onClick={() => {
+                              setEditingLead(lead);
+                              setShowLeadModal(true);
+                            }}
+                            className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                            title="Editar Lead"
+                          >
+                            <Edit3 size={16} />
+                          </button>
+                          <button 
+                            onClick={() => {
+                              confirmAction("Converter em Cliente Ativo", `Deseja converter ${lead.companyName || lead.name} em um cliente ativo? Ele será removido do painel de leads.`, async () => {
+                                setLeads(prev => prev.filter(l => l.id !== lead.id));
+                                try {
+                                  await deleteDoc(doc(db, 'leads', lead.id));
+                                } catch {
+                                  try {
+                                    await setDoc(doc(db, 'leads', lead.id), { status: 'Convertido', updatedAt: new Date() }, { merge: true });
+                                  } catch (err) {
+                                    console.warn("Error updating converted lead:", err);
+                                  }
+                                }
+                                setConvertingLeadId(lead.id);
+                                setEditingTenant(null);
+                                resetForm();
+                                setName(lead.companyName || lead.name);
+                                setOwnerId(lead.email);
+                                setShowLeadModal(false);
+                                setShowAddModal(true);
+                              }, 'info');
+                            }}
+                            className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
+                            title="Converter em Cliente Ativo"
+                          >
+                            <CheckCircle2 size={16} />
+                          </button>
+                          <button 
+                            onClick={() => handleMarkLeadLost(lead)}
+                            className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                            title="Marcar como Perdido"
+                          >
+                            <XCircle size={16} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   )) : (
@@ -3629,7 +3666,8 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                         Nenhum lead registrado no momento
                       </td>
                     </tr>
-                  )}
+                  );
+                  })()}
                 </tbody>
               </table>
             </div>

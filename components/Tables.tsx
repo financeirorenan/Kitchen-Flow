@@ -744,6 +744,8 @@ const Tables: React.FC<TablesProps> = memo(
                  getStandardPaymentMethod(r.paymentMethod || "dinheiro") === "dinheiro" &&
                  !cat.includes("abertura") && 
                  !cat.startsWith("venda") &&
+                 !cat.includes("motoboy") &&
+                 !cat.includes("entregador") &&
                  !r.orderId;
         })
         .reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
@@ -2126,6 +2128,22 @@ const Tables: React.FC<TablesProps> = memo(
           }
         : undefined;
 
+      const finalPayments = isSplitting
+        ? [
+            ...splitParts.map((p) => ({
+              id: p.id,
+              method: p.method,
+              amount: p.amount,
+              customerId: p.customerId,
+              alreadyRecorded: p.alreadyRecorded,
+              isFiscalIssued: p.isFiscalIssued,
+              fiscalKey: p.fiscalKey,
+              customerDocument: p.customerDocument,
+            })),
+            { method: "dinheiro" as PaymentMethod, amount: amountToPay, alreadyRecorded: false },
+          ]
+        : undefined;
+
       handleOrderCompletion(
         "dinheiro",
         isFiscalEmission,
@@ -2133,7 +2151,7 @@ const Tables: React.FC<TablesProps> = memo(
         isCounterContext,
         deliveryInfo,
         isFiscalEmission ? customerDocumentInput : undefined,
-        undefined,
+        finalPayments,
         received,
       );
       setIsProcessing(false);
@@ -2360,14 +2378,20 @@ const Tables: React.FC<TablesProps> = memo(
       const finalPayments = isSplitting
         ? [
             ...splitParts.map((p) => ({
+              id: p.id,
               method: p.method,
               amount: p.amount,
               customerId: p.customerId,
+              alreadyRecorded: p.alreadyRecorded,
+              isFiscalIssued: p.isFiscalIssued,
+              fiscalKey: p.fiscalKey,
+              customerDocument: p.customerDocument,
             })),
             {
               method: "conta_cliente" as PaymentMethod,
               amount: amountToPay,
               customerId: selectedCustomerId,
+              alreadyRecorded: false,
             },
           ]
         : undefined;

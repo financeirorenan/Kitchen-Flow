@@ -712,7 +712,9 @@ const App: React.FC = () => {
 
   const isSuperAdmin = user?.email?.toLowerCase() === 'financeirorenanuk@gmail.com' || currentUserData?.role === 'SAAS_ADMIN';
 
-  const effectiveAllowedModules = isSuperAdmin ? undefined : (tenantData?.customModules || tenantData?.subscription?.allowedModules);
+  const effectiveAllowedModules = isSuperAdmin
+    ? (viewingTenantId ? (tenantData?.customModules || tenantData?.subscription?.allowedModules) : undefined)
+    : (tenantData?.customModules || tenantData?.subscription?.allowedModules);
 
   const getUserPermissions = (userData: User | null): Permission[] => {
     if (!userData) return [];
@@ -939,6 +941,11 @@ const App: React.FC = () => {
         if (isSuperAdmin) {
           if (urlTenantParam && urlTenantParam !== viewingTenantId) {
             setViewingTenantId(urlTenantParam);
+          } else if (!urlTenantParam && !viewingTenantId) {
+            const fallbackTenant = userTenantId || 'lojista';
+            setViewingTenantId(fallbackTenant);
+            navigate(`/lojista/${fallbackTenant}`, { replace: true });
+            return;
           }
         } else {
           // Lojista acessando o painel
@@ -1135,9 +1142,22 @@ const App: React.FC = () => {
   }, [handleSelectTab]);
 
   const handleViewTenant = (tenantId: string, name?: string, logo?: string) => {
+    setPdvEditOrder(null);
     setViewingTenantId(tenantId);
     setViewingTenantName(name || null);
     setViewingTenantLogo(logo || null);
+    if (name) {
+      setAdminSettings(prev => ({
+        ...prev,
+        companyName: name,
+        logoUrl: logo || prev.logoUrl
+      }));
+      setDigitalMenuSettings(prev => ({
+        ...prev,
+        restaurantName: name,
+        logoUrl: logo || prev.logoUrl
+      }));
+    }
     setCurrentProject('RESTAURANT');
     setActiveTab('merchant-copilot');
     navigate(`/lojista/${tenantId}`);
@@ -1265,12 +1285,44 @@ const App: React.FC = () => {
     setRawMaterialCategories([]);
     setCashClosings([]);
     setCashSession({ isOpen: false, openingValue: 0, openedAt: null });
+
+    // PRIORIDADE: Primeiro o ID canônico consolidado para todos os módulos (Caixa, KDS, Salão, Delivery)
+    const effectiveTenantId = getCanonicalTenantId(currentUserData, viewingTenantId, tenantData);
+    const canonicalStoreId = getCanonicalStoreId(effectiveTenantId);
+
+    // Try pre-populating tenantData immediately from SaaS cached tenants if viewing a tenant
+    let cachedSelectedTenant: Tenant | null = null;
+    if (effectiveTenantId) {
+      try {
+        const rawCachedTenants = localStorage.getItem('kitchenflow_saas_cached_tenants');
+        if (rawCachedTenants) {
+          const parsedTenants = JSON.parse(rawCachedTenants) as Tenant[];
+          const found = parsedTenants.find(t => t.id === effectiveTenantId || t.slug === effectiveTenantId);
+          if (found) {
+            cachedSelectedTenant = found;
+            setTenantData(found);
+            if (!viewingTenantName && found.name) {
+              setViewingTenantName(found.name);
+            }
+            if (!viewingTenantLogo && found.logoUrl) {
+              setViewingTenantLogo(found.logoUrl);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("Could not read cached tenants:", e);
+      }
+    }
+
+    const initialName = viewingTenantName || cachedSelectedTenant?.name || '';
+    const initialLogo = viewingTenantLogo || cachedSelectedTenant?.logoUrl || '';
+
     setAdminSettings({
-      companyName: '',
-      logoUrl: '',
-      cnpj: '',
-      address: '',
-      phone: '',
+      companyName: initialName,
+      logoUrl: initialLogo,
+      cnpj: cachedSelectedTenant?.cnpj || '',
+      address: cachedSelectedTenant?.address || '',
+      phone: cachedSelectedTenant?.phone || '',
       socialMedia: { instagram: '', facebook: '', whatsapp: '' },
       businessHours: [
         { day: 'Segunda-feira', open: '09:00', close: '22:00', isClosed: false },
@@ -1290,8 +1342,8 @@ const App: React.FC = () => {
         nextNfceNumber: 1, 
         series: 1, 
         taxRegime: 'simples_nacional',
-        cnpj: '',
-        razaoSocial: '',
+        cnpj: cachedSelectedTenant?.cnpj || '',
+        razaoSocial: initialName,
         inscricaoEstadual: '',
         address: {
           logradouro: '',
@@ -1311,7 +1363,7 @@ const App: React.FC = () => {
       minOrderValue: 20.00,
       estimatedDeliveryTime: '30-45 min',
       estimatedPickupTime: '15-20 min',
-      autoAcceptOrders: false,
+      autoAcceptOrders: cachedSelectedTenant?.autoAcceptOrders || false,
       paymentMethods: [
         { id: '1', name: 'Dinheiro', type: 'cash', feePercentage: 0, active: true },
         { id: '2', name: 'Cartão de Crédito', type: 'credit', feePercentage: 3.2, active: true, operatorId: 'op-1' },
@@ -1336,12 +1388,12 @@ const App: React.FC = () => {
       primaryColor: '#E31B23',
       accentColor: '#FACC15',
       fontFamily: 'sans',
-      restaurantName: '',
-      welcomeMessage: '',
+      restaurantName: initialName,
+      welcomeMessage: cachedSelectedTenant?.description || '',
       allowOrdering: true,
       showStock: true,
       bannerUrl: 'https://images.unsplash.com/photo-1550547660-d9450f859349?q=80&w=1000&auto=format&fit=crop',
-      logoUrl: '',
+      logoUrl: initialLogo,
       categoryImages: {
         'Bebidas': 'https://images.unsplash.com/photo-1544145945-f904253d0c71?w=400',
         'Lanches': 'https://images.unsplash.com/photo-1571091718767-18b5b1457add?w=400',
@@ -1357,44 +1409,61 @@ const App: React.FC = () => {
         active: false
       }
     });
+
+    // Also load local settings for this tenant if saved in IndexedDB
+    if (effectiveTenantId) {
+      localDb.settings.get(effectiveTenantId).then(localSettings => {
+        if (localSettings) {
+          if (localSettings.admin) {
+            setAdminSettings(prev => ({
+              ...prev,
+              ...localSettings.admin,
+              companyName: initialName || localSettings.admin.companyName || prev.companyName,
+              logoUrl: initialLogo || localSettings.admin.logoUrl || prev.logoUrl
+            }));
+          }
+          if (localSettings.digitalMenu) {
+            setDigitalMenuSettings(prev => ({
+              ...prev,
+              ...localSettings.digitalMenu,
+              restaurantName: initialName || localSettings.digitalMenu.restaurantName || prev.restaurantName,
+              logoUrl: initialLogo || localSettings.digitalMenu.logoUrl || prev.logoUrl
+            }));
+          }
+          if (localSettings.productCategories && Array.isArray(localSettings.productCategories)) {
+            setProductCategories(localSettings.productCategories);
+          }
+          if (localSettings.rawMaterialCategories && Array.isArray(localSettings.rawMaterialCategories)) {
+            setRawMaterialCategories(localSettings.rawMaterialCategories);
+          }
+          if (localSettings.cashSession) {
+            setCashSession(localSettings.cashSession);
+          }
+        }
+      }).catch(e => console.warn("LocalDb settings read warning:", e));
+    }
+
     ensureLojistaTenantWithData();
     notifiedOrdersRef.current.clear();
-    setCashSession({ isOpen: false, openingValue: 0, openedAt: null });
-    
-    // Clear all state collections when switching tenants to avoid stale cross-tenant data
-    setProducts([]);
-    setTables([]);
-    setCustomers([]);
-    setOrders([]);
-    setFinancialRecords([]);
-    setRawMaterials([]);
-    setBankAccounts([]);
-    setCouriers([]);
-    setAuditLogs([]);
-    setUsers([]);
-    setCashClosings([]);
 
-    // PRIORIDADE: Primeiro o ID canônico consolidado para todos os módulos (Caixa, KDS, Salão, Delivery)
-    const effectiveTenantId = getCanonicalTenantId(currentUserData, viewingTenantId, tenantData);
-    const canonicalStoreId = getCanonicalStoreId(effectiveTenantId);
-    const isRemoteAuthValid = Boolean(auth.currentUser?.uid) && !user?.isLocalSession && user?.uid !== 'demo-admin-uid';
+    const isRemoteAuthValid = Boolean(auth.currentUser?.uid) || Boolean(user?.uid);
     if (!effectiveTenantId || !isRemoteAuthValid) {
-      setTenantData(null);
+      setTenantData(cachedSelectedTenant || null);
       setAdminSettings(prev => ({
         ...prev,
-        companyName: 'KitchenFlow AI',
-        logoUrl: ''
+        companyName: initialName || 'KitchenFlow AI',
+        logoUrl: initialLogo || ''
       }));
       setDigitalMenuSettings(prev => ({
         ...prev,
-        restaurantName: 'KitchenFlow AI',
-        logoUrl: ''
+        restaurantName: initialName || 'KitchenFlow AI',
+        logoUrl: initialLogo || ''
       }));
       return;
     }
 
-    let activeTenantName: string | null = null;
-    let activeTenantLogo: string | null = null;
+    let activeTenantName: string | null = initialName || null;
+    let activeTenantLogo: string | null = initialLogo || null;
 
     const collectionsToSync = [
       { name: 'products', setter: setProducts, syncType: 'snapshot', limit: 250 },
@@ -1603,6 +1672,15 @@ const App: React.FC = () => {
           setQuotaExceeded(true);
         } else {
           handleFirestoreError(error, OperationType.LIST, col.name);
+        }
+        // Fallback to localDb filtered by effectiveTenantId if cloud snapshot fails
+        if (localDb && (localDb as any)[col.name]) {
+          (localDb as any)[col.name].toArray().then((localItems: any[]) => {
+            const filtered = localItems.filter(it => !it.tenantId || it.tenantId === effectiveTenantId || (effectiveTenantId === 'lojista' && it.tenantId === 't1'));
+            if (filtered.length > 0) {
+              col.setter(filtered);
+            }
+          }).catch(() => {});
         }
       });
     });
@@ -2915,9 +2993,13 @@ const App: React.FC = () => {
     // Calculo automático de taxas com base na forma de pagamento
     let feeAmount = record.feeAmount || 0;
     if (record.paymentMethod && record.type === 'income' && !record.feeAmount && adminSettings?.paymentMethods) {
+       const normRecordMethod = normalizePaymentMethod(record.paymentMethod, adminSettings);
        const methodConfig = adminSettings.paymentMethods.find(m => 
+          m.id === record.paymentMethod ||
+          normalizePaymentMethod(m.type, adminSettings) === normRecordMethod ||
+          normalizePaymentMethod(m.name, adminSettings) === normRecordMethod ||
           m.name.toLowerCase() === record.paymentMethod?.toLowerCase() || 
-          m.type === record.paymentMethod?.toLowerCase()
+          m.type.toLowerCase() === record.paymentMethod?.toLowerCase()
        );
        
        if (methodConfig && methodConfig.feePercentage > 0) {
@@ -4711,6 +4793,101 @@ const App: React.FC = () => {
     };
   };
 
+  const deductStockForItems = async (items: OrderItem[], channel: string) => {
+    if (!items || items.length === 0) return { updatedProductsList: [] as Product[], updatedRawMaterialsList: [] as RawMaterial[] };
+
+    const productStockReductions = new Map<string, number>();
+    const rawMaterialReductions = new Map<string, number>();
+
+    for (const item of items) {
+      const cleanItemName = (item.name || '').replace(/\s*\([^)]*\)/g, '').trim().toLowerCase();
+      const product = products.find(p => 
+        (item.productId && p.id === item.productId) ||
+        (p.id === (item as any).id) ||
+        (cleanItemName && p.name.trim().toLowerCase() === cleanItemName)
+      );
+
+      if (product) {
+        if (product.trackStock) {
+          productStockReductions.set(product.id, (productStockReductions.get(product.id) || 0) + item.quantity);
+        }
+
+        if (product.technicalSheet && product.technicalSheet.length > 0) {
+          for (const tsItem of product.technicalSheet) {
+            const rawMaterial = rawMaterials.find(rm => 
+              rm.id === tsItem.rawMaterialId || 
+              (tsItem.rawMaterialName && rm.name.trim().toLowerCase() === tsItem.rawMaterialName.trim().toLowerCase())
+            );
+            if (rawMaterial) {
+              const ch = tsItem.channel || 'all';
+              const isMatch = 
+                ch === 'all' ||
+                (ch === 'dine_in' && channel === 'dine_in') ||
+                (ch === 'takeout_delivery' && (channel === 'takeout' || channel === 'delivery')) ||
+                (ch === 'delivery' && channel === 'delivery') ||
+                (ch === 'takeout' && channel === 'takeout');
+
+              if (isMatch) {
+                const reduction = Number(tsItem.quantity) * Number(item.quantity);
+                rawMaterialReductions.set(rawMaterial.id, (rawMaterialReductions.get(rawMaterial.id) || 0) + reduction);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    const updatedProductsList: Product[] = [];
+    if (productStockReductions.size > 0) {
+      setProducts(prev => prev.map(p => {
+        const red = productStockReductions.get(p.id);
+        if (red) {
+          const updated = { ...p, stock: Math.max(0, (p.stock || 0) - red) };
+          updatedProductsList.push(updated);
+          return updated;
+        }
+        return p;
+      }));
+    }
+
+    const updatedRawMaterialsList: RawMaterial[] = [];
+    if (rawMaterialReductions.size > 0) {
+      setRawMaterials(prev => prev.map(rm => {
+        const red = rawMaterialReductions.get(rm.id);
+        if (red) {
+          const updated = { ...rm, currentStock: Math.max(0, rm.currentStock - red) };
+          updatedRawMaterialsList.push(updated);
+          return updated;
+        }
+        return rm;
+      }));
+    }
+
+    try {
+      if (updatedProductsList.length > 0) {
+        await localDb.products.bulkPut(updatedProductsList);
+      }
+      if (updatedRawMaterialsList.length > 0) {
+        await localDb.rawMaterials.bulkPut(updatedRawMaterialsList);
+      }
+      const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+      if (effectiveTenantId) {
+        const batch = writeBatch(db);
+        for (const p of updatedProductsList) {
+          batch.set(doc(db, 'products', p.id), cleanObject(p), { merge: true });
+        }
+        for (const rm of updatedRawMaterialsList) {
+          batch.set(doc(db, 'rawMaterials', rm.id), cleanObject(rm), { merge: true });
+        }
+        await batch.commit();
+      }
+    } catch (e) {
+      console.warn("Error persisting stock reduction:", e);
+    }
+
+    return { updatedProductsList, updatedRawMaterialsList };
+  };
+
   const handleCloseTable = async (
     tableId: number | string, 
     method: PaymentMethod, 
@@ -4893,6 +5070,7 @@ const App: React.FC = () => {
       source: table.currentOrderId ? (orders.find(o => o.id === table.currentOrderId)?.source || 'pos') : (pdvEditOrder?.source || 'pos'),
       isManual: true,
       isSettled: true,
+      stockDeducted: true,
       kitchenStatus: determinedKitchenStatus,
       finishedAt: determinedStatus === 'finished' ? new Date() : (activeOrderObj?.finishedAt || undefined),
       completedAt: determinedStatus === 'finished' ? new Date() : (activeOrderObj?.completedAt || undefined),
@@ -5411,16 +5589,6 @@ const App: React.FC = () => {
             console.error("Error updating courier balance in cloud after settlement:", e);
           }
         }
-        
-        // Also create a financial record for the collective settlement if relevant
-        await handleAddFinancialRecord({
-          type: 'expense',
-          amount: totalEarningsToDeduct,
-          category: 'Entregadores',
-          description: `Acerto de ${orderIds.length} entregas - ${courier.name}`,
-          date: new Date(),
-          status: 'paid'
-        });
       }
     }
 
@@ -5964,11 +6132,17 @@ const App: React.FC = () => {
 
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
     const now = new Date();
+
+    if (!order.stockDeducted && order.items && order.items.length > 0) {
+      await deductStockForItems(order.items, order.type === 'delivery' ? 'delivery' : 'takeout');
+    }
+
     const rawAcceptedOrder: Order = { 
       ...order, 
       tenantId: order.tenantId || effectiveTenantId || 'HCL1177LRQVPEKCTYRAHU7IGBQ42',
       source: order.source || 'whatsapp',
       status: 'preparing',
+      stockDeducted: true,
       shiftOpenedAt: cashSessionRef.current.isOpen ? (cashSessionRef.current.openedAt || now) : now,
       deliveryFee: order.type === 'delivery' ? globalDeliveryFee : 0 
     };
@@ -6268,6 +6442,8 @@ const App: React.FC = () => {
                   getStandardPaymentMethod(r.paymentMethod || 'dinheiro') === 'dinheiro' && 
                   !cat.includes('abertura') && 
                   !cat.startsWith('venda') &&
+                  !cat.includes('motoboy') &&
+                  !cat.includes('entregador') &&
                   !r.orderId;
          })
          .reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
@@ -6630,7 +6806,7 @@ const App: React.FC = () => {
     !localUserPerms.includes('pos_access') &&
     !localUserPerms.includes('tables_manage');
 
-  const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || tenantData?.id || (isSuperAdmin ? 'lojista' : 't1');
+  const effectiveTenantId = getCanonicalTenantId(currentUserData, viewingTenantId, tenantData);
 
   return (
     <div className="flex h-screen max-h-screen w-screen bg-slate-50 relative overflow-hidden">
@@ -6799,7 +6975,7 @@ const App: React.FC = () => {
                   </div>
                   <button
                     type="button"
-                    onClick={() => { setActiveTab('settings'); navigate('/settings'); }}
+                    onClick={() => handleSelectTab('settings')}
                     className={`px-2.5 py-1 rounded-xl font-black text-[10px] uppercase tracking-wider flex items-center gap-1.5 border shadow-2xs transition-all cursor-pointer ${
                       computeIsStoreOpen()
                         ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
@@ -6840,7 +7016,9 @@ const App: React.FC = () => {
               onUpdateCustomer={handleUpdateCustomer}
               onAddFinancialRecord={handleAddFinancialRecord}
               onUpdateFinancialRecord={handleUpdateFinancialRecord}
-              onRefreshData={() => fetchRealtimeData()}
+              onRefreshData={() => {
+                setQuotaExceeded(false);
+              }}
               onOpenOrder={(orderId) => {
                 const found = orders.find(o => o.id === orderId);
                 if (found) {
@@ -6896,7 +7074,7 @@ const App: React.FC = () => {
                       </div>
                       <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
                         <button 
-                          onClick={() => setActiveTab('settings')} 
+                          onClick={() => handleSelectTab('settings')} 
                           className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all"
                         >
                           Ver Planos
@@ -6916,9 +7094,16 @@ const App: React.FC = () => {
               {!isKDSOnlyUser && (
                 <header className="flex justify-between items-center mb-4 bg-white p-6 rounded-[2.5rem] border shadow-sm">
                   <div className="flex items-center gap-4">
+                    {(viewingTenantLogo || tenantData?.logoUrl || adminSettings.logoUrl) ? (
+                      <img src={viewingTenantLogo || tenantData?.logoUrl || adminSettings.logoUrl} alt="" className="w-12 h-12 rounded-2xl object-cover border border-slate-100 shadow-xs shrink-0" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-xs shrink-0">
+                        {(viewingTenantName || tenantData?.name || adminSettings.companyName || 'KF').substring(0, 2).toUpperCase()}
+                      </div>
+                    )}
                     <div>
                       <h2 className="text-[10px] font-black text-indigo-600 uppercase tracking-[0.2em] mb-1">
-                        Painel Lojista Profissional
+                        {viewingTenantName || tenantData?.name || adminSettings.companyName || 'Painel Lojista Profissional'}
                       </h2>
                       <h1 className="text-3xl font-black text-slate-800 tracking-tighter flex items-center gap-3">
                         <span className="text-slate-600">
@@ -6949,7 +7134,7 @@ const App: React.FC = () => {
                   <div className="flex items-center gap-3">
                      <button
                        type="button"
-                       onClick={() => { setActiveTab('settings'); navigate('/settings'); }}
+                       onClick={() => handleSelectTab('settings')}
                        className={`px-3.5 py-2.5 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center gap-2 border shadow-2xs transition-all cursor-pointer hover:scale-[1.02] active:scale-95 ${
                          computeIsStoreOpen()
                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
@@ -6966,8 +7151,8 @@ const App: React.FC = () => {
                        className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center text-white font-black shadow-xl shadow-slate-200 text-sm cursor-pointer hover:bg-slate-800 transition-all hover:scale-105 active:scale-[0.98] overflow-hidden shrink-0"
                        title="Editar Perfil"
                      >
-                       {currentUserData?.avatar ? (
-                         <img src={currentUserData.avatar} alt={currentUserData.name} className="w-full h-full object-cover animate-fade-in" referrerPolicy="no-referrer" />
+                       {viewingTenantLogo || tenantData?.logoUrl || adminSettings.logoUrl || currentUserData?.avatar ? (
+                         <img src={viewingTenantLogo || tenantData?.logoUrl || adminSettings.logoUrl || currentUserData?.avatar} alt={viewingTenantName || tenantData?.name || currentUserData?.name || 'Loja'} className="w-full h-full object-cover animate-fade-in" referrerPolicy="no-referrer" />
                        ) : (
                          (viewingTenantName || tenantData?.name || adminSettings.companyName || 'KitchenFlow').substring(0, 2).toUpperCase()
                        )}
@@ -7459,7 +7644,7 @@ const App: React.FC = () => {
         )}
         {activeTab === 'digital-menu' && hasPermission('digital_menu_manage') && (
           <DigitalMenuConfig 
-            tenantId={viewingTenantId || currentUserData?.tenantId || tenantData?.id}
+            tenantId={effectiveTenantId}
             settings={digitalMenuSettings} 
             onUpdateSettings={handleUpdateDigitalMenuSettings} 
             products={products} 
@@ -7468,7 +7653,6 @@ const App: React.FC = () => {
             tables={tables} 
             onUpdateProduct={handleUpdateProduct} 
             onPlaceDigitalOrder={async (order) => {
-              const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || tenantData?.id || (isSuperAdmin ? 'lojista' : 't1');
               const orderWithTenant = {
                 ...order,
                 tenantId: effectiveTenantId,
@@ -7499,8 +7683,8 @@ const App: React.FC = () => {
 
         {activeTab === 'support' && (
           <SupportView 
-            restaurantName={adminSettings.companyName}
-            tenantId={currentUserData?.tenantId}
+            restaurantName={viewingTenantName || tenantData?.name || adminSettings.companyName}
+            tenantId={effectiveTenantId}
           />
         )}
         {activeTab === 'fiscal' && (

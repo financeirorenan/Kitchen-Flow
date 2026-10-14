@@ -221,7 +221,7 @@ const Delivery: React.FC<DeliveryProps> = memo(({
         totalFees, 
         cashCollected,
         dailyFee,
-        balance: Math.max(0, (totalFees + dailyFee) - cashCollected)
+        balance: (totalFees + dailyFee) - cashCollected
       };
     });
   }, [couriers, deliveryOrders]);
@@ -292,7 +292,7 @@ const Delivery: React.FC<DeliveryProps> = memo(({
         discounts,
         valorAPagar,
         valorPago,
-        balance: Math.max(0, valorAPagar - cashCollected) // Total a pagar - dinheiro coletado na rua = saldo final (não-negativo)
+        balance: valorAPagar - cashCollected
       };
     });
   }, [couriers, deliveryOrders, settlementStartDate, settlementEndDate, settlementStatus]);
@@ -404,6 +404,7 @@ const Delivery: React.FC<DeliveryProps> = memo(({
         onAddFinancialRecord({
           type: effectiveBalance >= 0 ? 'expense' : 'income',
           amount: amount as number,
+          paymentMethod: method as any,
           category: 'Acerto Motoboy',
           description: `Acerto com ${courier.name} (${method.toUpperCase()}). Taxas: R$${totalFees.toFixed(2)} | Diária: R$${dailyFee.toFixed(2)}${settlementOptions.discountCash ? ` | Dinheiro rua: R$${cashCollected.toFixed(2)}` : ''}`,
           date: new Date()

@@ -84,7 +84,6 @@ const Sidebar: React.FC<SidebarProps> = memo(({
     { id: 'digital-menu', label: 'Cardápio Digital', icon: Smartphone, permission: 'digital_menu_manage' },
     { id: 'customers', label: 'Clientes / Fiado', icon: UserCircle, permission: 'customers_manage' },
     { id: 'inventory', label: 'Estoque', icon: Package, permission: 'inventory_edit' },
-    { id: 'suppliers', label: 'Fornecedores B2B', icon: Layers, permission: 'inventory_edit' },
     { id: 'finance', label: 'Financeiro', icon: DollarSign, permission: 'finance_view' },
     { id: 'fiscal-coupons', label: 'Cupons Fiscais', icon: Receipt, permission: 'fiscal_manage' },
     { id: 'users', label: 'Equipe', icon: UsersIcon, permission: 'users_manage' },
