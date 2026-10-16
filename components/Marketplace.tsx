@@ -200,6 +200,8 @@ export const DEFAULT_MOCKUP_TENANTS: (Tenant & { coverUrl: string; rating: numbe
 // Helper to provide luscious cover food photography for all stores
 export const getTenantCover = (tenant: Tenant): string => {
   if ((tenant as any).coverUrl) return (tenant as any).coverUrl;
+  if ((tenant as any).bannerUrl) return (tenant as any).bannerUrl;
+  if ((tenant as any).digitalMenu?.bannerUrl) return (tenant as any).digitalMenu.bannerUrl;
   const name = (tenant.name || "").toLowerCase();
   const cat = (tenant.category || "").toLowerCase();
   if (name.includes("pizza") || cat.includes("pizza")) {
@@ -1007,13 +1009,21 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   };
 
   const getTenantOpenStatus = (tenantId: string) => {
+    const isCurrentSelected = selectedTenant?.id === tenantId;
     const settingSnapshot = tenantsSettings[tenantId];
-    const adminData = settingSnapshot?.admin || settingSnapshot || {};
+    const adminData = isCurrentSelected && storeAdminSettings 
+      ? { ...(settingSnapshot?.admin || settingSnapshot || {}), ...storeAdminSettings }
+      : (settingSnapshot?.admin || settingSnapshot || {});
     const tenantData = tenants.find((t) => t.id === tenantId);
 
     // 1. Prioridade máxima: Forçamento manual de fechamento ou abertura
-    const isForceClosed = adminData.isStoreForceClosed ?? settingSnapshot?.isStoreForceClosed ?? (tenantData as any)?.isStoreForceClosed ?? false;
-    const isForceOpen = adminData.isStoreForceOpen ?? settingSnapshot?.isStoreForceOpen ?? (tenantData as any)?.isStoreForceOpen ?? false;
+    const isForceClosed = (isCurrentSelected && storeSettings?.isStoreForceClosed !== undefined)
+      ? storeSettings.isStoreForceClosed
+      : (adminData.isStoreForceClosed ?? settingSnapshot?.isStoreForceClosed ?? (tenantData as any)?.isStoreForceClosed ?? false);
+
+    const isForceOpen = (isCurrentSelected && storeSettings?.isStoreForceOpen !== undefined)
+      ? storeSettings.isStoreForceOpen
+      : (adminData.isStoreForceOpen ?? settingSnapshot?.isStoreForceOpen ?? (tenantData as any)?.isStoreForceOpen ?? false);
 
     if (isForceClosed) {
       return { 
@@ -1035,7 +1045,9 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     }
 
     // 2. Obter grade de horários (businessHours)
-    const hours: any[] = adminData.businessHours || settingSnapshot?.businessHours || (tenantData as any)?.businessHours || [];
+    const hours: any[] = (isCurrentSelected && storeSettings?.businessHours && storeSettings.businessHours.length > 0)
+      ? storeSettings.businessHours
+      : (adminData.businessHours || settingSnapshot?.businessHours || (tenantData as any)?.businessHours || []);
     
     // Se não tiver horários cadastrados, padrão: Aberto
     if (!hours || !Array.isArray(hours) || hours.length === 0) {
@@ -1382,23 +1394,29 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
       if (settingsSnap.exists()) {
         const data = settingsSnap.data();
+        const dMenu = data.digitalMenu || {};
+        const adm = data.admin || {};
         builtSettings = {
-          restaurantName: tenant.name,
-          primaryColor: "#008080",
-          welcomeMessage: "Bem-vindo ao nosso cardápio!",
-          bannerUrl: "",
-          logoUrl: tenant.logoUrl || "",
-          allowOrdering: true,
-          showStock: false,
-          ...(data.digitalMenu || {}),
+          restaurantName: dMenu.restaurantName || adm.companyName || tenant.name,
+          primaryColor: dMenu.primaryColor || adm.primaryColor || tenant.primaryColor || "#4f46e5",
+          accentColor: dMenu.accentColor || adm.accentColor || tenant.accentColor || "#facc15",
+          fontFamily: dMenu.fontFamily || "sans",
+          welcomeMessage: dMenu.welcomeMessage || "Bem-vindo ao nosso cardápio!",
+          bannerUrl: dMenu.bannerUrl || adm.bannerUrl || tenant.bannerUrl || tenant.coverUrl || "",
+          logoUrl: dMenu.logoUrl || adm.logoUrl || tenant.logoUrl || "",
+          allowOrdering: dMenu.allowOrdering !== undefined ? dMenu.allowOrdering : true,
+          showStock: dMenu.showStock || false,
+          ...dMenu,
         };
         if (data.admin) adminSet = data.admin;
       } else {
         builtSettings = {
           restaurantName: tenant.name,
-          primaryColor: "#008080",
+          primaryColor: tenant.primaryColor || "#4f46e5",
+          accentColor: tenant.accentColor || "#facc15",
+          fontFamily: "sans",
           welcomeMessage: "Bem-vindo ao nosso cardápio!",
-          bannerUrl: "",
+          bannerUrl: tenant.bannerUrl || tenant.coverUrl || "",
           logoUrl: tenant.logoUrl || "",
           allowOrdering: true,
           showStock: false,
@@ -1840,14 +1858,17 @@ const Marketplace: React.FC<MarketplaceProps> = ({
           const existingSnapshot = tenantsSettings[tenant.id];
           if (existingSnapshot) {
             const quickDigitalMenu = existingSnapshot.digitalMenu || {};
+            const quickAdmin = existingSnapshot.admin || {};
             setStoreSettings({
-              restaurantName: tenant.name,
-              primaryColor: "#008080",
-              welcomeMessage: "Bem-vindo ao nosso cardápio!",
-              bannerUrl: "",
-              logoUrl: tenant.logoUrl || "",
-              allowOrdering: true,
-              showStock: false,
+              restaurantName: quickDigitalMenu.restaurantName || quickAdmin.companyName || tenant.name,
+              primaryColor: quickDigitalMenu.primaryColor || quickAdmin.primaryColor || tenant.primaryColor || "#4f46e5",
+              accentColor: quickDigitalMenu.accentColor || quickAdmin.accentColor || tenant.accentColor || "#facc15",
+              fontFamily: quickDigitalMenu.fontFamily || "sans",
+              welcomeMessage: quickDigitalMenu.welcomeMessage || "Bem-vindo ao nosso cardápio!",
+              bannerUrl: quickDigitalMenu.bannerUrl || quickAdmin.bannerUrl || tenant.bannerUrl || tenant.coverUrl || "",
+              logoUrl: quickDigitalMenu.logoUrl || quickAdmin.logoUrl || tenant.logoUrl || "",
+              allowOrdering: quickDigitalMenu.allowOrdering !== undefined ? quickDigitalMenu.allowOrdering : true,
+              showStock: quickDigitalMenu.showStock || false,
               ...quickDigitalMenu,
             });
             if (existingSnapshot.admin) {
@@ -1858,9 +1879,11 @@ const Marketplace: React.FC<MarketplaceProps> = ({
             // Set base settings with tenant info so DigitalMenu mounts with skeleton instantly
             setStoreSettings({
               restaurantName: tenant.name,
-              primaryColor: "#008080",
+              primaryColor: tenant.primaryColor || "#4f46e5",
+              accentColor: tenant.accentColor || "#facc15",
+              fontFamily: "sans",
               welcomeMessage: "Bem-vindo ao nosso cardápio!",
-              bannerUrl: "",
+              bannerUrl: tenant.bannerUrl || tenant.coverUrl || "",
               logoUrl: tenant.logoUrl || "",
               allowOrdering: true,
               showStock: false,
@@ -1904,23 +1927,29 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
         if (settingsSnap.exists()) {
           const data = settingsSnap.data();
+          const dMenu = data.digitalMenu || {};
+          const adm = data.admin || {};
           finalSettings = {
-            restaurantName: tenant.name,
-            primaryColor: "#008080",
-            welcomeMessage: "Bem-vindo ao nosso cardápio!",
-            bannerUrl: "",
-            logoUrl: tenant.logoUrl || "",
-            allowOrdering: true,
-            showStock: false,
-            ...(data.digitalMenu || {}),
+            restaurantName: dMenu.restaurantName || adm.companyName || tenant.name,
+            primaryColor: dMenu.primaryColor || adm.primaryColor || tenant.primaryColor || "#4f46e5",
+            accentColor: dMenu.accentColor || adm.accentColor || tenant.accentColor || "#facc15",
+            fontFamily: dMenu.fontFamily || "sans",
+            welcomeMessage: dMenu.welcomeMessage || "Bem-vindo ao nosso cardápio!",
+            bannerUrl: dMenu.bannerUrl || adm.bannerUrl || tenant.bannerUrl || tenant.coverUrl || "",
+            logoUrl: dMenu.logoUrl || adm.logoUrl || tenant.logoUrl || "",
+            allowOrdering: dMenu.allowOrdering !== undefined ? dMenu.allowOrdering : true,
+            showStock: dMenu.showStock || false,
+            ...dMenu,
           };
           if (data.admin) finalAdmin = data.admin;
         } else {
           finalSettings = {
             restaurantName: tenant.name,
-            primaryColor: "#008080",
+            primaryColor: tenant.primaryColor || "#4f46e5",
+            accentColor: tenant.accentColor || "#facc15",
+            fontFamily: "sans",
             welcomeMessage: "Bem-vindo ao nosso cardápio!",
-            bannerUrl: "",
+            bannerUrl: tenant.bannerUrl || tenant.coverUrl || "",
             logoUrl: tenant.logoUrl || "",
             allowOrdering: true,
             showStock: false,
@@ -2254,7 +2283,8 @@ const Marketplace: React.FC<MarketplaceProps> = ({
           isLoading={isStoreLoading && storeProducts.length === 0}
           settings={{
             ...storeSettings,
-            primaryColor: storeSettings.primaryColor || "#0d9488",
+            primaryColor: storeSettings.primaryColor || storeAdminSettings?.primaryColor || selectedTenant?.primaryColor || "#4f46e5",
+            accentColor: storeSettings.accentColor || storeAdminSettings?.accentColor || selectedTenant?.accentColor || "#facc15",
           }}
           products={storeProducts}
           autoStart={true}
@@ -2286,6 +2316,13 @@ const Marketplace: React.FC<MarketplaceProps> = ({
           restaurantAddress={storeAdminSettings?.address || selectedTenant?.address}
           restaurantCity={getRestaurantCity(selectedTenant, storeAdminSettings)}
           onPlaceOrder={async (order) => {
+            const currentStatus = getTenantOpenStatus(selectedTenant.id);
+            if (!currentStatus.isOpen) {
+              const msg = `O restaurante está fechado no momento (${currentStatus.showTime || "fora do horário de atendimento"}). Não é possível enviar pedidos.`;
+              showToast(msg, "error");
+              throw new Error(msg);
+            }
+
             // Se o perfil local não estiver preenchido, preenchemos com os dados do pedido atual
             if (!profile?.name || !profile?.phone) {
               onUpdateProfile({

@@ -244,6 +244,8 @@ export interface AdminSettings {
     whatsapp?: string;
   };
   logoUrl?: string;
+  bannerUrl?: string;
+  coverUrl?: string;
   latitude?: number;
   longitude?: number;
   primaryColor?: string;
@@ -306,6 +308,9 @@ export interface DigitalMenuSettings {
   showStock: boolean;
   bannerUrl: string;
   logoUrl: string;
+  isStoreForceClosed?: boolean; // Fechado manualmente
+  isStoreForceOpen?: boolean; // Forçar aberto
+  businessHours?: BusinessHours[]; // Horários de atendimento
   categoryImages?: Record<string, string>; // Imagens personalizadas para cada categoria
   categoryOrder?: string[]; // Ordem personalizada das categorias
   hiddenCategories?: string[]; // Categorias ocultas no cardápio digital
@@ -359,6 +364,9 @@ export interface Tenant {
   active: boolean;
   logoUrl?: string; // URL do logo para o Marketplace
   bannerUrl?: string; // Banner para o Marketplace
+  coverUrl?: string; // Imagem de capa para o Marketplace
+  primaryColor?: string; // Cor primária da marca
+  accentColor?: string; // Cor de destaque da marca
   category?: string; // Categoria (Lanches, Pizza, etc.)
   description?: string; // Breve descrição
   customModules?: Permission[]; // Módulos específicos habilitados para este cliente (sobrescreve o plano)

@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo } from 'react';
-import { DigitalMenuSettings, Product, Table, Order } from '../types';
+import { DigitalMenuSettings, Product, Table, Order, BusinessHours } from '../types';
 import { compressImage } from '../lib/imageUtils';
 import { 
   Smartphone, Palette, QrCode, 
@@ -12,7 +12,7 @@ import {
   Bike, Home, UserCircle, Phone, Store,
   Image as ImageIcon, Sparkles, ArrowUp, ArrowDown, Zap, Tag, Star,
   Search, Filter, Loader2, Package,
-  Printer, Download, ExternalLink, Trash2, AlertTriangle
+  Printer, Download, ExternalLink, Trash2, AlertTriangle, Clock
 } from 'lucide-react';
 
 import DigitalMenu from './DigitalMenu';
@@ -59,7 +59,45 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
   estimatedDeliveryTime,
   estimatedPickupTime
 }) => {
-  const [activeTab, setActiveTab] = useState<'visual' | 'management' | 'qrcode' | 'promo' | 'totem'>('visual');
+  const [activeTab, setActiveTab] = useState<'visual' | 'management' | 'qrcode' | 'promo' | 'totem' | 'hours'>('visual');
+  const FIXED_WEEKDAYS = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo'];
+
+  const businessHours = useMemo(() => settings.businessHours || [], [settings.businessHours]);
+
+  const getDayShifts = (dayName: string) => {
+    const shifts = businessHours.filter(h => h.day === dayName);
+    if (shifts.length === 0) {
+      return [{ day: dayName, open: '18:00', close: '23:30', isClosed: false }];
+    }
+    return shifts;
+  };
+
+  const handleUpdateShift = (dayName: string, shiftIndex: number, field: 'open' | 'close', value: string) => {
+    const dayShifts = [...getDayShifts(dayName)];
+    if (dayShifts[shiftIndex]) {
+      dayShifts[shiftIndex] = { ...dayShifts[shiftIndex], [field]: value };
+    }
+    const otherDays = businessHours.filter(h => h.day !== dayName);
+    onUpdateSettings({ ...settings, businessHours: [...otherDays, ...dayShifts] });
+  };
+
+  const handleToggleDayClosed = (dayName: string, isClosed: boolean) => {
+    const dayShifts = getDayShifts(dayName).map(s => ({ ...s, isClosed }));
+    const otherDays = businessHours.filter(h => h.day !== dayName);
+    onUpdateSettings({ ...settings, businessHours: [...otherDays, ...dayShifts] });
+  };
+
+  const handleAddShiftToDay = (dayName: string) => {
+    const dayShifts = [...getDayShifts(dayName), { day: dayName, open: '11:00', close: '15:00', isClosed: false }];
+    const otherDays = businessHours.filter(h => h.day !== dayName);
+    onUpdateSettings({ ...settings, businessHours: [...otherDays, ...dayShifts] });
+  };
+
+  const handleRemoveShiftFromDay = (dayName: string, shiftIndex: number) => {
+    const dayShifts = getDayShifts(dayName).filter((_, idx) => idx !== shiftIndex);
+    const otherDays = businessHours.filter(h => h.day !== dayName);
+    onUpdateSettings({ ...settings, businessHours: [...otherDays, ...(dayShifts.length > 0 ? dayShifts : [{ day: dayName, open: '18:00', close: '23:30', isClosed: true }])] });
+  };
   const [showTestMode, setShowTestMode] = useState(false);
   const [isLinkCopied, setIsLinkCopied] = useState<string | boolean>(false);
   const [previewDevice, setPreviewDevice] = useState<'mobile' | 'desktop'>('mobile');
@@ -374,8 +412,72 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
           </div>
         </div>
 
+        {/* Status Operacional da Loja no Cardápio Digital & Marketplace */}
+        <div className="p-4 bg-slate-900 rounded-3xl text-white flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl border border-slate-800">
+          <div className="flex items-center gap-3">
+            <div className={`w-3.5 h-3.5 rounded-full ${
+              settings.isStoreForceClosed ? 'bg-rose-500 animate-pulse' : settings.isStoreForceOpen ? 'bg-emerald-400 animate-pulse' : 'bg-sky-400'
+            }`} />
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Status do Cardápio:</span>
+                <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${
+                  settings.isStoreForceClosed ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' :
+                  settings.isStoreForceOpen ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
+                  'bg-sky-500/20 text-sky-300 border border-sky-500/30'
+                }`}>
+                  {settings.isStoreForceClosed ? '🔴 FECHADO MANUALMENTE' : settings.isStoreForceOpen ? '🟢 FORÇAR ABERTO' : '⏰ AUTOMÁTICO (HORÁRIOS)'}
+                </span>
+              </div>
+              <p className="text-[11px] font-medium text-slate-300 mt-0.5">
+                {settings.isStoreForceClosed 
+                  ? 'A loja está fechada. Clientes não conseguirão finalizar pedidos no cardápio.' 
+                  : settings.isStoreForceOpen 
+                  ? 'A loja está aberta para receber pedidos agora independente do horário programado.' 
+                  : 'A loja abre e fecha automaticamente conforme a escala semanal de horários de atendimento.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => onUpdateSettings({ ...settings, isStoreForceClosed: false, isStoreForceOpen: false })}
+              className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border cursor-pointer ${
+                !settings.isStoreForceClosed && !settings.isStoreForceOpen 
+                  ? 'bg-sky-600 text-white border-sky-400 shadow-md' 
+                  : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+              }`}
+            >
+              ⏰ Automático
+            </button>
+            <button
+              type="button"
+              onClick={() => onUpdateSettings({ ...settings, isStoreForceClosed: false, isStoreForceOpen: true })}
+              className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border cursor-pointer ${
+                settings.isStoreForceOpen 
+                  ? 'bg-emerald-600 text-white border-emerald-400 shadow-md' 
+                  : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+              }`}
+            >
+              🟢 Aberto
+            </button>
+            <button
+              type="button"
+              onClick={() => onUpdateSettings({ ...settings, isStoreForceClosed: true, isStoreForceOpen: false })}
+              className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border cursor-pointer ${
+                settings.isStoreForceClosed 
+                  ? 'bg-rose-600 text-white border-rose-400 shadow-md' 
+                  : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+              }`}
+            >
+              🔴 Fechado (Pausa)
+            </button>
+          </div>
+        </div>
+
         <div className="bg-white p-5 rounded-3xl border shadow-sm space-y-5">
-           <div className="flex bg-slate-50 p-1 rounded-xl w-fit border">
+           <div className="flex bg-slate-50 p-1 rounded-xl w-fit border flex-wrap gap-1">
             <button onClick={() => setActiveTab('visual')} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-black text-[9px] uppercase tracking-widest transition-all ${activeTab === 'visual' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:bg-white'}`}>
               <Palette size={14} /> Estilo Visual
             </button>
@@ -384,6 +486,9 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
             </button>
             <button onClick={() => setActiveTab('promo')} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-black text-[9px] uppercase tracking-widest transition-all ${activeTab === 'promo' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:bg-white'}`}>
               <Tag size={14} /> Promoção do Dia
+            </button>
+            <button onClick={() => setActiveTab('hours')} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-black text-[9px] uppercase tracking-widest transition-all ${activeTab === 'hours' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:bg-white'}`}>
+              <Clock size={14} /> Atendimento & Horários
             </button>
             <button onClick={() => setActiveTab('qrcode')} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-black text-[9px] uppercase tracking-widest transition-all ${activeTab === 'qrcode' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:bg-white'}`}>
               <QrCode size={14} /> QR Codes
@@ -395,69 +500,172 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
 
           {activeTab === 'visual' && (
             <div className="space-y-5 animate-in slide-in-from-left-4">
+              <div className="p-3 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-2xl border border-indigo-100/80 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+                    <Sparkles size={16} />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-black text-slate-800">Identidade Visual Unificada da Loja</h3>
+                    <p className="text-[9px] font-medium text-slate-500">Cores, logo e capa configurados aqui são sincronizados no Cardápio Digital, no Marketplace e no Painel.</p>
+                  </div>
+                </div>
+                <span className="px-2.5 py-1 bg-white text-indigo-700 text-[8px] font-black rounded-lg border border-indigo-100 shadow-sm shrink-0 uppercase tracking-wider">
+                  Sincronizado
+                </span>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Logo Selection */}
                 <div className="space-y-3">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-2">
-                    <ImageIcon size={14} /> Logo do Restaurante
-                  </label>
-                  <div className="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 hover:border-indigo-300 transition-all group relative overflow-hidden">
-                    <div className="w-16 h-16 rounded-xl bg-white shadow-sm flex items-center justify-center overflow-hidden border border-slate-100">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1 flex items-center gap-2">
+                      <ImageIcon size={14} className="text-indigo-600" /> Logo Oficial do Restaurante
+                    </label>
+                    {settings.logoUrl && (
+                      <button
+                        type="button"
+                        onClick={() => onUpdateSettings({ ...settings, logoUrl: '' })}
+                        className="text-[9px] font-black text-rose-500 hover:text-rose-700 uppercase tracking-wider flex items-center gap-1 transition-colors"
+                      >
+                        <Trash2 size={12} /> Remover Logo
+                      </button>
+                    )}
+                  </div>
+                  
+                  <div className="p-4 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 hover:border-indigo-300 transition-all flex flex-col sm:flex-row items-center gap-4">
+                    <div className="w-20 h-20 rounded-2xl bg-white shadow-md flex items-center justify-center overflow-hidden border border-slate-100 shrink-0 relative group">
                       {settings.logoUrl ? (
                         <img src={settings.logoUrl} alt="Logo" className="w-full h-full object-cover" />
                       ) : (
-                        <ImageIcon className="text-slate-300" size={24} />
+                        <div className="flex flex-col items-center justify-center text-slate-300">
+                          <Store size={28} />
+                          <span className="text-[7px] font-bold mt-1">Sem Logo</span>
+                        </div>
                       )}
                     </div>
-                    <div className="flex-1">
-                      <p className="text-[10px] font-bold text-slate-500 mb-2">PNG ou JPG (Recomendado 512x512)</p>
-                      <label className="cursor-pointer bg-white text-indigo-600 px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest shadow-sm border hover:bg-indigo-50 transition-all inline-block">
-                        Selecionar Arquivo
-                        <input type="file" className="hidden" accept="image/*" onChange={(e) => handleFileUpload(e, 'logo')} />
-                      </label>
+                    <div className="flex-1 space-y-2 text-center sm:text-left w-full">
+                      <p className="text-[10px] font-bold text-slate-500">Formato quadrado PNG ou JPG (Recomendado 512x512)</p>
+                      <div className="flex items-center gap-2 flex-wrap justify-center sm:justify-start">
+                        <label className="cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest shadow-md transition-all inline-flex items-center gap-1.5 active:scale-95">
+                          <Plus size={13} /> Escolher Arquivo
+                          <input type="file" className="hidden" accept="image/*" onChange={(e) => handleFileUpload(e, 'logo')} />
+                        </label>
+                      </div>
+                      <input 
+                        type="text" 
+                        placeholder="Ou cole a URL direta da logo..." 
+                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg outline-none font-medium text-[10px] focus:border-indigo-500 transition-all" 
+                        value={settings.logoUrl || ''} 
+                        onChange={(e) => onUpdateSettings({ ...settings, logoUrl: e.target.value })} 
+                      />
                     </div>
                   </div>
                 </div>
 
                 {/* Colors and Fonts */}
                 <div className="space-y-3">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-2">
-                    <Palette size={14} /> Cores e Tipografia
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1 flex items-center gap-2">
+                    <Palette size={14} className="text-indigo-600" /> Cores da Marca e Tipografia
                   </label>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex flex-col gap-2">
-                      <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Cor Primária</span>
-                      <div className="flex items-center gap-3">
+                  
+                  <div className="grid grid-cols-2 gap-3">
+                    {/* Cor Primária */}
+                    <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Cor Principal</span>
+                        <span className="text-[9px] font-mono font-bold text-slate-600 uppercase">{settings.primaryColor || '#4f46e5'}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
                         <input 
                           type="color" 
-                          value={settings.primaryColor} 
+                          value={settings.primaryColor || '#4f46e5'} 
                           onChange={(e) => onUpdateSettings({ ...settings, primaryColor: e.target.value })}
-                          className="w-10 h-10 rounded-lg border-2 border-white shadow-sm cursor-pointer"
+                          className="w-9 h-9 rounded-xl border-2 border-white shadow-sm cursor-pointer p-0 bg-transparent shrink-0"
                         />
-                        <span className="text-[10px] font-mono font-bold text-slate-600 uppercase">{settings.primaryColor}</span>
+                        <input 
+                          type="text"
+                          value={settings.primaryColor || '#4f46e5'}
+                          onChange={(e) => onUpdateSettings({ ...settings, primaryColor: e.target.value })}
+                          className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg font-mono font-bold text-[10px] uppercase outline-none focus:border-indigo-500"
+                          placeholder="#4F46E5"
+                        />
+                      </div>
+                      {/* Presets Rápidos */}
+                      <div className="flex items-center gap-1.5 pt-1 flex-wrap">
+                        {[
+                          { name: 'Vermelho Gourmet', color: '#E31B23' },
+                          { name: 'Laranja Delivery', color: '#FF4F18' },
+                          { name: 'Esmeralda', color: '#059669' },
+                          { name: 'Roxo Moderno', color: '#7C3AED' },
+                          { name: 'Azul', color: '#2563EB' },
+                          { name: 'Preto Elegante', color: '#18181B' },
+                        ].map((p) => (
+                          <button
+                            key={p.color}
+                            type="button"
+                            title={p.name}
+                            onClick={() => onUpdateSettings({ ...settings, primaryColor: p.color })}
+                            className="w-5 h-5 rounded-md border border-white shadow-xs hover:scale-110 transition-transform"
+                            style={{ backgroundColor: p.color }}
+                          />
+                        ))}
                       </div>
                     </div>
-                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex flex-col gap-2">
-                      <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Cor de Destaque</span>
-                      <div className="flex items-center gap-3">
+
+                    {/* Cor de Destaque */}
+                    <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Destaque (Accent)</span>
+                        <span className="text-[9px] font-mono font-bold text-slate-600 uppercase">{settings.accentColor || '#FACC15'}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
                         <input 
                           type="color" 
                           value={settings.accentColor || '#FACC15'} 
                           onChange={(e) => onUpdateSettings({ ...settings, accentColor: e.target.value })}
-                          className="w-10 h-10 rounded-lg border-2 border-white shadow-sm cursor-pointer"
+                          className="w-9 h-9 rounded-xl border-2 border-white shadow-sm cursor-pointer p-0 bg-transparent shrink-0"
                         />
-                        <span className="text-[10px] font-mono font-bold text-slate-600 uppercase">{settings.accentColor || '#FACC15'}</span>
+                        <input 
+                          type="text"
+                          value={settings.accentColor || '#FACC15'}
+                          onChange={(e) => onUpdateSettings({ ...settings, accentColor: e.target.value })}
+                          className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg font-mono font-bold text-[10px] uppercase outline-none focus:border-indigo-500"
+                          placeholder="#FACC15"
+                        />
+                      </div>
+                      {/* Presets Rápidos Accent */}
+                      <div className="flex items-center gap-1.5 pt-1 flex-wrap">
+                        {[
+                          { name: 'Amarelo', color: '#FACC15' },
+                          { name: 'Verde', color: '#10B981' },
+                          { name: 'Laranja', color: '#FB923C' },
+                          { name: 'Rosa', color: '#F43F5E' },
+                          { name: 'Dourado', color: '#F59E0B' },
+                        ].map((p) => (
+                          <button
+                            key={p.color}
+                            type="button"
+                            title={p.name}
+                            onClick={() => onUpdateSettings({ ...settings, accentColor: p.color })}
+                            className="w-5 h-5 rounded-md border border-white shadow-xs hover:scale-110 transition-transform"
+                            style={{ backgroundColor: p.color }}
+                          />
+                        ))}
                       </div>
                     </div>
                   </div>
-                  <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex flex-col gap-2">
-                    <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Fonte do Sistema</span>
-                    <div className="grid grid-cols-3 gap-2">
+
+                  {/* Fonte */}
+                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between gap-2">
+                    <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Fonte</span>
+                    <div className="flex gap-1.5">
                       {['sans', 'serif', 'mono'].map(font => (
                         <button 
                           key={font}
+                          type="button"
                           onClick={() => onUpdateSettings({ ...settings, fontFamily: font as any })}
-                          className={`px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${settings.fontFamily === font ? 'bg-indigo-600 text-white shadow-lg' : 'bg-white text-slate-500 border border-slate-100 hover:bg-slate-50'}`}
+                          className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${settings.fontFamily === font ? 'bg-indigo-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-100'}`}
                         >
                           {font}
                         </button>
@@ -468,30 +676,57 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
               </div>
 
               {/* Banner Selection */}
-              <div className="space-y-4">
+              <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-2">
-                    <Sparkles size={14} /> Banner Principal
-                  </label>
-                  <label className="cursor-pointer text-indigo-600 text-[10px] font-black uppercase tracking-widest hover:underline flex items-center gap-1">
-                    <Plus size={12} /> Upload Personalizado
-                    <input type="file" className="hidden" accept="image/*" onChange={(e) => handleFileUpload(e, 'banner')} />
-                  </label>
+                  <div>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1 flex items-center gap-2">
+                      <Sparkles size={14} className="text-amber-500" /> Capa Principal da Loja (Banner no Marketplace & Cardápio)
+                    </label>
+                    <p className="text-[8px] font-medium text-slate-400 ml-1">Foto em destaque exibida no cabeçalho do seu Cardápio Digital e no card da sua loja no Marketplace.</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="cursor-pointer bg-white text-indigo-600 border border-indigo-200 hover:bg-indigo-50 px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest shadow-xs transition-all flex items-center gap-1">
+                      <Plus size={12} /> Subir Foto
+                      <input type="file" className="hidden" accept="image/*" onChange={(e) => handleFileUpload(e, 'banner')} />
+                    </label>
+                    {settings.bannerUrl && (
+                      <button
+                        type="button"
+                        onClick={() => onUpdateSettings({ ...settings, bannerUrl: '' })}
+                        className="text-[9px] font-black text-rose-500 hover:text-rose-700 uppercase tracking-wider flex items-center gap-1 transition-colors px-2 py-1.5"
+                      >
+                        <Trash2 size={12} /> Remover Capa
+                      </button>
+                    )}
+                  </div>
                 </div>
+
+                {/* Banner Preview se existir */}
+                {settings.bannerUrl && (
+                  <div className="relative h-28 w-full rounded-2xl overflow-hidden border border-slate-200 shadow-sm group">
+                    <img src={settings.bannerUrl} alt="Capa da Loja" className="w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-3">
+                      <span className="text-[10px] font-black text-white uppercase tracking-wider bg-black/40 px-2.5 py-1 rounded-lg backdrop-blur-sm">
+                        Capa Atual em Uso
+                      </span>
+                    </div>
+                  </div>
+                )}
                 
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
                   {bannerPresets.map((preset) => (
                     <button
                       key={preset.name}
+                      type="button"
                       onClick={() => onUpdateSettings({ ...settings, bannerUrl: preset.url })}
-                      className={`relative h-20 rounded-xl overflow-hidden border-2 transition-all group ${settings.bannerUrl === preset.url ? 'border-indigo-600 ring-2 ring-indigo-100' : 'border-transparent hover:border-indigo-200'}`}
+                      className={`relative h-20 rounded-xl overflow-hidden border-2 transition-all group ${settings.bannerUrl === preset.url ? 'border-indigo-600 ring-2 ring-indigo-200 shadow-md' : 'border-transparent hover:border-indigo-200'}`}
                     >
                       <img src={preset.url} alt={preset.name} className="w-full h-full object-cover" />
                       <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                         <span className="text-[8px] font-black text-white uppercase tracking-widest">{preset.name}</span>
                       </div>
                       {settings.bannerUrl === preset.url && (
-                        <div className="absolute top-1 right-1 bg-indigo-600 text-white p-1 rounded-lg">
+                        <div className="absolute top-1 right-1 bg-indigo-600 text-white p-1 rounded-lg shadow-sm">
                           <Check size={10} />
                         </div>
                       )}
@@ -502,17 +737,36 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
                 <div className="relative">
                   <input 
                     type="text" 
-                    placeholder="Ou cole a URL de uma imagem externa..." 
-                    className="w-full px-4 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl outline-none font-medium text-[11px] focus:border-indigo-500 focus:bg-white transition-all" 
-                    value={settings.bannerUrl} 
+                    placeholder="Ou cole a URL direta de uma imagem externa para a capa..." 
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none font-medium text-[11px] focus:border-indigo-500 focus:bg-white transition-all pr-10" 
+                    value={settings.bannerUrl || ''} 
                     onChange={(e) => onUpdateSettings({ ...settings, bannerUrl: e.target.value })} 
                   />
                   <ImageIcon className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
                 </div>
               </div>
-              <div className="space-y-2">
-                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome de Exibição</label>
-                <input type="text" className="w-full px-4 py-3 bg-slate-50 border rounded-xl outline-none font-bold text-xs" value={settings.restaurantName} onChange={(e) => onUpdateSettings({ ...settings, restaurantName: e.target.value })} />
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">Nome de Exibição do Restaurante</label>
+                  <input 
+                    type="text" 
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none font-bold text-xs focus:bg-white focus:border-indigo-500 transition-all" 
+                    value={settings.restaurantName || ''} 
+                    onChange={(e) => onUpdateSettings({ ...settings, restaurantName: e.target.value })} 
+                    placeholder="Nome do seu restaurante"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">Mensagem de Boas-Vindas</label>
+                  <input 
+                    type="text" 
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none font-bold text-xs focus:bg-white focus:border-indigo-500 transition-all" 
+                    value={settings.welcomeMessage || ''} 
+                    onChange={(e) => onUpdateSettings({ ...settings, welcomeMessage: e.target.value })} 
+                    placeholder="Bem-vindo ao nosso cardápio!"
+                  />
+                </div>
               </div>
 
               {/* URL E SLUG PERSONALIZADO DO CLIENTE */}
@@ -1190,6 +1444,132 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
                     </div>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'hours' && (
+            <div className="space-y-6 animate-in slide-in-from-left-4">
+              <div className="p-4 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-2xl border border-indigo-100 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+                    <Clock size={16} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black text-slate-800">Horários de Atendimento do Cardápio & Delivery</h4>
+                    <p className="text-[10px] font-medium text-slate-500">
+                      Configure os turnos em que sua loja aceita pedidos. Fora desses horários (ou quando marcada como fechada), os clientes podem visualizar o cardápio mas o sistema bloqueia o envio e finalização do pedido.
+                    </p>
+                  </div>
+                </div>
+                <span className="px-3 py-1 bg-white text-indigo-700 text-[8px] font-black rounded-lg border border-indigo-100 shadow-sm shrink-0 uppercase tracking-wider">
+                  Bloqueio Ativo
+                </span>
+              </div>
+
+              {/* Escala Semanal de Funcionamento */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                {FIXED_WEEKDAYS.map((dayName) => {
+                  const dayShifts = getDayShifts(dayName);
+                  const isClosed = dayShifts.every((s) => s.isClosed);
+
+                  return (
+                    <div 
+                      key={dayName} 
+                      className={`flex flex-col p-4 rounded-2xl border transition-all ${
+                        isClosed 
+                          ? 'bg-slate-50/80 border-slate-200/70' 
+                          : 'bg-white border-slate-200 shadow-2xs hover:shadow-sm'
+                      }`}
+                    >
+                      {/* Cabeçalho do Card do Dia */}
+                      <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-slate-100">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-black text-slate-800 uppercase text-xs tracking-wider">
+                            {dayName}
+                          </span>
+                          <span className={`text-[8.5px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md border ${
+                            isClosed 
+                              ? 'bg-rose-50 text-rose-600 border-rose-200/60' 
+                              : 'bg-emerald-50 text-emerald-700 border-emerald-200/60'
+                          }`}>
+                            {isClosed ? 'Fechado' : `${dayShifts.length} ${dayShifts.length > 1 ? 'Turnos' : 'Turno'}`}
+                          </span>
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={isClosed}
+                          onClick={() => handleAddShiftToDay(dayName)}
+                          className="flex items-center gap-1 px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 disabled:opacity-40 disabled:hover:bg-indigo-50 rounded-lg text-[9.5px] font-black uppercase tracking-wider transition-all cursor-pointer hover:scale-105 active:scale-95"
+                          title={`Adicionar mais um horário para ${dayName}`}
+                        >
+                          <Plus size={12} />
+                          <span>Turno</span>
+                        </button>
+                      </div>
+
+                      {/* Opção Marcar como Fechado */}
+                      <div className="mb-2.5">
+                        <label className="flex items-center justify-between cursor-pointer p-2 bg-slate-50 hover:bg-slate-100/80 rounded-xl border border-slate-200/80 transition-all">
+                          <span className={`text-[9px] font-black uppercase tracking-wider ${isClosed ? 'text-rose-600' : 'text-slate-600'}`}>
+                            {isClosed ? '🔴 Loja Fechada neste dia' : '🟢 Loja Aberta'}
+                          </span>
+                          <input 
+                            type="checkbox" 
+                            checked={isClosed}
+                            onChange={(e) => handleToggleDayClosed(dayName, e.target.checked)}
+                            className="toggle toggle-xs toggle-primary cursor-pointer"
+                          />
+                        </label>
+                      </div>
+
+                      {/* Lista de Turnos do Dia */}
+                      {!isClosed && (
+                        <div className="space-y-2">
+                          {dayShifts.map((shift, shiftIdx) => (
+                            <div 
+                              key={shiftIdx}
+                              className="flex items-center gap-1.5 p-2 bg-slate-50 rounded-xl border border-slate-100"
+                            >
+                              <div className="flex-1 grid grid-cols-2 gap-1.5 items-center">
+                                <div>
+                                  <span className="text-[7.5px] font-black uppercase tracking-wider text-slate-400 block mb-0.5">Abertura</span>
+                                  <input 
+                                    type="time" 
+                                    value={shift.open || '18:00'}
+                                    onChange={(e) => handleUpdateShift(dayName, shiftIdx, 'open', e.target.value)}
+                                    className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-[11px] font-mono font-bold text-slate-800 outline-none focus:border-indigo-500"
+                                  />
+                                </div>
+                                <div>
+                                  <span className="text-[7.5px] font-black uppercase tracking-wider text-slate-400 block mb-0.5">Fechamento</span>
+                                  <input 
+                                    type="time" 
+                                    value={shift.close || '23:30'}
+                                    onChange={(e) => handleUpdateShift(dayName, shiftIdx, 'close', e.target.value)}
+                                    className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-[11px] font-mono font-bold text-slate-800 outline-none focus:border-indigo-500"
+                                  />
+                                </div>
+                              </div>
+
+                              {dayShifts.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveShiftFromDay(dayName, shiftIdx)}
+                                  className="p-1.5 text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer self-end mb-0.5"
+                                  title="Remover este turno"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

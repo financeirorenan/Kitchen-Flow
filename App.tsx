@@ -2397,9 +2397,8 @@ const App: React.FC = () => {
       const s = await localDb.settings.get(effectiveTenantId || 'global');
       
       // Ensure images are compressed before saving to Firestore (1MB limit)
-      let compressedLogo = digitalMenuSettings.logoUrl;
-      let compressedBanner = digitalMenuSettings.bannerUrl;
-      let compressedAdminLogo = adminSettings.logoUrl;
+      let compressedLogo = digitalMenuSettings.logoUrl || adminSettings.logoUrl;
+      let compressedBanner = digitalMenuSettings.bannerUrl || adminSettings.bannerUrl;
 
       if (compressedLogo && compressedLogo.length > 100000 && compressedLogo.startsWith('data:image/')) {
         compressedLogo = await compressImage(compressedLogo, 400, 400, 0.7);
@@ -2407,12 +2406,35 @@ const App: React.FC = () => {
       if (compressedBanner && compressedBanner.length > 200000 && compressedBanner.startsWith('data:image/')) {
         compressedBanner = await compressImage(compressedBanner, 800, 450, 0.7);
       }
-      if (compressedAdminLogo && compressedAdminLogo.length > 100000 && compressedAdminLogo.startsWith('data:image/')) {
-        compressedAdminLogo = await compressImage(compressedAdminLogo, 400, 400, 0.7);
-      }
 
-      const updatedDigitalMenu = { ...digitalMenuSettings, logoUrl: compressedLogo, bannerUrl: compressedBanner };
-      const updatedAdmin = { ...adminSettings, logoUrl: compressedAdminLogo };
+      // UNIFY BRANDING: Primary Color, Accent Color, Logo, Banner, Store Name
+      const unifiedPrimaryColor = digitalMenuSettings.primaryColor || adminSettings.primaryColor || '#4f46e5';
+      const unifiedAccentColor = digitalMenuSettings.accentColor || adminSettings.accentColor || '#facc15';
+      const unifiedLogo = compressedLogo || '';
+      const unifiedBanner = compressedBanner || '';
+      const unifiedName = digitalMenuSettings.restaurantName || adminSettings.companyName || 'KitchenFlow';
+
+      const updatedDigitalMenu = { 
+        ...digitalMenuSettings, 
+        restaurantName: unifiedName,
+        primaryColor: unifiedPrimaryColor,
+        accentColor: unifiedAccentColor,
+        logoUrl: unifiedLogo, 
+        bannerUrl: unifiedBanner 
+      };
+      const updatedAdmin = { 
+        ...adminSettings, 
+        companyName: unifiedName,
+        primaryColor: unifiedPrimaryColor,
+        accentColor: unifiedAccentColor,
+        logoUrl: unifiedLogo, 
+        bannerUrl: unifiedBanner,
+        coverUrl: unifiedBanner
+      };
+
+      // Keep active React states in sync immediately
+      setDigitalMenuSettings(updatedDigitalMenu);
+      setAdminSettings(updatedAdmin);
 
       // Limpar campos de estado interno que não devem ir para o Firestore admin settings
       const adminToSync = { ...updatedAdmin };
@@ -2481,12 +2503,18 @@ const App: React.FC = () => {
         // Sync Tenant Profile (This is what shows up in the Marketplace and SaaS Admin)
         const tenantUpdate: any = {
           logoUrl: updatedDigitalMenu.logoUrl || updatedAdmin.logoUrl || tenantData?.logoUrl,
-          bannerUrl: updatedDigitalMenu.bannerUrl || tenantData?.bannerUrl,
+          bannerUrl: updatedDigitalMenu.bannerUrl || updatedAdmin.bannerUrl || tenantData?.bannerUrl,
+          coverUrl: updatedDigitalMenu.bannerUrl || updatedAdmin.bannerUrl || tenantData?.bannerUrl,
+          primaryColor: unifiedPrimaryColor,
+          accentColor: unifiedAccentColor,
           description: updatedDigitalMenu.welcomeMessage,
           name: updatedDigitalMenu.restaurantName || updatedAdmin.companyName,
           cnpj: updatedAdmin.cnpj || tenantData?.cnpj,
           address: updatedAdmin.address,
           phone: updatedAdmin.phone,
+          isStoreForceClosed: updatedAdmin.isStoreForceClosed ?? updatedDigitalMenu.isStoreForceClosed ?? false,
+          isStoreForceOpen: updatedAdmin.isStoreForceOpen ?? updatedDigitalMenu.isStoreForceOpen ?? false,
+          businessHours: updatedAdmin.businessHours || updatedDigitalMenu.businessHours || [],
           updatedAt: new Date()
         };
 
@@ -5876,16 +5904,44 @@ const App: React.FC = () => {
     setDigitalMenuSettings(prev => {
       resolved = typeof newSettings === 'function' ? newSettings(prev) : newSettings;
       
+      // Unify with adminSettings immediately
+      setAdminSettings(prevAdmin => ({
+        ...prevAdmin,
+        primaryColor: resolved.primaryColor || prevAdmin.primaryColor,
+        accentColor: resolved.accentColor || prevAdmin.accentColor,
+        logoUrl: resolved.logoUrl || prevAdmin.logoUrl,
+        bannerUrl: resolved.bannerUrl || prevAdmin.bannerUrl,
+        coverUrl: resolved.bannerUrl || prevAdmin.coverUrl,
+        companyName: resolved.restaurantName || prevAdmin.companyName,
+        isStoreForceClosed: resolved.isStoreForceClosed !== undefined ? resolved.isStoreForceClosed : prevAdmin.isStoreForceClosed,
+        isStoreForceOpen: resolved.isStoreForceOpen !== undefined ? resolved.isStoreForceOpen : prevAdmin.isStoreForceOpen,
+        businessHours: resolved.businessHours || prevAdmin.businessHours,
+      }));
+
       localDb.settings.get(effectiveTenantId || 'global').then(s => {
+        const mergedAdmin = {
+          ...(s?.admin || adminSettings),
+          primaryColor: resolved.primaryColor || s?.admin?.primaryColor || adminSettings.primaryColor,
+          accentColor: resolved.accentColor || s?.admin?.accentColor || adminSettings.accentColor,
+          logoUrl: resolved.logoUrl || s?.admin?.logoUrl || adminSettings.logoUrl,
+          bannerUrl: resolved.bannerUrl || s?.admin?.bannerUrl || adminSettings.bannerUrl,
+          coverUrl: resolved.bannerUrl || s?.admin?.coverUrl || adminSettings.coverUrl,
+          companyName: resolved.restaurantName || s?.admin?.companyName || adminSettings.companyName,
+          isStoreForceClosed: resolved.isStoreForceClosed !== undefined ? resolved.isStoreForceClosed : s?.admin?.isStoreForceClosed,
+          isStoreForceOpen: resolved.isStoreForceOpen !== undefined ? resolved.isStoreForceOpen : s?.admin?.isStoreForceOpen,
+          businessHours: resolved.businessHours || s?.admin?.businessHours || adminSettings.businessHours,
+        };
+
         if (s) {
           localDb.settings.put({
             ...s,
+            admin: mergedAdmin,
             digitalMenu: resolved
           });
         } else {
           localDb.settings.put({
             id: effectiveTenantId || 'global',
-            admin: adminSettings,
+            admin: mergedAdmin,
             digitalMenu: resolved,
             cashSession: cashSession
           });
@@ -5894,11 +5950,50 @@ const App: React.FC = () => {
 
       if (effectiveTenantId) {
         setDoc(doc(db, 'settings', effectiveTenantId), {
-          digitalMenu: resolved,
+          digitalMenu: cleanObject(resolved),
           updatedAt: new Date()
         }, { merge: true }).catch(err => console.error("Error syncing digital menu settings to cloud:", err));
+
+        // Sync live to publicStorefronts for marketplace / public menu
+        setDoc(doc(db, 'publicStorefronts', effectiveTenantId), {
+          digitalMenu: cleanObject(resolved),
+          updatedAt: new Date()
+        }, { merge: true }).catch(err => console.error("Error syncing digital menu to publicStorefronts:", err));
+
+        // Sync tenant profile branding & status
+        setDoc(doc(db, 'tenants', effectiveTenantId), cleanObject({
+          logoUrl: resolved.logoUrl || undefined,
+          bannerUrl: resolved.bannerUrl || undefined,
+          coverUrl: resolved.bannerUrl || undefined,
+          primaryColor: resolved.primaryColor || undefined,
+          accentColor: resolved.accentColor || undefined,
+          name: resolved.restaurantName || undefined,
+          isStoreForceClosed: resolved.isStoreForceClosed !== undefined ? resolved.isStoreForceClosed : undefined,
+          isStoreForceOpen: resolved.isStoreForceOpen !== undefined ? resolved.isStoreForceOpen : undefined,
+          businessHours: resolved.businessHours || undefined,
+          updatedAt: new Date()
+        }), { merge: true }).catch(err => console.error("Error syncing tenant branding:", err));
       }
 
+      return resolved;
+    });
+  };
+
+  const handleUpdateAdminSettings = (newSettingsOrFn: AdminSettings | ((prev: AdminSettings) => AdminSettings)) => {
+    setAdminSettings(prev => {
+      const resolved = typeof newSettingsOrFn === 'function' ? newSettingsOrFn(prev) : newSettingsOrFn;
+      // Sync branding & status to digitalMenuSettings
+      setDigitalMenuSettings(prevMenu => ({
+        ...prevMenu,
+        restaurantName: resolved.companyName || prevMenu.restaurantName,
+        primaryColor: resolved.primaryColor || prevMenu.primaryColor,
+        accentColor: resolved.accentColor || prevMenu.accentColor,
+        logoUrl: resolved.logoUrl || prevMenu.logoUrl,
+        bannerUrl: resolved.bannerUrl || prevMenu.bannerUrl,
+        isStoreForceClosed: resolved.isStoreForceClosed !== undefined ? resolved.isStoreForceClosed : prevMenu.isStoreForceClosed,
+        isStoreForceOpen: resolved.isStoreForceOpen !== undefined ? resolved.isStoreForceOpen : prevMenu.isStoreForceOpen,
+        businessHours: resolved.businessHours || prevMenu.businessHours,
+      }));
       return resolved;
     });
   };
@@ -7753,7 +7848,7 @@ const App: React.FC = () => {
         {(activeTab === 'settings' || activeTab === 'admin-settings') && hasPermission('admin_settings_manage') && (
           <AdminSettingsComponent 
             settings={adminSettings} 
-            onUpdateSettings={setAdminSettings}
+            onUpdateSettings={handleUpdateAdminSettings}
             onSaveSettings={handleSaveSettings}
             allowedModules={effectiveAllowedModules}
             products={products}

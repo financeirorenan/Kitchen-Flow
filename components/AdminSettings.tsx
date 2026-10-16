@@ -414,6 +414,23 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
     }
   };
 
+  const handleBannerUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        const base64 = event.target?.result as string;
+        const compressed = await compressImage(base64, 1200, 600, 0.75);
+        onUpdateSettings({ ...settings, bannerUrl: compressed, coverUrl: compressed });
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error("Error uploading banner:", err);
+    }
+  };
+
   return (
     <div className="flex flex-col lg:flex-row gap-4 animate-in fade-in duration-500">
       {/* Navegação de Configurações */}
@@ -588,7 +605,7 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
                          </label>
                       </div>
                       <div className="w-full space-y-2">
-                         <p className="text-[10px] font-black uppercase tracking-widest text-indigo-400">Logo do Painel Lojista</p>
+                         <p className="text-[10px] font-black uppercase tracking-widest text-indigo-400">Logo Oficial da Marca</p>
                          <div className="flex gap-2">
                             <button 
                               onClick={() => document.getElementById('logo-upload')?.click()}
@@ -601,12 +618,91 @@ const AdminSettingsComponent: React.FC<AdminSettingsProps> = ({
                                <button 
                                  onClick={() => onUpdateSettings({...settings, logoUrl: ''})}
                                  className="w-10 h-10 bg-rose-500 text-white rounded-xl flex items-center justify-center shadow-lg active:scale-95 transition-all"
+                                 title="Remover Logo"
                                >
                                   <Trash2 size={16} />
                                </button>
                             )}
                          </div>
-                         <p className="text-[7px] font-medium opacity-70">Esta foto aparece apenas no seu painel administrativo.</p>
+                         <p className="text-[7.5px] font-medium opacity-80 leading-tight">Exibida no Painel Lojista, no topo do seu Cardápio Digital e no Marketplace.</p>
+                      </div>
+                  </div>
+
+                  <div className="md:col-span-2 p-5 bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-3xl shadow-xl flex flex-col space-y-4 border border-slate-700/60">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-3">
+                         <div>
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-orange-500/20 text-orange-400 text-[9px] font-black uppercase tracking-wider border border-orange-500/30">
+                               <Sparkles size={11} /> Vitrine & Marketplace
+                            </span>
+                            <h3 className="text-sm font-black text-white mt-1">Imagem de Capa da Loja (Banner)</h3>
+                            <p className="text-[10px] font-medium text-slate-300">
+                               Esta foto é a capa principal exibida aos clientes no Marketplace de Restaurantes, no Cardápio Digital e na busca de lojas.
+                            </p>
+                         </div>
+                         <div className="flex items-center gap-2">
+                            <button
+                               type="button"
+                               onClick={() => document.getElementById('banner-upload')?.click()}
+                               className="px-4 py-2 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl font-black text-[10px] uppercase tracking-wider shadow-lg active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                            >
+                               <Upload size={13} /> Subir Nova Capa
+                               <input id="banner-upload" type="file" className="hidden" accept="image/*" onChange={handleBannerUpload} />
+                            </button>
+                            {(settings.bannerUrl || settings.coverUrl) && (
+                               <button
+                                  type="button"
+                                  onClick={() => onUpdateSettings({ ...settings, bannerUrl: '', coverUrl: '' })}
+                                  className="p-2 bg-rose-500/20 hover:bg-rose-500 text-rose-300 hover:text-white rounded-xl transition-all"
+                                  title="Remover capa personalizada"
+                               >
+                                  <Trash2 size={15} />
+                               </button>
+                            )}
+                         </div>
+                      </div>
+
+                      {/* Preview Container */}
+                      <div className="relative w-full h-44 sm:h-56 rounded-2xl overflow-hidden border border-white/10 bg-slate-950 group">
+                         <img 
+                            src={settings.bannerUrl || settings.coverUrl || tenantData?.bannerUrl || 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?q=80&w=1200&auto=format&fit=crop'} 
+                            alt="Capa da Loja" 
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                         />
+                         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30 pointer-events-none" />
+                         
+                         <label className="absolute inset-0 bg-black/40 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
+                            <Camera size={28} className="text-white drop-shadow-md mb-1" />
+                            <span className="text-xs font-black uppercase tracking-wider text-white bg-black/60 px-3 py-1 rounded-full">
+                               Clique para trocar imagem de capa
+                            </span>
+                            <input type="file" className="hidden" accept="image/*" onChange={handleBannerUpload} />
+                         </label>
+
+                         <div className="absolute bottom-3 left-3 flex items-center gap-2">
+                            <span className="text-[10px] font-black uppercase tracking-wider bg-black/60 backdrop-blur-md text-amber-400 px-2.5 py-1 rounded-lg border border-white/10">
+                               {(settings.bannerUrl || settings.coverUrl) ? '✓ Capa Personalizada Ativa' : 'Foto Padrão Automática'}
+                            </span>
+                         </div>
+                      </div>
+
+                      {/* URL alternativo */}
+                      <div className="flex gap-2 items-center pt-1">
+                         <input
+                            type="text"
+                            placeholder="Ou cole o link direto de uma imagem na web (URL https://...)"
+                            className="flex-1 px-3 py-2 bg-slate-950/60 border border-slate-700 rounded-xl text-white placeholder-slate-500 text-xs font-medium outline-none focus:border-orange-500 transition-all"
+                            value={settings.bannerUrl || settings.coverUrl || ''}
+                            onChange={(e) => onUpdateSettings({ ...settings, bannerUrl: e.target.value, coverUrl: e.target.value })}
+                         />
+                         {(settings.bannerUrl || settings.coverUrl) && (
+                            <button
+                               type="button"
+                               onClick={() => onUpdateSettings({ ...settings, bannerUrl: '', coverUrl: '' })}
+                               className="px-3 py-2 bg-slate-800 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition-all"
+                            >
+                               Limpar
+                            </button>
+                         )}
                       </div>
                   </div>
                </div>

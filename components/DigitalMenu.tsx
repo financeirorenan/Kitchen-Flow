@@ -146,9 +146,96 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
     }
   };
 
-  const effectivePrimaryColor = isMarketplace ? '#FF4F18' : settings.primaryColor;
-  const accentColor = isMarketplace ? '#facc15' : (settings.accentColor || '#facc15');
+  const effectivePrimaryColor = settings.primaryColor || (isMarketplace ? '#FF4F18' : '#4f46e5');
+  const accentColor = settings.accentColor || (isMarketplace ? '#facc15' : '#10b981');
   const fontFamilyClass = settings.fontFamily === 'serif' ? 'font-serif' : settings.fontFamily === 'mono' ? 'font-mono' : 'font-sans';
+
+  // Strict Calculation of Store Open/Closed Status
+  const { effectiveIsOpen, effectiveOpenStatusMessage } = useMemo(() => {
+    // 1. If explicit isOpen is false, respect it
+    if (isOpen === false) {
+      return { effectiveIsOpen: false, effectiveOpenStatusMessage: openStatusMessage || "Fechado agora" };
+    }
+
+    // 2. Check settings.isStoreForceClosed / isStoreForceOpen
+    if (settings.isStoreForceClosed) {
+      return { effectiveIsOpen: false, effectiveOpenStatusMessage: "Fechado Manualmente" };
+    }
+    if (settings.isStoreForceOpen) {
+      return { effectiveIsOpen: true, effectiveOpenStatusMessage: "Aberto agora" };
+    }
+
+    // 3. Check businessHours if present in settings
+    const hours = settings.businessHours;
+    if (hours && Array.isArray(hours) && hours.length > 0) {
+      const DAYS_MAP = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"];
+      const now = new Date();
+      const todayIndex = now.getDay();
+      const todayName = DAYS_MAP[todayIndex];
+
+      const matchDay = (hDay: string, targetDayIndex: number) => {
+        if (!hDay) return false;
+        const targetName = DAYS_MAP[targetDayIndex];
+        const dayClean = hDay.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const targetClean = targetName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        if (dayClean === targetClean || dayClean.replace("-feira", "") === targetClean.replace("-feira", "")) return true;
+        if (targetDayIndex >= 1 && targetDayIndex <= 5 && (dayClean.includes("segunda a sexta") || dayClean.includes("seg a sex") || dayClean.includes("dias uteis"))) return true;
+        if ((targetDayIndex === 0 || targetDayIndex === 6) && (dayClean.includes("sabado e domingo") || dayClean.includes("sab e dom") || dayClean.includes("fim de semana"))) return true;
+        if (dayClean.includes("diario") || dayClean.includes("todos os dias")) return true;
+        return false;
+      };
+
+      const currentHours = now.getHours();
+      const currentMinutes = now.getMinutes();
+      const currentTimeStr = `${String(currentHours).padStart(2, "0")}:${String(currentMinutes).padStart(2, "0")}`;
+
+      // A) Overnight shift from yesterday
+      const yesterdayIndex = (todayIndex + 6) % 7;
+      const yesterdaySchedules = hours.filter(h => matchDay(h.day, yesterdayIndex));
+      const overnightShift = yesterdaySchedules.find(shift => {
+        if (shift.isClosed) return false;
+        const open = shift.open || "00:00";
+        const close = shift.close || "23:59";
+        return close < open && currentTimeStr <= close;
+      });
+      if (overnightShift) {
+        return { effectiveIsOpen: true, effectiveOpenStatusMessage: `Aberto até ${overnightShift.close}` };
+      }
+
+      // B) Today's shifts
+      const todaySchedules = hours.filter(h => matchDay(h.day, todayIndex));
+      if (!todaySchedules || todaySchedules.length === 0 || todaySchedules.every(s => s.isClosed)) {
+        return { effectiveIsOpen: false, effectiveOpenStatusMessage: `Fechado hoje (${todayName})` };
+      }
+
+      const activeShifts = todaySchedules.filter(s => !s.isClosed);
+      if (activeShifts.length === 0) {
+        return { effectiveIsOpen: false, effectiveOpenStatusMessage: `Fechado hoje (${todayName})` };
+      }
+
+      const matchingShift = activeShifts.find(shift => {
+        const openTime = shift.open || "00:00";
+        const closeTime = shift.close || "23:59";
+        if (closeTime < openTime) {
+          return currentTimeStr >= openTime || currentTimeStr <= closeTime;
+        }
+        return currentTimeStr >= openTime && currentTimeStr <= closeTime;
+      });
+
+      if (matchingShift) {
+        return { effectiveIsOpen: true, effectiveOpenStatusMessage: `Aberto até ${matchingShift.close}` };
+      }
+
+      const upcomingShift = activeShifts.find(s => (s.open || "00:00") > currentTimeStr);
+      if (upcomingShift) {
+        return { effectiveIsOpen: false, effectiveOpenStatusMessage: `Abre hoje às ${upcomingShift.open}` };
+      }
+
+      return { effectiveIsOpen: false, effectiveOpenStatusMessage: `Fechado fora do horário` };
+    }
+
+    return { effectiveIsOpen: isOpen, effectiveOpenStatusMessage: openStatusMessage || (isOpen ? "Aberto agora" : "Fechado agora") };
+  }, [isOpen, openStatusMessage, settings.isStoreForceClosed, settings.isStoreForceOpen, settings.businessHours]);
   
   // Order context
   const [orderType, setOrderType] = useState<'table' | 'delivery' | 'takeout' | null>(() => {
@@ -809,6 +896,10 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
 
   const handleFinishOrder = async () => {
     if (isSubmittingOrderRef.current || isSubmittingOrder || cart.length === 0) return;
+    if (!effectiveIsOpen && !isSimulation) {
+      alert(`O restaurante está fechado no momento (${effectiveOpenStatusMessage || "Fora do horário de atendimento"}). Não é possível finalizar pedidos fora do horário de atendimento.`);
+      return;
+    }
     isSubmittingOrderRef.current = true;
     setIsSubmittingOrder(true);
 
@@ -919,7 +1010,19 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
 
   if (menuStep === 'welcome' && !initialTable) {
     return (
-      <div className="min-h-full bg-white flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-500 relative overflow-hidden">
+      <div 
+        className="digital-menu-container min-h-full bg-white flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-500 relative overflow-hidden"
+        style={{
+          ['--brand-primary' as any]: effectivePrimaryColor,
+          ['--brand-accent' as any]: accentColor,
+        }}
+      >
+        <style>{`
+          .digital-menu-container .text-brand-primary { color: ${effectivePrimaryColor} !important; }
+          .digital-menu-container .bg-brand-primary { background-color: ${effectivePrimaryColor} !important; }
+          .digital-menu-container .border-brand-primary { border-color: ${effectivePrimaryColor} !important; }
+          .digital-menu-container .focus\\:border-brand-primary:focus { border-color: ${effectivePrimaryColor} !important; }
+        `}</style>
         {/* Background Gradient & Animated Shapes */}
         <div className="absolute inset-0 bg-gradient-to-br from-slate-50 to-white" />
         <motion.div 
@@ -1020,7 +1123,19 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
   }
 
   return (
-    <div className={`min-h-full bg-[#f8fafb] ${fontFamilyClass} text-slate-900 overflow-x-hidden pb-32`}>
+    <div 
+      className={`digital-menu-container min-h-full bg-[#f8fafb] ${fontFamilyClass} text-slate-900 overflow-x-hidden pb-32`}
+      style={{
+        ['--brand-primary' as any]: effectivePrimaryColor,
+        ['--brand-accent' as any]: accentColor,
+      }}
+    >
+      <style>{`
+        .digital-menu-container .text-brand-primary { color: ${effectivePrimaryColor} !important; }
+        .digital-menu-container .bg-brand-primary { background-color: ${effectivePrimaryColor} !important; }
+        .digital-menu-container .border-brand-primary { border-color: ${effectivePrimaryColor} !important; }
+        .digital-menu-container .focus\\:border-brand-primary:focus { border-color: ${effectivePrimaryColor} !important; }
+      `}</style>
       {/* RESTAURANT HEADER (Screen 6) */}
       <div className="relative h-64 w-full">
         <img 
@@ -1076,7 +1191,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
              <div className="absolute -top-10 right-8 w-20 h-20 bg-white p-1.5 rounded-[2rem] shadow-2xl border border-slate-50">
                <img 
                  src={settings.logoUrl || `https://picsum.photos/seed/${settings.restaurantName}/200/200`} 
-                 className={`w-full h-full object-cover rounded-[1.5rem] ${!isOpen && !isSimulation ? 'grayscale contrast-75 brightness-95' : ''}`} 
+                 className={`w-full h-full object-cover rounded-[1.5rem] ${!effectiveIsOpen && !isSimulation ? 'grayscale contrast-75 brightness-95' : ''}`} 
                  alt={settings.restaurantName}
                />
              </div>
@@ -1087,12 +1202,12 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
 
              <div className="flex items-center gap-2 mb-3 flex-wrap">
                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 border ${
-                 isOpen || isSimulation
+                 effectiveIsOpen || isSimulation
                    ? "bg-emerald-50 text-emerald-700 border-emerald-200/60"
                    : "bg-rose-50 text-rose-700 border-rose-200/60"
                }`}>
-                 <span className={`w-1.5 h-1.5 rounded-full ${isOpen || isSimulation ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`} />
-                 {isOpen || isSimulation ? (openStatusMessage || "Aberto agora") : (openStatusMessage || "Fechado agora")}
+                 <span className={`w-1.5 h-1.5 rounded-full ${effectiveIsOpen || isSimulation ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`} />
+                 {effectiveIsOpen || isSimulation ? (effectiveOpenStatusMessage || "Aberto agora") : (effectiveOpenStatusMessage || "Fechado agora")}
                </span>
 
                {restaurantCity && (
@@ -1125,7 +1240,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
       </div>
 
       {/* Closed Banner Warning */}
-      {!isOpen && !isSimulation && (
+      {!effectiveIsOpen && !isSimulation && (
         <div className="px-6 mt-4">
           <div className="bg-rose-50/90 border border-rose-200/80 rounded-2xl p-4 flex items-start gap-3 text-rose-900 shadow-sm">
             <AlertTriangle size={20} className="text-rose-500 shrink-0 mt-0.5" />
@@ -1134,7 +1249,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                 Estabelecimento Fechado no Momento
               </p>
               <p className="text-[11px] font-medium text-rose-700 mt-0.5 leading-relaxed">
-                {openStatusMessage ? `${openStatusMessage}.` : "Este estabelecimento não está recebendo novos pedidos no momento."} Você pode consultar os itens do cardápio normalmente.
+                {effectiveOpenStatusMessage ? `${effectiveOpenStatusMessage}.` : "Este estabelecimento não está aberto no momento."} Você pode consultar os produtos do cardápio, mas o envio e finalização de pedidos só é permitido quando a loja estiver aberta dentro do horário de atendimento.
               </p>
             </div>
           </div>
@@ -1453,8 +1568,11 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                   </div>
 
                   <button 
-                    disabled={cart.length === 0 || cartTotal < minOrderValue}
-                    onClick={() => setCheckoutStep('details' as const)}
+                    disabled={cart.length === 0 || cartTotal < minOrderValue || (!effectiveIsOpen && !isSimulation)}
+                    onClick={() => {
+                      if (!effectiveIsOpen && !isSimulation) return;
+                      setCheckoutStep('details' as const);
+                    }}
                     className="flex items-center gap-2 select-none disabled:opacity-50"
                   >
                     <span 
@@ -2100,11 +2218,11 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
 
               {checkoutStep !== 'success' && (
                 <div className="p-6 bg-white border-t space-y-4">
-                  {!isOpen && !isSimulation && (
+                  {!effectiveIsOpen && !isSimulation && (
                     <div className="bg-rose-50 p-3.5 rounded-xl border border-rose-200 flex items-center gap-2.5 text-rose-800">
                       <AlertTriangle size={16} className="shrink-0 text-rose-500" />
                       <p className="text-[10px] font-bold">
-                        Estabelecimento fechado no momento ({openStatusMessage || "Fechado"}). Não é possível enviar pedidos.
+                        Estabelecimento fechado no momento ({effectiveOpenStatusMessage || "Fechado"}). Não é possível enviar pedidos fora do horário de funcionamento.
                       </p>
                     </div>
                   )}
@@ -2119,13 +2237,16 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                   <button 
                     disabled={
                       isSubmittingOrder ||
-                      (!isOpen && !isSimulation) ||
+                      (!effectiveIsOpen && !isSimulation) ||
                       (checkoutStep === 'cart' && cartTotal < minOrderValue) ||
                       (checkoutStep === 'details' && (!customerName || !customerPhone || !paymentMethod || !orderType)) ||
                       (checkoutStep === 'details' && orderType === 'delivery' && (!customerAddress || !!cityMatchError || isValidatingCity))
                     }
                     onClick={() => {
-                      if (!isOpen && !isSimulation) return;
+                      if (!effectiveIsOpen && !isSimulation) {
+                        alert(`O restaurante está fechado no momento (${effectiveOpenStatusMessage || "fora do horário de atendimento"}). Não é possível enviar pedidos.`);
+                        return;
+                      }
                       if (checkoutStep === 'cart') {
                         const hasSides = availableUpsells.sides.length > 0;
                         const hasDrinks = availableUpsells.drinks.length > 0;
@@ -2146,7 +2267,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                     className="w-full py-5 text-slate-900 rounded-2xl font-black text-xs uppercase tracking-[0.2em] shadow-xl active:scale-95 transition-all disabled:opacity-50"
                     style={{ backgroundColor: accentColor, boxShadow: `0 20px 25px -5px ${accentColor}33` }}
                   >
-                    {!isOpen && !isSimulation ? 'Restaurante Fechado' : checkoutStep === 'cart' ? 'Finalizar Pedido' : 'Confirmar Pedido'}
+                    {!effectiveIsOpen && !isSimulation ? 'Restaurante Fechado' : checkoutStep === 'cart' ? 'Finalizar Pedido' : 'Confirmar Pedido'}
                   </button>
                 </div>
               )}
