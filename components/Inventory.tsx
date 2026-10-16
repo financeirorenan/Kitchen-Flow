@@ -3537,6 +3537,45 @@ const Inventory: React.FC<InventoryProps> = memo(({
                           className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 transition-all cursor-pointer"
                         />
                       </div>
+                      <div className="col-span-2 pt-2 border-t border-slate-200 mt-1 flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-orange-500 font-bold text-xs">🔥</span>
+                            <span className="text-[10px] font-black text-slate-700 uppercase tracking-tight">Mais Vendidos da Cidade (Marketplace)</span>
+                          </div>
+                          <input 
+                            type="checkbox" 
+                            checked={editingProduct.isBestSeller ?? false} 
+                            onChange={(e) => setEditingProduct({
+                              ...editingProduct, 
+                              isBestSeller: e.target.checked,
+                              customCityBadge: e.target.checked ? (editingProduct.customCityBadge || '🔥 #1 DA CIDADE') : undefined
+                            })}
+                            className="w-4 h-4 rounded text-orange-600 focus:ring-orange-500 border-slate-300 transition-all cursor-pointer"
+                          />
+                        </div>
+                        {editingProduct.isBestSeller && (
+                          <div className="space-y-1.5 pl-3 py-1.5 border-l-2 border-orange-400 bg-orange-50/50 rounded-r-xl">
+                            <label className="text-[9px] font-black uppercase text-orange-700 tracking-wider">Selo / Badge de Destaque na Cidade</label>
+                            <div className="flex flex-wrap gap-1.5">
+                              {['🔥 #1 DA CIDADE', '🍔 MAIS PEDIDO', '⭐ FAVORITO LOCAL', '👑 CAMPEÃO DE VENDAS', '🍣 DESTAQUE DA SEMANA', '🏷️ SUPER OFERTA'].map((badge) => (
+                                <button
+                                  key={badge}
+                                  type="button"
+                                  onClick={() => setEditingProduct({ ...editingProduct, customCityBadge: badge })}
+                                  className={`px-2 py-0.5 rounded-lg text-[9px] font-bold uppercase transition-all ${
+                                    (editingProduct.customCityBadge || '🔥 #1 DA CIDADE') === badge
+                                      ? 'bg-orange-500 text-white shadow-sm'
+                                      : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                                  }`}
+                                >
+                                  {badge}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                       <div className="col-span-2 pt-2 border-t border-slate-200 mt-1 flex items-center justify-between">
                         <span className="text-[10px] font-black text-slate-800 uppercase tracking-widest">Status do Produto</span>
                         <div className="flex items-center gap-3">

@@ -5,7 +5,7 @@ import { collection, onSnapshot, doc, setDoc, updateDoc, query, orderBy, deleteD
 import { compressImage } from '../lib/imageUtils';
 import { ensureLojistaTenantWithData } from '../lib/ensureLojistaTenant';
 import { isQuotaError } from '../lib/firestoreErrors';
-import { Tenant, Plan, Permission, User, MarketplaceInvoice, MarketplaceSettings, MarketplacePromotion, SaasAuditLog, SaasNotification, Order, FinancialRecord, Customer, Product, CashClosingReport, BankAccount, AuditLog } from '../types';
+import { Tenant, Plan, Permission, User, MarketplaceInvoice, MarketplaceSettings, MarketplacePromotion, SaasAuditLog, SaasNotification, Order, FinancialRecord, Customer, Product, CashClosingReport, BankAccount, AuditLog, CityBestSellersConfig } from '../types';
 import { maskPhone } from '../utils/masks';
 import { sendSaasInvoiceEmailResend } from '../services/emailService';
 import { SystemDiagnosticsSuite } from './SystemDiagnosticsSuite';
@@ -21,6 +21,7 @@ import { MarketplaceCrmFunnelView } from './saas/marketplace/MarketplaceCrmFunne
 import { MarketplaceAlgorithmAuctionView } from './saas/marketplace/MarketplaceAlgorithmAuctionView';
 import { MarketplaceOpportunitiesView } from './saas/marketplace/MarketplaceOpportunitiesView';
 import { MarketplaceBannersManagerView } from './saas/marketplace/MarketplaceBannersManagerView';
+import { CityBestSellersManagerView } from './saas/marketplace/CityBestSellersManagerView';
 import { SaasNotificationsDrawer } from './saas/SaasNotificationsDrawer';
 import { SaasAuditLogsModal } from './saas/SaasAuditLogsModal';
 import { SaasGlobalSearchModal } from './saas/SaasGlobalSearchModal';
@@ -114,7 +115,8 @@ import {
   GraduationCap,
   Command,
   Eye,
-  Store
+  Store,
+  Flame
 } from 'lucide-react';
 
 const ALL_MODULES: { id: Permission; label: string }[] = [
@@ -1498,8 +1500,9 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     cashOnDelivery: true
   });
   const [marketplaceConfigSubTab, setMarketplaceConfigSubTab] = useState<
-    'overview' | 'stores' | 'monetization' | 'promotions' | 'crm' | 'algorithm' | 'opportunities' | 'banners' | 'fees' | 'operations' | 'marketing' | 'ranking' | 'maintenance'
+    'overview' | 'stores' | 'monetization' | 'promotions' | 'crm' | 'algorithm' | 'opportunities' | 'banners' | 'city_bestsellers' | 'fees' | 'operations' | 'marketing' | 'ranking' | 'maintenance'
   >('overview');
+  const [cityBestSellersConfig, setCityBestSellersConfig] = useState<CityBestSellersConfig | undefined>(undefined);
   const [marketplaceBanner, setMarketplaceBanner] = useState('https://images.unsplash.com/photo-1504674900247-0877df9cc836?q=80&w=800&auto=format&fit=crop');
   const [marketplacePromotions, setMarketplacePromotions] = useState<MarketplacePromotion[]>([]);
   const [maintenanceConfig, setMaintenanceConfig] = useState({
@@ -1563,6 +1566,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         if (data.paymentMethods) setMarketplacePaymentMethods(prev => ({ ...prev, ...data.paymentMethods }));
         if (data.bannerUrl) setMarketplaceBanner(data.bannerUrl);
         if (data.promotions) setMarketplacePromotions(data.promotions);
+        if (data.cityBestSellersConfig) setCityBestSellersConfig(data.cityBestSellersConfig);
         if (data.maintenance) {
           setMaintenanceConfig({
             active: data.maintenance.active || false,
@@ -1594,6 +1598,17 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
     };
   }, []);
 
+  const handleSaveCityBestSellers = async (newConfig: CityBestSellersConfig) => {
+    setCityBestSellersConfig(newConfig);
+    await setDoc(doc(db, 'settings', 'marketplace'), {
+      cityBestSellersConfig: newConfig,
+      updatedAt: new Date()
+    }, { merge: true });
+    if (showToast) {
+      showToast("Configurações dos Mais Vendidos por Cidade salvas com sucesso!", "success");
+    }
+  };
+
   const handleSaveMarketplaceConfig = async () => {
     try {
       await setDoc(doc(db, 'settings', 'marketplace'), {
@@ -1614,6 +1629,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         paymentMethods: marketplacePaymentMethods,
         bannerUrl: marketplaceBanner,
         promotions: marketplacePromotions,
+        cityBestSellersConfig: cityBestSellersConfig || null,
         maintenance: {
           active: maintenanceConfig.active,
           startAt: maintenanceConfig.startAt ? new Date(maintenanceConfig.startAt) : null,
@@ -3992,6 +4008,17 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                 </button>
 
                 <button
+                  onClick={() => setMarketplaceConfigSubTab('city_bestsellers')}
+                  className={`px-3.5 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
+                    marketplaceConfigSubTab === 'city_bestsellers'
+                      ? 'bg-orange-500 text-white shadow-md shadow-orange-200'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'
+                  }`}
+                >
+                  <Flame size={13} className={marketplaceConfigSubTab === 'city_bestsellers' ? 'text-white' : 'text-orange-500'} /> 🔥 Mais Vendidos por Cidade
+                </button>
+
+                <button
                   onClick={() => setMarketplaceConfigSubTab('fees')}
                   className={`px-3.5 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
                     marketplaceConfigSubTab === 'fees'
@@ -4093,6 +4120,17 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                      tenants={tenants}
                      bannerUrl={marketplaceBanner}
                      onBannerChange={(url) => setMarketplaceBanner(url)}
+                   />
+                 )}
+
+                 {/* SUB-TAB: MAIS VENDIDOS & DESTAQUES POR CIDADE */}
+                 {marketplaceConfigSubTab === 'city_bestsellers' && (
+                   <CityBestSellersManagerView 
+                     tenants={tenants}
+                     marketplaceProducts={products}
+                     currentConfig={cityBestSellersConfig}
+                     onSaveConfig={handleSaveCityBestSellers}
+                     showToast={showToast}
                    />
                  )}
 

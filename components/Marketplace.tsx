@@ -87,6 +87,7 @@ import {
   Order,
   Courier,
   MarketplaceSettings,
+  CityBestSellerItem,
   COMMERCE_VERTICAL_CATEGORIES,
   CommerceCategoryPreset,
 } from "../types";
@@ -661,6 +662,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   const [commerceCategories, setCommerceCategories] = useState<any[]>([]);
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [marketplaceProducts, setMarketplaceProducts] = useState<Product[]>([]);
+  const [marketplaceSettings, setMarketplaceSettings] = useState<MarketplaceSettings | null>(null);
   const [activeCategory, setActiveCategory] = useState("todos");
 
   const dynamicCategories = useMemo(() => {
@@ -1188,10 +1190,13 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     return extractCityFromAddress(currentAddress);
   }, [currentAddress]);
 
-  // Dynamic Popular Featured Items strictly tied to REAL registered products in customer's city
+  // Dynamic Popular Featured Items strictly tied to REAL registered products in customer's city and SaaS/Lojista configuration
   const popularFeaturedItems = useMemo(() => {
-    const targetCity = customerCity || "Pradópolis";
+    const config = marketplaceSettings?.cityBestSellersConfig;
+    const targetCity = customerCity || config?.defaultCity || "Pradópolis";
     const normTargetCity = normalizeString(targetCity);
+    const mode = config?.mode || 'mixed';
+    const maxItems = config?.maxItemsPerCity || 10;
 
     // 1. Filtrar restaurantes que atendem ou estão na cidade do cliente
     const cityTenants = tenants.filter((t) => {
@@ -1212,11 +1217,6 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       return true;
     });
 
-    // Se NÃO houver produtos reais cadastrados para as lojas ativas, retornar vazio (NUNCA inventar pratos fictícios)
-    if (realProducts.length === 0) {
-      return [];
-    }
-
     // Função de imagem fallback caso o lojista não tenha colocado foto no prato real
     const getCategoryFallback = (catName?: string) => {
       const cat = (catName || "").toLowerCase();
@@ -1229,21 +1229,73 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       return "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=600&auto=format&fit=crop";
     };
 
-    // Ordenar: produtos com foto e promoções primeiro
-    const sorted = [...realProducts].sort((a, b) => {
+    // 3. Buscar pratos curados no SaaS Admin para esta cidade
+    let curatedItemsForCity: CityBestSellerItem[] = [];
+    if (config?.customItemsByCity) {
+      const matchingKey = Object.keys(config.customItemsByCity).find(key => {
+        const normKey = normalizeString(key);
+        return normKey === normTargetCity || normTargetCity.includes(normKey) || normKey.includes(normTargetCity);
+      });
+      if (matchingKey && config.customItemsByCity[matchingKey]) {
+        curatedItemsForCity = config.customItemsByCity[matchingKey].filter(item => item.active !== false);
+      }
+    }
+
+    const formattedCurated = curatedItemsForCity
+      .sort((a, b) => (a.priority || 0) - (b.priority || 0))
+      .map(item => {
+        const matchedProduct = item.id ? marketplaceProducts.find(p => p.id === item.id) : undefined;
+        return {
+          id: item.id,
+          name: item.name,
+          storeName: item.storeName,
+          tenantId: item.tenantId,
+          price: item.price,
+          image: item.image || (matchedProduct?.image || getCategoryFallback(matchedProduct?.category)),
+          badge: item.badge || `🔥 #1 EM ${(targetCity || "SUA CIDADE").toUpperCase()}`,
+          city: targetCity,
+          product: matchedProduct
+        };
+      });
+
+    // Se estiver em modo exclusivamente "curated", retorne os itens configurados
+    if (mode === 'curated' && formattedCurated.length > 0) {
+      return formattedCurated.slice(0, maxItems);
+    }
+
+    // 4. Ordenar produtos reais respeitando `isBestSeller` do lojista, promoções e fotos
+    const sortedReal = [...realProducts].sort((a, b) => {
+      // Prioridade 1: Prato marcado pelo lojista como mais vendido / destaque da cidade
+      if (a.isBestSeller && !b.isBestSeller) return -1;
+      if (!a.isBestSeller && b.isBestSeller) return 1;
+
+      // Se modo for promoções, prioriza promoções
+      if (mode === 'promotions') {
+        if (a.isPromotional && !b.isPromotional) return -1;
+        if (!a.isPromotional && b.isPromotional) return 1;
+      }
+
+      // Promoções padrão
       if (a.isPromotional && !b.isPromotional) return -1;
       if (!a.isPromotional && b.isPromotional) return 1;
+
+      // Foto
       if (a.image && !b.image) return -1;
       if (!a.image && b.image) return 1;
+
       return (a.displayOrder || 0) - (b.displayOrder || 0);
     });
 
-    return sorted.slice(0, 10).map((p, idx) => {
+    const formattedReal = sortedReal.map((p, idx) => {
       const matchedTenant = activePool.find((t) => t.id === p.tenantId) || tenants.find((t) => t.id === p.tenantId);
       const storeDisplayName = matchedTenant ? matchedTenant.name : "Restaurante Local";
 
       let badge = "⭐ DESTAQUE";
-      if (p.isPromotional) {
+      if (p.customCityBadge) {
+        badge = p.customCityBadge;
+      } else if (p.isBestSeller) {
+        badge = `🔥 #1 EM ${(targetCity || "SUA CIDADE").toUpperCase()}`;
+      } else if (p.isPromotional) {
         badge = "🏷️ OFERTA";
       } else if (idx === 0) {
         badge = `🔥 #1 EM ${(targetCity || "SUA CIDADE").toUpperCase()}`;
@@ -1265,7 +1317,32 @@ const Marketplace: React.FC<MarketplaceProps> = ({
         product: p
       };
     });
-  }, [customerCity, tenants, tenantsSettings, marketplaceProducts]);
+
+    // Se estiver em modo "mixed": Itens curados pelo SaaS Admin primeiro, preenchidos pelos reais
+    if (mode === 'mixed') {
+      const existingIds = new Set(formattedCurated.map(i => i.id).filter(Boolean));
+      const existingNames = new Set(formattedCurated.map(i => i.name.toLowerCase().trim()));
+      
+      const combined = [...formattedCurated];
+      for (const realItem of formattedReal) {
+        if (combined.length >= maxItems) break;
+        if (!existingIds.has(realItem.id) && !existingNames.has(realItem.name.toLowerCase().trim())) {
+          combined.push(realItem);
+        }
+      }
+      if (combined.length > 0) return combined;
+    }
+
+    if (formattedReal.length > 0) {
+      return formattedReal.slice(0, maxItems);
+    }
+
+    if (formattedCurated.length > 0) {
+      return formattedCurated.slice(0, maxItems);
+    }
+
+    return [];
+  }, [customerCity, tenants, tenantsSettings, marketplaceProducts, marketplaceSettings]);
 
   const [isLocating, setIsLocating] = useState(false);
 
@@ -1460,8 +1537,6 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   // Tracking states
   const [activeOrders, setActiveOrders] = useState<Order[]>([]);
   const [trackingCourier, setTrackingCourier] = useState<Courier | null>(null);
-  const [marketplaceSettings, setMarketplaceSettings] =
-    useState<MarketplaceSettings | null>(null);
   const storeListRef = React.useRef<HTMLDivElement>(null);
 
   // Notifications State & Logic

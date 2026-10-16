@@ -12,7 +12,7 @@ import {
   Bike, Home, UserCircle, Phone, Store,
   Image as ImageIcon, Sparkles, ArrowUp, ArrowDown, Zap, Tag, Star,
   Search, Filter, Loader2, Package,
-  Printer, Download, ExternalLink, Trash2, AlertTriangle, Clock
+  Printer, Download, ExternalLink, Trash2, AlertTriangle, Clock, Flame
 } from 'lucide-react';
 
 import DigitalMenu from './DigitalMenu';
@@ -856,10 +856,36 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="font-bold text-slate-800 text-xs truncate">{product.name}</p>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className="font-bold text-slate-800 text-xs truncate">{product.name}</p>
+                        {product.isBestSeller && (
+                          <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-orange-100 text-orange-700 border border-orange-200 flex items-center gap-0.5">
+                            <Flame size={9} /> {product.customCityBadge || 'Mais Vendidos'}
+                          </span>
+                        )}
+                        {product.isPromotional && (
+                          <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-amber-100 text-amber-700 border border-amber-200">
+                            Promoção
+                          </span>
+                        )}
+                      </div>
                       <p className="text-[10px] text-slate-400 font-bold uppercase">{product.category}</p>
                     </div>
                     <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => {
+                          const nextState = !product.isBestSeller;
+                          onUpdateProduct({ 
+                            ...product, 
+                            isBestSeller: nextState,
+                            customCityBadge: nextState ? (product.customCityBadge || '🔥 #1 DA CIDADE') : undefined
+                          });
+                        }}
+                        className={`p-2 rounded-lg transition-all ${product.isBestSeller ? 'bg-orange-100 text-orange-600 ring-2 ring-orange-400 shadow-sm' : 'bg-white text-slate-300 hover:text-slate-400'}`}
+                        title={product.isBestSeller ? "Destacado nos Mais Vendidos da Cidade (Clique para desativar)" : "Destacar nos Mais Vendidos da Cidade"}
+                      >
+                        <Flame size={16} />
+                      </button>
                       <button 
                         onClick={() => togglePromo(product)}
                         className={`p-2 rounded-lg transition-all ${product.isPromotional ? 'bg-amber-100 text-amber-600' : 'bg-white text-slate-300 hover:text-slate-400'}`}

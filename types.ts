@@ -538,7 +538,30 @@ export interface MarketplaceSettings {
   coupons?: MarketplaceCoupon[];
   algorithmWeights?: MarketplaceAlgorithmWeights;
   goals?: MarketplaceGoal[];
+  cityBestSellersConfig?: CityBestSellersConfig;
   updatedAt: Date;
+}
+
+export interface CityBestSellerItem {
+  id: string; // ID do produto ou ID customizado
+  name: string;
+  storeName: string;
+  tenantId?: string;
+  price: number;
+  originalPrice?: number;
+  image: string;
+  badge: string; // Ex: "🔥 #1 EM PRADÓPOLIS", "🍔 MAIS PEDIDO", "⭐ FAVORITO LOCAL"
+  city: string; // Cidade alvo (ex: "Pradópolis")
+  priority?: number;
+  active?: boolean;
+}
+
+export interface CityBestSellersConfig {
+  mode: 'auto' | 'curated' | 'promotions' | 'mixed';
+  defaultCity?: string;
+  maxItemsPerCity?: number;
+  customItemsByCity?: Record<string, CityBestSellerItem[]>;
+  allowMerchantHighlight?: boolean;
 }
 
 export interface User {
@@ -749,6 +772,8 @@ export interface Product {
   priceHistory?: PriceHistory[];
   isPromotional?: boolean;
   promoPrice?: number;
+  isBestSeller?: boolean; // Destacado nos Mais Vendidos da cidade
+  customCityBadge?: string; // Selo customizado para o marketplace (ex: "🔥 #1 DA CIDADE")
   displayOrder?: number;
   externalId?: string;
   source?: string;
