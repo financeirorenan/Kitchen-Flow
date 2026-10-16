@@ -220,17 +220,30 @@ self.addEventListener('message', (event) => {
       break;
 
     case 'SEND_NOTIFICATION':
-      showNotification(data.title || 'Alerta KitchenFlow AI', {
-        body: data.body || 'Atualização no seu painel de entregas.'
+      showNotification(data.title || 'Alerta KitchenFlow', {
+        body: data.body || 'Atualização sobre seu pedido.',
+        icon: data.icon || '/icon-192.png',
+        badge: data.badge || '/icon-192.png',
+        tag: data.tag || undefined,
+        vibrate: data.vibrate || [200, 100, 200],
+        data: {
+          url: data.url || (data.data && data.data.url) || self.registration.scope
+        }
       });
       break;
 
     case 'SCHEDULE_TEST_NOTIFICATION':
       const delay = data.delayMs || 5000;
       setTimeout(() => {
-        showNotification(data.title || 'Alerta KitchenFlow AI 🛵', {
-          body: data.body || 'As notificações em segundo plano estão funcionando perfeitamente!',
-          tag: 'test-notification'
+        showNotification(data.title || 'Alerta KitchenFlow 🛵', {
+          body: data.body || 'As notificações no celular estão funcionando perfeitamente!',
+          tag: 'test-notification',
+          icon: '/icon-192.png',
+          badge: '/icon-192.png',
+          vibrate: [200, 100, 200],
+          data: {
+            url: self.registration.scope
+          }
         });
       }, delay);
       break;
@@ -251,8 +264,13 @@ self.addEventListener('notificationclick', (event) => {
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {
-        if (client.url.includes(targetUrl) && 'focus' in client) {
-          return client.focus();
+        if ('focus' in client) {
+          if (client.url.includes('/marketplace') || client.url.includes(self.registration.scope)) {
+            if (client.navigate && targetUrl && targetUrl !== client.url) {
+              client.navigate(targetUrl).catch(() => {});
+            }
+            return client.focus();
+          }
         }
       }
       if (self.clients.openWindow) {

@@ -93,6 +93,14 @@ import {
 } from "../types";
 import { maskPhone } from "../utils/masks";
 import DigitalMenu from "./DigitalMenu";
+import {
+  registerPwaServiceWorker,
+  getNotificationPermission,
+  requestCustomerNotificationPermission,
+  triggerNativeNotification,
+  trackAndNotifyOrderStatus,
+  NotificationPermissionState,
+} from "../utils/customerPushNotification";
 
 const KitchenFlowBrandLogo = ({ className = "w-9 h-9" }: { className?: string }) => (
   <svg viewBox="0 0 512 512" className={className} xmlns="http://www.w3.org/2000/svg">
@@ -765,6 +773,32 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     }
     setCopiedCoupon(code);
     setTimeout(() => setCopiedCoupon(null), 2500);
+  };
+
+  // PWA Push Notifications State & Handlers
+  const [pushPermission, setPushPermission] = useState<NotificationPermissionState>(() => getNotificationPermission());
+
+  useEffect(() => {
+    registerPwaServiceWorker();
+  }, []);
+
+  const handleRequestPushPermission = async () => {
+    const granted = await requestCustomerNotificationPermission();
+    setPushPermission(getNotificationPermission());
+    if (granted) {
+      showToast("Notificações no celular ativadas com sucesso! 🔔", "success");
+    } else {
+      showToast("Permissão de notificação não foi concedida pelo navegador.", "info");
+    }
+  };
+
+  const handleTestPushNotification = async () => {
+    await triggerNativeNotification("🛵 Teste: Pedido a Caminho!", {
+      body: "As notificações do KitchenFlow estão funcionando no seu celular!",
+      tag: "test-notification",
+      url: "/marketplace?nav=orders",
+    });
+    showToast("Notificação de teste enviada! Verifique a barra do seu celular.", "success");
   };
 
   // 10 Visual Verticals & Categories (Configurações de Categorias e Filtros)
@@ -1798,27 +1832,75 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     };
   }, []);
 
-  // Monitor active orders for tracking (only when authenticated)
+  // Monitor active orders for tracking (authenticated user or guest with stored order IDs)
   useEffect(() => {
-    if (!currentUser?.uid) return;
+    let unsubscribeUser: (() => void) | null = null;
+    let unsubscribeGuest: (() => void) | null = null;
 
-    const q = query(
-      collection(db, "orders"),
-      where("customerId", "==", currentUser.uid),
-      where("status", "in", ["pending", "preparing", "ready", "delivering"]),
-    );
+    const handleOrdersUpdate = (fetchedOrders: Order[]) => {
+      setActiveOrders(fetchedOrders);
+      // Track and notify order status changes with native PWA Push
+      const storeMap: Record<string, string> = {};
+      tenants.forEach((t) => {
+        storeMap[t.id] = t.name;
+      });
+      trackAndNotifyOrderStatus(fetchedOrders, storeMap);
+    };
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const orders = snapshot.docs.map(
-        (doc) => ({ ...doc.data(), id: doc.id }) as Order,
+    if (currentUser?.uid) {
+      const q = query(
+        collection(db, "orders"),
+        where("customerId", "==", currentUser.uid),
+        where("status", "in", ["pending", "preparing", "ready", "delivering"]),
       );
-      setActiveOrders(orders);
-    }, (error) => {
-      console.warn("Erro ao monitorar pedidos ativos:", error);
-    });
+      unsubscribeUser = onSnapshot(
+        q,
+        (snapshot) => {
+          const orders = snapshot.docs.map(
+            (doc) => ({ ...doc.data(), id: doc.id }) as Order,
+          );
+          handleOrdersUpdate(orders);
+        },
+        (error) => {
+          console.warn("Erro ao monitorar pedidos ativos:", error);
+        },
+      );
+    } else {
+      // Guest orders stored in localStorage
+      try {
+        const storedIds: string[] = JSON.parse(
+          localStorage.getItem("marketplace_my_order_ids") || "[]",
+        );
+        if (storedIds.length > 0) {
+          const q = query(
+            collection(db, "orders"),
+            where("id", "in", storedIds.slice(0, 10)),
+          );
+          unsubscribeGuest = onSnapshot(
+            q,
+            (snapshot) => {
+              const orders = snapshot.docs
+                .map((doc) => ({ ...doc.data(), id: doc.id }) as Order)
+                .filter((o) =>
+                  ["pending", "preparing", "ready", "delivering"].includes(o.status),
+                );
+              handleOrdersUpdate(orders);
+            },
+            (error) => {
+              console.warn("Erro ao monitorar pedidos guest:", error);
+            },
+          );
+        }
+      } catch (err) {
+        console.warn("Erro ao ler pedidos locais:", err);
+      }
+    }
 
-    return () => unsubscribe();
-  }, [currentUser?.uid]);
+    return () => {
+      if (unsubscribeUser) unsubscribeUser();
+      if (unsubscribeGuest) unsubscribeGuest();
+    };
+  }, [currentUser?.uid, tenants]);
 
   // Fetch full order history (including finished/delivered, only when authenticated)
   useEffect(() => {
@@ -2453,6 +2535,22 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 orderWithTenant,
               );
               console.log("Pedido salvo com sucesso! ID:", order.id, "Método:", normalizedPaymentMethod);
+
+              // Salvar o ID do pedido no localStorage para tracking em tempo real e notificações push
+              try {
+                const storedOrderIds: string[] = JSON.parse(
+                  localStorage.getItem("marketplace_my_order_ids") || "[]",
+                );
+                const nextOrderIds = Array.from(
+                  new Set([order.id, ...storedOrderIds]),
+                ).slice(0, 15);
+                localStorage.setItem(
+                  "marketplace_my_order_ids",
+                  JSON.stringify(nextOrderIds),
+                );
+              } catch (e) {
+                // Ignore storage quotas
+              }
 
               // Registrar evento na fila de integração para Saipos e ERPs de terceiros
               try {
@@ -3389,6 +3487,46 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 <ShoppingBag size={22} />
               </div>
             </div>
+
+            {/* PWA Push Notification Status & Activation Banner */}
+            {pushPermission !== "granted" ? (
+              <div className="bg-gradient-to-r from-orange-50 via-amber-50/60 to-orange-50 border border-orange-200/90 rounded-3xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-[#FF3B00] text-white flex items-center justify-center shrink-0 shadow-md shadow-orange-500/20">
+                    <Bell size={20} />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black text-slate-900 leading-tight">
+                      Ativar Notificações no Celular (Push PWA)
+                    </h4>
+                    <p className="text-xs text-slate-500 font-medium mt-0.5">
+                      Receba avisos na tela do celular quando a cozinha começar a preparar e quando o motoboy sair!
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={handleRequestPushPermission}
+                  className="w-full sm:w-auto px-5 py-2.5 bg-[#FF3B00] hover:bg-[#E63500] text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-md active:scale-95 cursor-pointer whitespace-nowrap"
+                >
+                  Ativar Alertas Push 🔔
+                </button>
+              </div>
+            ) : (
+              <div className="bg-emerald-50/90 border border-emerald-200/90 rounded-2xl px-4 py-3 flex items-center justify-between gap-3 text-left">
+                <div className="flex items-center gap-2.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                  <p className="text-xs font-bold text-emerald-900">
+                    Notificações push ativas! Você receberá alertas em tempo real sobre seu pedido.
+                  </p>
+                </div>
+                <button
+                  onClick={handleTestPushNotification}
+                  className="text-[11px] font-bold text-emerald-700 hover:text-emerald-900 underline whitespace-nowrap cursor-pointer shrink-0"
+                >
+                  Testar Alerta
+                </button>
+              </div>
+            )}
 
             {/* Active Orders with live tracking */}
             {activeOrders.length > 0 && (
@@ -4621,6 +4759,46 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 </button>
               )}
             </div>
+
+            {/* PWA Push Notification Permission Prompt */}
+            {pushPermission !== "granted" ? (
+              <div className="mx-4 sm:mx-5 mt-3 p-3.5 bg-gradient-to-r from-orange-500/10 via-amber-500/10 to-orange-500/5 border border-orange-200/90 rounded-2xl flex items-center justify-between gap-3 text-left">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-[#FF3B00] text-white flex items-center justify-center shrink-0 shadow-sm">
+                    <Bell size={16} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black text-slate-900 leading-tight">
+                      Alertas no Celular (Push PWA)
+                    </h4>
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      Receba avisos na tela de bloqueio quando o motoboy sair!
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={handleRequestPushPermission}
+                  className="px-3 py-1.5 bg-[#FF3B00] hover:bg-[#E63500] text-white text-xs font-black rounded-xl shadow-sm transition-all whitespace-nowrap cursor-pointer active:scale-95"
+                >
+                  Ativar
+                </button>
+              </div>
+            ) : (
+              <div className="mx-4 sm:mx-5 mt-3 px-3.5 py-2.5 bg-emerald-50 border border-emerald-200/80 rounded-2xl flex items-center justify-between gap-3 text-left">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                  <span className="text-xs font-bold text-emerald-800">
+                    Notificações push ativas no seu celular
+                  </span>
+                </div>
+                <button
+                  onClick={handleTestPushNotification}
+                  className="text-[11px] font-bold text-emerald-700 hover:text-emerald-900 underline whitespace-nowrap cursor-pointer"
+                >
+                  Testar
+                </button>
+              </div>
+            )}
 
             {/* Notifications Feed */}
             <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3 custom-scrollbar">
