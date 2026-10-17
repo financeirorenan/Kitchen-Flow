@@ -6,11 +6,12 @@ import {
   ChefHat, Timer, Bike, AlertCircle, X,
   Edit, Plus, Minus, Trash2, Search, CreditCard, Printer, Share2, ShoppingBag, MapPin, Phone,
   Store, XCircle, Receipt, Maximize2, Minimize2, ArrowLeft, ArrowRight,
-  Grid
+  Grid, AlertTriangle
 } from 'lucide-react';
 import { generateReceiptHtml, handlePrintOrder } from '../services/printService';
 import { getOrderNumericId, formatOrderNumber, deduplicateOrders } from '../utils/deduplicate';
 import { logDiagnostic, subscribeToDomainEvents } from '../services/orderService';
+import { parseKdsItemDetails, isAllergenAlert } from '../utils/kdsItemFormatter';
 import EditOrderModal from './EditOrderModal';
 
 interface KDSProps {
@@ -200,9 +201,28 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
           </div>
         </div>
 
+        {/* Observação Geral do Pedido (se houver, ex: Cardápio Digital ou PDV) */}
+        {(order.notes || order.observation) && (
+          <div className="border-t border-slate-100 pt-2">
+            {isAllergenAlert(order.notes || order.observation || '') ? (
+              <div className="p-2 rounded-lg bg-red-600 text-white text-[9.5px] font-black uppercase tracking-wide flex items-center gap-1.5 shadow-xs animate-pulse">
+                <AlertTriangle size={12} className="shrink-0" />
+                <span className="break-words leading-tight">
+                  🚨 OBS GERAL (ALÉRGICO): {order.notes || order.observation}
+                </span>
+              </div>
+            ) : (
+              <div className="p-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-950 text-[10px] font-bold leading-snug">
+                <span className="font-black text-amber-800 uppercase mr-1">Obs Geral:</span>
+                <span className="break-words whitespace-pre-wrap">{order.notes || order.observation}</span>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Itens do Pedido */}
         {order.items && order.items.length > 0 && (
-          <div className="border-t border-slate-100 pt-2 space-y-2.5 max-h-52 overflow-y-auto custom-scrollbar pr-1">
+          <div className="border-t border-slate-100 pt-2 space-y-2.5 max-h-56 overflow-y-auto custom-scrollbar pr-1">
             <p className="text-[9px] font-black tracking-wider uppercase text-slate-400">Itens do Pedido ({order.items.length})</p>
             <div className="space-y-2.5">
               {Object.entries(itemsByCategory).map(([category, items]) => (
@@ -211,78 +231,147 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
                     {category}
                   </p>
                   <div className="space-y-1 pl-1">
-                    {items.map((item, idx) => (
-                      <div key={idx} className="flex flex-col text-slate-800 text-xs py-0.5">
-                        {(() => {
-                          const consolidatedOptions: { name: string; quantity: number; category?: string }[] = [];
-                          if (item.selectedOptions && item.selectedOptions.length > 0) {
-                            item.selectedOptions.forEach(opt => {
-                              const existing = consolidatedOptions.find(o => o.name.trim().toLowerCase() === opt.name.trim().toLowerCase());
-                              const q = opt.quantity || 1;
-                              if (existing) {
-                                existing.quantity += q;
-                              } else {
-                                consolidatedOptions.push({ name: opt.name, quantity: q, category: opt.category });
-                              }
-                            });
-                          }
+                    {(() => {
+                      const orderHasMultipleBatches = order.items.some(
+                        (it) => ((it as any).batchNumber || 1) > 1 || (it as any).isNew
+                      );
 
-                          let displayName = item.name || '';
-                          if (consolidatedOptions.length > 0 && displayName.includes('(')) {
-                            // Remove as opções entre parênteses do nome do prato para manter apenas o nome padrão, sem duplicidade
-                            displayName = displayName.replace(/\s*\(([^)]+)\)/g, (match, inner) => {
-                              const innerLower = inner.toLowerCase();
-                              const hasMatchingOption = consolidatedOptions.some(opt =>
-                                opt.name && innerLower.includes(opt.name.trim().toLowerCase())
-                              );
-                              return hasMatchingOption ? '' : match;
-                            }).trim();
-                          }
+                      return items.map((item, idx) => {
+                        const isMulti = item.quantity > 1;
+                        const details = parseKdsItemDetails(item, orderHasMultipleBatches);
 
-                          return (
-                            <>
-                              <div className="flex items-start gap-2">
-                                <span className="font-black text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded text-[10px] min-w-[20px] text-center border border-indigo-100 shrink-0">
-                                  {item.quantity}x
-                                </span>
-                                <span className="font-bold text-slate-700 leading-tight">{displayName}</span>
-                                {((item as any).batchNumber > 1 || (item as any).isNew) && (
-                                  <span className="ml-1 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-amber-500 text-white shrink-0">
-                                    NOVO
+                        return (
+                          <div
+                            key={idx}
+                            className={`flex flex-col text-slate-800 text-xs py-1 px-1.5 rounded-lg transition-colors ${
+                              details.isCancelled
+                                ? 'bg-rose-50 opacity-60 line-through border border-rose-200'
+                                : details.isNewBatch
+                                ? 'bg-amber-50/80 border border-amber-200/90'
+                                : details.isPreviousBatch
+                                ? 'opacity-80'
+                                : ''
+                            }`}
+                          >
+                            <div className="flex items-start gap-2">
+                              <span
+                                className={`font-black px-1.5 py-0.5 rounded text-[10px] min-w-[20px] text-center border shrink-0 ${
+                                  isMulti
+                                    ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                    : 'text-indigo-700 bg-indigo-50 border-indigo-100'
+                                }`}
+                              >
+                                {item.quantity}x
+                              </span>
+
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span
+                                    className={`font-black leading-tight ${
+                                      details.isCancelled
+                                        ? 'text-rose-500 line-through'
+                                        : 'text-slate-800'
+                                    }`}
+                                  >
+                                    {details.displayName}
                                   </span>
-                                )}
-                              </div>
-                              {consolidatedOptions.length > 0 && (
-                                <div className="pl-7 mt-1 text-[10px] text-slate-600 font-bold space-y-1">
-                                  {consolidatedOptions.map((opt, oIdx) => {
-                                    const isMulti = opt.quantity > 1;
-                                    return (
-                                      <div key={oIdx} className="flex items-center gap-1.5 flex-wrap">
-                                        <span className={isMulti ? "text-amber-700 font-black" : ""}>
-                                          + {isMulti ? `${opt.quantity}x ` : ""}{opt.name}
-                                        </span>
-                                        {isMulti && (
-                                          <span className="text-[9px] uppercase font-black px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300 shadow-xs">
-                                            {opt.quantity} UNID
-                                          </span>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
+
+                                  {/* Badges de Rodada / Momento */}
+                                  {details.isCancelled ? (
+                                    <span className="px-1.5 py-0.2 rounded text-[8px] font-black uppercase tracking-wider bg-rose-600 text-white shrink-0">
+                                      CANCELADO
+                                    </span>
+                                  ) : details.isNewBatch ? (
+                                    <span className="px-1.5 py-0.2 rounded text-[8px] font-black uppercase tracking-wider bg-amber-500 text-slate-950 shrink-0 shadow-xs flex items-center gap-0.5">
+                                      <span>⚡ NOVO</span>
+                                      {details.batchNumber && details.batchNumber > 1 && (
+                                        <span>(RODADA #{details.batchNumber})</span>
+                                      )}
+                                    </span>
+                                  ) : details.isPreviousBatch ? (
+                                    <span className="px-1.5 py-0.2 rounded text-[7.5px] font-bold uppercase tracking-wider bg-slate-100 text-slate-500 border border-slate-200 shrink-0">
+                                      ✓ 1ª Rodada (Já Enviada)
+                                    </span>
+                                  ) : null}
                                 </div>
-                              )}
-                            </>
-                          );
-                        })()}
-                        {item.observation && (
-                          <div className="pl-7 mt-1">
-                            <p className="text-[9px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-md w-fit whitespace-pre-line">
-                              Obs: {item.observation}
-                            </p>
+
+                                {/* ALERTA DE ALERGÊNICOS COM DESTAQUE MÁXIMO VISUAL */}
+                                {details.allergens.length > 0 && (
+                                  <div className="mt-1 space-y-0.5">
+                                    {details.allergens.map((alg, aIdx) => (
+                                      <div
+                                        key={aIdx}
+                                        className="px-2 py-0.5 rounded bg-red-600 text-white text-[9px] font-black uppercase tracking-wide flex items-center gap-1 shadow-xs animate-pulse"
+                                      >
+                                        <AlertTriangle size={11} className="shrink-0" />
+                                        <span>🚨 ATENÇÃO ALÉRGICO: {alg}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {/* REMOÇÕES DE INGREDIENTES (SEM CEBOLA, SEM TOMATE, ETC.) */}
+                                {details.removals.length > 0 && (
+                                  <div className="mt-1 flex flex-wrap gap-1">
+                                    {details.removals.map((rem, rIdx) => (
+                                      <div
+                                        key={rIdx}
+                                        className="px-1.5 py-0.5 rounded bg-rose-100 border border-rose-300 text-rose-900 text-[9px] font-black uppercase tracking-wide flex items-center gap-1 shrink-0"
+                                      >
+                                        <span className="text-rose-600 font-extrabold">✕</span>
+                                        <span>
+                                          REMOVER: {rem.replace(/^(sem|remover|retirar|tirar)\s*[:\-]?\s*/i, '')}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {/* ADICIONAIS PAGOS / EXTRAS COM QUANTIDADE CONSOLIDADA */}
+                                {details.paidAddons.length > 0 && (
+                                  <div className="mt-1 pl-1 text-[10px] text-slate-700 font-bold space-y-0.5">
+                                    {details.paidAddons.map((opt, oIdx) => {
+                                      const isAddonMulti = opt.quantity > 1;
+                                      return (
+                                        <div
+                                          key={oIdx}
+                                          className="flex items-center gap-1.5 flex-wrap"
+                                        >
+                                          <span className="text-emerald-700 font-black">+</span>
+                                          <span className={isAddonMulti ? 'text-amber-800 font-black' : 'text-slate-700'}>
+                                            {isAddonMulti ? `${opt.quantity}x ` : ''}
+                                            {opt.name}
+                                          </span>
+                                          {isAddonMulti && (
+                                            <span className="text-[8.5px] uppercase font-black px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300">
+                                              {opt.quantity} UNID
+                                            </span>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+
+                                {/* OBSERVAÇÃO ESPECÍFICA DO ITEM (SEM CORTE DE TEXTO) */}
+                                {details.cleanObservation &&
+                                  !details.removals.includes(details.cleanObservation) &&
+                                  !details.allergens.includes(details.cleanObservation) && (
+                                    <div className="mt-1">
+                                      <p className="text-[9px] font-bold text-amber-900 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md w-fit whitespace-pre-wrap break-words leading-tight">
+                                        <span className="font-black text-amber-800 mr-1 uppercase">
+                                          Obs:
+                                        </span>
+                                        {details.cleanObservation}
+                                      </p>
+                                    </div>
+                                  )}
+                              </div>
+                            </div>
                           </div>
-                        )}
-                      </div>
-                    ))}
+                        );
+                      });
+                    })()}
                   </div>
                 </div>
               ))}
@@ -714,15 +803,36 @@ const KDS: React.FC<KDSProps> = memo(({
           const existing = tableOrdersMap.get(tableKey)!;
           const mergedItems = [...(existing.items || [])];
           for (const item of (order.items || [])) {
-            const idx = mergedItems.findIndex(i => i.id === item.id || (i.productId === item.productId && i.name === item.name && (i.observation || '') === (item.observation || '')));
-            if (idx !== -1) {
-              mergedItems[idx] = { ...mergedItems[idx], ...item };
+            // Se for exatamente o mesmo ID de item, atualiza
+            const sameIdIdx = mergedItems.findIndex(i => i.id && item.id && i.id === item.id);
+            if (sameIdIdx !== -1) {
+              mergedItems[sameIdIdx] = { ...mergedItems[sameIdIdx], ...item };
+              continue;
+            }
+
+            // Se for do mesmo lote, mesmo produto, mesma observação e mesmo status de cancelamento: soma quantidade!
+            const sameBatchAndContentIdx = mergedItems.findIndex(i =>
+              i.productId === item.productId &&
+              i.name === item.name &&
+              (i.observation || '') === (item.observation || '') &&
+              (i.batchNumber || 1) === (item.batchNumber || 1) &&
+              Boolean(i.cancelled) === Boolean(item.cancelled)
+            );
+
+            if (sameBatchAndContentIdx !== -1) {
+              mergedItems[sameBatchAndContentIdx] = {
+                ...mergedItems[sameBatchAndContentIdx],
+                quantity: mergedItems[sameBatchAndContentIdx].quantity + item.quantity
+              };
             } else {
-              mergedItems.push({ ...item, isNew: true });
+              // Itens de rodadas/lotes diferentes ou com cancelamento permanecem como itens distintos
+              mergedItems.push({ ...item, isNew: item.isNew ?? true });
             }
           }
           existing.items = mergedItems;
-          existing.total = mergedItems.reduce((acc, i) => acc + (i.price * i.quantity), 0);
+          existing.total = mergedItems
+            .filter(i => !i.cancelled)
+            .reduce((acc, i) => acc + (i.price * i.quantity), 0);
           continue;
         } else {
           const clone = { ...order, items: [...(order.items || [])] };

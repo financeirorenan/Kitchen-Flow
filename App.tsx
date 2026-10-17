@@ -744,17 +744,25 @@ const App: React.FC = () => {
     return getUserPermissions(currentUserData).includes(permission);
   };
 
-  const [marketplaceProfile, setMarketplaceProfile] = useState<{name: string, phone: string} | null>(null);
+  const [marketplaceProfile, setMarketplaceProfile] = useState<{name: string, phone: string, photoURL?: string} | null>(null);
 
   // Carregar perfil do marketplace do localStorage se existir
   useEffect(() => {
-    const saved = localStorage.getItem('marketplace_profile');
-    if (saved) setMarketplaceProfile(JSON.parse(saved));
+    try {
+      const saved = localStorage.getItem('marketplace_profile');
+      if (saved) setMarketplaceProfile(JSON.parse(saved));
+    } catch (e) {
+      console.warn('Erro ao carregar perfil do marketplace:', e);
+    }
   }, []);
 
-  const handleUpdateMarketplaceProfile = (data: {name: string, phone: string}) => {
+  const handleUpdateMarketplaceProfile = (data: {name: string, phone: string, photoURL?: string}) => {
     setMarketplaceProfile(data);
-    localStorage.setItem('marketplace_profile', JSON.stringify(data));
+    try {
+      localStorage.setItem('marketplace_profile', JSON.stringify(data));
+    } catch (e) {
+      console.warn('Erro ao salvar perfil do marketplace:', e);
+    }
   };
 
   const getTabUrl = useCallback((tab: string, tenantId?: string) => {
@@ -3537,7 +3545,7 @@ const App: React.FC = () => {
       });
 
       const updatedDeliveryFee = effectiveDeliveryFee !== undefined ? effectiveDeliveryFee : (activeExistingOrder.deliveryFee || 0);
-      const newItemsTotal = existingItems.reduce((acc, i) => acc + (i.price * i.quantity), 0);
+      const newItemsTotal = existingItems.filter(i => !i.cancelled).reduce((acc, i) => acc + (i.price * i.quantity), 0);
       const finalOrderTotal = newItemsTotal + updatedDeliveryFee + (activeExistingOrder.additionalFee || 0) - (activeExistingOrder.discount || 0);
 
       const updates: Partial<Order> = {
@@ -4537,6 +4545,26 @@ const App: React.FC = () => {
       setTables(prev => prev.map(t => t.id === id || t.id === numericId || (t as any).docId === id ? { ...t, ...tableUpdates } : t));
       if (!isNaN(numericId)) {
         localDb.diningTables.update(numericId, tableUpdates).catch(e => console.warn("LocalDb table update error:", e));
+      }
+
+      // Se houver pedido ativo vinculado a esta mesa no KDS, sincroniza os itens e o total imediatamente
+      if (existingTable?.currentOrderId) {
+        const orderIdToSync = existingTable.currentOrderId;
+        const activeItemsTotal = items.filter(it => !it.cancelled).reduce((acc, it) => acc + (it.price * it.quantity), 0);
+        setOrders(prev => prev.map(o => (o.id === orderIdToSync || o.docId === orderIdToSync) ? {
+          ...o,
+          items,
+          total: activeItemsTotal + (o.deliveryFee || 0) + (o.additionalFee || 0) - (o.discount || 0),
+          updatedAt: new Date()
+        } : o));
+
+        if (effectiveTenantId) {
+          setDoc(doc(db, 'orders', orderIdToSync), cleanObject({
+            items,
+            total: activeItemsTotal,
+            updatedAt: new Date()
+          }), { merge: true }).catch(e => console.warn("Erro ao sincronizar pedido de mesa no Firestore:", e));
+        }
       }
 
       // Cloud Sync (asynchronous and non-blocking)
@@ -5954,9 +5982,15 @@ const App: React.FC = () => {
           updatedAt: new Date()
         }, { merge: true }).catch(err => console.error("Error syncing digital menu settings to cloud:", err));
 
+        const cleanSlug = resolved.customSlug
+          ? resolved.customSlug.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+          : (resolved.restaurantName ? resolved.restaurantName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') : undefined);
+
         // Sync live to publicStorefronts for marketplace / public menu
         setDoc(doc(db, 'publicStorefronts', effectiveTenantId), {
           digitalMenu: cleanObject(resolved),
+          slug: cleanSlug || undefined,
+          name: resolved.restaurantName || undefined,
           updatedAt: new Date()
         }, { merge: true }).catch(err => console.error("Error syncing digital menu to publicStorefronts:", err));
 
@@ -5968,6 +6002,7 @@ const App: React.FC = () => {
           primaryColor: resolved.primaryColor || undefined,
           accentColor: resolved.accentColor || undefined,
           name: resolved.restaurantName || undefined,
+          slug: cleanSlug || undefined,
           isStoreForceClosed: resolved.isStoreForceClosed !== undefined ? resolved.isStoreForceClosed : undefined,
           isStoreForceOpen: resolved.isStoreForceOpen !== undefined ? resolved.isStoreForceOpen : undefined,
           businessHours: resolved.businessHours || undefined,

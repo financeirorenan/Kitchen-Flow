@@ -592,18 +592,27 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
   }, [availableProducts, settings.totemUpsellMode, settings.totemUpsellProducts]);
 
   const categories = useMemo(() => {
-    const cats = Array.from(new Set(availableProducts.map(p => p.category || 'Outros')));
+    const cats = Array.from(new Set(
+      availableProducts
+        .map(p => (p.category || '').trim())
+        .filter(c => Boolean(c))
+    ));
+    if (cats.length === 0 && availableProducts.length > 0) {
+      cats.push('Geral');
+    }
     const order = settings.categoryOrder || productCategories || [];
     const hidden = settings.hiddenCategories || [];
     
-    // Sort categories based on categoryOrder or productCategories, then add any remaining ones
-    const sortedCats = [...order.filter(c => cats.includes(c))];
+    // Sort categories based on categoryOrder or productCategories, strictly matching existing product categories
+    const sortedCats = order.filter(c => cats.includes(c));
     cats.forEach(c => {
       if (!sortedCats.includes(c)) sortedCats.push(c);
     });
 
-    // Filter out hidden categories
-    return sortedCats.filter(c => !hidden.includes(c));
+    // Filter out hidden categories and guarantee at least one real active product belongs to it
+    return sortedCats
+      .filter(c => !hidden.includes(c))
+      .filter(c => availableProducts.some(p => (p.category || 'Geral').trim() === c));
   }, [availableProducts, settings.categoryOrder, productCategories, settings.hiddenCategories]);
 
   const categoriesKey = categories.join(',');
@@ -746,6 +755,12 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
   };
 
   const addToCart = (product: Product, options?: ProductOption[], customQuantity = 1) => {
+    const isOutOfStock = Boolean(product.trackStock && (product.stock ?? 0) <= 0);
+    if (isOutOfStock) {
+      alert(`O produto "${product.name}" está temporariamente esgotado.`);
+      return;
+    }
+
     const hasOptions = (product.optionCategories && product.optionCategories.length > 0) || (product.options && product.options.length > 0);
     
     if (hasOptions && !options) {
@@ -1336,116 +1351,149 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
             </div>
           ))
         ) : (
-          filteredProducts.map(product => (
-            <motion.div 
-              layout
-              key={product.id} 
-              onClick={() => {
-                setModalQuantity(1);
-                setSelectedProductForModal(product);
-                setShowProductModal(true);
-              }}
-              className="bg-white rounded-[2.5rem] p-3 flex gap-4 shadow-[0_8px_30px_rgb(0,0,0,0.02)] border border-slate-50 relative group active:scale-[0.98] transition-all hover:shadow-xl hover:shadow-slate-100/50 cursor-pointer"
-            >
-              <div className="w-32 h-32 sm:w-40 sm:h-40 rounded-[2rem] overflow-hidden shrink-0 border border-slate-100/50 relative flex items-center justify-center bg-slate-50">
-                {product.image ? (
-                  <img 
-                    src={product.image} 
-                    alt={product.name}
-                    loading="lazy"
-                    decoding="async"
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" 
-                    referrerPolicy="no-referrer" 
-                  />
-                ) : (
-                  <div className="flex flex-col items-center gap-1 opacity-20">
-                     <Package size={32} className="text-slate-500" />
-                     <span className="text-[10px] font-black uppercase text-slate-500">Sem Foto</span>
-                  </div>
-                )}
-                {product.isPromotional && (
-                  <div 
-                    className="absolute top-3 left-3 text-white p-2 rounded-full z-20 shadow-md backdrop-blur-md"
-                    style={{ backgroundColor: `${effectivePrimaryColor}cc` }}
-                  >
-                    <Zap size={12} fill="currentColor" />
-                  </div>
-                )}
-              </div>
+          filteredProducts.map(product => {
+            const isOutOfStock = Boolean(product.trackStock && (product.stock ?? 0) <= 0);
 
-              <div className="flex-1 min-w-0 flex flex-col justify-between py-1.5 pr-2">
-                <div className="max-h-[85px] overflow-hidden">
-                  <div className="flex justify-between items-start">
-                    <div className="flex-1 min-w-0">
-                      <h4 className="font-extrabold text-slate-800 text-base leading-tight pr-4 group-hover:text-emerald-600 transition-colors uppercase italic truncate">{product.name}</h4>
-                      {((product.optionCategories && product.optionCategories.length > 0) || (product.options && product.options.length > 0)) && (
-                        <span className="text-[7px] font-black uppercase tracking-widest bg-emerald-50 text-emerald-500 px-2 py-0.5 rounded-full border border-emerald-100 mt-1 inline-block">
-                          Customizável
-                        </span>
-                      )}
+            return (
+              <motion.div 
+                layout
+                key={product.id} 
+                onClick={() => {
+                  if (isOutOfStock) return;
+                  setModalQuantity(1);
+                  setSelectedProductForModal(product);
+                  setShowProductModal(true);
+                }}
+                className={`bg-white rounded-[2.5rem] p-3 flex gap-4 shadow-[0_8px_30px_rgb(0,0,0,0.02)] border border-slate-50 relative group transition-all hover:shadow-xl hover:shadow-slate-100/50 ${
+                  isOutOfStock ? 'opacity-65 cursor-not-allowed' : 'active:scale-[0.98] cursor-pointer'
+                }`}
+              >
+                <div className="w-32 h-32 sm:w-40 sm:h-40 rounded-[2rem] overflow-hidden shrink-0 border border-slate-100/50 relative flex items-center justify-center bg-slate-50">
+                  {product.image ? (
+                    <img 
+                      src={product.image} 
+                      alt={product.name}
+                      loading="lazy"
+                      decoding="async"
+                      className={`w-full h-full object-cover transition-transform duration-700 ${
+                        isOutOfStock ? 'grayscale-[60%]' : 'group-hover:scale-105'
+                      }`}
+                      referrerPolicy="no-referrer" 
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center gap-1 opacity-20">
+                       <Package size={32} className="text-slate-500" />
+                       <span className="text-[10px] font-black uppercase text-slate-500">Sem Foto</span>
                     </div>
-                  </div>
-                  <p className="text-[11px] text-slate-400 font-bold mt-1.5 line-clamp-2 leading-relaxed opacity-70">
-                    {product.description || 'Ingredientes selecionados com o toque especial da casa.'}
-                  </p>
+                  )}
+
+                  {isOutOfStock && (
+                    <div className="absolute inset-0 bg-slate-950/70 backdrop-blur-[1px] flex flex-col items-center justify-center z-20 rounded-2xl p-1 text-center">
+                      <span className="bg-rose-600 text-white font-black text-[9px] uppercase tracking-widest px-2.5 py-1 rounded-full shadow-lg border border-rose-400">
+                        ESGOTADO
+                      </span>
+                    </div>
+                  )}
+
+                  {!isOutOfStock && product.isPromotional && (
+                    <div 
+                      className="absolute top-3 left-3 text-white p-2 rounded-full z-20 shadow-md backdrop-blur-md"
+                      style={{ backgroundColor: `${effectivePrimaryColor}cc` }}
+                    >
+                      <Zap size={12} fill="currentColor" />
+                    </div>
+                  )}
                 </div>
-                
-                <div className="flex items-end justify-between mt-auto">
-                  <div className="flex flex-col font-sans">
-                    <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest mb-0.5">Preço base</span>
-                    <span className="text-lg font-black tracking-tighter" style={{ color: effectivePrimaryColor }}>
-                      R$ {product.price.toFixed(2)}
-                    </span>
+
+                <div className="flex-1 min-w-0 flex flex-col justify-between py-1.5 pr-2">
+                  <div className="max-h-[85px] overflow-hidden">
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <h4 className="font-extrabold text-slate-800 text-base leading-tight pr-2 group-hover:text-emerald-600 transition-colors uppercase italic truncate">{product.name}</h4>
+                          {isOutOfStock && (
+                            <span className="text-[8px] font-black uppercase tracking-wider bg-rose-50 text-rose-600 px-2 py-0.5 rounded-md border border-rose-200">
+                              Esgotado
+                            </span>
+                          )}
+                        </div>
+                        {((product.optionCategories && product.optionCategories.length > 0) || (product.options && product.options.length > 0)) && (
+                          <span className="text-[7px] font-black uppercase tracking-widest bg-emerald-50 text-emerald-500 px-2 py-0.5 rounded-full border border-emerald-100 mt-1 inline-block">
+                            Customizável
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-slate-400 font-bold mt-1.5 line-clamp-2 leading-relaxed opacity-70">
+                      {product.description || 'Ingredientes selecionados com o toque especial da casa.'}
+                    </p>
                   </div>
                   
-                  {(() => {
-                    const hasOptions = (product.optionCategories && product.optionCategories.length > 0) || (product.options && product.options.length > 0);
-                    const itemInCartNoOptions = !hasOptions && cart.find(item => item.product.id === product.id && (!item.selectedOptions || item.selectedOptions.length === 0));
+                  <div className="flex items-end justify-between mt-auto">
+                    <div className="flex flex-col font-sans">
+                      <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest mb-0.5">Preço base</span>
+                      <span className="text-lg font-black tracking-tighter" style={{ color: effectivePrimaryColor }}>
+                        R$ {product.price.toFixed(2)}
+                      </span>
+                    </div>
+                    
+                    {(() => {
+                      if (isOutOfStock) {
+                        return (
+                          <span className="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-400 font-black text-[10px] uppercase tracking-wider border border-slate-200 cursor-not-allowed">
+                            Esgotado
+                          </span>
+                        );
+                      }
 
-                    if (itemInCartNoOptions) {
+                      const hasOptions = (product.optionCategories && product.optionCategories.length > 0) || (product.options && product.options.length > 0);
+                      const itemInCartNoOptions = !hasOptions && cart.find(item => item.product.id === product.id && (!item.selectedOptions || item.selectedOptions.length === 0));
+
+                      if (itemInCartNoOptions) {
+                        return (
+                          <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-2xl border border-slate-100/60 shadow-inner" onClick={(e) => e.stopPropagation()}>
+                            <button 
+                              onClick={() => removeFromCart(product.id)}
+                              className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-slate-400 hover:text-rose-500 hover:border-rose-100 border border-slate-100/60 transition-all shadow-sm"
+                            >
+                              <Minus size={14} strokeWidth={2.5} />
+                            </button>
+                            <span className="font-black text-sm w-5 text-center text-slate-800">{itemInCartNoOptions.quantity}</span>
+                            <button 
+                              onClick={() => addToCart(product)}
+                              className="w-10 h-10 bg-white rounded-xl flex items-center justify-center border border-slate-100/60 hover:scale-105 transition-all shadow-sm"
+                              style={{ color: effectivePrimaryColor }}
+                            >
+                              <Plus size={14} strokeWidth={2.5} />
+                            </button>
+                          </div>
+                        );
+                      }
+
                       return (
-                        <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-2xl border border-slate-100/60 shadow-inner" onClick={(e) => e.stopPropagation()}>
-                          <button 
-                            onClick={() => removeFromCart(product.id)}
-                            className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-slate-400 hover:text-rose-500 hover:border-rose-100 border border-slate-100/60 transition-all shadow-sm"
-                          >
-                            <Minus size={14} strokeWidth={2.5} />
-                          </button>
-                          <span className="font-black text-sm w-5 text-center text-slate-800">{itemInCartNoOptions.quantity}</span>
-                          <button 
-                            onClick={() => addToCart(product)}
-                            className="w-10 h-10 bg-white rounded-xl flex items-center justify-center border border-slate-100/60 hover:scale-105 transition-all shadow-sm"
-                            style={{ color: effectivePrimaryColor }}
-                          >
-                            <Plus size={14} strokeWidth={2.5} />
-                          </button>
-                        </div>
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (hasOptions) {
+                              setModalQuantity(1);
+                              setSelectedProductForModal(product);
+                              setShowProductModal(true);
+                            } else {
+                              addToCart(product);
+                            }
+                          }}
+                          className="w-12 h-12 rounded-[1.3rem] flex items-center justify-center shadow-[0_8px_20px_rgba(0,0,0,0.08)] active:scale-95 transition-all border-none"
+                          style={{ backgroundColor: effectivePrimaryColor }}
+                        >
+                          <Plus size={24} className="text-white" strokeWidth={3} />
+                        </button>
                       );
-                    }
-
-                    return (
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (hasOptions) {
-                            setModalQuantity(1);
-                            setSelectedProductForModal(product);
-                            setShowProductModal(true);
-                          } else {
-                            addToCart(product);
-                          }
-                        }}
-                        className="w-12 h-12 rounded-[1.3rem] flex items-center justify-center shadow-[0_8px_20px_rgba(0,0,0,0.08)] active:scale-95 transition-all border-none"
-                        style={{ backgroundColor: effectivePrimaryColor }}
-                      >
-                        <Plus size={24} className="text-white" strokeWidth={3} />
-                      </button>
-                    );
-                  })()}
+                    })()}
+                  </div>
                 </div>
-              </div>
-            </motion.div>
-          ))
+              </motion.div>
+            );
+          })
         )}
       </div>
 

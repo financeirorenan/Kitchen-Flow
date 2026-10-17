@@ -3,10 +3,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Order, Product, Table } from '../types';
 import { 
   ChefHat, Clock, CheckCircle2, Volume2, VolumeX, 
-  Maximize2, Minimize2, Sun, Moon, LogOut
+  Maximize2, Minimize2, Sun, Moon, LogOut, AlertTriangle
 } from 'lucide-react';
 import { formatOrderNumber, getOrderNumericId, deduplicateOrders } from '../utils/deduplicate';
 import { logDiagnostic } from '../services/orderService';
+import { parseKdsItemDetails } from '../utils/kdsItemFormatter';
 
 interface KDSKitchenOnlyProps {
   orders: Order[];
@@ -124,15 +125,33 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
           const existing = tableOrdersMap.get(tableKey)!;
           const mergedItems = [...(existing.items || [])];
           for (const item of (order.items || [])) {
-            const idx = mergedItems.findIndex(i => i.id === item.id || (i.productId === item.productId && i.name === item.name && (i.observation || '') === (item.observation || '')));
-            if (idx !== -1) {
-              mergedItems[idx] = { ...mergedItems[idx], ...item };
+            const sameIdIdx = mergedItems.findIndex(i => i.id && item.id && i.id === item.id);
+            if (sameIdIdx !== -1) {
+              mergedItems[sameIdIdx] = { ...mergedItems[sameIdIdx], ...item };
+              continue;
+            }
+
+            const sameBatchAndContentIdx = mergedItems.findIndex(i =>
+              i.productId === item.productId &&
+              i.name === item.name &&
+              (i.observation || '') === (item.observation || '') &&
+              (i.batchNumber || 1) === (item.batchNumber || 1) &&
+              Boolean(i.cancelled) === Boolean(item.cancelled)
+            );
+
+            if (sameBatchAndContentIdx !== -1) {
+              mergedItems[sameBatchAndContentIdx] = {
+                ...mergedItems[sameBatchAndContentIdx],
+                quantity: mergedItems[sameBatchAndContentIdx].quantity + item.quantity
+              };
             } else {
-              mergedItems.push({ ...item, isNew: true });
+              mergedItems.push({ ...item, isNew: item.isNew ?? true });
             }
           }
           existing.items = mergedItems;
-          existing.total = mergedItems.reduce((acc, i) => acc + (i.price * i.quantity), 0);
+          existing.total = mergedItems
+            .filter(i => !i.cancelled)
+            .reduce((acc, i) => acc + (i.price * i.quantity), 0);
           if (!existing.mergedOrderIds) {
             existing.mergedOrderIds = [existing.id];
           }
@@ -662,61 +681,170 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                         </div>
                       )}
 
-                      {/* Lista de Itens */}
-                      <div className="space-y-3">
-                        {itemsToDisplay.map((item, idx) => {
-                          const isMulti = item.quantity > 1;
+                      {/* Lista de Itens com Adicionais, Remoções e Rodadas */}
+                      <div className="space-y-3.5">
+                        {(() => {
+                          const orderHasMultipleBatches = itemsToDisplay.some(
+                            (it) => ((it as any).batchNumber || 1) > 1 || (it as any).isNew
+                          );
 
-                          return (
-                            <div key={item.id || `${order.id}-${idx}`} className="flex flex-col">
-                              {/* Linha Principal do Item: 1× NOME DO PRATO */}
-                              <div className="flex items-start gap-2">
-                                <span className={`text-base sm:text-lg font-black shrink-0 select-none ${
-                                  isMulti 
-                                    ? isLight ? 'text-amber-800' : 'text-amber-400' 
-                                    : isLight ? 'text-emerald-700' : 'text-emerald-400'
-                                }`}>
-                                  {item.quantity}×
-                                </span>
-                                
-                                <div className="flex-1 min-w-0">
-                                  <span className={`text-base sm:text-lg font-black tracking-tight uppercase leading-snug break-words ${
-                                    isLight ? 'text-slate-950' : 'text-zinc-50'
-                                  }`}>
-                                    {item.name}
+                          return itemsToDisplay.map((item, idx) => {
+                            const isMulti = item.quantity > 1;
+                            const details = parseKdsItemDetails(item, orderHasMultipleBatches);
+
+                            return (
+                              <div
+                                key={item.id || `${order.id}-${idx}`}
+                                className={`flex flex-col p-2 rounded-xl transition-colors ${
+                                  details.isCancelled
+                                    ? 'bg-rose-500/10 border border-rose-500/30 opacity-60 line-through'
+                                    : details.isNewBatch
+                                    ? isLight
+                                      ? 'bg-amber-50/70 border border-amber-200'
+                                      : 'bg-amber-950/20 border border-amber-800/40'
+                                    : details.isPreviousBatch
+                                    ? 'opacity-80'
+                                    : ''
+                                }`}
+                              >
+                                {/* Linha Principal: Quantidade + Nome + Badges de Rodada */}
+                                <div className="flex items-start gap-2.5">
+                                  <span
+                                    className={`text-base sm:text-lg font-black shrink-0 select-none px-2 py-0.5 rounded-lg border ${
+                                      isMulti
+                                        ? isLight
+                                          ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                          : 'bg-amber-900/60 text-amber-200 border-amber-700'
+                                        : isLight
+                                        ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                        : 'bg-emerald-950/60 text-emerald-300 border-emerald-800'
+                                    }`}
+                                  >
+                                    {item.quantity}×
                                   </span>
 
-                                  {/* Opções e Adicionais do Prato */}
-                                  {item.options && item.options.length > 0 && (
-                                    <div className="mt-1 pl-1 space-y-0.5">
-                                      {item.options.map((opt, oIdx) => (
-                                        <div 
-                                          key={oIdx} 
-                                          className={`text-xs font-bold flex items-center gap-1.5 ${
-                                            isLight ? 'text-slate-800' : 'text-zinc-300'
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span
+                                        className={`text-base sm:text-lg font-black tracking-tight uppercase leading-snug break-words ${
+                                          details.isCancelled
+                                            ? 'text-rose-500 line-through'
+                                            : isLight
+                                            ? 'text-slate-950'
+                                            : 'text-zinc-50'
+                                        }`}
+                                      >
+                                        {details.displayName}
+                                      </span>
+
+                                      {/* Badge de Rodada / Momento do Pedido na Mesa */}
+                                      {details.isCancelled ? (
+                                        <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-rose-600 text-white shrink-0">
+                                          CANCELADO
+                                        </span>
+                                      ) : details.isNewBatch ? (
+                                        <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-amber-500 text-slate-950 shrink-0 shadow-xs flex items-center gap-1">
+                                          <span>⚡ NOVO</span>
+                                          {details.batchNumber && details.batchNumber > 1 && (
+                                            <span>(RODADA #{details.batchNumber})</span>
+                                          )}
+                                        </span>
+                                      ) : details.isPreviousBatch ? (
+                                        <span
+                                          className={`px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider shrink-0 ${
+                                            isLight
+                                              ? 'bg-slate-100 text-slate-500 border border-slate-200'
+                                              : 'bg-zinc-800 text-zinc-400 border border-zinc-700'
                                           }`}
                                         >
-                                          <span>+ {opt.quantity && opt.quantity > 1 ? `${opt.quantity}× ` : ''}{opt.name}</span>
-                                        </div>
-                                      ))}
+                                          ✓ 1ª Rodada (Já na Cozinha)
+                                        </span>
+                                      ) : null}
                                     </div>
-                                  )}
 
-                                  {/* Observação Específica do Item */}
-                                  {item.observation && (
-                                    <div className={`mt-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold w-fit ${
-                                      isLight 
-                                        ? 'bg-amber-100 text-amber-950 border-amber-300' 
-                                        : 'bg-amber-950/50 text-amber-200 border-amber-800/60'
-                                    }`}>
-                                      OBS: {item.observation}
-                                    </div>
-                                  )}
+                                    {/* ALERTA DE ALERGÊNICOS COM DESTAQUE MÁXIMO VISUAL */}
+                                    {details.allergens.length > 0 && (
+                                      <div className="mt-1.5 space-y-1">
+                                        {details.allergens.map((alg, aIdx) => (
+                                          <div
+                                            key={aIdx}
+                                            className="px-2.5 py-1 rounded-lg bg-red-600 text-white text-[10px] sm:text-xs font-black uppercase tracking-wide flex items-center gap-1.5 shadow-sm animate-pulse"
+                                          >
+                                            <AlertTriangle size={13} className="shrink-0" />
+                                            <span>🚨 ATENÇÃO ALÉRGICO: {alg}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+
+                                    {/* REMOÇÕES DE INGREDIENTES (SEM CEBOLA, SEM TOMATE, ETC.) */}
+                                    {details.removals.length > 0 && (
+                                      <div className="mt-1.5 flex flex-wrap gap-1">
+                                        {details.removals.map((rem, rIdx) => (
+                                          <div
+                                            key={rIdx}
+                                            className="px-2 py-0.5 rounded-md bg-rose-100 border border-rose-300 text-rose-900 text-[10px] sm:text-xs font-black uppercase tracking-wide flex items-center gap-1 shrink-0"
+                                          >
+                                            <span className="text-rose-600 font-extrabold">✕</span>
+                                            <span>
+                                              REMOVER: {rem.replace(/^(sem|remover|retirar|tirar)\s*[:\-]?\s*/i, '')}
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+
+                                    {/* ADICIONAIS PAGOS / EXTRAS COM QUANTIDADE CONSOLIDADA */}
+                                    {details.paidAddons.length > 0 && (
+                                      <div className="mt-1.5 pl-1 space-y-1">
+                                        {details.paidAddons.map((opt, oIdx) => {
+                                          const isAddonMulti = opt.quantity > 1;
+                                          return (
+                                            <div
+                                              key={oIdx}
+                                              className={`text-xs font-black flex items-center gap-1.5 flex-wrap ${
+                                                isLight ? 'text-slate-900' : 'text-zinc-200'
+                                              }`}
+                                            >
+                                              <span className="text-emerald-600 font-extrabold">+</span>
+                                              <span>
+                                                {isAddonMulti ? `${opt.quantity}× ` : ''}
+                                                {opt.name}
+                                              </span>
+                                              {isAddonMulti && (
+                                                <span className="text-[9px] uppercase font-black px-1.5 py-0.2 rounded bg-amber-100 text-amber-950 border border-amber-300">
+                                                  {opt.quantity} UNID
+                                                </span>
+                                              )}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+
+                                    {/* OBSERVAÇÃO ESPECÍFICA DO ITEM (SEM CORTE DE TEXTO) */}
+                                    {details.cleanObservation &&
+                                      !details.removals.includes(details.cleanObservation) &&
+                                      !details.allergens.includes(details.cleanObservation) && (
+                                        <div
+                                          className={`mt-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold leading-relaxed whitespace-pre-wrap break-words ${
+                                            isLight
+                                              ? 'bg-amber-100/90 text-amber-950 border-amber-300'
+                                              : 'bg-amber-950/60 text-amber-200 border-amber-800'
+                                          }`}
+                                        >
+                                          <span className="font-black mr-1 text-amber-800 uppercase">
+                                            Obs:
+                                          </span>
+                                          {details.cleanObservation}
+                                        </div>
+                                      )}
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          );
-                        })}
+                            );
+                          });
+                        })()}
                       </div>
                     </div>
 

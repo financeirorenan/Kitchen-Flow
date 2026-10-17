@@ -146,7 +146,7 @@ export async function triggerNativeNotification(
           tag: options.tag,
           vibrate: options.vibrate || defaultVibrate,
           data: { url: targetUrl }
-        });
+        } as any);
         return true;
       }
     } catch (e) {

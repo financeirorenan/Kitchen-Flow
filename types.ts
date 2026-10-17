@@ -705,6 +705,8 @@ export interface RawMaterial {
   name: string;
   unit: string; // kg, g, l, ml, un, etc.
   currentStock: number;
+  stock?: number; // compatibilidade e testes
+  cost?: number; // compatibilidade e testes
   minStock: number;
   costPerUnit: number;
   lastPurchaseDate?: Date;
@@ -792,6 +794,7 @@ export interface Product {
   isAvailableDineIn?: boolean;
   isAvailableOnline?: boolean;
   isAvailableDigitalMenu?: boolean;
+  available?: boolean;
   active?: boolean;
 }
 
@@ -805,10 +808,15 @@ export interface OrderItem {
   observation?: string;
   seat?: string;
   selectedOptions?: ProductOption[];
+  options?: ProductOption[];
+  removals?: string[];
+  allergens?: string[];
   sentToKitchen?: boolean;
   batchNumber?: number;
   isNew?: boolean;
   sentAt?: string;
+  round?: number;
+  cancelled?: boolean;
 }
 
 export interface OrderPayment {
@@ -880,7 +888,7 @@ export interface Order {
   dailyNumber?: number;
   version?: number;
   lastEventId?: string;
-  currentBatch?: number;
+  isManual?: boolean;
   observations?: string;
   notes?: string;
 }

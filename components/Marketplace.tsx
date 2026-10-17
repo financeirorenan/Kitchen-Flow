@@ -18,6 +18,7 @@ import {
   ChevronDown,
   Filter,
   Sparkles,
+  Camera,
   Heart,
   User as UserIcon,
   Home,
@@ -106,15 +107,31 @@ const KitchenFlowBrandLogo = ({ className = "w-9 h-9" }: { className?: string })
   <svg viewBox="0 0 512 512" className={className} xmlns="http://www.w3.org/2000/svg">
     <defs>
       <linearGradient id="kfBrandGradMp" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stopColor="#FF5722" />
+        <stop offset="0%" stopColor="#FF6B00" />
+        <stop offset="50%" stopColor="#FF4F18" />
         <stop offset="100%" stopColor="#E02A00" />
       </linearGradient>
+      <linearGradient id="zupiBoltGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stopColor="#FFFFFF" />
+        <stop offset="100%" stopColor="#FFF5ED" />
+      </linearGradient>
+      <filter id="zupiBoltShadow" x="-20%" y="-20%" width="140%" height="140%">
+        <feDropShadow dx="0" dy="6" stdDeviation="8" floodColor="#000000" floodOpacity="0.22" />
+      </filter>
     </defs>
     {/* Smooth rounded background matching favicon */}
     <rect width="512" height="512" rx="112" fill="url(#kfBrandGradMp)" />
     
-    {/* Crisp, solid white letter K */}
-    <path d="M 132,112 H 200 V 212 L 328,112 H 396 L 254,242 L 396,400 H 328 L 200,268 V 400 H 132 Z" fill="#FFFFFF" />
+    {/* Raio da Zupi - Ícone dinâmico e veloz */}
+    <path
+      d="M 296,80 L 164,268 H 260 L 216,432 L 356,220 H 260 Z"
+      fill="url(#zupiBoltGrad)"
+      filter="url(#zupiBoltShadow)"
+      stroke="#FFFFFF"
+      strokeWidth="10"
+      strokeLinejoin="round"
+      strokeLinecap="round"
+    />
   </svg>
 );
 
@@ -294,8 +311,8 @@ export const DEFAULT_FEATURED_DISHES = [
 interface MarketplaceProps {
   onSelectTenant: (tenantId: string) => void;
   currentUser: any;
-  profile: { name: string; phone: string } | null;
-  onUpdateProfile: (data: { name: string; phone: string }) => void;
+  profile: { name: string; phone: string; photoURL?: string } | null;
+  onUpdateProfile: (data: { name: string; phone: string; photoURL?: string }) => void;
 }
 
 const resolveIcon = (iconName: string) => {
@@ -801,9 +818,27 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     showToast("Notificação de teste enviada! Verifique a barra do seu celular.", "success");
   };
 
-  // 10 Visual Verticals & Categories (Configurações de Categorias e Filtros)
+  // Dynamic categories strictly tied to registered tenants and their actual categories
   const catalogCategories = useMemo(() => {
-    return COMMERCE_VERTICAL_CATEGORIES.map((cat) => ({
+    const activeTenantsList = tenants.length > 0 ? tenants : DEFAULT_MOCKUP_TENANTS;
+    
+    const todosPreset = COMMERCE_VERTICAL_CATEGORIES.find((c) => c.id === "todos") || {
+      id: "todos",
+      label: "Todos",
+      subtitle: "Tudo na cidade",
+      name: "Todos",
+      description: "Todas as lojas e categorias",
+      emoji: "🍽️",
+      iconName: "UtensilsCrossed",
+    };
+
+    // Filter preset categories to only those that have at least one tenant
+    const matchedPresets = COMMERCE_VERTICAL_CATEGORIES.filter((cat) => {
+      if (cat.id === "todos") return false;
+      return activeTenantsList.some((t) =>
+        matchesMarketplaceCategory(t.category, t.name, cat.id)
+      );
+    }).map((cat) => ({
       id: cat.id,
       label: cat.label,
       subtitle: cat.subtitle,
@@ -812,7 +847,58 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       emoji: cat.emoji,
       iconName: cat.iconName,
     }));
-  }, []);
+
+    // Include custom tenant categories not in presets
+    const customCats: {
+      id: string;
+      label: string;
+      subtitle: string;
+      name: string;
+      description: string;
+      emoji: string;
+      iconName: string;
+    }[] = [];
+
+    activeTenantsList.forEach((t) => {
+      const rawCat = (t.category || "").trim();
+      if (!rawCat) return;
+      const alreadyCovered = matchedPresets.some((p) =>
+        matchesMarketplaceCategory(rawCat, t.name, p.id)
+      );
+      if (!alreadyCovered && !customCats.some((c) => c.label.toLowerCase() === rawCat.toLowerCase())) {
+        const id = rawCat.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "_");
+        customCats.push({
+          id,
+          label: rawCat,
+          subtitle: "Especialidade",
+          name: rawCat,
+          description: rawCat,
+          emoji: rawCat.toLowerCase().includes("pastel") ? "🥟" : "🍽️",
+          iconName: "UtensilsCrossed",
+        });
+      }
+    });
+
+    return [
+      {
+        id: todosPreset.id,
+        label: todosPreset.label,
+        subtitle: todosPreset.subtitle,
+        name: todosPreset.name,
+        description: todosPreset.description,
+        emoji: todosPreset.emoji,
+        iconName: todosPreset.iconName,
+      },
+      ...matchedPresets,
+      ...customCats,
+    ];
+  }, [tenants]);
+
+  useEffect(() => {
+    if (activeCategory !== "todos" && !catalogCategories.some((c) => c.id === activeCategory)) {
+      setActiveCategory("todos");
+    }
+  }, [catalogCategories, activeCategory]);
 
   // Navigation State
   const [navView, setNavView] = useState<
@@ -863,6 +949,108 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [tempName, setTempName] = useState(profile?.name || "");
   const [tempPhone, setTempPhone] = useState(profile?.phone || "");
+  const [tempPhotoURL, setTempPhotoURL] = useState<string>(() => {
+    try {
+      return profile?.photoURL || localStorage.getItem("marketplace_avatar") || currentUser?.photoURL || "";
+    } catch {
+      return profile?.photoURL || currentUser?.photoURL || "";
+    }
+  });
+  const [isPhotoUploading, setIsPhotoUploading] = useState(false);
+  const [showLogoutConfirmModal, setShowLogoutConfirmModal] = useState(false);
+  const [photoFeedback, setPhotoFeedback] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const modalFileInputRef = useRef<HTMLInputElement>(null);
+
+  const effectiveUserPhoto = tempPhotoURL || profile?.photoURL || currentUser?.photoURL || "";
+
+  const handlePhotoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      return;
+    }
+
+    setIsPhotoUploading(true);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          const MAX_SIZE = 400;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height) {
+            if (width > MAX_SIZE) {
+              height = Math.round((height * MAX_SIZE) / width);
+              width = MAX_SIZE;
+            }
+          } else {
+            if (height > MAX_SIZE) {
+              width = Math.round((width * MAX_SIZE) / height);
+              height = MAX_SIZE;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+            setTempPhotoURL(dataUrl);
+            try {
+              localStorage.setItem("marketplace_avatar", dataUrl);
+            } catch (err) {
+              console.warn("Storage full for avatar:", err);
+            }
+            if (onUpdateProfile) {
+              onUpdateProfile({
+                name: tempName || profile?.name || currentUser?.displayName || "Cliente",
+                phone: tempPhone || profile?.phone || "",
+                photoURL: dataUrl
+              });
+            }
+            setPhotoFeedback("Foto atualizada com sucesso!");
+            setTimeout(() => setPhotoFeedback(null), 3500);
+          }
+        } catch (err) {
+          console.error("Erro ao processar imagem:", err);
+        } finally {
+          setIsPhotoUploading(false);
+        }
+      };
+      img.onerror = () => setIsPhotoUploading(false);
+      img.src = event.target?.result as string;
+    };
+    reader.onerror = () => setIsPhotoUploading(false);
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
+  const handleConfirmLogout = async () => {
+    try {
+      await auth.signOut();
+    } catch (err) {
+      console.warn("Erro ao fazer logout:", err);
+    }
+    try {
+      localStorage.removeItem("marketplace_profile");
+      localStorage.removeItem("marketplace_avatar");
+    } catch (e) {
+      console.warn("Erro ao limpar storage:", e);
+    }
+    setTempPhotoURL("");
+    if (onUpdateProfile) {
+      onUpdateProfile({ name: "", phone: "", photoURL: "" });
+    }
+    setShowLogoutConfirmModal(false);
+    setNavView("home");
+    navigate("/marketplace");
+  };
 
   // Payment Methods States
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -1565,8 +1753,9 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     }
   }, []);
 
-  // Use ref for Firestore product listener to prevent leaks and isolation issues
+  // Use ref for Firestore product and settings listeners to prevent leaks and isolation issues
   const productListenerRef = React.useRef<(() => void) | null>(null);
+  const storeSettingsListenerRef = React.useRef<(() => void) | null>(null);
 
   // Tracking states
   const [activeOrders, setActiveOrders] = useState<Order[]>([]);
@@ -1708,6 +1897,9 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     if (profile) {
       setTempName(profile.name);
       setTempPhone(profile.phone);
+      if (profile.photoURL) {
+        setTempPhotoURL(profile.photoURL);
+      }
     }
   }, [profile]);
 
@@ -2154,6 +2346,35 @@ const Marketplace: React.FC<MarketplaceProps> = ({
             console.error("Erro ao escutar produtos da loja:", error);
           },
         );
+
+        // Listen for live storefront settings updates in real time (branding, hours, status, delivery fee)
+        storeSettingsListenerRef.current = onSnapshot(
+          settingsRef,
+          (snapshot) => {
+            if (snapshot.exists()) {
+              const data = snapshot.data();
+              const dMenu = data.digitalMenu || {};
+              const adm = data.admin || {};
+              const liveSettings: DigitalMenuSettings = {
+                restaurantName: dMenu.restaurantName || adm.companyName || tenant.name,
+                primaryColor: dMenu.primaryColor || adm.primaryColor || tenant.primaryColor || "#4f46e5",
+                accentColor: dMenu.accentColor || adm.accentColor || tenant.accentColor || "#facc15",
+                fontFamily: dMenu.fontFamily || "sans",
+                welcomeMessage: dMenu.welcomeMessage || "Bem-vindo ao nosso cardápio!",
+                bannerUrl: dMenu.bannerUrl || adm.bannerUrl || tenant.bannerUrl || tenant.coverUrl || "",
+                logoUrl: dMenu.logoUrl || adm.logoUrl || tenant.logoUrl || "",
+                allowOrdering: dMenu.allowOrdering !== undefined ? dMenu.allowOrdering : true,
+                showStock: dMenu.showStock || false,
+                ...dMenu,
+              };
+              setStoreSettings(liveSettings);
+              if (data.admin) setStoreAdminSettings(data.admin);
+            }
+          },
+          (error) => {
+            console.warn("Erro ao escutar configurações públicas da loja:", error);
+          }
+        );
       } catch (err) {
         console.error("Error loading store data:", err);
       } finally {
@@ -2234,11 +2455,11 @@ const Marketplace: React.FC<MarketplaceProps> = ({
           }
         } catch {}
 
-        // Fetch directly from Firestore by ID or query all tenants by slug without blocking on initialLoading
+        // Fetch directly from Firestore by ID or query all tenants/publicStorefronts by slug
         const fetchTenantDirectly = async () => {
           setIsStoreLoading(true);
           try {
-            // First check by direct doc ID
+            // 1. Direct doc ID in tenants
             const tenantRef = doc(db, "tenants", routeTenantId);
             const tenantSnap = await getDoc(tenantRef);
             if (tenantSnap.exists()) {
@@ -2250,7 +2471,49 @@ const Marketplace: React.FC<MarketplaceProps> = ({
               return;
             }
 
-            // Query active tenants to find by slug
+            // 2. Direct doc ID in publicStorefronts
+            const sfRef = doc(db, "publicStorefronts", routeTenantId);
+            const sfSnap = await getDoc(sfRef);
+            if (sfSnap.exists()) {
+              const sfData = sfSnap.data();
+              const syntheticTenant: Tenant = {
+                id: sfSnap.id,
+                name: sfData.digitalMenu?.restaurantName || sfData.name || routeTenantId,
+                email: "",
+                logoUrl: sfData.digitalMenu?.logoUrl || "",
+                createdAt: new Date().toISOString(),
+              };
+              loadStoreData(syntheticTenant);
+              return;
+            }
+
+            // 3. Search publicStorefronts by slug or customSlug
+            const allStorefrontsSnap = await getDocs(query(collection(db, "publicStorefronts"), limit(100)));
+            const matchedSf = allStorefrontsSnap.docs.find(d => {
+              const data = d.data();
+              const customSlug = data.digitalMenu?.customSlug;
+              const sfSlug = data.slug;
+              const sfName = data.digitalMenu?.restaurantName || data.name || '';
+              if (customSlug && normalizeSlug(customSlug) === targetNorm) return true;
+              if (sfSlug && normalizeSlug(sfSlug) === targetNorm) return true;
+              if (sfName && normalizeSlug(sfName) === targetNorm) return true;
+              return d.id === routeTenantId || d.id.toLowerCase() === routeTenantId.toLowerCase();
+            });
+
+            if (matchedSf) {
+              const data = matchedSf.data();
+              const syntheticTenant: Tenant = {
+                id: matchedSf.id,
+                name: data.digitalMenu?.restaurantName || data.name || routeTenantId,
+                email: "",
+                logoUrl: data.digitalMenu?.logoUrl || "",
+                createdAt: new Date().toISOString(),
+              };
+              loadStoreData(syntheticTenant);
+              return;
+            }
+
+            // 4. Query active tenants to find by slug or name
             const allTenantsSnap = await getDocs(query(collection(db, "tenants"), limit(100)));
             const allTenants = allTenantsSnap.docs.map(d => ({ ...d.data(), id: d.id }) as Tenant);
             
@@ -2271,12 +2534,9 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
             if (matchedBySlug) {
               loadStoreData(matchedBySlug);
-            } else if (allTenants.length > 0) {
-              // Fallback to Viva Lá Fome or first tenant
-              const defaultTenant = allTenants.find(t => t.id === 'HCL1177LRQVPEKCTYRAHU7IGBQ42' || normalizeSlug(t.name).includes('viva')) || allTenants[0];
-              loadStoreData(defaultTenant);
             } else {
-              console.warn("Tenant not found for route:", routeTenantId);
+              console.warn("Restaurante não localizado para o endereço:", routeTenantId);
+              setSelectedTenant(null);
               setIsStoreLoading(false);
             }
           } catch (err) {
@@ -2295,6 +2555,10 @@ const Marketplace: React.FC<MarketplaceProps> = ({
         productListenerRef.current();
         productListenerRef.current = null;
       }
+      if (storeSettingsListenerRef.current) {
+        storeSettingsListenerRef.current();
+        storeSettingsListenerRef.current = null;
+      }
     }
   }, [routeTenantId, tenants, selectedTenant?.id]);
 
@@ -2302,6 +2566,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     // Cleanup on unmount
     return () => {
       if (productListenerRef.current) productListenerRef.current();
+      if (storeSettingsListenerRef.current) storeSettingsListenerRef.current();
     };
   }, []);
 
@@ -2356,13 +2621,14 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   }, [tenants, activeCategory, searchTerm, activePromotionId, marketplaceSettings, tenantsSettings]);
 
   const displayTenants = useMemo(() => {
-    if (filteredTenants.length > 0) return filteredTenants;
+    if (tenants.length > 0) {
+      return filteredTenants;
+    }
     if (activeCategory === "todos") return DEFAULT_MOCKUP_TENANTS;
-    const match = DEFAULT_MOCKUP_TENANTS.filter((t) =>
+    return DEFAULT_MOCKUP_TENANTS.filter((t) =>
       matchesMarketplaceCategory(t.category, t.name, activeCategory)
     );
-    return match.length > 0 ? match : DEFAULT_MOCKUP_TENANTS;
-  }, [filteredTenants, activeCategory]);
+  }, [tenants, filteredTenants, activeCategory]);
 
   const isMaintenanceActive = useMemo(() => {
     if (!marketplaceSettings?.maintenance?.active) return false;
@@ -2419,6 +2685,41 @@ const Marketplace: React.FC<MarketplaceProps> = ({
               <Clock size={14} /> Tentar Novamente
             </button>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (isDirectCardapioRoute && !selectedTenant) {
+    if (isStoreLoading) {
+      return (
+        <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center">
+          <div className="w-16 h-16 bg-white rounded-3xl shadow-xl flex items-center justify-center mb-4 text-[#FF4F18]">
+            <Store size={32} className="animate-pulse" />
+          </div>
+          <h2 className="text-xl font-black text-slate-800">Carregando Cardápio...</h2>
+          <p className="text-xs text-slate-400 font-semibold mt-1">Conectando ao restaurante em tempo real</p>
+          <div className="w-6 h-6 border-2 border-slate-200 border-t-[#FF4F18] rounded-full animate-spin mt-4" />
+        </div>
+      );
+    }
+
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center">
+        <div className="max-w-md w-full bg-white rounded-3xl p-8 shadow-xl border border-slate-100 flex flex-col items-center">
+          <div className="w-20 h-20 bg-rose-50 text-rose-500 rounded-3xl flex items-center justify-center mb-4">
+            <Store size={40} />
+          </div>
+          <h2 className="text-2xl font-black text-slate-800 mb-2">Restaurante Não Encontrado</h2>
+          <p className="text-xs text-slate-500 font-medium leading-relaxed mb-6">
+            O cardápio que você tentou acessar não foi localizado ou o link foi alterado pelo estabelecimento.
+          </p>
+          <button
+            onClick={() => navigate('/marketplace')}
+            className="w-full py-3.5 bg-[#FF4F18] text-white rounded-2xl font-black text-xs uppercase tracking-wider shadow-lg hover:opacity-95 transition-all cursor-pointer"
+          >
+            Explorar Restaurantes no Marketplace
+          </button>
         </div>
       </div>
     );
@@ -2680,11 +2981,6 @@ const Marketplace: React.FC<MarketplaceProps> = ({
           </span>
         </div>
         <div className="flex items-center gap-3.5 sm:gap-4 shrink-0 text-[11px] sm:text-xs text-slate-300 font-medium">
-          <Link to="/" className="hover:text-white flex items-center gap-1.5 transition-colors">
-            <Globe size={13} className="text-slate-400" />
-            <span className="hidden sm:inline">Portal do Lojista</span>
-          </Link>
-          <span className="text-slate-700 hidden sm:inline">•</span>
           <div className="flex items-center gap-1.5 hover:text-white transition-colors cursor-pointer">
             <Smartphone size={13} className="text-[#FF5722]" />
             <PwaInstallPrompt compact />
@@ -2704,20 +3000,12 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                   setActiveCategory("todos");
                   setSearchTerm("");
                 }}
-                className="flex items-center gap-2.5 group cursor-pointer"
+                className="flex items-center group cursor-pointer"
+                title="Zupi Marketplace"
+                aria-label="Zupi Marketplace"
               >
                 <div className="w-10 h-10 rounded-2xl overflow-hidden shrink-0 shadow-md shadow-orange-500/25 group-hover:scale-105 transition-transform">
                   <KitchenFlowBrandLogo className="w-full h-full" />
-                </div>
-                <div className="flex flex-col text-left">
-                  <div className="flex items-center gap-1">
-                    <span className="font-display font-black text-xl tracking-tight text-slate-900 leading-none">
-                      KitchenFlow <span className="text-[#FF5722]">Marketplace</span>
-                    </span>
-                  </div>
-                  <span className="text-[10px] font-bold text-slate-400 mt-0.5 uppercase tracking-wider">
-                    Delivery Gastronômico
-                  </span>
                 </div>
               </Link>
 
@@ -2776,12 +3064,20 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 }}
                 className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-slate-50 hover:bg-slate-100 border border-slate-200/80 transition-colors cursor-pointer"
               >
-                <div className="w-6 h-6 rounded-full bg-[#FF3B00] text-white font-black text-xs flex items-center justify-center">
-                  {profile?.name?.[0]?.toUpperCase() || currentUser?.displayName?.[0]?.toUpperCase() || "A"}
-                </div>
+                {effectiveUserPhoto ? (
+                  <img
+                    src={effectiveUserPhoto}
+                    alt="Perfil"
+                    className="w-6 h-6 rounded-full object-cover border border-white shadow-xs"
+                  />
+                ) : (
+                  <div className="w-6 h-6 rounded-full bg-[#FF3B00] text-white font-black text-xs flex items-center justify-center">
+                    {profile?.name?.[0]?.toUpperCase() || currentUser?.displayName?.[0]?.toUpperCase() || "A"}
+                  </div>
+                )}
                 <div className="text-left hidden md:block">
                   <p className="text-xs font-black text-slate-800 leading-tight">
-                    {profile?.name || currentUser?.displayName || "Ana"}
+                    {profile?.name || currentUser?.displayName || "Cliente"}
                   </p>
                   <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider block leading-none">
                     CLIENTE
@@ -2791,13 +3087,10 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
               {/* Logout / Exit */}
               <button
-                onClick={() => {
-                  if (window.confirm("Deseja sair da sua conta?")) {
-                    auth.signOut();
-                  }
-                }}
-                className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded-full transition-colors hidden sm:flex cursor-pointer"
-                title="Sair"
+                type="button"
+                onClick={() => setShowLogoutConfirmModal(true)}
+                className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-full transition-colors flex cursor-pointer"
+                title="Sair da Conta"
               >
                 <LogOut size={16} />
               </button>
@@ -2966,6 +3259,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
             </div>
 
             {/* 🔥 Mais Pedidos na Região (Mockup 1 Style) */}
+            {((popularFeaturedItems.length > 0) || (tenants.length === 0 && DEFAULT_FEATURED_DISHES.length > 0)) && (
             <div className="px-4 sm:px-6 pt-4 pb-4 text-left">
               <div className="mb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-2">
                 <div>
@@ -2995,7 +3289,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
               </div>
 
               <div className="flex gap-4 sm:gap-5 overflow-x-auto no-scrollbar pb-3 pt-1">
-                {(popularFeaturedItems.length > 0 ? popularFeaturedItems : DEFAULT_FEATURED_DISHES).map((item, idx) => (
+                {(popularFeaturedItems.length > 0 ? popularFeaturedItems : (tenants.length === 0 ? DEFAULT_FEATURED_DISHES : [])).map((item, idx) => (
                   <div
                     key={idx}
                     onClick={() => {
@@ -3047,6 +3341,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 ))}
               </div>
             </div>
+            )}
 
             {/* Real-time Tracking Widget with Visual Stepper */}
             <AnimatePresence>
@@ -3136,7 +3431,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-orange-500/10 text-[#FF5722] text-[10px] font-black uppercase tracking-wider border border-orange-500/20">
-                      ⭐ RESTAURANTES PARCEIROS
+                      ⭐ RESTAURANTES & LOJAS
                     </span>
                     <span className="text-xs font-bold text-slate-400">
                       • Entrega rápida
@@ -3146,7 +3441,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                     Lojas em Destaque
                   </h2>
                   <p className="text-xs font-semibold text-slate-500 mt-1.5">
-                    Restaurantes parceiros oficiais com cardápio completo e taxa reduzida
+                    Faça seu pedido com cardápio completo, entrega rápida ou retirada
                   </p>
                 </div>
                 <div className="flex items-center gap-2 self-start sm:self-auto">
@@ -3277,64 +3572,26 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                     </motion.div>
                   );
                 })}
-              </div>
-            </section>
 
-            {/* Institutional KitchenFlow Partner & SaaS Banner */}
-            <section className="px-6 mb-12">
-              <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white rounded-[2.5rem] p-7 sm:p-10 border border-slate-800 shadow-2xl relative overflow-hidden text-left">
-                {/* Glow effects */}
-                <div className="absolute top-0 right-0 w-96 h-96 bg-orange-500/10 rounded-full blur-3xl pointer-events-none" />
-                <div className="absolute bottom-0 left-0 w-80 h-80 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
-
-                <div className="relative z-10 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-8">
-                  <div className="max-w-2xl space-y-3.5">
-                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-orange-500/15 border border-orange-500/30 text-orange-400 text-[10px] sm:text-xs font-black uppercase tracking-widest">
-                      <Store size={13} />
-                      <span>Para Donos de Restaurantes, Lanchonetes & Pizzarias</span>
+                {displayTenants.length === 0 && (
+                  <div className="col-span-full py-16 px-6 text-center bg-white rounded-3xl border border-slate-200/80 shadow-xs">
+                    <div className="w-16 h-16 rounded-2xl bg-orange-50 text-[#FF5722] flex items-center justify-center mx-auto mb-4 border border-orange-100">
+                      <Store size={28} />
                     </div>
-
-                    <h3 className="text-2xl sm:text-3.5xl font-display font-black text-white tracking-tight leading-tight">
-                      Venda no KitchenFlow com <br className="hidden sm:block" />
-                      <span className="text-transparent bg-clip-text bg-gradient-to-r from-orange-400 via-orange-500 to-amber-400">
-                        0% de comissão por pedido.
-                      </span>
+                    <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-tight">
+                      Nenhum estabelecimento encontrado nesta categoria
                     </h3>
-
-                    <p className="text-xs sm:text-sm text-slate-300 leading-relaxed max-w-xl">
-                      Tenha seu próprio cardápio digital, PDV ultra-rápido, sistema KDS para a cozinha, controle de mesas, comandas e gestão de entregadores com GPS em tempo real.
+                    <p className="text-xs text-slate-500 font-medium mt-1 max-w-md mx-auto">
+                      Não há lojas cadastradas para o filtro selecionado no momento.
                     </p>
-
-                    <div className="flex flex-wrap items-center gap-4 pt-1 text-xs text-slate-300">
-                      <span className="flex items-center gap-1.5 font-bold">
-                        <CheckCircle2 size={15} className="text-emerald-400" /> Sem taxa por pedido
-                      </span>
-                      <span className="flex items-center gap-1.5 font-bold">
-                        <CheckCircle2 size={15} className="text-emerald-400" /> Cardápio Próprio
-                      </span>
-                      <span className="flex items-center gap-1.5 font-bold">
-                        <CheckCircle2 size={15} className="text-emerald-400" /> Suporte no Brasil
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col sm:flex-row lg:flex-col gap-3 w-full sm:w-auto shrink-0">
-                    <Link
-                      to="/login"
-                      className="px-6 py-4 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white rounded-2xl font-black text-xs uppercase tracking-wider text-center shadow-lg shadow-orange-500/25 transition-all flex items-center justify-center gap-2 group cursor-pointer"
+                    <button
+                      onClick={() => setActiveCategory("todos")}
+                      className="mt-5 px-6 py-2.5 bg-gradient-to-r from-[#FF5722] to-[#E02A00] text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-md hover:scale-105 active:scale-95 transition-all cursor-pointer"
                     >
-                      <span>Cadastrar Meu Restaurante</span>
-                      <ArrowRight size={15} className="group-hover:translate-x-0.5 transition-transform" />
-                    </Link>
-                    <Link
-                      to="/"
-                      className="px-6 py-4 bg-white/10 hover:bg-white/15 text-white border border-white/15 rounded-2xl font-bold text-xs uppercase tracking-wider text-center transition-all flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <span>Conhecer o KitchenFlow</span>
-                      <ArrowUpRight size={15} className="text-slate-400" />
-                    </Link>
+                      Ver Todas as Lojas
+                    </button>
                   </div>
-                </div>
+                )}
               </div>
             </section>
           </>
@@ -3746,12 +4003,20 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
               {/* Profile Body */}
               <div className="px-6 pb-6 pt-0">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handlePhotoFileChange}
+                  className="hidden"
+                />
+
                 <div className="flex flex-col sm:flex-row items-start sm:items-end justify-between gap-4 -mt-12 sm:-mt-14 mb-4">
-                  {/* Avatar */}
+                  {/* Avatar com ação de foto da galeria */}
                   <div className="relative group">
-                    {currentUser?.photoURL ? (
+                    {effectiveUserPhoto ? (
                       <img
-                        src={currentUser.photoURL}
+                        src={effectiveUserPhoto}
                         alt="Foto do Perfil"
                         className="w-24 h-24 sm:w-28 sm:h-28 rounded-3xl border-4 border-white shadow-xl object-cover bg-white"
                       />
@@ -3761,23 +4026,43 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                       </div>
                     )}
                     <button
-                      onClick={() => setShowProfileModal(true)}
-                      className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-slate-900 hover:bg-black text-white flex items-center justify-center border-2 border-white shadow-md transition-all cursor-pointer hover:scale-110 active:scale-95"
-                      title="Editar Perfil"
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="absolute -bottom-1 -right-1 w-9 h-9 rounded-2xl bg-[#FF4F18] hover:bg-[#E02A00] text-white flex items-center justify-center border-2 border-white shadow-lg transition-all cursor-pointer hover:scale-110 active:scale-95"
+                      title="Trocar foto usando a galeria"
                     >
-                      <Edit3 size={13} />
+                      <Camera size={16} />
                     </button>
                   </div>
 
-                  {/* Edit Profile Button */}
-                  <button
-                    onClick={() => setShowProfileModal(true)}
-                    className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-orange-50/80 text-slate-800 hover:text-[#FF5722] border border-slate-200/90 hover:border-orange-300 text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-sm self-stretch sm:self-auto justify-center"
-                  >
-                    <Edit3 size={14} />
-                    <span>Editar Dados Pessoais</span>
-                  </button>
+                  {/* Action Buttons: Galeria & Editar Dados */}
+                  <div className="flex flex-wrap items-center gap-2 self-stretch sm:self-auto">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex-1 sm:flex-initial px-4 py-2.5 rounded-xl bg-orange-50 hover:bg-orange-100 text-[#FF5722] border border-orange-200/90 text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-sm justify-center active:scale-95"
+                    >
+                      <Camera size={15} />
+                      <span>{isPhotoUploading ? "Carregando..." : "Trocar Foto da Galeria"}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowProfileModal(true)}
+                      className="flex-1 sm:flex-initial px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200/90 text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-sm justify-center active:scale-95"
+                    >
+                      <Edit3 size={15} />
+                      <span>Editar Dados</span>
+                    </button>
+                  </div>
                 </div>
+
+                {photoFeedback && (
+                  <div className="mb-4 px-3.5 py-2.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-bold flex items-center gap-2 animate-in fade-in">
+                    <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                    <span>{photoFeedback}</span>
+                  </div>
+                )}
 
                 {/* Identity info */}
                 <div className="space-y-1">
@@ -4118,15 +4403,12 @@ const Marketplace: React.FC<MarketplaceProps> = ({
             {/* Logout Card */}
             <div className="pt-2">
               <button
-                onClick={() => {
-                  if (window.confirm("Deseja realmente sair da sua conta?")) {
-                    auth.signOut();
-                  }
-                }}
-                className="w-full py-4 bg-rose-50 hover:bg-rose-100/80 border border-rose-200/90 text-rose-600 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer hover:scale-[1.01] active:scale-[0.99]"
+                type="button"
+                onClick={() => setShowLogoutConfirmModal(true)}
+                className="w-full py-4 bg-rose-50 hover:bg-rose-100/90 border border-rose-200/90 text-rose-600 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer hover:scale-[1.01] active:scale-[0.99]"
               >
                 <LogOut size={16} />
-                <span>Sair da Conta ({profile?.name || currentUser?.displayName || currentUser?.email || "Cliente"})</span>
+                <span>Encerrar Sessão / Sair da Conta ({profile?.name || currentUser?.displayName || currentUser?.email || "Cliente"})</span>
               </button>
             </div>
           </section>
@@ -4321,28 +4603,45 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 </div>
               ) : (
                 <div className="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-200">
-                  {currentUser.photoURL ? (
-                    <img
-                      src={currentUser.photoURL}
-                      alt="Avatar"
-                      className="w-12 h-12 rounded-xl shadow-sm border-2 border-white"
-                    />
-                  ) : (
-                    <div className="w-12 h-12 rounded-xl bg-orange-500 flex items-center justify-center text-white font-black text-lg">
-                      {(
-                        currentUser.displayName ||
-                        currentUser.email ||
-                        "U"
-                      ).substring(0, 1)}
-                    </div>
-                  )}
-                  <div className="text-left">
+                  <input
+                    ref={modalFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handlePhotoFileChange}
+                    className="hidden"
+                  />
+                  <div className="relative group shrink-0">
+                    {effectiveUserPhoto ? (
+                      <img
+                        src={effectiveUserPhoto}
+                        alt="Avatar"
+                        className="w-14 h-14 rounded-2xl shadow-sm border-2 border-white object-cover"
+                      />
+                    ) : (
+                      <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-orange-500 to-amber-500 flex items-center justify-center text-white font-black text-xl">
+                        {(tempName || profile?.name || currentUser?.displayName || "C").substring(0, 1).toUpperCase()}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => modalFileInputRef.current?.click()}
+                      className="absolute -bottom-1 -right-1 w-6 h-6 rounded-lg bg-[#FF4F18] text-white flex items-center justify-center border border-white shadow-sm hover:scale-110 transition-transform cursor-pointer"
+                      title="Alterar foto da galeria"
+                    >
+                      <Camera size={12} />
+                    </button>
+                  </div>
+                  <div className="text-left flex-1 min-w-0">
                     <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">
-                      Conectado
+                      Foto de Perfil
                     </p>
-                    <p className="font-black text-slate-900 text-sm">
-                      {currentUser.displayName || currentUser.email}
-                    </p>
+                    <button
+                      type="button"
+                      onClick={() => modalFileInputRef.current?.click()}
+                      className="text-xs font-bold text-[#FF5722] hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <Camera size={12} /> {isPhotoUploading ? "Processando..." : "Escolher da galeria"}
+                    </button>
                   </div>
                 </div>
               )}
@@ -4374,13 +4673,17 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 </div>
 
                 <button
+                  type="button"
                   onClick={() => {
                     if (!tempName || !tempPhone) {
-                      alert("Atenção: Nome e Telefone são necessários.");
+                      setPhotoFeedback("Atenção: Nome e Telefone são necessários.");
+                      setTimeout(() => setPhotoFeedback(null), 3000);
                       return;
                     }
-                    onUpdateProfile({ name: tempName, phone: tempPhone });
+                    onUpdateProfile({ name: tempName, phone: tempPhone, photoURL: tempPhotoURL });
                     setShowProfileModal(false);
+                    setPhotoFeedback("Perfil atualizado com sucesso!");
+                    setTimeout(() => setPhotoFeedback(null), 3000);
                   }}
                   className="w-full py-4 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white rounded-2xl font-black text-[11px] uppercase tracking-widest shadow-lg shadow-orange-500/25 transition-all active:scale-[0.98] cursor-pointer"
                 >
@@ -5282,6 +5585,44 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                   {helpModalLoading ? "Carregando..." : "Falar no WhatsApp"}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Logout Confirmation Modal */}
+      {showLogoutConfirmModal && (
+        <div 
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowLogoutConfirmModal(false);
+          }}
+          className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[300] flex items-center justify-center p-4 animate-in fade-in duration-200"
+        >
+          <div className="bg-white w-full max-w-sm rounded-[2rem] p-6 shadow-2xl border border-slate-100 text-center animate-in zoom-in-95 duration-200">
+            <div className="w-14 h-14 bg-rose-50 text-rose-500 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-rose-100">
+              <LogOut size={26} strokeWidth={2.5} />
+            </div>
+            <h3 className="text-lg font-black text-slate-900 tracking-tight">
+              Deseja sair da sua conta?
+            </h3>
+            <p className="text-xs text-slate-500 font-medium mt-1.5 leading-relaxed">
+              Você será desconectado deste dispositivo. Seus dados e favoritos permanecerão salvos para seu próximo acesso.
+            </p>
+            <div className="grid grid-cols-2 gap-3 mt-6">
+              <button
+                type="button"
+                onClick={() => setShowLogoutConfirmModal(false)}
+                className="py-3 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-xs uppercase tracking-wider transition-all cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmLogout}
+                className="py-3 px-4 rounded-xl bg-rose-500 hover:bg-rose-600 text-white font-black text-xs uppercase tracking-wider shadow-lg shadow-rose-500/25 transition-all cursor-pointer active:scale-95"
+              >
+                Sim, Sair
+              </button>
             </div>
           </div>
         </div>

@@ -1534,16 +1534,38 @@ const Tables: React.FC<TablesProps> = memo(
     const removeItem = useCallback(
       (index: number) => {
         if (!selectedTable) return;
-        const newItems = selectedTable.items.filter((_, i) => i !== index);
-        const newTotal = newItems.reduce(
-          (acc, item) => acc + item.price * item.quantity,
-          0,
-        );
+        const itemToRemove = selectedTable.items[index];
+        const isSent = !!itemToRemove?.sentToKitchen;
+
+        let newItems: OrderItem[];
+        if (isSent) {
+          // Marca o item como cancelado para manter histórico da comanda e atualizar KDS sem reenviar
+          newItems = selectedTable.items.map((it, i) =>
+            i === index ? { ...it, cancelled: true, cancelledAt: new Date().toISOString() } : it
+          );
+        } else {
+          // Item ainda não foi enviado à cozinha: pode ser removido diretamente
+          newItems = selectedTable.items.filter((_, i) => i !== index);
+        }
+
+        const newTotal = newItems
+          .filter(it => !it.cancelled)
+          .reduce((acc, item) => acc + item.price * item.quantity, 0);
+
         const updated = { ...selectedTable, items: newItems, total: newTotal };
         setSelectedTable(updated);
         onUpdateTable(selectedTable.id, newItems, "occupied", isCounterContext);
+
+        // Se a mesa possuir pedido ativo na cozinha, sincroniza imediatamente a remoção/cancelamento
+        const activeOrderId = pdvEditOrder ? pdvEditOrder.id : selectedTable.currentOrderId;
+        if (activeOrderId && onUpdateOrder) {
+          onUpdateOrder(String(activeOrderId), {
+            items: newItems,
+            total: newTotal + (selectedTable.deliveryFee || 0)
+          });
+        }
       },
-      [selectedTable, isCounterContext, onUpdateTable],
+      [selectedTable, isCounterContext, onUpdateTable, pdvEditOrder, onUpdateOrder],
     );
 
     const startEditItem = async (index: number) => {

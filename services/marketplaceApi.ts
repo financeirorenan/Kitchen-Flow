@@ -793,7 +793,7 @@ marketplaceApiRouter.post("/orders/:orderId/confirm", async (req: AuthenticatedR
     const merchantId = requireMerchant(req, res);
     if (!merchantId) return;
 
-    const { orderId } = req.params;
+    const orderId = String(req.params.orderId);
     const now = new Date();
 
     const orderRef = clientDoc(db, "orders", orderId);
@@ -838,7 +838,7 @@ marketplaceApiRouter.post("/orders/:orderId/dispatch", async (req: Authenticated
     const merchantId = requireMerchant(req, res);
     if (!merchantId) return;
 
-    const { orderId } = req.params;
+    const orderId = String(req.params.orderId);
     const { courierName, courierPhone } = req.body;
     const now = new Date();
 
@@ -886,7 +886,7 @@ marketplaceApiRouter.post("/orders/:orderId/ready", async (req: AuthenticatedReq
     const merchantId = requireMerchant(req, res);
     if (!merchantId) return;
 
-    const { orderId } = req.params;
+    const orderId = String(req.params.orderId);
     const now = new Date();
 
     const orderRef = clientDoc(db, "orders", orderId);
@@ -926,7 +926,7 @@ marketplaceApiRouter.post("/orders/:orderId/cancel", async (req: AuthenticatedRe
     const merchantId = requireMerchant(req, res);
     if (!merchantId) return;
 
-    const { orderId } = req.params;
+    const orderId = String(req.params.orderId);
     const { reason, code } = req.body;
     const now = new Date();
 
@@ -1113,7 +1113,7 @@ marketplaceApiRouter.patch("/catalog/items/:itemId", async (req: AuthenticatedRe
     const merchantId = requireMerchant(req, res);
     if (!merchantId) return;
 
-    const { itemId } = req.params;
+    const itemId = String(req.params.itemId);
     const { available, price } = req.body;
 
     const docRef = clientDoc(db, "products", itemId);

@@ -190,7 +190,7 @@ function sha1Sync(str: string): string {
  * Evita o erro 19158033 da SEFAZ-SP (que ocorre quando ?p= recebe apenas a chave ou dados malformados sem o layout v2.00)
  */
 export const buildNfceQrCodeUrl = (order: Partial<Order>, settings: AdminSettings): { qrUrl: string; consultaUrl: string; displayConsultaUrl: string; fiscalKey: string } => {
-  const amb = settings.fiscal?.environment === 'production' ? '1' : '2';
+  const amb = (settings.fiscal?.environment as string) === 'producao' || (settings.fiscal?.environment as string) === 'production' ? '1' : '2';
   const isProd = amb === '1';
 
   const baseQrUrl = isProd
