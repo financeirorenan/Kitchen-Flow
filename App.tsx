@@ -2806,7 +2806,7 @@ const App: React.FC = () => {
                    source: cloudOrder.source || 'digital_menu',
                    status: 'preparing' as const, 
                    shiftOpenedAt: cashSessionRef.current.isOpen ? (cashSessionRef.current.openedAt || new Date()) : new Date(),
-                   deliveryFee: cloudOrder.type === 'delivery' ? globalDeliveryFee : 0 
+                   deliveryFee: cloudOrder.deliveryFee !== undefined ? cloudOrder.deliveryFee : (cloudOrder.type === 'delivery' ? globalDeliveryFee : 0) 
                  };
                  const acceptedOrder = assignDailyNumberToOrder(rawAcceptedOrder);
                  await localDb.orders.put(acceptedOrder);
@@ -6274,7 +6274,7 @@ const App: React.FC = () => {
       status: 'preparing',
       stockDeducted: true,
       shiftOpenedAt: cashSessionRef.current.isOpen ? (cashSessionRef.current.openedAt || now) : now,
-      deliveryFee: order.type === 'delivery' ? globalDeliveryFee : 0 
+      deliveryFee: order.deliveryFee !== undefined ? order.deliveryFee : (order.type === 'delivery' ? globalDeliveryFee : 0) 
     };
     const acceptedOrder = assignDailyNumberToOrder(rawAcceptedOrder);
     await localDb.orders.put(acceptedOrder);

@@ -45,7 +45,8 @@ export const AuditDiscountsTab: React.FC<AuditDiscountsTabProps> = ({
     isDateInRange(o.createdAt, range) && 
     o.discount && 
     o.discount > 0 && 
-    o.status !== 'canceled'
+    o.status !== 'canceled' &&
+    o.status !== 'cancelled'
   );
 
   const filteredOrders = discountedOrders.filter(order => {

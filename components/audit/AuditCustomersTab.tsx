@@ -66,7 +66,7 @@ export const AuditCustomersTab: React.FC<AuditCustomersTabProps> = ({
     let lastPurchaseDate: Date | null = null;
 
     custOrders.forEach(o => {
-      if (o.status === 'canceled') {
+      if (o.status === 'canceled' || o.status === 'cancelled') {
         totalCanceledOrders++;
       } else {
         totalPurchased += Number(o.total || 0);
@@ -151,7 +151,7 @@ export const AuditCustomersTab: React.FC<AuditCustomersTabProps> = ({
         badgeColor: 'bg-indigo-50 text-indigo-700 border-indigo-200'
       });
 
-      if (o.status === 'canceled') {
+      if (o.status === 'canceled' || o.status === 'cancelled') {
         events.push({
           id: `canc-${o.id}`,
           date: new Date(o.createdAt),

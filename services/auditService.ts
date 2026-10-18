@@ -125,7 +125,7 @@ export function calculateAuditMetrics(params: {
   // Filtrar pedidos no período
   const periodOrders = orders.filter(o => isDateInRange(o.createdAt, range));
   const totalOrdersCount = periodOrders.length;
-  const canceledOrdersCount = periodOrders.filter(o => o.status === 'canceled').length;
+  const canceledOrdersCount = periodOrders.filter(o => o.status === 'canceled' || o.status === 'cancelled').length;
 
   // Pedidos com histórico de alteração nos logs
   const alteredOrderIds = new Set<string>();
@@ -143,7 +143,7 @@ export function calculateAuditMetrics(params: {
   let totalDiscounts = 0;
 
   periodOrders.forEach(o => {
-    if (o.status !== 'canceled') {
+    if (o.status !== 'canceled' && o.status !== 'cancelled') {
       totalSold += Number(o.total || 0);
       totalDiscounts += Number(o.discount || 0);
 
@@ -323,7 +323,7 @@ export function detectInconsistencies(params: {
     }
 
     // 4. Pedido cancelado após recebimento
-    if (order.status === 'canceled' && (order.paymentStatus === 'paid' || (order.payments && order.payments.length > 0))) {
+    if ((order.status === 'canceled' || order.status === 'cancelled') && (order.paymentStatus === 'paid' || (order.payments && order.payments.length > 0))) {
       // Verificar se houve registro de estorno correspondente
       const hasRefundLog = auditLogs.some(l => l.orderId === order.id && (l.action.includes('ESTORNO') || l.description.toLowerCase().includes('estorno')));
       if (!hasRefundLog) {
@@ -460,7 +460,7 @@ export function buildProductsSoldAudit(
 
   orders.forEach(order => {
     if (!isDateInRange(order.createdAt, range)) return;
-    const isCanceled = order.status === 'canceled';
+    const isCanceled = order.status === 'canceled' || order.status === 'cancelled';
 
     if (order.items && Array.isArray(order.items)) {
       order.items.forEach(item => {
@@ -539,7 +539,7 @@ export function buildDiscountsRanking(
   orders.forEach(order => {
     if (!isDateInRange(order.createdAt, range)) return;
     const discount = Number(order.discount || 0);
-    if (discount > 0 && order.status !== 'canceled') {
+    if (discount > 0 && order.status !== 'canceled' && order.status !== 'cancelled') {
       totalDiscountSum += discount;
       totalDiscountCount++;
       if (discount > highestDiscount) highestDiscount = discount;
@@ -913,7 +913,7 @@ export function calculateMerchantAuditSummary(params: {
     netMerchantAmount,
     alteredOrdersCount: alteredOrderIds.size,
     cancellationsCount: canceledOrders,
-    reversalsCount: periodOrders.filter(o => o.status === 'canceled' && o.paymentStatus === 'paid').length + (totalReversals > 0 ? 1 : 0),
+    reversalsCount: periodOrders.filter(o => (o.status === 'canceled' || o.status === 'cancelled') && o.paymentStatus === 'paid').length + (totalReversals > 0 ? 1 : 0),
     settledCount,
     financialAdjustmentsCount,
     manualOperationsCount: manualOperationsLogs.length,
@@ -1239,7 +1239,7 @@ export function detectReconciliationDiscrepancies(params: {
     }
 
     // 2. Pedido cancelado contabilizado como venda
-    if (order.status === 'canceled' && order.paymentStatus === 'paid') {
+    if ((order.status === 'canceled' || order.status === 'cancelled') && order.paymentStatus === 'paid') {
       discrepancies.push({
         id: `rec-cancel-sold-${order.id}`,
         code: 'REC_02_CANCELADO_COM_PAGAMENTO_ATIVO',
@@ -1323,4 +1323,213 @@ export function detectReconciliationDiscrepancies(params: {
   });
 
   return discrepancies;
+}
+
+// -------------------------------------------------------------
+// EQUAÇÃO MESTRE: SOMA DOS PEDIDOS POR CANAL = SOMA DAS ENTRADAS NO CAIXA POR CANAL
+// -------------------------------------------------------------
+
+export interface ChannelMasterEquationItem {
+  channel: 'table' | 'counter' | 'delivery' | 'marketplace';
+  channelLabel: string;
+  ordersCount: number;
+  ordersGrossSum: number;
+  ordersDeliveryFeesSum: number;
+  ordersDiscountsSum: number;
+  ordersNetSum: number;
+  cashEntriesSum: number;
+  difference: number;
+  isBalanced: boolean;
+  electronicSum: number;
+  dinheiroSum: number;
+  pixSum: number;
+  cardFeesEstimated: number;
+  netRevenueEstimated: number;
+}
+
+export interface MasterEquationReport {
+  channels: ChannelMasterEquationItem[];
+  totalOrdersGross: number;
+  totalDeliveryFees: number;
+  totalDiscounts: number;
+  totalOrdersNet: number;
+  totalCashEntries: number;
+  totalDifference: number;
+  isAllBalanced: boolean;
+  kdsTotalOrders: number;
+  kdsDispatchedOrders: number;
+  kdsBalanceStatus: 'balanced' | 'divergent';
+}
+
+export function calculateMasterEquationByChannel(params: {
+  orders: Order[];
+  range: AuditPeriodRange;
+  cardFeePercent?: number; // Ex: 2.5% padrão ou das configurações do lojista
+}): MasterEquationReport {
+  const { orders, range, cardFeePercent = 2.5 } = params;
+
+  // Filtrar apenas pedidos do período e excluir cancelados, subcomandas e mesclados
+  const activeOrders = orders.filter(o => {
+    if (!isDateInRange(o.createdAt, range)) return false;
+    if (o.status === 'canceled' || o.status === 'cancelled') return false;
+    if (o.isSubTicket || o.mergedIntoOrderId) return false;
+    return true;
+  });
+
+  const channelDefs: { id: 'table' | 'counter' | 'delivery' | 'marketplace'; label: string }[] = [
+    { id: 'table', label: 'Mesas (Salão)' },
+    { id: 'counter', label: 'Balcão (Takeout)' },
+    { id: 'delivery', label: 'Delivery Próprio' },
+    { id: 'marketplace', label: 'Marketplace (App / Zupi)' }
+  ];
+
+  const classifyOrderChannel = (o: Order): 'table' | 'counter' | 'delivery' | 'marketplace' => {
+    if (o.source === 'marketplace' || (o as any).partnerApp === 'zupi' || (o as any).marketplaceFee > 0) {
+      return 'marketplace';
+    }
+    if (o.type === 'delivery') {
+      return 'delivery';
+    }
+    if (o.type === 'takeout' || o.type === 'counter') {
+      return 'counter';
+    }
+    if (o.type === 'table' || o.type === 'dine_in') {
+      return 'table';
+    }
+    // Fallback: se tiver número de mesa e não for delivery
+    if (o.tableNumber && !['delivery', 'takeout', 'counter'].includes(String(o.type))) {
+      const tbStr = String(o.tableNumber).toLowerCase();
+      if (tbStr.includes('balcão') || tbStr.includes('balcao')) return 'counter';
+      return 'table';
+    }
+    return 'counter';
+  };
+
+  const channelAccumulators: Record<string, {
+    count: number;
+    itemsGross: number;
+    deliveryFees: number;
+    discounts: number;
+    netSum: number;
+    cashEntries: number;
+    electronic: number;
+    dinheiro: number;
+    pix: number;
+  }> = {
+    table: { count: 0, itemsGross: 0, deliveryFees: 0, discounts: 0, netSum: 0, cashEntries: 0, electronic: 0, dinheiro: 0, pix: 0 },
+    counter: { count: 0, itemsGross: 0, deliveryFees: 0, discounts: 0, netSum: 0, cashEntries: 0, electronic: 0, dinheiro: 0, pix: 0 },
+    delivery: { count: 0, itemsGross: 0, deliveryFees: 0, discounts: 0, netSum: 0, cashEntries: 0, electronic: 0, dinheiro: 0, pix: 0 },
+    marketplace: { count: 0, itemsGross: 0, deliveryFees: 0, discounts: 0, netSum: 0, cashEntries: 0, electronic: 0, dinheiro: 0, pix: 0 }
+  };
+
+  activeOrders.forEach(o => {
+    const ch = classifyOrderChannel(o);
+    const acc = channelAccumulators[ch];
+    acc.count++;
+
+    const orderTotal = Number(o.total || 0);
+    const orderDeliveryFee = Number(o.deliveryFee || 0);
+    const orderDiscount = Number(o.discount || 0);
+    const itemsGross = (o.items || []).reduce((sum, it) => sum + (Number(it.price || 0) * Number(it.quantity || 1)), 0);
+
+    acc.itemsGross += itemsGross > 0 ? itemsGross : (orderTotal + orderDiscount - orderDeliveryFee);
+    acc.deliveryFees += orderDeliveryFee;
+    acc.discounts += orderDiscount;
+    acc.netSum += orderTotal;
+
+    // Calcular pagamentos realizados (entradas no caixa)
+    const isPaid = o.isSettled || o.paymentStatus === 'paid' || o.status === 'delivered' || o.status === 'finished';
+    
+    if (o.payments && o.payments.length > 0) {
+      let paymentsTotal = 0;
+      o.payments.forEach(p => {
+        const amt = Number(p.amount || 0);
+        if (amt > 0) {
+          paymentsTotal += amt;
+          const method = String(p.method || '').toLowerCase();
+          if (method === 'dinheiro') {
+            acc.dinheiro += amt;
+          } else if (method === 'pix') {
+            acc.pix += amt;
+            acc.electronic += amt;
+          } else {
+            acc.electronic += amt;
+          }
+        }
+      });
+      acc.cashEntries += paymentsTotal;
+    } else if (isPaid) {
+      acc.cashEntries += orderTotal;
+      const method = String(o.paymentMethod || 'dinheiro').toLowerCase();
+      if (method === 'dinheiro') {
+        acc.dinheiro += orderTotal;
+      } else if (method === 'pix') {
+        acc.pix += orderTotal;
+        acc.electronic += orderTotal;
+      } else {
+        acc.electronic += orderTotal;
+      }
+    }
+  });
+
+  const channels: ChannelMasterEquationItem[] = channelDefs.map(def => {
+    const acc = channelAccumulators[def.id];
+    const diff = Math.round(Math.abs(acc.netSum - acc.cashEntries) * 100) / 100;
+    const isBalanced = diff < 0.05;
+    const cardFees = (acc.electronic - acc.pix) * (cardFeePercent / 100);
+    const netRevenue = acc.cashEntries - cardFees;
+
+    return {
+      channel: def.id,
+      channelLabel: def.label,
+      ordersCount: acc.count,
+      ordersGrossSum: Math.round(acc.itemsGross * 100) / 100,
+      ordersDeliveryFeesSum: Math.round(acc.deliveryFees * 100) / 100,
+      ordersDiscountsSum: Math.round(acc.discounts * 100) / 100,
+      ordersNetSum: Math.round(acc.netSum * 100) / 100,
+      cashEntriesSum: Math.round(acc.cashEntries * 100) / 100,
+      difference: diff,
+      isBalanced,
+      electronicSum: Math.round(acc.electronic * 100) / 100,
+      dinheiroSum: Math.round(acc.dinheiro * 100) / 100,
+      pixSum: Math.round(acc.pix * 100) / 100,
+      cardFeesEstimated: Math.round(cardFees * 100) / 100,
+      netRevenueEstimated: Math.round(netRevenue * 100) / 100
+    };
+  });
+
+  const totalOrdersGross = channels.reduce((s, c) => s + c.ordersGrossSum, 0);
+  const totalDeliveryFees = channels.reduce((s, c) => s + c.ordersDeliveryFeesSum, 0);
+  const totalDiscounts = channels.reduce((s, c) => s + c.ordersDiscountsSum, 0);
+  const totalOrdersNet = channels.reduce((s, c) => s + c.ordersNetSum, 0);
+  const totalCashEntries = channels.reduce((s, c) => s + c.cashEntriesSum, 0);
+  const totalDifference = Math.round(Math.abs(totalOrdersNet - totalCashEntries) * 100) / 100;
+  const isAllBalanced = channels.every(c => c.isBalanced);
+
+  // KDS Check
+  const kdsEligibleOrders = activeOrders.filter(o => 
+    o.status === 'pending' || 
+    o.status === 'preparing' || 
+    o.status === 'ready' || 
+    o.status === 'delivering' || 
+    o.status === 'delivered' || 
+    o.status === 'finished'
+  );
+  const kdsDispatchedOrders = activeOrders.filter(o => 
+    o.status === 'delivered' || o.status === 'finished'
+  ).length;
+
+  return {
+    channels,
+    totalOrdersGross: Math.round(totalOrdersGross * 100) / 100,
+    totalDeliveryFees: Math.round(totalDeliveryFees * 100) / 100,
+    totalDiscounts: Math.round(totalDiscounts * 100) / 100,
+    totalOrdersNet: Math.round(totalOrdersNet * 100) / 100,
+    totalCashEntries: Math.round(totalCashEntries * 100) / 100,
+    totalDifference,
+    isAllBalanced,
+    kdsTotalOrders: kdsEligibleOrders.length,
+    kdsDispatchedOrders,
+    kdsBalanceStatus: isAllBalanced ? 'balanced' : 'divergent'
+  };
 }

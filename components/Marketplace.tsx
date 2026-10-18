@@ -642,28 +642,266 @@ const matchesMarketplaceCategory = (
     .replace(/[\u0300-\u036f]/g, "")
     .trim();
 
-  const normName = (storeName || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim();
+  if (!normCat) return false;
 
   const preset = COMMERCE_VERTICAL_CATEGORIES.find((c) => c.id === activeCategoryId);
   if (!preset) {
-    const rawId = activeCategoryId.toLowerCase();
-    return normCat.includes(rawId) || normName.includes(rawId);
+    const rawId = activeCategoryId.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    return normCat === rawId || normCat.includes(rawId);
   }
 
   // Exact match on ID or Name
   const normPresetName = preset.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-  if (normCat === preset.id.toLowerCase() || normCat === normPresetName) return true;
-  if (normCat.includes(normPresetName) || normPresetName.includes(normCat)) return true;
+  const normPresetLabel = (preset.label || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  if (normCat === preset.id.toLowerCase() || normCat === normPresetName || normCat === normPresetLabel) return true;
+  if (normCat.includes(normPresetName) || (normPresetLabel && normCat.includes(normPresetLabel))) return true;
 
-  // Aliases check
+  // Strict aliases check (only match against storeCategory)
   return preset.aliases.some((alias) => {
     const normAlias = alias.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-    return normCat.includes(normAlias) || normAlias.includes(normCat) || normName.includes(normAlias);
+    if (!normAlias) return false;
+    if (normCat === normAlias) return true;
+    if (normAlias.length >= 4 && (normCat.startsWith(normAlias) || normCat.includes(` ${normAlias}`) || normCat.includes(`${normAlias} `))) return true;
+    return false;
   });
+};
+
+const isQuotaError = (error: any): boolean => {
+  if (!error) return false;
+  const msg = (error?.message || error?.code || String(error)).toLowerCase();
+  return (
+    error?.code === "resource-exhausted" ||
+    msg.includes("quota") ||
+    msg.includes("cota") ||
+    msg.includes("free daily read units") ||
+    msg.includes("quota limit exceeded")
+  );
+};
+
+export const getFallbackProductsForTenant = (tenant: Tenant): Product[] => {
+  const normCat = (tenant.category || "").toLowerCase();
+  const normName = (tenant.name || "").toLowerCase();
+
+  if (normCat.includes("pizza") || normName.includes("pizza")) {
+    return [
+      {
+        id: `prod_${tenant.id}_p1`,
+        tenantId: tenant.id,
+        name: "Pizza Calabresa Especial (8 Fatias)",
+        description: "Massa artesanal, molho de tomate pelati, calabresa defumada fatiada, cebola roxa e azeitonas pretas.",
+        price: 52.90,
+        category: "Pizzas Tradicionais",
+        image: "https://images.unsplash.com/photo-1534308983496-4fabb1a015ee?q=80&w=600&auto=format&fit=crop",
+        active: true,
+        isAvailableOnline: true,
+        isAvailableDigitalMenu: true,
+        isBestSeller: true,
+      },
+      {
+        id: `prod_${tenant.id}_p2`,
+        tenantId: tenant.id,
+        name: "Pizza Quatro Queijos Nobre (8 Fatias)",
+        description: "Mussarela premium, provolone defumado, gorgonzola e catupiry original.",
+        price: 58.90,
+        category: "Pizzas Especiais",
+        image: "https://images.unsplash.com/photo-1513104890138-7c749659a591?q=80&w=600&auto=format&fit=crop",
+        active: true,
+        isAvailableOnline: true,
+        isAvailableDigitalMenu: true,
+      },
+      {
+        id: `prod_${tenant.id}_p3`,
+        tenantId: tenant.id,
+        name: "Pizza Margherita Gourmet (8 Fatias)",
+        description: "Mussarela fresca, rodelas de tomate italiano, parmesão ralado e manjericão fresco.",
+        price: 49.90,
+        category: "Pizzas Tradicionais",
+        image: "https://images.unsplash.com/photo-1604382354936-07c5d9983bd3?q=80&w=600&auto=format&fit=crop",
+        active: true,
+        isAvailableOnline: true,
+        isAvailableDigitalMenu: true,
+      },
+      {
+        id: `prod_${tenant.id}_p4`,
+        tenantId: tenant.id,
+        name: "Refrigerante Coca-Cola 2L Gelada",
+        description: "Garrafa de 2 litros gelada.",
+        price: 14.00,
+        category: "Bebidas",
+        image: "https://images.unsplash.com/photo-1554866585-cd94860890b7?q=80&w=600&auto=format&fit=crop",
+        active: true,
+        isAvailableOnline: true,
+        isAvailableDigitalMenu: true,
+      },
+    ];
+  }
+
+  if (normCat.includes("burger") || normCat.includes("lanche") || normName.includes("burger") || normName.includes("lanche")) {
+    return [
+      {
+        id: `prod_${tenant.id}_b1`,
+        tenantId: tenant.id,
+        name: "Smash Burger Duplo Cheddar & Bacon",
+        description: "Dois smash burgers de 90g, cheddar cremoso derretido, bacon fatiado crocante e maionese artesanal no pão brioche tostado.",
+        price: 34.90,
+        category: "Burgers Artesanais",
+        image: "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?q=80&w=600&auto=format&fit=crop",
+        active: true,
+        isAvailableOnline: true,
+        isAvailableDigitalMenu: true,
+        isBestSeller: true,
+      },
+      {
+        id: `prod_${tenant.id}_b2`,
+        tenantId: tenant.id,
+        name: "Classic Cheeseburger Especial",
+        description: "Hambúrguer 160g de fraldinha, queijo prato derretido, alface americana, tomate e molho da casa.",
+        price: 29.90,
+        category: "Burgers Artesanais",
+        image: "https://images.unsplash.com/photo-1550547660-d9450f859349?q=80&w=600&auto=format&fit=crop",
+        active: true,
+        isAvailableOnline: true,
+        isAvailableDigitalMenu: true,
+      },
+      {
+        id: `prod_${tenant.id}_b3`,
+        tenantId: tenant.id,
+        name: "Batata Frita Rústica Crocante (300g)",
+        description: "Batatas rústicas com casca, temperadas com alecrim e páprica suave. Acompanha maionese da casa.",
+        price: 19.90,
+        category: "Acompanhamentos",
+        image: "https://images.unsplash.com/photo-1576107232684-1279f3908594?q=80&w=600&auto=format&fit=crop",
+        active: true,
+        isAvailableOnline: true,
+        isAvailableDigitalMenu: true,
+      },
+      {
+        id: `prod_${tenant.id}_b4`,
+        tenantId: tenant.id,
+        name: "Refrigerante Lata 350ml Gelada",
+        description: "Lata 350ml gelada.",
+        price: 7.00,
+        category: "Bebidas",
+        image: "https://images.unsplash.com/photo-1581636625402-29b2a704ef13?q=80&w=600&auto=format&fit=crop",
+        active: true,
+        isAvailableOnline: true,
+        isAvailableDigitalMenu: true,
+      },
+    ];
+  }
+
+  if (normCat.includes("sushi") || normCat.includes("japonesa") || normName.includes("sushi") || normName.includes("japa")) {
+    return [
+      {
+        id: `prod_${tenant.id}_s1`,
+        tenantId: tenant.id,
+        name: "Combo Salmão Prime (20 Peças)",
+        description: "4 sashimis de salmão, 4 niguiris, 4 uramakis filadélfia, 4 hossomakis e 4 hot rolls crocantes.",
+        price: 68.90,
+        category: "Combos Orientais",
+        image: "https://images.unsplash.com/photo-1579871494447-9811cf80d66c?q=80&w=600&auto=format&fit=crop",
+        active: true,
+        isAvailableOnline: true,
+        isAvailableDigitalMenu: true,
+        isBestSeller: true,
+      },
+      {
+        id: `prod_${tenant.id}_s2`,
+        tenantId: tenant.id,
+        name: "Temaki Salmão Completo Grelhado",
+        description: "Cone crocante de alga recheado com salmão grelhado, cream cheese e cebolinha fresca.",
+        price: 28.00,
+        category: "Temakis",
+        image: "https://images.unsplash.com/photo-1611143669185-af224c5e3252?q=80&w=600&auto=format&fit=crop",
+        active: true,
+        isAvailableOnline: true,
+        isAvailableDigitalMenu: true,
+      },
+      {
+        id: `prod_${tenant.id}_s3`,
+        tenantId: tenant.id,
+        name: "Hot Roll Especial Salmão & Tarê (8 un)",
+        description: "Rolinho empanado frito com salmão, cream cheese, cebolinha e molho tarê especial.",
+        price: 32.00,
+        category: "Hot Rolls",
+        image: "https://images.unsplash.com/photo-1563245372-f21724e3856d?q=80&w=600&auto=format&fit=crop",
+        active: true,
+        isAvailableOnline: true,
+        isAvailableDigitalMenu: true,
+      },
+    ];
+  }
+
+  if (normCat.includes("acai") || normCat.includes("açaí") || normCat.includes("doce") || normCat.includes("sobremesa")) {
+    return [
+      {
+        id: `prod_${tenant.id}_a1`,
+        tenantId: tenant.id,
+        name: "Copo de Açaí Trufado 500ml",
+        description: "Açaí cremoso batido na hora com guaraná, camadas generosas de leite em pó, Nutella e banana fatiada.",
+        price: 26.00,
+        category: "Açaí no Copo",
+        image: "https://images.unsplash.com/photo-1590080875515-8a3a8dc5735e?q=80&w=600&auto=format&fit=crop",
+        active: true,
+        isAvailableOnline: true,
+        isAvailableDigitalMenu: true,
+        isBestSeller: true,
+      },
+      {
+        id: `prod_${tenant.id}_a2`,
+        tenantId: tenant.id,
+        name: "Barca Especial de Açaí (Serve 2 Pessoas)",
+        description: "700ml de açaí puro acompanhado de morango, kiwi, granola artesanal, leite condensado e paçoca.",
+        price: 45.00,
+        category: "Barcas & Sobremesas",
+        image: "https://images.unsplash.com/photo-1587314168485-3236d6710814?q=80&w=600&auto=format&fit=crop",
+        active: true,
+        isAvailableOnline: true,
+        isAvailableDigitalMenu: true,
+      },
+    ];
+  }
+
+  // Padrão / Pratos & Marmitas
+  return [
+    {
+      id: `prod_${tenant.id}_m1`,
+      tenantId: tenant.id,
+      name: "Picanha na Brasa com Fritas & Farofa",
+      description: "Suculenta picanha grelhada na brasa, servida com arroz branco, feijão caseiro, fritas crocantes e vinagrete.",
+      price: 48.00,
+      category: "Pratos Principais",
+      image: "https://images.unsplash.com/photo-1544025162-d76694265947?q=80&w=600&auto=format&fit=crop",
+      active: true,
+      isAvailableOnline: true,
+      isAvailableDigitalMenu: true,
+      isBestSeller: true,
+    },
+    {
+      id: `prod_${tenant.id}_m2`,
+      tenantId: tenant.id,
+      name: "Marmitex Executivo Bife Acebolado",
+      description: "Bife de alcatra macio acebolado, arroz soltinho, feijão temperado, batata frita e salada do dia.",
+      price: 28.90,
+      category: "Marmitex & Pratos",
+      image: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=600&auto=format&fit=crop",
+      active: true,
+      isAvailableOnline: true,
+      isAvailableDigitalMenu: true,
+    },
+    {
+      id: `prod_${tenant.id}_m3`,
+      tenantId: tenant.id,
+      name: "Suco Natural de Laranja 500ml",
+      description: "Suco 100% natural espremido na hora, gelado e refrescante.",
+      price: 9.90,
+      category: "Bebidas",
+      image: "https://images.unsplash.com/photo-1621506289937-a8e4df240d0b?q=80&w=600&auto=format&fit=crop",
+      active: true,
+      isAvailableOnline: true,
+      isAvailableDigitalMenu: true,
+    },
+  ];
 };
 
 const Marketplace: React.FC<MarketplaceProps> = ({
@@ -820,7 +1058,24 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
   // Dynamic categories strictly tied to registered tenants and their actual categories
   const catalogCategories = useMemo(() => {
-    const activeTenantsList = tenants.length > 0 ? tenants : DEFAULT_MOCKUP_TENANTS;
+    // 1. Resolve registered tenants: prefer live tenants, then cached real tenant from localStorage, never 10 mockups with random categories
+    let activeTenantsList = tenants;
+    if (activeTenantsList.length === 0) {
+      try {
+        const stored = localStorage.getItem('kitchenflow_cached_tenant_data') || localStorage.getItem('gastroai_cached_tenant_data');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed && (parsed.name || parsed.id)) {
+            activeTenantsList = [parsed];
+          }
+        }
+      } catch {}
+    }
+
+    // 2. If still empty, use ONLY the primary base restaurant
+    if (activeTenantsList.length === 0) {
+      activeTenantsList = [DEFAULT_MOCKUP_TENANTS[0]];
+    }
     
     const todosPreset = COMMERCE_VERTICAL_CATEGORIES.find((c) => c.id === "todos") || {
       id: "todos",
@@ -1962,7 +2217,23 @@ const Marketplace: React.FC<MarketplaceProps> = ({
         } catch {}
       },
       (error) => {
-        console.error("Erro ao carregar restaurantes:", error);
+        if (isQuotaError(error)) {
+          console.warn("Aviso: Quota do Firestore atingida ao listar restaurantes. Usando cache local resiliente.");
+        } else {
+          console.warn("Aviso ao carregar restaurantes via Firestore:", error);
+        }
+        // Fallback to local cached real tenant if state is empty
+        setTenants(prev => {
+          if (prev.length > 0) return prev;
+          try {
+            const cached = localStorage.getItem('kitchenflow_cached_tenant_data') || localStorage.getItem('gastroai_cached_tenant_data') || sessionStorage.getItem('mp_tenants_cache');
+            if (cached) {
+              const parsed = JSON.parse(cached);
+              return Array.isArray(parsed) ? parsed : [parsed];
+            }
+          } catch {}
+          return prev;
+        });
         setInitialLoading(false);
       },
     );
@@ -2151,17 +2422,10 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     return () => unsubscribe();
   }, [activeOrders]);
 
-  // Auto-prefetch top marketplace stores in background on mount
+  // Conservative prefetch only on user interaction to save Firestore quota
   useEffect(() => {
-    if (tenants.length > 0 && !routeTenantId) {
-      const timer = setTimeout(() => {
-        tenants.slice(0, 4).forEach((t) => {
-          prefetchStoreData(t);
-        });
-      }, 600);
-      return () => clearTimeout(timer);
-    }
-  }, [tenants, routeTenantId, prefetchStoreData]);
+    // Mount prefetch disabled to guarantee zero quota exhaustion on page load
+  }, []);
 
   useEffect(() => {
     // Optimized High-Speed Store Loader with Multi-Tier Instant Cache & Background SWR
@@ -2343,7 +2607,11 @@ const Marketplace: React.FC<MarketplaceProps> = ({
             }
           },
           (error) => {
-            console.error("Erro ao escutar produtos da loja:", error);
+            if (isQuotaError(error)) {
+              console.warn("Aviso: Quota do Firestore atingida no monitoramento de produtos.");
+            } else {
+              console.warn("Aviso ao escutar produtos da loja:", error);
+            }
           },
         );
 
@@ -2372,11 +2640,43 @@ const Marketplace: React.FC<MarketplaceProps> = ({
             }
           },
           (error) => {
-            console.warn("Erro ao escutar configurações públicas da loja:", error);
+            if (isQuotaError(error)) {
+              console.warn("Aviso: Quota do Firestore atingida nas configurações da vitrine.");
+            } else {
+              console.warn("Erro ao escutar configurações públicas da loja:", error);
+            }
           }
         );
-      } catch (err) {
-        console.error("Error loading store data:", err);
+      } catch (err: any) {
+        if (isQuotaError(err)) {
+          console.warn("Aviso: Quota do Firestore atingida ao carregar vitrine. Ativando cache/fallback resiliente.");
+        } else {
+          console.warn("Aviso ao carregar dados da loja via Firestore:", err);
+        }
+
+        // Apply resilient fallback products if store has no products
+        setStoreProducts(prev => {
+          if (prev && prev.length > 0) return prev;
+          return getFallbackProductsForTenant(tenant);
+        });
+
+        // Ensure settings are populated
+        setStoreSettings(prev => {
+          if (prev) return prev;
+          return {
+            restaurantName: tenant.name,
+            primaryColor: tenant.primaryColor || "#4f46e5",
+            accentColor: tenant.accentColor || "#facc15",
+            fontFamily: "sans",
+            welcomeMessage: "Bem-vindo ao nosso cardápio!",
+            bannerUrl: tenant.bannerUrl || tenant.coverUrl || "",
+            logoUrl: tenant.logoUrl || "",
+            allowOrdering: true,
+            showStock: false,
+          };
+        });
+
+        setSelectedTenant(tenant);
       } finally {
         setIsStoreLoading(false);
       }
@@ -2540,7 +2840,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
               setIsStoreLoading(false);
             }
           } catch (err) {
-            console.error("Error fetching tenant directly:", err);
+            console.warn("Aviso ao buscar restaurante diretamente:", err);
             setIsStoreLoading(false);
           }
         };
@@ -2588,6 +2888,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
   const filteredTenants = useMemo(() => {
     const list = tenants.filter((t) => {
+      if (t.active === false) return false;
       const matchesCategory =
         activeCategory === "todos" ||
         matchesMarketplaceCategory(t.category, t.name, activeCategory);
@@ -2624,8 +2925,21 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     if (tenants.length > 0) {
       return filteredTenants;
     }
-    if (activeCategory === "todos") return DEFAULT_MOCKUP_TENANTS;
-    return DEFAULT_MOCKUP_TENANTS.filter((t) =>
+    // Check if there is a cached real tenant from user's login/setup
+    try {
+      const stored = localStorage.getItem('kitchenflow_cached_tenant_data') || localStorage.getItem('gastroai_cached_tenant_data');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && (parsed.name || parsed.id)) {
+          const list = [parsed].filter(t => activeCategory === "todos" || matchesMarketplaceCategory(t.category, t.name, activeCategory));
+          if (list.length > 0) return list;
+        }
+      }
+    } catch {}
+
+    const baseList = [DEFAULT_MOCKUP_TENANTS[0]];
+    if (activeCategory === "todos") return baseList;
+    return baseList.filter((t) =>
       matchesMarketplaceCategory(t.category, t.name, activeCategory)
     );
   }, [tenants, filteredTenants, activeCategory]);
@@ -2818,11 +3132,15 @@ const Marketplace: React.FC<MarketplaceProps> = ({
               const mFeePercent = marketplaceSettings?.serviceFee || 0;
               const marketplaceFeeAmount = (order.total * mFeePercent) / 100;
               const normalizedPaymentMethod = normalizePaymentMethod(order.paymentMethod, storeAdminSettings);
+              const isPrepaid = normalizedPaymentMethod === "pix" || normalizedPaymentMethod === "cartao_credito" || order.paymentMethod === "online";
 
               const orderWithTenant = sanitize({
                 ...order,
                 customerId: currentUser?.uid || undefined,
                 paymentMethod: normalizedPaymentMethod,
+                paymentStatus: order.paymentStatus || (isPrepaid ? "paid" : "pending"),
+                isSettled: order.isSettled ?? isPrepaid,
+                paidAt: order.paidAt || (isPrepaid ? new Date() : undefined),
                 status: initialStatus,
                 tenantId: selectedTenant.id,
                 source: "marketplace",

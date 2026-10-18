@@ -39,7 +39,7 @@ export const AuditCancellationsTab: React.FC<AuditCancellationsTabProps> = ({
   };
 
   // Filtrar pedidos cancelados no período
-  const canceledOrders = orders.filter(o => o.status === 'canceled' && isDateInRange(o.createdAt, range));
+  const canceledOrders = orders.filter(o => (o.status === 'canceled' || o.status === 'cancelled') && isDateInRange(o.createdAt, range));
 
   // Identificar cancelamentos suspeitos para o painel de alertas no topo
   const suspiciousAlerts: Array<{

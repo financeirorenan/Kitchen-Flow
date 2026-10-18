@@ -72,10 +72,33 @@ export const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout })
   const [newOrderAlert, setNewOrderAlert] = useState<Order | null>(null);
   const [copiedAddress, setCopiedAddress] = useState(false);
 
-  // Notifications state
+  // Notifications and push configuration state
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
   const [testNotificationTimer, setTestNotificationTimer] = useState<number | null>(null);
   const [notificationsList, setNotificationsList] = useState<CourierNotificationItem[]>([]);
+  const [pushPreferences, setPushPreferences] = useState<{
+    soundEnabled: boolean;
+    vibrationEnabled: boolean;
+    newOrderAlerts: boolean;
+    readyOrderAlerts: boolean;
+    chatAlerts: boolean;
+    backgroundLockscreen: boolean;
+  }>(() => {
+    try {
+      const saved = localStorage.getItem('kf_courier_push_preferences');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return {
+      soundEnabled: true,
+      vibrationEnabled: true,
+      newOrderAlerts: true,
+      readyOrderAlerts: true,
+      chatAlerts: true,
+      backgroundLockscreen: true,
+    };
+  });
+  const testTimerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const testTimerTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Profile editing form state
   const [editingData, setEditingData] = useState({
@@ -265,7 +288,70 @@ export const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout })
     }
   };
 
-  const handleTestBackgroundNotification = () => {
+  const handleUpdatePushPreferences = (newPrefs: Partial<typeof pushPreferences>) => {
+    setPushPreferences(prev => {
+      const updated = { ...prev, ...newPrefs };
+      try {
+        localStorage.setItem('kf_courier_push_preferences', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+    setToast({ message: 'Preferências de notificação atualizadas!', type: 'success' });
+  };
+
+  const handleCancelBackgroundTest = () => {
+    if (testTimerIntervalRef.current) {
+      clearInterval(testTimerIntervalRef.current);
+      testTimerIntervalRef.current = null;
+    }
+    if (testTimerTimeoutRef.current) {
+      clearTimeout(testTimerTimeoutRef.current);
+      testTimerTimeoutRef.current = null;
+    }
+    setTestNotificationTimer(null);
+    setToast({ message: 'Agendamento de teste cancelado.', type: 'info' });
+  };
+
+  const handleImmediateTestNotification = (title?: string, body?: string) => {
+    if (Notification.permission !== 'granted') {
+      setToast({ message: 'Por favor, conceda permissão de notificações primeiro.', type: 'error' });
+      return;
+    }
+
+    const testTitle = title || 'Nova Entrega Disponível 🛵 (R$ 16,50)';
+    const testBody = body || 'Pizzaria Bella Napoli • Coleta em 1.2km • Toque para visualizar no KitchenFlow!';
+
+    if (pushPreferences.soundEnabled) {
+      playNotificationSound();
+    }
+    if (pushPreferences.vibrationEnabled && 'vibrate' in navigator) {
+      try { navigator.vibrate([200, 100, 200]); } catch {}
+    }
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.ready.then((reg) => {
+        reg.showNotification(testTitle, {
+          body: testBody,
+          icon: '/icon-192.png',
+          badge: '/icon-192.png',
+          tag: 'test-immediate',
+          vibrate: pushPreferences.vibrationEnabled ? [200, 100, 200] : undefined,
+        }).catch(() => {
+          try {
+            new Notification(testTitle, { body: testBody, icon: '/icon-192.png' });
+          } catch {}
+        });
+      });
+    } else {
+      try {
+        new Notification(testTitle, { body: testBody, icon: '/icon-192.png' });
+      } catch {}
+    }
+
+    setToast({ message: 'Notificação imediata disparada!', type: 'success' });
+  };
+
+  const handleScheduleBackgroundTest = (delaySeconds: number = 5, scenarioTitle?: string, scenarioBody?: string) => {
     if (!('serviceWorker' in navigator)) {
       setToast({ message: 'Service Worker não suportado neste dispositivo.', type: 'error' });
       return;
@@ -275,34 +361,59 @@ export const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout })
       return;
     }
 
+    // Cancel existing timers if any
+    if (testTimerIntervalRef.current) clearInterval(testTimerIntervalRef.current);
+    if (testTimerTimeoutRef.current) clearTimeout(testTimerTimeoutRef.current);
+
+    const title = scenarioTitle || 'Nova Entrega Disponível 🛵 (R$ 16,50)';
+    const body = scenarioBody || 'Pizzaria Bella Napoli • Coleta em 1.2km • Toque para aceitar a rota!';
+
     navigator.serviceWorker.ready.then((reg) => {
       const sw = reg.active || navigator.serviceWorker.controller;
       if (sw) {
         sw.postMessage({
           type: 'SCHEDULE_TEST_NOTIFICATION',
-          delayMs: 5000,
-          title: 'Notificação de Teste 🛵',
-          body: 'As notificações em segundo plano do KitchenFlow Courier estão 100% ativas!'
+          delayMs: delaySeconds * 1000,
+          title,
+          body,
+          vibrate: pushPreferences.vibrationEnabled ? [250, 150, 250, 150, 300] : undefined,
         });
-        
-        setToast({ 
-          message: 'Agendado! Minimize o app ou bloqueie a tela imediatamente para ver o alerta.', 
-          type: 'success' 
-        });
-
-        let countdown = 5;
-        setTestNotificationTimer(countdown);
-        const interval = setInterval(() => {
-          countdown -= 1;
-          if (countdown <= 0) {
-            clearInterval(interval);
-            setTestNotificationTimer(null);
-          } else {
-            setTestNotificationTimer(countdown);
-          }
-        }, 1000);
       }
     });
+
+    // Fallback timer if app window remains in focus
+    testTimerTimeoutRef.current = setTimeout(() => {
+      if (pushPreferences.soundEnabled) {
+        playNotificationSound();
+      }
+      if (pushPreferences.vibrationEnabled && 'vibrate' in navigator) {
+        try { navigator.vibrate([200, 100, 200]); } catch {}
+      }
+      setTestNotificationTimer(null);
+      setToast({ message: 'Notificação push disparada com sucesso!', type: 'success' });
+    }, delaySeconds * 1000);
+
+    setTestNotificationTimer(delaySeconds);
+    let current = delaySeconds;
+    testTimerIntervalRef.current = setInterval(() => {
+      current -= 1;
+      if (current <= 0) {
+        if (testTimerIntervalRef.current) clearInterval(testTimerIntervalRef.current);
+        testTimerIntervalRef.current = null;
+        setTestNotificationTimer(null);
+      } else {
+        setTestNotificationTimer(current);
+      }
+    }, 1000);
+
+    setToast({ 
+      message: `Agendado em ${delaySeconds}s! Bloqueie a tela do celular agora ou troque de aplicativo para testar o alerta em segundo plano.`, 
+      type: 'success' 
+    });
+  };
+
+  const handleTestBackgroundNotification = () => {
+    handleScheduleBackgroundTest(5);
   };
 
   useEffect(() => {
@@ -997,10 +1108,15 @@ export const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout })
                   saving={saving}
                   notificationPermission={notificationPermission}
                   testNotificationTimer={testNotificationTimer}
+                  pushPreferences={pushPreferences}
                   onEditingDataChange={setEditingData}
                   onSaveProfile={handleSaveProfile}
                   onRequestNotificationPermission={requestNotificationPermission}
                   onTestBackgroundNotification={handleTestBackgroundNotification}
+                  onScheduleBackgroundTest={handleScheduleBackgroundTest}
+                  onImmediateTestNotification={handleImmediateTestNotification}
+                  onCancelBackgroundTest={handleCancelBackgroundTest}
+                  onUpdatePushPreferences={handleUpdatePushPreferences}
                   onUploadPhoto={handlePhotoUploadChange}
                   onLogout={onLogout}
                 />

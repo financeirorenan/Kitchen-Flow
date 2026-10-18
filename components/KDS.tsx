@@ -750,20 +750,28 @@ const KDS: React.FC<KDSProps> = memo(({
   }, [selectedOrderIds, onUpdateStatus]);
 
   const handleAdvance = useCallback((order: Order) => {
+    const ids: string[] = (order as any).mergedOrderIds && Array.isArray((order as any).mergedOrderIds)
+      ? (order as any).mergedOrderIds
+      : [order.id];
+
     if (order.status === 'pending' || order.status === 'preparing') {
-      onUpdateStatus(order.id, 'ready');
+      ids.forEach(id => onUpdateStatus(id, 'ready'));
     } else if (order.status === 'ready') {
-      onUpdateStatus(order.id, 'delivering');
+      ids.forEach(id => onUpdateStatus(id, 'delivering'));
     } else if (order.status === 'delivering') {
-      onUpdateStatus(order.id, 'delivered');
+      ids.forEach(id => onUpdateStatus(id, 'delivered'));
     }
   }, [onUpdateStatus]);
 
   const handleBack = useCallback((order: Order) => {
+    const ids: string[] = (order as any).mergedOrderIds && Array.isArray((order as any).mergedOrderIds)
+      ? (order as any).mergedOrderIds
+      : [order.id];
+
     if (order.status === 'delivering') {
-      onUpdateStatus(order.id, 'ready');
+      ids.forEach(id => onUpdateStatus(id, 'ready'));
     } else if (order.status === 'ready') {
-      onUpdateStatus(order.id, 'preparing');
+      ids.forEach(id => onUpdateStatus(id, 'preparing'));
     }
   }, [onUpdateStatus]);
 
@@ -833,14 +841,20 @@ const KDS: React.FC<KDSProps> = memo(({
           existing.total = mergedItems
             .filter(i => !i.cancelled)
             .reduce((acc, i) => acc + (i.price * i.quantity), 0);
+          if (!(existing as any).mergedOrderIds) {
+            (existing as any).mergedOrderIds = [existing.id];
+          }
+          if (!(existing as any).mergedOrderIds.includes(order.id)) {
+            (existing as any).mergedOrderIds.push(order.id);
+          }
           continue;
         } else {
-          const clone = { ...order, items: [...(order.items || [])] };
+          const clone = { ...order, items: [...(order.items || [])], mergedOrderIds: [order.id] };
           tableOrdersMap.set(tableKey, clone);
           result.push(clone);
         }
       } else {
-        result.push({ ...order, items: [...(order.items || [])] });
+        result.push({ ...order, items: [...(order.items || [])], mergedOrderIds: [order.id] });
       }
     }
 

@@ -433,7 +433,7 @@ export const AuditOrdersTab: React.FC<AuditOrdersTabProps> = ({
 
                         {/* Status */}
                         <td className="py-3 px-3">
-                          {order.status === 'canceled' ? (
+                          {(order.status === 'canceled' || order.status === 'cancelled') ? (
                             <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-rose-50 text-rose-700 border border-rose-200">
                               Cancelado
                             </span>
