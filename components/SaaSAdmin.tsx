@@ -1546,35 +1546,80 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   const [contractOwnerAddress, setContractOwnerAddress] = useState<string>('Av. Paulista, 1000, Bela Vista, São Paulo/SP');
   const [contractOwnerRepresentative, setContractOwnerRepresentative] = useState<string>('Renan de Oliveira');
 
+  const [isSavingMarketplaceConfig, setIsSavingMarketplaceConfig] = useState(false);
+
+  const sanitizeFirestorePayload = (val: any): any => {
+    if (val === undefined) return null;
+    if (val === null || typeof val !== 'object') return val;
+    if (val instanceof Date) {
+      return isNaN(val.getTime()) ? new Date() : val;
+    }
+    if (Array.isArray(val)) {
+      return val
+        .filter((item) => item !== undefined)
+        .map((item) => sanitizeFirestorePayload(item));
+    }
+    const cleaned: Record<string, any> = {};
+    Object.keys(val).forEach((key) => {
+      const v = val[key];
+      if (v !== undefined) {
+        cleaned[key] = sanitizeFirestorePayload(v);
+      }
+    });
+    return cleaned;
+  };
+
+  const applyMarketplaceConfigData = (data: any) => {
+    if (!data) return;
+    if (data.serviceFee !== undefined) setMarketplaceFee(data.serviceFee);
+    if (data.fixedFee !== undefined) setMarketplaceFixedFee(data.fixedFee);
+    if (data.consumerFee !== undefined) setMarketplaceConsumerFee(data.consumerFee);
+    if (data.minOrderValue !== undefined) setMarketplaceMinOrderValue(data.minOrderValue);
+    if (data.maxRadius !== undefined) setMarketplaceMaxRadius(data.maxRadius);
+    if (data.autoApproveOrders !== undefined) setMarketplaceAutoApproveOrders(data.autoApproveOrders);
+    if (data.orderTimeoutMinutes !== undefined) setMarketplaceOrderTimeoutMinutes(data.orderTimeoutMinutes);
+    if (data.allowPickup !== undefined) setMarketplaceAllowPickup(data.allowPickup);
+    if (data.allowDelivery !== undefined) setMarketplaceAllowDelivery(data.allowDelivery);
+    if (data.rankingStrategy) setMarketplaceRankingStrategy(data.rankingStrategy);
+    if (data.enableSponsored !== undefined) setMarketplaceEnableSponsored(data.enableSponsored);
+    if (data.announcementBanner !== undefined) setMarketplaceAnnouncementBanner(data.announcementBanner);
+    if (data.categories && Array.isArray(data.categories)) setMarketplaceCategories(data.categories);
+    if (data.paymentMethods) setMarketplacePaymentMethods(prev => ({ ...prev, ...data.paymentMethods }));
+    if (data.bannerUrl) setMarketplaceBanner(data.bannerUrl);
+    if (data.promotions) setMarketplacePromotions(data.promotions);
+    if (data.cityBestSellersConfig) setCityBestSellersConfig(data.cityBestSellersConfig);
+    if (data.maintenance) {
+      const parseDateInput = (raw: any) => {
+        if (!raw) return '';
+        const d = raw?.toDate ? raw.toDate() : new Date(raw);
+        return !isNaN(d.getTime()) ? d.toISOString().slice(0, 16) : '';
+      };
+      setMaintenanceConfig({
+        active: data.maintenance.active || false,
+        startAt: parseDateInput(data.maintenance.startAt),
+        endAt: parseDateInput(data.maintenance.endAt),
+        message: data.maintenance.message || ''
+      });
+    }
+  };
+
   useEffect(() => {
+    try {
+      const cached = localStorage.getItem('kitchenflow_marketplace_settings');
+      if (cached) {
+        applyMarketplaceConfigData(JSON.parse(cached));
+      }
+    } catch (e) {
+      console.warn("Erro ao ler cache de configurações do marketplace:", e);
+    }
+
     const unsub = onSnapshot(doc(db, 'settings', 'marketplace'), (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.data();
-        if (data.serviceFee !== undefined) setMarketplaceFee(data.serviceFee);
-        if (data.fixedFee !== undefined) setMarketplaceFixedFee(data.fixedFee);
-        if (data.consumerFee !== undefined) setMarketplaceConsumerFee(data.consumerFee);
-        if (data.minOrderValue !== undefined) setMarketplaceMinOrderValue(data.minOrderValue);
-        if (data.maxRadius !== undefined) setMarketplaceMaxRadius(data.maxRadius);
-        if (data.autoApproveOrders !== undefined) setMarketplaceAutoApproveOrders(data.autoApproveOrders);
-        if (data.orderTimeoutMinutes !== undefined) setMarketplaceOrderTimeoutMinutes(data.orderTimeoutMinutes);
-        if (data.allowPickup !== undefined) setMarketplaceAllowPickup(data.allowPickup);
-        if (data.allowDelivery !== undefined) setMarketplaceAllowDelivery(data.allowDelivery);
-        if (data.rankingStrategy) setMarketplaceRankingStrategy(data.rankingStrategy);
-        if (data.enableSponsored !== undefined) setMarketplaceEnableSponsored(data.enableSponsored);
-        if (data.announcementBanner !== undefined) setMarketplaceAnnouncementBanner(data.announcementBanner);
-        if (data.categories && Array.isArray(data.categories)) setMarketplaceCategories(data.categories);
-        if (data.paymentMethods) setMarketplacePaymentMethods(prev => ({ ...prev, ...data.paymentMethods }));
-        if (data.bannerUrl) setMarketplaceBanner(data.bannerUrl);
-        if (data.promotions) setMarketplacePromotions(data.promotions);
-        if (data.cityBestSellersConfig) setCityBestSellersConfig(data.cityBestSellersConfig);
-        if (data.maintenance) {
-          setMaintenanceConfig({
-            active: data.maintenance.active || false,
-            startAt: data.maintenance.startAt ? new Date(data.maintenance.startAt.toDate ? data.maintenance.startAt.toDate() : data.maintenance.startAt).toISOString().slice(0, 16) : '',
-            endAt: data.maintenance.endAt ? new Date(data.maintenance.endAt.toDate ? data.maintenance.endAt.toDate() : data.maintenance.endAt).toISOString().slice(0, 16) : '',
-            message: data.maintenance.message || ''
-          });
-        }
+        applyMarketplaceConfigData(data);
+        try {
+          localStorage.setItem('kitchenflow_marketplace_settings', JSON.stringify(data));
+        } catch {}
       }
     }, (error) => {
       console.warn("SaaSAdmin marketplace settings snapshot error:", error);
@@ -1599,45 +1644,78 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   }, []);
 
   const handleSaveCityBestSellers = async (newConfig: CityBestSellersConfig) => {
-    setCityBestSellersConfig(newConfig);
-    await setDoc(doc(db, 'settings', 'marketplace'), {
-      cityBestSellersConfig: newConfig,
-      updatedAt: new Date()
-    }, { merge: true });
+    const cleanConfig = sanitizeFirestorePayload(newConfig);
+    setCityBestSellersConfig(cleanConfig);
+    try {
+      const existingRaw = localStorage.getItem('kitchenflow_marketplace_settings');
+      const existing = existingRaw ? JSON.parse(existingRaw) : {};
+      localStorage.setItem('kitchenflow_marketplace_settings', JSON.stringify({
+        ...existing,
+        cityBestSellersConfig: cleanConfig,
+        updatedAt: new Date().toISOString()
+      }));
+    } catch {}
+    try {
+      await setDoc(doc(db, 'settings', 'marketplace'), {
+        cityBestSellersConfig: cleanConfig,
+        updatedAt: new Date()
+      }, { merge: true });
+    } catch (err) {
+      console.warn("Aviso ao sincronizar cityBestSellersConfig na nuvem (salvo localmente):", err);
+    }
     if (showToast) {
-      showToast("Configurações dos Mais Vendidos por Cidade salvas com sucesso!", "success");
+      showToast("Configurações do Marketplace salvas com sucesso!", "success");
     }
   };
 
   const handleSaveMarketplaceConfig = async () => {
+    setIsSavingMarketplaceConfig(true);
     try {
-      await setDoc(doc(db, 'settings', 'marketplace'), {
+      const startDate = maintenanceConfig.startAt ? new Date(maintenanceConfig.startAt) : null;
+      const endDate = maintenanceConfig.endAt ? new Date(maintenanceConfig.endAt) : null;
+
+      const payload = sanitizeFirestorePayload({
         id: 'marketplace',
-        serviceFee: marketplaceFee,
-        fixedFee: marketplaceFixedFee,
-        consumerFee: marketplaceConsumerFee,
-        minOrderValue: marketplaceMinOrderValue,
-        maxRadius: marketplaceMaxRadius,
-        autoApproveOrders: marketplaceAutoApproveOrders,
-        orderTimeoutMinutes: marketplaceOrderTimeoutMinutes,
-        allowPickup: marketplaceAllowPickup,
-        allowDelivery: marketplaceAllowDelivery,
-        rankingStrategy: marketplaceRankingStrategy,
-        enableSponsored: marketplaceEnableSponsored,
-        announcementBanner: marketplaceAnnouncementBanner,
-        categories: marketplaceCategories,
-        paymentMethods: marketplacePaymentMethods,
-        bannerUrl: marketplaceBanner,
-        promotions: marketplacePromotions,
+        serviceFee: Number(marketplaceFee) || 0,
+        fixedFee: Number(marketplaceFixedFee) || 0,
+        consumerFee: Number(marketplaceConsumerFee) || 0,
+        minOrderValue: Number(marketplaceMinOrderValue) || 0,
+        maxRadius: Number(marketplaceMaxRadius) || 0,
+        autoApproveOrders: Boolean(marketplaceAutoApproveOrders),
+        orderTimeoutMinutes: Number(marketplaceOrderTimeoutMinutes) || 15,
+        allowPickup: Boolean(marketplaceAllowPickup),
+        allowDelivery: Boolean(marketplaceAllowDelivery),
+        rankingStrategy: marketplaceRankingStrategy || 'distance',
+        enableSponsored: Boolean(marketplaceEnableSponsored),
+        announcementBanner: marketplaceAnnouncementBanner || '',
+        categories: Array.isArray(marketplaceCategories) ? marketplaceCategories : [],
+        paymentMethods: marketplacePaymentMethods || {},
+        bannerUrl: marketplaceBanner || '',
+        promotions: Array.isArray(marketplacePromotions) ? marketplacePromotions : [],
         cityBestSellersConfig: cityBestSellersConfig || null,
         maintenance: {
-          active: maintenanceConfig.active,
-          startAt: maintenanceConfig.startAt ? new Date(maintenanceConfig.startAt) : null,
-          endAt: maintenanceConfig.endAt ? new Date(maintenanceConfig.endAt) : null,
-          message: maintenanceConfig.message
+          active: Boolean(maintenanceConfig.active),
+          startAt: startDate && !isNaN(startDate.getTime()) ? startDate : null,
+          endAt: endDate && !isNaN(endDate.getTime()) ? endDate : null,
+          message: maintenanceConfig.message || ''
         },
         updatedAt: new Date()
       });
+
+      try {
+        localStorage.setItem('kitchenflow_marketplace_settings', JSON.stringify(payload));
+      } catch (storageErr) {
+        console.warn("Aviso ao salvar cache local de configurações do marketplace:", storageErr);
+      }
+
+      try {
+        await setDoc(doc(db, 'settings', 'marketplace'), payload, { merge: true });
+      } catch (cloudError) {
+        console.warn("Aviso ao sincronizar configurações do marketplace no Firestore (mantido em cache local):", cloudError);
+      }
+
+      addAuditLog('Atualizou configurações globais do Marketplace', 'Marketplace Global', undefined, 'Configurações salvas', 'Marketplace');
+
       if (showToast) {
         showToast("Configurações do Marketplace salvas com sucesso!", "success");
       } else {
@@ -1650,6 +1728,8 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
       } else {
         alert("Erro ao salvar configurações do marketplace");
       }
+    } finally {
+      setIsSavingMarketplaceConfig(false);
     }
   };
 
@@ -3333,7 +3413,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
             </thead>
             <tbody className="divide-y divide-slate-50">
               {filteredTenants.map((tenant, idx) => (
-                <tr key={tenant.id} className="hover:bg-slate-50/50 transition-all group">
+                <tr key={tenant.id || `tenant-row-${idx}`} className="hover:bg-slate-50/50 transition-all group">
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center font-black text-xs overflow-hidden border-2 border-slate-100 group-hover:border-indigo-200 transition-all">
@@ -3727,8 +3807,8 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                       </tr>
                    </thead>
                    <tbody className="divide-y divide-slate-50 text-sm">
-                      {supportTickets.length > 0 ? supportTickets.map(ticket => (
-                        <tr key={ticket.id} className="hover:bg-slate-50/50 transition-all">
+                      {supportTickets.length > 0 ? supportTickets.map((ticket, idx) => (
+                        <tr key={ticket.id || `ticket-${idx}`} className="hover:bg-slate-50/50 transition-all">
                            <td className="px-6 py-4">
                               <p className="font-black text-slate-800">{ticket.subject}</p>
                               <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{ticket.tenantName}</p>
@@ -3799,8 +3879,8 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                       </tr>
                    </thead>
                    <tbody className="divide-y divide-slate-50">
-                      {saasUsers.map(u => (
-                        <tr key={u.id} className="hover:bg-slate-50/50 transition-all">
+                      {saasUsers.map((u, idx) => (
+                        <tr key={u.id || `suser-${idx}`} className="hover:bg-slate-50/50 transition-all">
                            <td className="px-6 py-4">
                               <div className="flex items-center gap-3">
                                  <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-black text-[10px] overflow-hidden border border-slate-100 group-hover:border-indigo-200 transition-all">
@@ -3909,11 +3989,12 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                    <p className="text-[11px] font-medium text-slate-400 mt-0.5">Gestão completa de taxas, operação, logística, banners, promoções e algoritmos do aplicativo consumidor</p>
                  </div>
                  <button 
-                   onClick={() => confirmAction("Salvar Configurações", "Deseja salvar as alterações no marketplace global?", handleSaveMarketplaceConfig, 'info')}
-                   className="px-6 py-3 bg-indigo-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-900/30 flex items-center gap-2 shrink-0"
+                   onClick={handleSaveMarketplaceConfig}
+                   disabled={isSavingMarketplaceConfig}
+                   className="px-6 py-3 bg-indigo-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-900/30 flex items-center gap-2 shrink-0 cursor-pointer disabled:opacity-50"
                  >
                    <Save size={16} />
-                   Salvar Alterações
+                   {isSavingMarketplaceConfig ? 'Salvando...' : 'Salvar Alterações'}
                  </button>
               </div>
 
@@ -4130,6 +4211,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                      marketplaceProducts={products}
                      currentConfig={cityBestSellersConfig}
                      onSaveConfig={handleSaveCityBestSellers}
+                     onChangeConfig={(cfg) => setCityBestSellersConfig(cfg)}
                      showToast={showToast}
                    />
                  )}
@@ -5135,11 +5217,11 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                          <div className="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
                             {tenants
                              .filter(t => t.name.toLowerCase().includes(promoTenantSearch.toLowerCase()))
-                             .map(tenant => {
+                             .map((tenant, idx) => {
                                const isSelected = (editingPromo.participatingTenantIds || []).includes(tenant.id);
                                return (
                                  <button
-                                   key={tenant.id}
+                                   key={tenant.id || `promo-tenant-${idx}`}
                                    type="button"
                                    onClick={() => {
                                       const currentIds = editingPromo.participatingTenantIds || [];
@@ -6967,8 +7049,8 @@ ${selectedTenantForContract.name} (LICENCIADA)`;
                 </h3>
                 
                 <div className="flex-1 border border-slate-100 rounded-[2rem] overflow-hidden bg-slate-50/20 max-h-[350px] overflow-y-auto divide-y divide-slate-100">
-                  {commerceCategories.length > 0 ? commerceCategories.map((cat) => (
-                    <div key={cat.id} className="p-4 flex justify-between items-center hover:bg-slate-55/50 transition-all">
+                  {commerceCategories.length > 0 ? commerceCategories.map((cat, idx) => (
+                    <div key={cat.id || cat.name || `ccat-${idx}`} className="p-4 flex justify-between items-center hover:bg-slate-55/50 transition-all">
                       <div className="flex items-center gap-3.5 pr-4">
                         <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 border border-slate-100 ${cat.bg || 'bg-indigo-50'}`}>
                           {cat.img ? (

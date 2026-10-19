@@ -16,6 +16,15 @@ interface EditOrderModalProps {
 const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], onClose, onSave }) => {
   const [items, setItems] = useState<OrderItem[]>(order?.items ? [...order.items] : []);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(order?.paymentMethod || 'dinheiro');
+  const [splitPayments, setSplitPayments] = useState<Array<{ method: PaymentMethod; amount: string }>>(() => {
+    if (order?.payments && order.payments.length > 1) {
+      return order.payments.map(p => ({
+        method: (p.method || 'dinheiro') as PaymentMethod,
+        amount: Number(p.amount || 0).toFixed(2)
+      }));
+    }
+    return [];
+  });
   const [searchTerm, setSearchTerm] = useState('');
 
   const [showOptionsModal, setShowOptionsModal] = useState(false);
@@ -282,9 +291,9 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
               />
               {filteredProducts.length > 0 && (
                 <div className="absolute top-full left-0 right-0 mt-2 bg-white border-2 border-slate-100 rounded-xl shadow-xl z-10 overflow-hidden">
-                  {filteredProducts.map(p => (
+                  {filteredProducts.map((p, idx) => (
                     <button 
-                      key={p.id}
+                      key={p.id || `prod-${idx}`}
                       onClick={() => handleAddItem(p)}
                       className="w-full flex items-center justify-between p-3 hover:bg-indigo-50 transition-colors border-b last:border-0"
                     >
@@ -300,26 +309,124 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
             </div>
           </div>
 
-          {/* Forma de Pagamento */}
+          {/* Forma de Pagamento (simples ou dividida em 2+ formas) */}
           <div className="space-y-3">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-              <CreditCard size={14} /> Forma de Pagamento
-            </h3>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {(['dinheiro', 'cartao_credito', 'cartao_debito', 'pix', 'vale_refeicao'] as PaymentMethod[]).map(method => (
-                <button 
-                  key={method}
-                  onClick={() => setPaymentMethod(method)}
-                  className={`p-3 rounded-xl border-2 font-bold text-[10px] uppercase tracking-wider transition-all ${
-                    paymentMethod === method 
-                      ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-md' 
-                      : 'border-slate-100 bg-slate-50 text-slate-500 hover:border-slate-200'
-                  }`}
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <CreditCard size={14} /> Forma(s) de Pagamento
+              </h3>
+              {splitPayments.length <= 1 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const half = (total / 2).toFixed(2);
+                    const rest = (total - parseFloat(half)).toFixed(2);
+                    setSplitPayments([
+                      { method: paymentMethod || 'pix', amount: half },
+                      { method: paymentMethod === 'pix' ? 'cartao_debito' : 'pix', amount: rest }
+                    ]);
+                  }}
+                  className="text-[10px] font-black uppercase tracking-widest text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-all flex items-center gap-1"
                 >
-                  {method.replace('_', ' ')}
+                  <Plus size={12} /> Dividir em 2 Formas
                 </button>
-              ))}
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setSplitPayments([])}
+                  className="text-[10px] font-black uppercase tracking-widest text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-lg transition-all"
+                >
+                  Usar 1 Forma Única
+                </button>
+              )}
             </div>
+
+            {splitPayments.length > 1 ? (
+              <div className="space-y-2.5 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                {splitPayments.map((part, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <span className="text-[10px] font-black text-slate-500 uppercase w-14">
+                      {idx + 1}ª Parte:
+                    </span>
+                    <select
+                      value={part.method || 'dinheiro'}
+                      onChange={(e) => {
+                        const newMethod = e.target.value as PaymentMethod;
+                        setSplitPayments(prev => prev.map((p, i) => i === idx ? { ...p, method: newMethod } : p));
+                      }}
+                      className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-black uppercase text-slate-700 focus:border-indigo-500 outline-none"
+                    >
+                      <option value="pix">PIX</option>
+                      <option value="dinheiro">Dinheiro</option>
+                      <option value="cartao_credito">Cartão de Crédito</option>
+                      <option value="cartao_debito">Cartão de Débito</option>
+                      <option value="vale_refeicao">Vale Refeição</option>
+                      <option value="conta_cliente">Conta Cliente</option>
+                    </select>
+                    <div className="relative w-32">
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-black text-slate-400">R$</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={part.amount}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setSplitPayments(prev => {
+                            const updated = prev.map((p, i) => i === idx ? { ...p, amount: val } : p);
+                            if (updated.length === 2) {
+                              const otherIdx = idx === 0 ? 1 : 0;
+                              const numVal = parseFloat(val) || 0;
+                              const remaining = Math.max(0, total - numVal);
+                              updated[otherIdx] = { ...updated[otherIdx], amount: remaining.toFixed(2) };
+                            }
+                            return updated;
+                          });
+                        }}
+                        className="w-full pl-8 pr-2 py-2 bg-white border border-slate-200 rounded-lg text-xs font-black text-slate-800 focus:border-indigo-500 outline-none"
+                      />
+                    </div>
+                    {splitPayments.length > 2 && (
+                      <button
+                        type="button"
+                        onClick={() => setSplitPayments(prev => prev.filter((_, i) => i !== idx))}
+                        className="p-1.5 text-slate-400 hover:text-rose-500"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                <div className="flex justify-between items-center pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setSplitPayments(prev => [...prev, { method: 'dinheiro', amount: '0.00' }])}
+                    className="text-[10px] font-black uppercase text-indigo-600 hover:underline flex items-center gap-1"
+                  >
+                    <Plus size={12} /> Adicionar outra forma
+                  </button>
+                  <span className="text-[10px] font-black text-slate-500 uppercase">
+                    Soma: R$ {splitPayments.reduce((acc, p) => acc + (parseFloat(p.amount) || 0), 0).toFixed(2)} / Total: R$ {total.toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {(['dinheiro', 'cartao_credito', 'cartao_debito', 'pix', 'vale_refeicao'] as PaymentMethod[]).map(method => (
+                  <button 
+                    key={method}
+                    type="button"
+                    onClick={() => setPaymentMethod(method)}
+                    className={`p-3 rounded-xl border-2 font-bold text-[10px] uppercase tracking-wider transition-all ${
+                      paymentMethod === method 
+                        ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-md' 
+                        : 'border-slate-100 bg-slate-50 text-slate-500 hover:border-slate-200'
+                    }`}
+                  >
+                    {method.replace('_', ' ')}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -336,11 +443,26 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
               Cancelar
             </button>
             <button 
-              onClick={() => onSave({ 
-                items, 
-                total, 
-                ...(order?.paymentMethod || order?.isSettled || order?.paymentStatus === 'paid' ? { paymentMethod } : {}) 
-              })}
+              onClick={() => {
+                const validSplits = splitPayments
+                  .map(p => ({ method: p.method || 'dinheiro', amount: parseFloat(p.amount) || 0 }))
+                  .filter(p => p.amount > 0);
+                if (validSplits.length > 1) {
+                  onSave({
+                    items,
+                    total,
+                    paymentMethod: validSplits[0].method,
+                    payments: validSplits,
+                  });
+                } else {
+                  onSave({
+                    items,
+                    total,
+                    paymentMethod,
+                    payments: [{ method: paymentMethod || 'dinheiro', amount: total }],
+                  });
+                }
+              }}
               className="px-8 py-2 bg-indigo-600 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all"
             >
               Salvar Alterações
@@ -362,14 +484,14 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
             </div>
             
             <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
-              {selectedProductForOptions.optionCategories?.map(cat => {
+              {selectedProductForOptions.optionCategories?.map((cat, catIdx) => {
                 const totalInCat = selectedOptions
                   .filter(o => o.category === cat.name || (cat.options || []).some(co => co.id === o.id))
                   .reduce((sum, o) => sum + (o.quantity || 1), 0);
                 const isSingleChoice = cat.max === 1;
 
                 return (
-                <div key={cat.id} className="space-y-2">
+                <div key={cat.id || cat.name || `cat-${catIdx}`} className="space-y-2">
                   <div className="flex justify-between items-center border-b pb-1">
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{cat.name}</p>
                     <p className="text-[8px] font-bold text-indigo-500 uppercase">
@@ -377,7 +499,7 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
                     </p>
                   </div>
                   <div className="grid grid-cols-1 gap-2">
-                    {cat.options.map(opt => {
+                    {cat.options.map((opt, optIdx) => {
                       const optWithCat = { ...opt, category: cat.name };
                       const qty = getOptionQtyInModal(optWithCat);
                       const isSelected = qty > 0;
@@ -385,7 +507,7 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
 
                       return (
                         <div 
-                          key={opt.id}
+                          key={opt.id || opt.name || `opt-${catIdx}-${optIdx}`}
                           onClick={() => {
                             if (isSingleChoice) {
                               toggleOption(optWithCat, cat.name);

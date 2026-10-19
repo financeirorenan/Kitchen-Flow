@@ -496,43 +496,6 @@ const Tables: React.FC<TablesProps> = memo(
         },
       ];
 
-      if (pdvEditOrder && onUpdateOrder) {
-        onUpdateOrder(pdvEditOrder.id, {
-          items: selectedTable!.items,
-          total: computedTotal,
-          additionalFee: additionalFee || 0,
-          additionalFeeReason: additionalFeeReason || "",
-          discount: discount || 0,
-          paymentMethod: method,
-          payments: computedPayments,
-          isSettled: true,
-          paymentStatus: 'paid',
-          customerName: customerName || undefined,
-          customerPhone: customerPhone || undefined,
-          customerAddress: deliveryAddress || undefined,
-          deliveryFee: isDeliveryOrder
-            ? parseCurrency(deliveryFeeInput)
-            : undefined,
-          type: isDeliveryOrder
-            ? "delivery"
-            : isCounterContext
-              ? "takeout"
-              : "table",
-          customerId: customerId || undefined,
-        });
-      } else {
-        if (selectedTable?.currentOrderId && onUpdateOrder) {
-          onUpdateOrder(String(selectedTable.currentOrderId), {
-            isSettled: true,
-            paymentStatus: 'paid',
-            paymentMethod: method,
-            payments: computedPayments,
-            total: computedTotal,
-            items: selectedTable.items,
-          });
-        }
-      }
-
       onCloseTable(
         selectedTable!.id as any,
         method,
@@ -547,6 +510,10 @@ const Tables: React.FC<TablesProps> = memo(
         additionalFeeReason,
         discount,
       );
+
+      if (pdvEditOrder && onCancelPdvEdit) {
+        onCancelPdvEdit();
+      }
 
       if (pdvEditOrder && onCancelPdvEdit) {
         onCancelPdvEdit();
@@ -571,6 +538,7 @@ const Tables: React.FC<TablesProps> = memo(
           items: pdvEditOrder.items || [],
           total: (pdvEditOrder.total || 0) - (pdvEditOrder.deliveryFee || 0),
           currentOrderId: pdvEditOrder.id,
+          partialPayments: pdvEditOrder.payments || existingTable.partialPayments,
         } : {
           id: pdvEditOrder.tableNumber ? `tbl_${pdvEditOrder.tableNumber}` : (pdvEditOrder.id || `ord_${Date.now()}`),
           number: Number(pdvEditOrder.tableNumber) || 0,
@@ -579,6 +547,7 @@ const Tables: React.FC<TablesProps> = memo(
           status: "occupied",
           tenantId: pdvEditOrder.tenantId,
           currentOrderId: pdvEditOrder.id,
+          partialPayments: pdvEditOrder.payments,
         };
 
         setSelectedTable(mockTable);
@@ -742,20 +711,34 @@ const Tables: React.FC<TablesProps> = memo(
       }));
 
       const rawSessionOrders = deduplicateOrders(orders.filter((o) => {
-        const isTrueSubTicket = Boolean((o.isSubTicket || o.mergedIntoOrderId) && !financialRecords.some(r => r.orderId && (r.orderId === o.id || (o.docId && r.orderId === o.docId))));
+        const hasSessionFinancialRecord = financialRecords.some(r =>
+          r.orderId && (r.orderId === o.id || (o.docId && r.orderId === o.docId)) &&
+          parseToDate(r.date) >= sessionOpenedAt
+        );
+        const isTrueSubTicket = Boolean((o.isSubTicket || o.mergedIntoOrderId) && !hasSessionFinancialRecord);
         if (o.status === "cancelled" || isTrueSubTicket) return false;
         const isPaid = o.isSettled || o.paymentStatus === "paid" || (o.payments && o.payments.length > 0) || o.status === "finished" || o.status === "delivered";
         if (!isPaid) return false;
 
-        // 1. Se o pedido possui vínculo explícito com o turno (shiftOpenedAt), validar estritamente contra a sessão atual
+        // 1. Se o pedido possui vínculo explícito com o turno atual (shiftOpenedAt), incluir diretamente
+        let hasShiftFromEarlierSession = false;
         if ((o as any).shiftOpenedAt) {
           const orderShiftDate = parseToDate((o as any).shiftOpenedAt);
           if (orderShiftDate.getTime() > 0) {
-            return Math.abs(orderShiftDate.getTime() - sessionOpenedAt.getTime()) < 5000;
+            if (Math.abs(orderShiftDate.getTime() - sessionOpenedAt.getTime()) < 5000) {
+              return true;
+            }
+            if (orderShiftDate.getTime() < sessionOpenedAt.getTime() - 5000) {
+              hasShiftFromEarlierSession = true;
+            }
           }
         }
 
-        // 2. Validar pelo horário real do pagamento/liquidação (nunca incluir pedidos pagos antes da abertura deste caixa)
+        if (hasSessionFinancialRecord) {
+          return true;
+        }
+
+        // 2. Validar pelo horário real do pagamento/liquidação (incluir pedidos abertos antes mas pagos/finalizados neste caixa)
         if (o.paidAt) {
           const paidDate = parseToDate(o.paidAt);
           if (paidDate.getTime() > 0) {
@@ -784,6 +767,10 @@ const Tables: React.FC<TablesProps> = memo(
           if (finishedDate.getTime() > 0) {
             return finishedDate >= sessionOpenedAt;
           }
+        }
+
+        if (hasShiftFromEarlierSession) {
+          return false;
         }
 
         const createdAt = parseToDate(o.createdAt);
@@ -826,19 +813,47 @@ const Tables: React.FC<TablesProps> = memo(
       };
 
       const sessionOrders: Order[] = [];
+      const accountedRecordIds = new Set<string>();
+      const sessionOrderIds = new Set<string>();
 
       rawSessionOrders.forEach((o) => {
-        const orderTotal = Number(o.total) || 0;
-        const matchingRecords = financialRecords.filter(r => 
+        if (o.id) sessionOrderIds.add(o.id);
+        if (o.docId) sessionOrderIds.add(o.docId);
+
+        const rawOrderTotal = Number(o.total) || 0;
+        const calculatedItemsTotal = (o.items && o.items.length > 0)
+          ? o.items.filter((i: any) => !i.cancelled).reduce((acc: number, i: any) => acc + (Number(i.price) || 0) * (Number(i.quantity) || 1), 0) +
+            (Number(o.deliveryFee) || 0) +
+            (Number((o as any).additionalFee) || 0) -
+            (Number((o as any).discount) || 0)
+          : rawOrderTotal;
+
+        const matchingRecords = deduplicateFinancialRecords(financialRecords.filter(r => 
           r.orderId && (r.orderId === o.id || (o.docId && r.orderId === o.docId)) &&
           parseToDate(r.date) >= sessionOpenedAt
-        );
+        ));
+        matchingRecords.forEach(r => {
+          if (r.id) accountedRecordIds.add(r.id);
+        });
 
         let paymentsToUse = o.payments;
         let primaryMethod = o.paymentMethod;
 
-        // Se o pedido teve paymentMethod sobrescrito ou marcado como subticket por engano, restaurar dados do lançamento financeiro da sessão
-        if (o.isSubTicket || o.mergedIntoOrderId || (!paymentsToUse?.length && matchingRecords.length > 0)) {
+        const currentPaymentsSum = (paymentsToUse || []).reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+        const matchingRecordsSum = matchingRecords.reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
+
+        const orderTotal = (currentPaymentsSum > 0 && Math.abs(currentPaymentsSum - calculatedItemsTotal) < 0.05)
+          ? calculatedItemsTotal
+          : rawOrderTotal;
+
+        // Se o pedido teve paymentMethod sobrescrito, marcado como subticket por engano, ou possui pagamentos parciais mais completos nos registros financeiros
+        if (
+          o.isSubTicket ||
+          o.mergedIntoOrderId ||
+          (!paymentsToUse?.length && matchingRecords.length > 0) ||
+          (matchingRecords.length > (paymentsToUse?.length || 0) && Math.abs(matchingRecordsSum - orderTotal) < 0.05) ||
+          (currentPaymentsSum < orderTotal - 0.01 && matchingRecordsSum >= currentPaymentsSum && matchingRecords.length > 0)
+        ) {
           if (matchingRecords.length > 0) {
             paymentsToUse = matchingRecords.map(r => ({
               method: r.paymentMethod as any,
@@ -849,16 +864,11 @@ const Tables: React.FC<TablesProps> = memo(
           }
         }
 
-        const healedOrder: Order = {
-          ...o,
-          paymentMethod: primaryMethod || o.paymentMethod || "dinheiro",
-          payments: paymentsToUse || o.payments
-        };
-        sessionOrders.push(healedOrder);
+        let normalizedPayments = paymentsToUse ? [...paymentsToUse] : undefined;
 
-        if (paymentsToUse && paymentsToUse.length > 0) {
+        if (normalizedPayments && normalizedPayments.length > 0) {
           let paymentsSum = 0;
-          paymentsToUse.forEach((p) => {
+          normalizedPayments.forEach((p) => {
             const pAmount = Number(p.amount) || 0;
             if (pAmount > 0) {
               const method = getStandardPaymentMethod(p.method);
@@ -871,15 +881,19 @@ const Tables: React.FC<TablesProps> = memo(
             }
           });
 
-          // Se a soma dos pagamentos for menor que o total, alocar diferença
+          // Se a soma dos pagamentos for menor que o total real, alocar diferença e registrar a 2ª parte no pedido
           if (orderTotal > paymentsSum + 0.009) {
-            const diff = orderTotal - paymentsSum;
+            const diff = Number((orderTotal - paymentsSum).toFixed(2));
             const fallbackMethod = getStandardPaymentMethod(primaryMethod || "dinheiro");
             if (totalsByMethod.hasOwnProperty(fallbackMethod)) {
               totalsByMethod[fallbackMethod] += diff;
             } else {
               totalsByMethod.dinheiro += diff;
             }
+            normalizedPayments.push({
+              method: (primaryMethod || o.paymentMethod || "dinheiro") as any,
+              amount: diff,
+            });
           }
         } else {
           const method = getStandardPaymentMethod(primaryMethod || "dinheiro");
@@ -887,6 +901,64 @@ const Tables: React.FC<TablesProps> = memo(
             totalsByMethod[method] += orderTotal;
           } else {
             totalsByMethod.dinheiro += orderTotal;
+          }
+        }
+
+        const healedOrder: Order = {
+          ...o,
+          total: orderTotal,
+          paymentMethod: primaryMethod || o.paymentMethod || "dinheiro",
+          payments: normalizedPayments || o.payments
+        };
+        sessionOrders.push(healedOrder);
+      });
+
+      // Incluir pagamentos parciais já lançados no caixa de mesas/pedidos que ainda estão em aberto (não finalizados em sessionOrders)
+      const openPartialSaleRecords = deduplicateFinancialRecords(financialRecords.filter((r) => {
+        const isPaid = r.status === "paid" || !r.status;
+        if (!isPaid || r.type !== "income") return false;
+        if (r.id && accountedRecordIds.has(r.id)) return false;
+        if (r.orderId && sessionOrderIds.has(r.orderId)) return false;
+
+        const cat = (r.category || "").toLowerCase();
+        const desc = (r.description || "").toLowerCase();
+        if (!cat.startsWith("venda") && !desc.includes("pagamento parcial")) return false;
+
+        let inCurrentShift = false;
+        if (r.shiftOpenedAt) {
+          const shiftDate = parseToDate(r.shiftOpenedAt);
+          if (shiftDate.getTime() > 0) {
+            inCurrentShift = Math.abs(shiftDate.getTime() - sessionOpenedAt.getTime()) < 5000;
+          }
+        } else {
+          inCurrentShift = parseToDate(r.date) >= sessionOpenedAt;
+        }
+        if (!inCurrentShift) return false;
+
+        // Se não tem orderId, verificar se o pagamento parcial já não está embutido em algum pedido fechado de sessionOrders
+        if (!r.orderId && !desc.includes("pagamento parcial")) return false;
+        if (!r.orderId) {
+          const alreadyInClosedOrder = sessionOrders.some(so =>
+            so.payments && so.payments.length > 1 &&
+            so.payments.some((p: any) =>
+              (p.id && p.id === r.id) ||
+              (getStandardPaymentMethod(p.method) === getStandardPaymentMethod(r.paymentMethod || "dinheiro") &&
+               Math.abs((Number(p.amount) || 0) - (Number(r.amount) || 0)) < 0.01)
+            )
+          );
+          if (alreadyInClosedOrder) return false;
+        }
+        return true;
+      }));
+
+      openPartialSaleRecords.forEach((r) => {
+        const rAmount = Number(r.amount) || 0;
+        if (rAmount > 0) {
+          const method = getStandardPaymentMethod(r.paymentMethod || "dinheiro");
+          if (totalsByMethod.hasOwnProperty(method)) {
+            totalsByMethod[method] += rAmount;
+          } else {
+            totalsByMethod.dinheiro += rAmount;
           }
         }
       });
@@ -956,7 +1028,7 @@ const Tables: React.FC<TablesProps> = memo(
 
       let sourceOrders: Order[] = [];
       if (cashReport && cashReport.sessionOrders && cashReport.sessionOrders.length > 0) {
-        sourceOrders = cashReport.sessionOrders.filter((o) => !o.isSubTicket && !o.mergedIntoOrderId);
+        sourceOrders = cashReport.sessionOrders;
       } else if (lastClosingReport) {
         const openedAt = toSafeDate(lastClosingReport.openedAt);
         const closedAt = toSafeDate(lastClosingReport.closedAt);
@@ -2060,10 +2132,10 @@ const Tables: React.FC<TablesProps> = memo(
 
       // Determinar o valor a ser pago nesta etapa
       const amountToPay = isSplitting
-        ? splitMode === "value"
-          ? parseFloat(customSplitValue) || remainingBalance
-          : splitMode === "items"
-            ? getSelectedSplitTotal()
+        ? splitMode === "items"
+          ? getSelectedSplitTotal()
+          : (customSplitValue && parseFloat(customSplitValue) > 0 && parseFloat(customSplitValue) < remainingBalance - 0.01)
+            ? parseFloat(customSplitValue)
             : remainingBalance
         : (customSplitValue && parseFloat(customSplitValue) > 0 && parseFloat(customSplitValue) < remainingBalance - 0.01)
           ? parseFloat(customSplitValue)
@@ -2084,8 +2156,9 @@ const Tables: React.FC<TablesProps> = memo(
 
       // Se o valor for menor que o saldo remanescente OU se autoCloseAfterPayment estiver desativado (apenas para mesas), tratar como pagamento parcial/fração
       if (amountToPay < remainingBalance - 0.01 || (!autoCloseAfterPayment && !isCounterContext)) {
+        const partId = `fin-part-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
         const newPart: SplitPart = {
-          id: Math.random().toString(36).substr(2, 9),
+          id: partId,
           amount: amountToPay,
           method: method,
           isPaid: true,
@@ -2096,16 +2169,19 @@ const Tables: React.FC<TablesProps> = memo(
               : undefined,
         };
 
+        const activeOrdId = pdvEditOrder ? pdvEditOrder.id : (selectedTable.currentOrderId ? String(selectedTable.currentOrderId) : undefined);
+
         // Lançar IMEDIATAMENTE o pagamento parcial no Caixa/Financeiro
         if (onAddFinancialRecord) {
           onAddFinancialRecord({
+            id: partId,
             type: 'income',
             amount: amountToPay,
             category: isDeliveryOrder ? 'Vendas Entrega' : (isCounterContext ? 'Vendas Balcão' : 'Vendas Mesa'),
             description: `${isDeliveryOrder ? 'Entrega' : (isCounterContext ? 'Balcão' : `Mesa ${selectedTable?.number || selectedTable?.id}`)} - Pagamento Parcial: ${method}`,
             date: new Date(),
             paymentMethod: method,
-            orderId: pdvEditOrder ? pdvEditOrder.id : undefined
+            orderId: activeOrdId
           });
         }
 
@@ -2117,7 +2193,7 @@ const Tables: React.FC<TablesProps> = memo(
         setSplitParts(updatedParts);
         setRemainingBalance(newRemaining);
 
-        setSplitMode(null);
+        setSplitMode("value");
         setSelectedSplitQtys({});
         setCustomSplitValue("");
 
@@ -2195,17 +2271,21 @@ const Tables: React.FC<TablesProps> = memo(
       if (!selectedTable || !selectedPaymentMethod || isProcessing) return;
       const received = parseCurrency(amountReceived);
       const amountToPay = isSplitting
-        ? splitMode === "value"
-          ? parseFloat(customSplitValue) || remainingBalance
-          : splitMode === "items"
-            ? getSelectedSplitTotal()
+        ? splitMode === "items"
+          ? getSelectedSplitTotal()
+          : (customSplitValue && parseFloat(customSplitValue) > 0 && parseFloat(customSplitValue) < remainingBalance - 0.01)
+            ? parseFloat(customSplitValue)
             : remainingBalance
-        : selectedTable.total +
-          (isDeliveryOrder && isCounterContext
-            ? parseCurrency(deliveryFeeInput)
-            : 0) +
-          additionalFee -
-          discount;
+        : customSplitValue && parseFloat(customSplitValue) > 0 && parseFloat(customSplitValue) < remainingBalance - 0.01
+          ? parseFloat(customSplitValue)
+          : remainingBalance > 0 && splitParts.length > 0
+            ? remainingBalance
+            : selectedTable.total +
+              (isDeliveryOrder && isCounterContext
+                ? parseCurrency(deliveryFeeInput)
+                : 0) +
+              additionalFee -
+              discount;
 
       if (received < amountToPay) {
         alert("Valor recebido é menor que o total!");
@@ -2213,8 +2293,9 @@ const Tables: React.FC<TablesProps> = memo(
       }
 
       if (amountToPay < remainingBalance - 0.01 || (!autoCloseAfterPayment && !isCounterContext)) {
+        const partId = `fin-part-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
         const newPart: SplitPart = {
-          id: Math.random().toString(36).substr(2, 9),
+          id: partId,
           amount: amountToPay,
           method: "dinheiro",
           isPaid: true,
@@ -2225,16 +2306,19 @@ const Tables: React.FC<TablesProps> = memo(
               : undefined,
         };
 
+        const activeOrdId = pdvEditOrder ? pdvEditOrder.id : (selectedTable.currentOrderId ? String(selectedTable.currentOrderId) : undefined);
+
         // Lançar IMEDIATAMENTE o pagamento em dinheiro no Caixa/Financeiro
         if (onAddFinancialRecord) {
           onAddFinancialRecord({
+            id: partId,
             type: 'income',
             amount: amountToPay,
             category: isDeliveryOrder ? 'Vendas Entrega' : (isCounterContext ? 'Vendas Balcão' : 'Vendas Mesa'),
             description: `${isDeliveryOrder ? 'Entrega' : (isCounterContext ? 'Balcão' : `Mesa ${selectedTable?.number || selectedTable?.id}`)} - Pagamento Parcial: Dinheiro`,
             date: new Date(),
             paymentMethod: 'dinheiro',
-            orderId: pdvEditOrder ? pdvEditOrder.id : undefined
+            orderId: activeOrdId
           });
         }
 
@@ -2243,7 +2327,7 @@ const Tables: React.FC<TablesProps> = memo(
         setSplitParts(updatedParts);
         setRemainingBalance(newRemaining);
 
-        setSplitMode(null);
+        setSplitMode("value");
         setSelectedSplitQtys({});
         setCustomSplitValue("");
         setShowChangeModal(false);
@@ -2308,6 +2392,8 @@ const Tables: React.FC<TablesProps> = memo(
       setIsCounterContext(false);
       setIsDeliveryOrder(false);
       resetCustomerFields();
+      setIsSplitting(false);
+      setSplitParts([]);
     };
 
     const finishSplitPayment = (finalParts?: SplitPart[]) => {
@@ -2470,7 +2556,9 @@ const Tables: React.FC<TablesProps> = memo(
           : splitMode === "items"
             ? getSelectedSplitTotal()
             : remainingBalance
-        : remainingBalance;
+        : customSplitValue && parseFloat(customSplitValue) > 0
+          ? parseFloat(customSplitValue)
+          : remainingBalance;
 
       if (amountToPay < remainingBalance - 0.01 || !autoCloseAfterPayment) {
         const newPart: SplitPart = {
@@ -2677,8 +2765,14 @@ const Tables: React.FC<TablesProps> = memo(
     ]);
 
     const categories = useMemo(() => {
-      const cats = Array.from(new Set(products.map((p) => p.category)));
-      const order = digitalMenuSettings.categoryOrder || [];
+      const cats = Array.from(
+        new Set(
+          products
+            .map((p) => (p.category || "").trim())
+            .filter((c) => Boolean(c)),
+        ),
+      );
+      const order = (digitalMenuSettings.categoryOrder || []).filter((c) => Boolean(c));
       const hidden = digitalMenuSettings.hiddenCategories || [];
 
       // Sort categories based on categoryOrder, then add any remaining ones
@@ -2777,12 +2871,13 @@ const Tables: React.FC<TablesProps> = memo(
               <Utensils size={10} /> Mapa de Mesas
             </h3>
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-1.5">
-              {filteredTables.map((table) => (
+              {filteredTables.map((table, idx) => (
                 <button
                   key={
                     (table as any).docId ||
                     (table as any)._firestoreId ||
-                    table.id
+                    table.id ||
+                    `table-${idx}`
                   }
                   onClick={() => openTable(table)}
                   disabled={table.status === "cleaning"}
@@ -2832,13 +2927,13 @@ const Tables: React.FC<TablesProps> = memo(
                 </span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
-                {openUnpaidComandas.map((comanda) => {
+                {openUnpaidComandas.map((comanda, idx) => {
                   const isDel = comanda.type === 'delivery';
                   const isRet = comanda.type === 'takeout';
 
                   return (
                     <button
-                      key={String(comanda.id)}
+                      key={String(comanda.id || `comanda-${idx}`)}
                       onClick={() => handleOpenUnpaidComanda(comanda)}
                       className={`flex flex-col p-2 rounded-xl border-2 transition-all shadow-xs group text-left cursor-pointer relative overflow-hidden ${
                         isDel
@@ -3231,9 +3326,9 @@ const Tables: React.FC<TablesProps> = memo(
                                 r.category === "Suprimento" ||
                                 r.category === "Sangria",
                             )
-                            .map((record) => (
+                            .map((record, idx) => (
                               <div
-                                key={record.id}
+                                key={record.id || `rec-${idx}`}
                                 className="p-3 flex justify-between items-center bg-white/50"
                               >
                                 <div className="flex flex-col">
@@ -3535,7 +3630,7 @@ const Tables: React.FC<TablesProps> = memo(
               {/* Orders List Content */}
               <div className="p-4 overflow-y-auto custom-scrollbar flex-1 space-y-3">
                 {matchingOrdersForReport.length > 0 ? (
-                  matchingOrdersForReport.map(({ order, contribution }) => {
+                  matchingOrdersForReport.map(({ order, contribution }, idx) => {
                     const createdDate = order.createdAt instanceof Date ? order.createdAt : new Date(order.createdAt);
                     const timeStr = createdDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
@@ -3545,7 +3640,7 @@ const Tables: React.FC<TablesProps> = memo(
 
                     return (
                       <div
-                        key={order.id}
+                        key={order.id || `rep-ord-${idx}`}
                         className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all space-y-3"
                       >
                         {/* Header line of Order Card */}
@@ -3850,12 +3945,16 @@ const Tables: React.FC<TablesProps> = memo(
                         : splitMode === "items"
                           ? getSelectedSplitTotal()
                           : remainingBalance
-                      : selectedTable.total +
-                        (isDeliveryOrder && isCounterContext
-                          ? parseCurrency(deliveryFeeInput)
-                          : 0) +
-                        additionalFee -
-                        discount
+                      : customSplitValue && parseFloat(customSplitValue) > 0
+                        ? parseFloat(customSplitValue)
+                        : remainingBalance > 0 && splitParts.length > 0
+                          ? remainingBalance
+                          : selectedTable.total +
+                            (isDeliveryOrder && isCounterContext
+                              ? parseCurrency(deliveryFeeInput)
+                              : 0) +
+                            additionalFee -
+                            discount
                     ).toFixed(2)}
                   </h3>
                 </div>
@@ -3896,12 +3995,16 @@ const Tables: React.FC<TablesProps> = memo(
                               : splitMode === "items"
                                 ? getSelectedSplitTotal()
                                 : remainingBalance
-                            : selectedTable.total +
-                              (isDeliveryOrder && isCounterContext
-                                ? parseCurrency(deliveryFeeInput)
-                                : 0) +
-                              additionalFee -
-                              discount),
+                            : customSplitValue && parseFloat(customSplitValue) > 0
+                              ? parseFloat(customSplitValue)
+                              : remainingBalance > 0 && splitParts.length > 0
+                                ? remainingBalance
+                                : selectedTable.total +
+                                  (isDeliveryOrder && isCounterContext
+                                    ? parseCurrency(deliveryFeeInput)
+                                    : 0) +
+                                  additionalFee -
+                                  discount),
                       ).toFixed(2)}
                     </h3>
                   </div>
@@ -4000,14 +4103,14 @@ const Tables: React.FC<TablesProps> = memo(
                   {tables
                     .filter((t) => t.id !== selectedTable.id)
                     .sort((a, b) => (a.number || 0) - (b.number || 0))
-                    .map((t) => {
+                    .map((t, idx) => {
                       const isSelected = transferToTableId === t.id;
                       const isAvailable = t.status === "available";
                       const numLabel = getTableNumLabel(t);
 
                       return (
                         <button
-                          key={t.id}
+                          key={t.id || `transfer-t-${idx}`}
                           type="button"
                           onClick={() => isAvailable && setTransferToTableId(t.id)}
                           disabled={!isAvailable}
@@ -4348,9 +4451,9 @@ const Tables: React.FC<TablesProps> = memo(
                             >
                               {deliveryFilteredCustomers.length > 0 ? (
                                 <>
-                                  {deliveryFilteredCustomers.map((c) => (
+                                  {deliveryFilteredCustomers.map((c, idx) => (
                                     <button
-                                      key={c.id}
+                                      key={c.id || `del-cust-${idx}`}
                                       onClick={() => {
                                         setCustomerName(c.name);
                                         setCustomerPhone(c.phone);
@@ -4620,9 +4723,9 @@ const Tables: React.FC<TablesProps> = memo(
                   </div>
 
                   <div className="flex-1 overflow-y-auto p-3 lg:p-6 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 lg:gap-6 custom-scrollbar content-start">
-                    {filteredProducts.map((product) => (
+                    {filteredProducts.map((product, idx) => (
                       <button
-                        key={product.id}
+                        key={product.id || `prod-${idx}`}
                         onClick={() => addToTable(product)}
                         className="bg-white rounded-2xl lg:rounded-[2rem] border-2 border-slate-100 shadow-sm hover:shadow-xl hover:border-indigo-500 hover:-translate-y-1 transition-all text-left flex flex-col overflow-hidden group h-full min-h-[160px] lg:min-h-[200px]"
                       >
@@ -4672,9 +4775,9 @@ const Tables: React.FC<TablesProps> = memo(
                 {/* Coluna Direita: Categorias */}
                 <div className="hidden lg:flex w-56 bg-white border-l flex-col shrink-0">
                   <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
-                    {categories.map((cat) => (
+                    {categories.map((cat, idx) => (
                       <button
-                        key={cat}
+                        key={cat || `cat-desktop-${idx}`}
                         onClick={() => setSelectedCategory(cat)}
                         className={`w-full py-4 px-4 rounded-2xl font-black text-[10px] uppercase tracking-widest border-2 transition-all text-center ${
                           selectedCategory === cat
@@ -4690,9 +4793,9 @@ const Tables: React.FC<TablesProps> = memo(
 
                 {/* Categorias Mobile */}
                 <div className="lg:hidden bg-white border-t p-2 overflow-x-auto flex gap-2 shrink-0 custom-scrollbar">
-                  {categories.map((cat) => (
+                  {categories.map((cat, idx) => (
                     <button
-                      key={cat}
+                      key={cat || `cat-mobile-${idx}`}
                       onClick={() => setSelectedCategory(cat)}
                       className={`whitespace-nowrap px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest border-2 transition-all ${
                         selectedCategory === cat
@@ -4762,15 +4865,41 @@ const Tables: React.FC<TablesProps> = memo(
                   )}
                   <button
                     onClick={() => {
+                      const existingOrd = orders.find(
+                        (o) =>
+                          o.id === selectedTable.currentOrderId ||
+                          (pdvEditOrder && o.id === pdvEditOrder.id),
+                      );
+                      const activePayments =
+                        splitParts.length > 0
+                          ? splitParts.map((p) => ({
+                              method: p.method,
+                              amount: p.amount,
+                              customerName: p.customerId
+                                ? customers.find((c) => c.id === p.customerId)?.name
+                                : undefined,
+                            }))
+                          : selectedTable.partialPayments?.length
+                            ? selectedTable.partialPayments
+                            : existingOrd?.payments;
                       handlePrintOrder(
                         {
-                          id: selectedTable.currentOrderId || "TEMP",
+                          id:
+                            existingOrd?.id ||
+                            selectedTable.currentOrderId ||
+                            "TEMP",
+                          dailyNumber:
+                            existingOrd?.dailyNumber || pdvEditOrder?.dailyNumber,
                           items: selectedTable.items,
                           total:
                             selectedTable.total +
                             (isDeliveryOrder
                               ? parseCurrency(deliveryFeeInput)
-                              : 0),
+                              : 0) +
+                            additionalFee -
+                            discount,
+                          additionalFee: additionalFee || existingOrd?.additionalFee,
+                          discount: discount || existingOrd?.discount,
                           tableNumber: isCounterContext
                             ? undefined
                             : selectedTable.id,
@@ -4779,16 +4908,35 @@ const Tables: React.FC<TablesProps> = memo(
                             : isCounterContext
                               ? "takeout"
                               : "table",
-                          customerName: customerName || undefined,
-                          customerPhone: customerPhone || undefined,
-                          customerAddress: deliveryAddress || undefined,
+                          customerName:
+                            customerName || existingOrd?.customerName || undefined,
+                          customerPhone:
+                            customerPhone || existingOrd?.customerPhone || undefined,
+                          customerAddress:
+                            deliveryAddress ||
+                            existingOrd?.customerAddress ||
+                            existingOrd?.deliveryAddress ||
+                            undefined,
+                          deliveryAddress:
+                            deliveryAddress ||
+                            existingOrd?.deliveryAddress ||
+                            existingOrd?.customerAddress ||
+                            undefined,
                           deliveryFee: isDeliveryOrder
                             ? parseCurrency(deliveryFeeInput)
                             : undefined,
-                          createdAt: new Date(),
+                          paymentMethod:
+                            selectedPaymentMethod ||
+                            existingOrd?.paymentMethod ||
+                            (activePayments && activePayments.length > 0
+                              ? activePayments[0].method
+                              : undefined),
+                          payments: activePayments as any,
+                          changeFor: existingOrd?.changeFor,
+                          createdAt: existingOrd?.createdAt || new Date(),
                           tenantId: selectedTable.tenantId || "",
-                          status: "pending",
-                          source: "pos",
+                          status: existingOrd?.status || "pending",
+                          source: existingOrd?.source || "pos",
                           isManual: true,
                         } as Order,
                         adminSettings,
@@ -4965,14 +5113,14 @@ const Tables: React.FC<TablesProps> = memo(
               <div className="p-6 lg:p-8 space-y-4 lg:space-y-6 overflow-y-auto max-h-[60vh] custom-scrollbar">
                 {selectedProductForOptions.optionCategories &&
                 selectedProductForOptions.optionCategories.length > 0 ? (
-                  selectedProductForOptions.optionCategories.map((category) => {
+                  selectedProductForOptions.optionCategories.map((category, catIdx) => {
                     const totalInCat = selectedOptions
                       .filter((o) => o.category === category.name || (category.options || []).some((co) => co.id === o.id))
                       .reduce((sum, o) => sum + (o.quantity || 1), 0);
                     const isSingleChoice = category.max === 1;
 
                     return (
-                    <div key={category.id} className="space-y-3">
+                    <div key={category.id || category.name || `opt-cat-${catIdx}`} className="space-y-3">
                       <div className="flex justify-between items-end border-b pb-2">
                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
                           {category.name}
@@ -5002,7 +5150,7 @@ const Tables: React.FC<TablesProps> = memo(
                             }
                             return true;
                           })
-                          .map((option) => {
+                          .map((option, optIdx) => {
                             const optWithCat = { ...option, category: category.name };
                             const qty = getOptionQtyInModal(optWithCat);
                             const isSelected = qty > 0;
@@ -5010,7 +5158,7 @@ const Tables: React.FC<TablesProps> = memo(
 
                             return (
                               <div
-                                key={option.id}
+                                key={option.id || option.name || `opt-${catIdx}-${optIdx}`}
                                 onClick={() => {
                                   if (isSingleChoice) {
                                     toggleOption(optWithCat, category.name);
@@ -5459,13 +5607,13 @@ const Tables: React.FC<TablesProps> = memo(
                       </span>
                     </div>
                     <div className="space-y-2">
-                      {splitParts.map((part) => {
+                      {splitParts.map((part, idx) => {
                         const isBeingIssued = issuingPartId === part.id;
                         const isDocOpen =
                           showPartDocumentSection[part.id] || false;
                         return (
                           <div
-                            key={part.id}
+                            key={part.id || `split-part-${idx}`}
                             className="bg-white p-3 lg:p-4 rounded-xl lg:rounded-2xl border border-slate-100 shadow-sm animate-in slide-in-from-left-2 flex flex-col gap-2"
                           >
                             <div className="flex justify-between items-center w-full">
@@ -5839,7 +5987,7 @@ const Tables: React.FC<TablesProps> = memo(
                                       <button
                                         onClick={() => {
                                           setIsSplitting(true);
-                                          setSplitMode(null);
+                                          setSplitMode("value");
                                         }}
                                         className="text-[10px] font-black text-indigo-600 uppercase tracking-widest hover:underline"
                                       >
@@ -6047,7 +6195,7 @@ const Tables: React.FC<TablesProps> = memo(
                               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                                 {adminSettings.paymentMethods
                                   ?.filter((m) => m.active)
-                                  .map((method) => {
+                                  .map((method, idx) => {
                                     let Icon = Wallet;
                                     let color = "text-slate-500";
 
@@ -6080,7 +6228,7 @@ const Tables: React.FC<TablesProps> = memo(
 
                                     return (
                                       <button
-                                        key={method.id}
+                                        key={method.id || method.name || `pm-${idx}`}
                                         disabled={
                                           isProcessing ||
                                           (splitMode === "items" &&
@@ -6228,9 +6376,9 @@ const Tables: React.FC<TablesProps> = memo(
                               </button>
                             </div>
                             <div className="flex-1 overflow-y-auto space-y-2 custom-scrollbar pr-2 min-h-[150px]">
-                              {filteredCustomerList.map((c) => (
+                              {filteredCustomerList.map((c, idx) => (
                                 <button
-                                  key={c.id}
+                                  key={c.id || `cust-${idx}`}
                                   onClick={() => setSelectedCustomerId(c.id)}
                                   className={`w-full flex items-center justify-between p-3 rounded-xl border-2 transition-all ${selectedCustomerId === c.id ? "border-rose-600 bg-rose-50" : "border-slate-50 bg-white hover:border-slate-200"}`}
                                 >

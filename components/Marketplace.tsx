@@ -1174,7 +1174,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     if (location.pathname === "/perfil") {
       setNavView("profile");
     } else if (location.pathname.startsWith("/marketplace")) {
-      if (!routeTenantId) {
+      if (!routeTenantId && navView === "profile") {
         setNavView("home");
       }
     }
@@ -2238,11 +2238,22 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       },
     );
 
+    try {
+      const cachedMpSettings = localStorage.getItem("kitchenflow_marketplace_settings");
+      if (cachedMpSettings) {
+        setMarketplaceSettings(JSON.parse(cachedMpSettings) as MarketplaceSettings);
+      }
+    } catch {}
+
     const unsubscribeMarketplaceSettings = onSnapshot(
       doc(db, "settings", "marketplace"),
       (snapshot) => {
         if (snapshot.exists()) {
-          setMarketplaceSettings(snapshot.data() as MarketplaceSettings);
+          const data = snapshot.data() as MarketplaceSettings;
+          setMarketplaceSettings(data);
+          try {
+            localStorage.setItem("kitchenflow_marketplace_settings", JSON.stringify(data));
+          } catch {}
         }
       },
       (error) => {
@@ -3039,6 +3050,130 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     );
   }
 
+  const renderBottomNav = () => (
+    <nav className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-2xl border-t border-slate-200/90 px-4 py-2.5 sm:py-3 pb-safe z-50 flex justify-around items-center max-w-7xl mx-auto shadow-2xl">
+      {/* Início */}
+      <button
+        className={`flex flex-col items-center gap-1 transition-all relative px-3 py-1 rounded-xl cursor-pointer ${
+          !selectedTenant && navView === "home"
+            ? "text-[#FF3B00] font-black"
+            : "text-slate-500 hover:text-slate-800 font-semibold"
+        }`}
+        onClick={() => {
+          setSelectedTenant(null);
+          setNavView("home");
+          setActiveCategory("todos");
+          navigate("/marketplace");
+        }}
+      >
+        <Home size={20} strokeWidth={!selectedTenant && navView === "home" ? 2.5 : 2} />
+        <span className="text-[10px] tracking-tight">
+          Início
+        </span>
+        {!selectedTenant && navView === "home" && (
+          <motion.div
+            layoutId="nav-pill"
+            className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-[#FF3B00] rounded-full shadow-[0_0_8px_rgba(255,59,0,0.8)]"
+          />
+        )}
+      </button>
+
+      {/* Pedidos */}
+      <button
+        className={`flex flex-col items-center gap-1 transition-all relative px-3 py-1 rounded-xl cursor-pointer ${
+          !selectedTenant && navView === "orders"
+            ? "text-[#FF3B00] font-black"
+            : "text-slate-500 hover:text-slate-800 font-semibold"
+        }`}
+        onClick={() => {
+          setSelectedTenant(null);
+          setNavView("orders");
+          navigate("/marketplace");
+        }}
+      >
+        <ShoppingBag
+          size={20}
+          strokeWidth={!selectedTenant && navView === "orders" ? 2.5 : 2}
+        />
+        <span className="text-[10px] tracking-tight">
+          Pedidos
+        </span>
+        {activeOrders.length > 0 && (
+          <span className="absolute top-0 right-2 bg-[#FF3B00] text-white text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center border-2 border-white">
+            {activeOrders.length}
+          </span>
+        )}
+        {!selectedTenant && navView === "orders" && (
+          <motion.div
+            layoutId="nav-pill"
+            className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-[#FF3B00] rounded-full shadow-[0_0_8px_rgba(255,59,0,0.8)]"
+          />
+        )}
+      </button>
+
+      {/* Favoritos */}
+      <button
+        className={`flex flex-col items-center gap-1 transition-all relative px-3 py-1 rounded-xl cursor-pointer ${
+          !selectedTenant && navView === "favorites"
+            ? "text-[#FF3B00] font-black"
+            : "text-slate-500 hover:text-slate-800 font-semibold"
+        }`}
+        onClick={() => {
+          setSelectedTenant(null);
+          setNavView("favorites");
+          navigate("/marketplace");
+        }}
+      >
+        <div className="relative">
+          <Heart
+            size={20}
+            strokeWidth={!selectedTenant && navView === "favorites" ? 2.5 : 2}
+            fill={!selectedTenant && navView === "favorites" ? "currentColor" : "none"}
+          />
+          {favorites.length > 0 && (
+            <span className="absolute -top-1.5 -right-2.5 bg-[#FF3B00] text-white text-[9px] font-black px-1 rounded-full border border-white">
+              {favorites.length}
+            </span>
+          )}
+        </div>
+        <span className="text-[10px] tracking-tight">
+          Favoritos
+        </span>
+        {!selectedTenant && navView === "favorites" && (
+          <motion.div
+            layoutId="nav-pill"
+            className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-[#FF3B00] rounded-full shadow-[0_0_8px_rgba(255,59,0,0.8)]"
+          />
+        )}
+      </button>
+
+      {/* Perfil / Ana */}
+      <button
+        className={`flex flex-col items-center gap-1 transition-all relative px-3 py-1 rounded-xl cursor-pointer ${
+          !selectedTenant && navView === "profile"
+            ? "text-[#FF3B00] font-black"
+            : "text-slate-500 hover:text-slate-800 font-semibold"
+        }`}
+        onClick={() => {
+          setSelectedTenant(null);
+          setNavView("profile");
+          navigate("/perfil");
+        }}
+      >
+        <UserIcon size={20} strokeWidth={!selectedTenant && navView === "profile" ? 2.5 : 2} />
+        <span className="text-[10px] tracking-tight">
+          {profile?.name || currentUser?.displayName || "Ana"}
+        </span>
+        {!selectedTenant && navView === "profile" && (
+          <motion.div
+            layoutId="nav-pill"
+            className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-[#FF3B00] rounded-full shadow-[0_0_8px_rgba(255,59,0,0.8)]"
+          />
+        )}
+      </button>
+    </nav>
+  );
+
   if (selectedTenant && storeSettings) {
     const storeApplicablePromotions = (marketplaceSettings?.promotions || []).filter(p => 
       p.active && (
@@ -3268,6 +3403,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
             }
           }}
         />
+        {!isDirectCardapioRoute && renderBottomNav()}
       </div>
     );
   }
@@ -3544,11 +3680,11 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 </span>
               </div>
               <div className="flex gap-4 sm:gap-6 overflow-x-auto no-scrollbar py-2 px-1">
-                {catalogCategories.map((cat) => {
+                {catalogCategories.map((cat, idx) => {
                   const isSelected = activeCategory === cat.id;
                   return (
                     <button
-                      key={cat.id}
+                      key={cat.id || cat.label || `mcat-${idx}`}
                       onClick={() => setActiveCategory(cat.id)}
                       className="flex flex-col items-center gap-2 group cursor-pointer shrink-0 transition-transform active:scale-95"
                     >
@@ -3781,7 +3917,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
                   return (
                     <motion.div
-                      key={tenant.id}
+                      key={tenant.id || `tenant-${index}`}
                       initial={{ opacity: 0, y: 20 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: index * 0.04 }}
@@ -3939,12 +4075,12 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                     if (!statusA.isOpen && statusB.isOpen) return 1;
                     return 0;
                   })
-                  .map((tenant) => {
+                  .map((tenant, idx) => {
                     const status = getTenantOpenStatus(tenant.id);
                     const isOpen = status.isOpen;
                     return (
                       <motion.div
-                        key={tenant.id}
+                        key={tenant.id || `fav-tenant-${idx}`}
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         onMouseEnter={() => prefetchStoreData(tenant)}
@@ -4110,13 +4246,13 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                   <span className="w-2 h-2 rounded-full bg-[#FF5722] animate-ping" />
                   Pedido em Andamento
                 </h3>
-                {activeOrders.map((order) => {
+                {activeOrders.map((order, idx) => {
                   const tenant = tenants.find((t) => t.id === order.tenantId);
                   const st = order.status;
                   const stepIdx = st === "pending" ? 1 : st === "preparing" ? 2 : (st === "ready" || st === "delivering" || st === "out_for_delivery") ? 3 : 4;
                   return (
                     <div
-                      key={order.id}
+                      key={order.id || `act-ord-${idx}`}
                       className="bg-white rounded-3xl p-6 border border-slate-200/90 shadow-lg space-y-5 text-left"
                     >
                       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
@@ -4186,11 +4322,11 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                   Histórico de Pedidos Anteriores
                 </h3>
                 <div className="space-y-3">
-                  {orderHistory.map((order) => {
+                  {orderHistory.map((order, idx) => {
                     const tenant = tenants.find((t) => t.id === order.tenantId);
                     return (
                       <div
-                        key={order.id}
+                        key={order.id || `hist-ord-${idx}`}
                         onClick={() => tenant && handleStoreClick(tenant)}
                         className="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-sm hover:shadow-md transition-all cursor-pointer flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-left"
                       >
@@ -4734,121 +4870,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       </main>
 
       {/* Floating Modern Bottom Navigation Dock */}
-      <nav className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-2xl border-t border-slate-200/90 px-4 py-2.5 sm:py-3 pb-safe z-50 flex justify-around items-center max-w-7xl mx-auto shadow-2xl">
-        {/* Início */}
-        <button
-          className={`flex flex-col items-center gap-1 transition-all relative px-3 py-1 rounded-xl cursor-pointer ${
-            navView === "home"
-              ? "text-[#FF3B00] font-black"
-              : "text-slate-500 hover:text-slate-800 font-semibold"
-          }`}
-          onClick={() => {
-            setNavView("home");
-            setActiveCategory("todos");
-            navigate("/marketplace");
-          }}
-        >
-          <Home size={20} strokeWidth={navView === "home" ? 2.5 : 2} />
-          <span className="text-[10px] tracking-tight">
-            Início
-          </span>
-          {navView === "home" && (
-            <motion.div
-              layoutId="nav-pill"
-              className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-[#FF3B00] rounded-full shadow-[0_0_8px_rgba(255,59,0,0.8)]"
-            />
-          )}
-        </button>
-
-        {/* Pedidos */}
-        <button
-          className={`flex flex-col items-center gap-1 transition-all relative px-3 py-1 rounded-xl cursor-pointer ${
-            navView === "orders"
-              ? "text-[#FF3B00] font-black"
-              : "text-slate-500 hover:text-slate-800 font-semibold"
-          }`}
-          onClick={() => {
-            setNavView("orders");
-            navigate("/marketplace");
-          }}
-        >
-          <ShoppingBag
-            size={20}
-            strokeWidth={navView === "orders" ? 2.5 : 2}
-          />
-          <span className="text-[10px] tracking-tight">
-            Pedidos
-          </span>
-          {activeOrders.length > 0 && (
-            <span className="absolute top-0 right-2 bg-[#FF3B00] text-white text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center border-2 border-white">
-              {activeOrders.length}
-            </span>
-          )}
-          {navView === "orders" && (
-            <motion.div
-              layoutId="nav-pill"
-              className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-[#FF3B00] rounded-full shadow-[0_0_8px_rgba(255,59,0,0.8)]"
-            />
-          )}
-        </button>
-
-        {/* Favoritos */}
-        <button
-          className={`flex flex-col items-center gap-1 transition-all relative px-3 py-1 rounded-xl cursor-pointer ${
-            navView === "favorites"
-              ? "text-[#FF3B00] font-black"
-              : "text-slate-500 hover:text-slate-800 font-semibold"
-          }`}
-          onClick={() => {
-            setNavView("favorites");
-            navigate("/marketplace");
-          }}
-        >
-          <div className="relative">
-            <Heart
-              size={20}
-              strokeWidth={navView === "favorites" ? 2.5 : 2}
-              fill={navView === "favorites" ? "currentColor" : "none"}
-            />
-            <span className="absolute -top-1.5 -right-2.5 bg-[#FF3B00] text-white text-[9px] font-black px-1 rounded-full border border-white">
-              {favorites.length > 0 ? favorites.length : 2}
-            </span>
-          </div>
-          <span className="text-[10px] tracking-tight">
-            Favoritos
-          </span>
-          {navView === "favorites" && (
-            <motion.div
-              layoutId="nav-pill"
-              className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-[#FF3B00] rounded-full shadow-[0_0_8px_rgba(255,59,0,0.8)]"
-            />
-          )}
-        </button>
-
-        {/* Perfil / Ana */}
-        <button
-          className={`flex flex-col items-center gap-1 transition-all relative px-3 py-1 rounded-xl cursor-pointer ${
-            navView === "profile"
-              ? "text-[#FF3B00] font-black"
-              : "text-slate-500 hover:text-slate-800 font-semibold"
-          }`}
-          onClick={() => {
-            setNavView("profile");
-            navigate("/perfil");
-          }}
-        >
-          <UserIcon size={20} strokeWidth={navView === "profile" ? 2.5 : 2} />
-          <span className="text-[10px] tracking-tight">
-            {profile?.name || currentUser?.displayName || "Ana"}
-          </span>
-          {navView === "profile" && (
-            <motion.div
-              layoutId="nav-pill"
-              className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-[#FF3B00] rounded-full shadow-[0_0_8px_rgba(255,59,0,0.8)]"
-            />
-          )}
-        </button>
-      </nav>
+      {!isDirectCardapioRoute && renderBottomNav()}
 
       {/* Profile Modal */}
       {showProfileModal && (

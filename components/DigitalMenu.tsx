@@ -1141,7 +1141,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
 
   return (
     <div 
-      className={`digital-menu-container min-h-full bg-[#f8fafb] ${fontFamilyClass} text-slate-900 overflow-x-hidden pb-32`}
+      className={`digital-menu-container min-h-full bg-[#f8fafb] ${fontFamilyClass} text-slate-900 overflow-x-hidden ${isMarketplace ? 'pb-48' : 'pb-32'}`}
       style={{
         ['--brand-primary' as any]: effectivePrimaryColor,
         ['--brand-accent' as any]: accentColor,
@@ -1295,9 +1295,9 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
               <div className="w-32 h-10 rounded-2xl bg-slate-100 shimmer-effect shrink-0" />
             </>
           ) : (
-            categories.map(cat => (
+            categories.map((cat, idx) => (
               <button 
-                key={cat}
+                key={cat || `cat-${idx}`}
                 onClick={() => setActiveCategory(cat)}
                 className={`px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-[0.1em] transition-all whitespace-nowrap ${
                   activeCategory === cat 
@@ -1515,7 +1515,9 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
         <motion.div 
           initial={{ y: 50, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-md border-t border-slate-100 p-4 pb-safe z-50 flex items-center justify-between shadow-[0_-12px_25px_rgba(0,0,0,0.08)]"
+          className={`fixed inset-x-0 bg-white/95 backdrop-blur-md border-t border-slate-100 p-4 z-50 flex items-center justify-between shadow-[0_-12px_25px_rgba(0,0,0,0.08)] ${
+            isMarketplace ? 'bottom-[56px] sm:bottom-[62px] max-w-7xl mx-auto' : 'bottom-0 pb-safe'
+          }`}
         >
           <div className="flex items-center gap-3.5">
             <div className="relative">
@@ -2699,14 +2701,14 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                   : (selectedProductForOptions.options && selectedProductForOptions.options.length > 0)
                     ? [{ id: 'default-cat', name: 'Opcionais & Adicionais', min: 0, max: 99, options: selectedProductForOptions.options }]
                     : []
-                ).map(category => {
+                ).map((category, catIdx) => {
                   const totalInCat = selectedOptionsInModal
                     .filter(o => (category.options || []).some(co => co.id === o.id))
                     .reduce((sum, o) => sum + (o.quantity || 1), 0);
                   const isSingleChoice = category.max === 1;
 
                   return (
-                  <div key={category.id} className="space-y-6">
+                  <div key={category.id || category.name || `cat-${catIdx}`} className="space-y-6">
                     <div className="flex justify-between items-end border-b border-slate-100 pb-3">
                       <div>
                         <h4 className="text-base font-black text-slate-800 uppercase tracking-tighter">{category.name}</h4>
@@ -2738,7 +2740,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
                         if (orderType === 'table') return option.isAvailableDigitalMenu !== false;
                         if (orderType === 'delivery' || orderType === 'takeout') return option.isAvailableOnline !== false;
                         return true;
-                      }).map(option => {
+                      }).map((option, optIdx) => {
                         const selectedOpt = selectedOptionsInModal.find(o => o.id === option.id);
                         const qty = selectedOpt?.quantity || (selectedOpt ? 1 : 0);
                         const isSelected = qty > 0;
@@ -2746,7 +2748,7 @@ const DigitalMenu: React.FC<DigitalMenuProps> = ({
 
                         return (
                           <div
-                            key={option.id}
+                            key={option.id || option.name || `opt-${catIdx}-${optIdx}`}
                             onClick={() => {
                               if (isSingleChoice) {
                                 toggleOptionInModal(option, category.id);

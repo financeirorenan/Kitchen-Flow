@@ -1594,15 +1594,26 @@ const App: React.FC = () => {
                 if (localIsTerminal && !cloudIsTerminal && cloudStatus !== 'cancelled' && !isNewBatchInKitchen) {
                   console.log(`Resilience: Keeping terminal status ${localStatus} for order ${cloudOrder.id}`);
                 } else {
-                  // Blindagem de Pagamento: se o pedido local já foi liquidado, preservar as propriedades de liquidação
+                  // Blindagem de Pagamento: se o pedido local já foi liquidado ou possui pagamento atualizado/dividido, preservar as propriedades
                   const merged = { ...cloudOrder };
+                  const localUpdatedMs = localOrder.updatedAt ? toSafeDate(localOrder.updatedAt).getTime() : 0;
+                  const cloudUpdatedMs = merged.updatedAt ? toSafeDate(merged.updatedAt).getTime() : 0;
                   if (localOrder.isSettled || localOrder.paymentStatus === 'paid' || (localOrder.payments && localOrder.payments.length > 0)) {
-                    merged.isSettled = true;
-                    merged.paymentStatus = 'paid';
+                    merged.isSettled = localOrder.isSettled || merged.isSettled;
+                    merged.paymentStatus = localOrder.paymentStatus || merged.paymentStatus;
                     merged.paymentMethod = localOrder.paymentMethod || merged.paymentMethod;
-                    merged.payments = localOrder.payments || merged.payments;
+                    if (localOrder.payments && localOrder.payments.length >= (merged.payments?.length || 0)) {
+                      merged.payments = localOrder.payments;
+                    }
+                    if (localOrder.changeFor !== undefined) merged.changeFor = localOrder.changeFor;
                     merged.paidAt = localOrder.paidAt || merged.paidAt;
                     merged.completedAt = localOrder.completedAt || merged.completedAt;
+                    merged.finishedAt = localOrder.finishedAt || merged.finishedAt;
+                    if ((localOrder as any).shiftOpenedAt) (merged as any).shiftOpenedAt = (localOrder as any).shiftOpenedAt;
+                  } else if (localUpdatedMs > cloudUpdatedMs) {
+                    merged.paymentMethod = localOrder.paymentMethod || merged.paymentMethod;
+                    merged.payments = localOrder.payments || merged.payments;
+                    if (localOrder.changeFor !== undefined) merged.changeFor = localOrder.changeFor;
                   }
                   updated[existingIdx] = merged;
                 }
@@ -3944,6 +3955,16 @@ const App: React.FC = () => {
       }));
     } else if (status === 'delivered' || status === 'finished') {
       updates.deliveredAt = now;
+      updates.completedAt = order.completedAt || now;
+      updates.finishedAt = order.finishedAt || now;
+      updates.paidAt = order.paidAt || now;
+      updates.paymentStatus = 'paid';
+      if (status === 'finished') {
+        updates.isSettled = true;
+      }
+      if (cashSession?.isOpen && cashSession.openedAt) {
+        (updates as any).shiftOpenedAt = cashSession.openedAt;
+      }
       updates.kitchenStatus = 'delivered';
       updates.kitchen_status = 'delivered';
       updates.productionStatus = 'delivered';
@@ -3989,34 +4010,56 @@ const App: React.FC = () => {
     // 3. Side effects and cloud sync asynchronously in background
     (async () => {
       // Ciclo Final para pedidos de Marketplace/Delivery (Igual às Mesas)
-      if (status === 'finished') {
+      if (status === 'finished' || status === 'delivered') {
         const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
-        if (effectiveTenantId && !order.isSettled) {
+        const alreadyHasRecords = financialRecords.some(r => r.orderId && (r.orderId === order.id || (order.docId && r.orderId === order.docId)));
+        if (effectiveTenantId && !order.isSettled && !alreadyHasRecords) {
           try {
             // Registrar Receita
             let recordCategory = 'Vendas Mesa';
-            let recordDesc = `Pedido #${order.id.slice(-4)} (${order.type.toUpperCase()}) - Finalizado`;
+            const shortOrdNum = order.dailyNumber ? String(order.dailyNumber) : order.id.slice(-4);
+            let recordDesc = `Pedido #${shortOrdNum} (${order.type.toUpperCase()}) - Finalizado`;
             
             if (order.source === 'marketplace' || order.source === 'iFood') {
               recordCategory = 'Vendas Marketplace';
-              recordDesc = `Pedido #${order.id.slice(-4)} (Marketplace) - Finalizado`;
+              recordDesc = `Pedido #${shortOrdNum} (Marketplace) - Finalizado`;
             } else if (order.source === 'whatsapp' || order.source === 'partner_app' || (order.source as string) === 'digital_menu' || order.tableNumber !== undefined) {
               recordCategory = 'Vendas Cardápio Digital';
-              recordDesc = `Pedido #${order.id.slice(-4)} (Cardápio Digital) - Finalizado`;
+              recordDesc = `Pedido #${shortOrdNum} (Cardápio Digital) - Finalizado`;
             } else {
               recordCategory = order.type === 'delivery' ? 'Vendas Entrega' : (order.type === 'takeout' ? 'Vendas Balcão' : 'Vendas Mesa');
-              recordDesc = `Pedido #${order.id.slice(-4)} (${order.type === 'delivery' ? 'DELIVERY' : (order.type === 'takeout' ? 'BALCÃO' : 'MESA')}) - Finalizado`;
+              recordDesc = `Pedido #${shortOrdNum} (${order.type === 'delivery' ? 'DELIVERY' : (order.type === 'takeout' ? 'BALCÃO' : 'MESA')}) - Finalizado`;
             }
 
-            await handleAddFinancialRecord({
-              type: 'income',
-              amount: order.total,
-              category: recordCategory,
-              description: `${recordDesc} - Pagamento: ${order.paymentMethod || 'dinheiro'}`,
-              date: new Date(),
-              paymentMethod: order.paymentMethod || 'dinheiro',
-              orderId: order.id
-            });
+            if (order.payments && order.payments.length > 0) {
+              for (let i = 0; i < order.payments.length; i++) {
+                const p = order.payments[i];
+                const pAmount = Number(p.amount) || 0;
+                if (pAmount > 0 && !(p as any).alreadyRecorded) {
+                  await handleAddFinancialRecord({
+                    id: (p as any).id || `fin-${order.id}-${p.method}-${pAmount}-${i}`,
+                    type: 'income',
+                    amount: pAmount,
+                    category: recordCategory,
+                    description: `${recordDesc} (${i + 1}/${order.payments.length}) - Pagamento: ${p.method}`,
+                    date: new Date(),
+                    paymentMethod: p.method as any,
+                    orderId: order.id
+                  });
+                }
+              }
+            } else {
+              await handleAddFinancialRecord({
+                id: `fin-${order.id}-${order.paymentMethod || 'dinheiro'}-${order.total}`,
+                type: 'income',
+                amount: order.total,
+                category: recordCategory,
+                description: `${recordDesc} - Pagamento: ${order.paymentMethod || 'dinheiro'}`,
+                date: new Date(),
+                paymentMethod: order.paymentMethod || 'dinheiro',
+                orderId: order.id
+              });
+            }
 
             // Se for do Marketplace, acumular taxa de R$ 1,50
             if (order.source === 'marketplace') {
@@ -4033,7 +4076,9 @@ const App: React.FC = () => {
               addLog('u1', 'SISTEMA', `Taxa de marketplace registrada: R$ ${appFee.toFixed(2)}`);
             }
 
-            updates.isSettled = true;
+            if (status === 'finished') {
+              updates.isSettled = true;
+            }
           } catch (e) {
             console.error("Erro ao processar ciclo final do pedido:", e);
           }
@@ -4064,9 +4109,15 @@ const App: React.FC = () => {
           const deliveryEarning = order.courierEarnings || order.deliveryFee || 0;
           courierUpdates.earnings = (courierUpdates.earnings || courier.earnings || 0) + deliveryEarning;
           
-          // Se pagou em dinheiro, acumula no cashHeld do motoboy
-          if (order.paymentMethod === 'dinheiro') {
-            courierUpdates.cashHeld = (courier.cashHeld || 0) + order.total;
+          // Se pagou em dinheiro (total ou parcial), acumula apenas a parte em dinheiro no cashHeld do motoboy
+          const cashAmountForCourier = (order.payments && order.payments.length > 0)
+            ? order.payments
+                .filter(p => normalizePaymentMethod(p.method, adminSettings) === 'dinheiro')
+                .reduce((sum, p) => sum + (Number(p.amount) || 0), 0)
+            : (normalizePaymentMethod(order.paymentMethod || 'dinheiro', adminSettings) === 'dinheiro' ? (order.total || 0) : 0);
+
+          if (cashAmountForCourier > 0) {
+            courierUpdates.cashHeld = (courier.cashHeld || 0) + cashAmountForCourier;
           }
 
           // Só libera se não tiver mais NENHUM pedido em rota
@@ -4186,14 +4237,15 @@ const App: React.FC = () => {
     const targetId = oldOrder?.id || id;
     const targetDocId = oldOrder?.docId || oldOrder?.id || id;
     
+    updates.updatedAt = new Date();
+
     // Se a forma de pagamento mudou ou total mudou, atualizar também o array 'payments' do pedido se ele existir,
     // para que relatórios e o fechamento de caixa (que leem o.payments) reflitam a nova forma de pagamento
     if (updates.paymentMethod || updates.total !== undefined) {
-      const newMethod = updates.paymentMethod || oldOrder?.paymentMethod || 'dinheiro';
       const newTotal = updates.total !== undefined ? updates.total : (oldOrder?.total || 0);
       if (!updates.payments) {
         if (oldOrder?.payments && oldOrder.payments.length === 1) {
-          updates.payments = [{ method: updates.paymentMethod || oldOrder.payments[0].method, amount: newTotal }];
+          updates.payments = [{ method: updates.paymentMethod || oldOrder.payments[0].method, amount: newTotal, timestamp: oldOrder.payments[0].timestamp || new Date() }];
         }
       }
     }
@@ -4297,59 +4349,174 @@ const App: React.FC = () => {
       }
     }
 
-    // Se forma de pagamento ou total foi alterada, sincronizar com o lançamento financeiro correspondente
-    if (updates.paymentMethod || updates.total !== undefined) {
+    // Se forma de pagamento, pagamentos divididos ou total foi alterado, sincronizar com os lançamentos financeiros correspondentes
+    if (updates.payments || updates.paymentMethod || updates.total !== undefined || updates.isSettled) {
       const order = oldOrder || orders.find(o => o.id === id || o.docId === id);
       const targetId = order?.id || id;
       const targetDocId = order?.docId;
       const shortId = (order?.dailyNumber ? String(order.dailyNumber) : targetId.slice(-4));
+      const exactShortIdRegex = new RegExp(`Pedido #${shortId}(?:\\b|\\s|-|\\)|$)`, 'i');
 
       const matchingRecords = financialRecords.filter(r => 
         r.orderId === targetId ||
         (targetDocId && r.orderId === targetDocId) ||
-        (r.description && (r.description.includes(`#${shortId}`) || r.description.includes(`Pedido #${shortId}`)))
+        (!r.orderId && r.description && exactShortIdRegex.test(r.description))
       );
 
-      if (matchingRecords.length > 0) {
-        for (const matchingRecord of matchingRecords) {
-          const newAmount = updates.total !== undefined ? updates.total : matchingRecord.amount;
-          const newPaymentMethod = updates.paymentMethod || matchingRecord.paymentMethod;
-          
-          let newDescription = matchingRecord.description;
-          if (updates.paymentMethod) {
-            if (newDescription.includes("Pagamento:")) {
-              newDescription = newDescription.replace(/(Pagamento:\s*)([^\s,]+)/i, `$1${updates.paymentMethod}`);
-            } else {
-              newDescription = `${newDescription} - Pagamento: ${updates.paymentMethod}`;
+      const effectivePayments = updates.payments || order?.payments;
+      const recCategory = order?.type === 'delivery' ? 'Vendas Entrega' : (order?.type === 'takeout' ? 'Vendas Balcão' : 'Vendas Mesa');
+      const isCompleted = Boolean(
+        updates.isSettled ||
+        updates.paymentStatus === 'paid' ||
+        (order && (order.status === 'delivered' || order.status === 'finished' || order.isSettled || order.paymentStatus === 'paid'))
+      );
+
+      if (effectivePayments && effectivePayments.length > 1) {
+        if (matchingRecords.length > 0 || isCompleted) {
+          for (let i = 0; i < effectivePayments.length; i++) {
+            const part = effectivePayments[i];
+            const partAmount = Number(part.amount) || 0;
+            const partMethod = part.method || 'dinheiro';
+            const partDesc = `Pedido #${shortId} (${i + 1}/${effectivePayments.length}) - Pagamento: ${partMethod}`;
+
+            if (i < matchingRecords.length) {
+              await handleUpdateFinancialRecord(matchingRecords[i].id, {
+                amount: partAmount,
+                paymentMethod: partMethod as any,
+                description: partDesc,
+                orderId: targetId
+              });
+            } else if (partAmount > 0) {
+              await handleAddFinancialRecord({
+                id: (part as any).id || `fin-${targetId}-${partMethod}-${partAmount}-${i}`,
+                type: 'income',
+                amount: partAmount,
+                category: recCategory,
+                description: partDesc,
+                date: order?.paidAt ? new Date(order.paidAt) : (order?.createdAt ? new Date(order.createdAt) : new Date()),
+                paymentMethod: partMethod as any,
+                orderId: targetId
+              });
             }
           }
-          
-          await handleUpdateFinancialRecord(matchingRecord.id, { 
-            amount: newAmount,
-            paymentMethod: newPaymentMethod,
-            description: newDescription
-          });
+          // Se havia mais lançamentos antigos do que partes atuais, remover os excedentes
+          if (matchingRecords.length > effectivePayments.length) {
+            for (let i = effectivePayments.length; i < matchingRecords.length; i++) {
+              await handleDeleteFinancialRecord(matchingRecords[i].id).catch(e => console.warn("Delete extra record warning:", e));
+            }
+          }
         }
-      } else {
-        const isCompleted = order && (order.status === 'delivered' || order.status === 'finished' || order.isSettled);
-        if (isCompleted) {
-          const finalTotal = updates.total !== undefined ? updates.total : (order.total || 0);
-          const finalMethod = updates.paymentMethod || order.paymentMethod || 'dinheiro';
-          await handleAddFinancialRecord({
-            type: 'income',
-            amount: finalTotal,
-            category: order.type === 'delivery' ? 'Vendas Entrega' : (order.type === 'takeout' ? 'Vendas Balcão' : 'Vendas Mesa'),
-            description: `Pedido #${shortId} - Pagamento: ${finalMethod}`,
-            date: order.createdAt ? new Date(order.createdAt) : new Date(),
-            paymentMethod: finalMethod,
-            orderId: targetId
-          });
+      } else if (matchingRecords.length > 0) {
+        const finalTotal = updates.total !== undefined ? updates.total : (order?.total ?? matchingRecords[0].amount);
+        const finalMethod = (effectivePayments && effectivePayments.length === 1 ? effectivePayments[0].method : undefined) || updates.paymentMethod || order?.paymentMethod || matchingRecords[0].paymentMethod;
+        let newDescription = matchingRecords[0].description;
+        if (finalMethod) {
+          if (newDescription.includes("Pagamento:")) {
+            newDescription = newDescription.replace(/(Pagamento:\s*)([^\s,]+)/i, `$1${finalMethod}`);
+          } else {
+            newDescription = `${newDescription} - Pagamento: ${finalMethod}`;
+          }
         }
+
+        await handleUpdateFinancialRecord(matchingRecords[0].id, {
+          amount: finalTotal,
+          paymentMethod: finalMethod as any,
+          description: newDescription,
+          orderId: targetId
+        });
+
+        if (matchingRecords.length > 1) {
+          for (let i = 1; i < matchingRecords.length; i++) {
+            await handleDeleteFinancialRecord(matchingRecords[i].id).catch(e => console.warn("Delete extra record warning:", e));
+          }
+        }
+      } else if (isCompleted && order) {
+        const finalTotal = updates.total !== undefined ? updates.total : (order.total || 0);
+        const finalMethod = (effectivePayments && effectivePayments.length === 1 ? effectivePayments[0].method : undefined) || updates.paymentMethod || order.paymentMethod || 'dinheiro';
+        await handleAddFinancialRecord({
+          id: `fin-${targetId}-${finalMethod}-${finalTotal}`,
+          type: 'income',
+          amount: finalTotal,
+          category: recCategory,
+          description: `Pedido #${shortId} - Pagamento: ${finalMethod}`,
+          date: order.createdAt ? new Date(order.createdAt) : new Date(),
+          paymentMethod: finalMethod as any,
+          orderId: targetId
+        });
       }
     }
 
     addLog('u1', 'PEDIDO', `Pedido ${id} atualizado: ${Object.keys(updates).join(', ')}`);
   };
+
+  // Auto-reparo de registros financeiros de pedidos com pagamento dividido no turno ativo (ex: Pedido #8 Viva La Fome)
+  const healedSplitOrdersRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!cashSession?.isOpen || !cashSession.openedAt || orders.length === 0) return;
+    const sessionOpenTime = toSafeDate(cashSession.openedAt).getTime();
+    if (sessionOpenTime <= 0) return;
+
+    orders.forEach(o => {
+      if (!o || !o.payments || o.payments.length <= 1) return;
+      const isPaid = o.isSettled || o.paymentStatus === 'paid' || o.status === 'finished' || o.status === 'delivered';
+      if (!isPaid || o.status === 'cancelled') return;
+
+      const sig = `${o.id}_${o.payments.map(p => `${p.method}:${p.amount}`).join('|')}`;
+      if (healedSplitOrdersRef.current.has(sig)) return;
+
+      const matching = financialRecords.filter(r =>
+        r.orderId && (r.orderId === o.id || (o.docId && r.orderId === o.docId))
+      );
+
+      const expectedSum = o.payments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+      const actualSum = matching.reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
+      const methodsMatch = matching.length === o.payments.length && o.payments.every((p, idx) =>
+        matching[idx] &&
+        normalizePaymentMethod(matching[idx].paymentMethod, adminSettings) === normalizePaymentMethod(p.method, adminSettings) &&
+        Math.abs((Number(matching[idx].amount) || 0) - (Number(p.amount) || 0)) < 0.02
+      );
+
+      if (matching.length > 0 && (!methodsMatch || Math.abs(actualSum - expectedSum) > 0.05)) {
+        healedSplitOrdersRef.current.add(sig);
+        const shortId = o.dailyNumber ? String(o.dailyNumber) : o.id.slice(-4);
+        const recCategory = o.type === 'delivery' ? 'Vendas Entrega' : (o.type === 'takeout' ? 'Vendas Balcão' : 'Vendas Mesa');
+        (async () => {
+          for (let i = 0; i < o.payments!.length; i++) {
+            const part = o.payments![i];
+            const partAmount = Number(part.amount) || 0;
+            const partMethod = part.method || 'dinheiro';
+            const partDesc = `Pedido #${shortId} (${i + 1}/${o.payments!.length}) - Pagamento: ${partMethod}`;
+            if (i < matching.length) {
+              await handleUpdateFinancialRecord(matching[i].id, {
+                amount: partAmount,
+                paymentMethod: partMethod as any,
+                description: partDesc,
+                orderId: o.id
+              });
+            } else if (partAmount > 0) {
+              await handleAddFinancialRecord({
+                id: (part as any).id || `fin-${o.id}-${partMethod}-${partAmount}-${i}`,
+                type: 'income',
+                amount: partAmount,
+                category: recCategory,
+                description: partDesc,
+                date: o.paidAt ? new Date(o.paidAt) : (o.createdAt ? new Date(o.createdAt) : new Date()),
+                paymentMethod: partMethod as any,
+                orderId: o.id
+              });
+            }
+          }
+          if (matching.length > o.payments!.length) {
+            for (let i = o.payments!.length; i < matching.length; i++) {
+              await handleDeleteFinancialRecord(matching[i].id).catch(() => {});
+            }
+          }
+        })();
+      } else if (methodsMatch) {
+        healedSplitOrdersRef.current.add(sig);
+      }
+    });
+  }, [orders, financialRecords, cashSession?.isOpen, cashSession?.openedAt]);
 
   const handleAssignCourier = async (orderId: string, courierId: string) => {
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
@@ -5141,7 +5308,8 @@ const App: React.FC = () => {
     };
 
     const docId = (table as any).docId || (typeof tableId === 'string' ? tableId : null);
-    const finalTotal = table.total + (deliveryInfo?.fee || 0) + (additionalFee || 0) - (discount || 0);
+    const itemsSubtotal = (table.items || []).filter(i => !i.cancelled).reduce((acc, i) => acc + (Number(i.price) || 0) * (Number(i.quantity) || 1), 0);
+    const finalTotal = (itemsSubtotal > 0 ? itemsSubtotal : table.total) + (deliveryInfo?.fee || 0) + (additionalFee || 0) - (discount || 0);
     const tableNumber = table?.number || tableId;
 
     const isRealDelivery = !!(deliveryInfo && (deliveryInfo.address || (deliveryInfo.fee && deliveryInfo.fee > 0)));
@@ -5609,6 +5777,8 @@ const App: React.FC = () => {
                 orderId: newOrder.id,
                 status: 'pending'
               });
+            } else if ((p as any).id) {
+              await handleUpdateFinancialRecord((p as any).id, { orderId: newOrder.id }).catch(() => {});
             }
           } else if (!(p as any).alreadyRecorded) {
             await handleAddFinancialRecord({
@@ -5622,6 +5792,8 @@ const App: React.FC = () => {
               orderId: newOrder.id,
               status: 'paid'
             });
+          } else if ((p as any).id) {
+            await handleUpdateFinancialRecord((p as any).id, { orderId: newOrder.id }).catch(() => {});
           }
         }
 
@@ -5719,10 +5891,16 @@ const App: React.FC = () => {
       const order = orders.find(o => o.id === id);
       if (order && !order.isSettled) {
         totalEarningsToDeduct += (order.courierEarnings || 0);
-        if (normalizePaymentMethod(order.paymentMethod, adminSettings) === 'dinheiro') {
+        if (order.payments && order.payments.length > 0) {
+          totalCashToDeduct += order.payments
+            .filter(p => normalizePaymentMethod(p.method, adminSettings) === 'dinheiro')
+            .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+        } else if (normalizePaymentMethod(order.paymentMethod, adminSettings) === 'dinheiro') {
           totalCashToDeduct += (order.total || 0);
         }
       }
+
+      const shiftUpdate = cashSession?.isOpen && cashSession.openedAt ? { shiftOpenedAt: cashSession.openedAt } : {};
 
       if (effectiveTenantId) {
         try {
@@ -5730,13 +5908,14 @@ const App: React.FC = () => {
           await setDoc(doc(db, 'orders', targetDocId), { 
             isSettled: true, 
             status: 'finished',
-            updatedAt: new Date() 
+            updatedAt: new Date(),
+            ...shiftUpdate
           }, { merge: true });
         } catch (e) {
           console.error(`Error settling cloud order ${id}:`, e);
         }
       }
-      await localDb.orders.update(id, { isSettled: true, status: 'finished', updatedAt: new Date(), finishedAt: new Date(), completedAt: new Date() });
+      await localDb.orders.update(id, { isSettled: true, status: 'finished', updatedAt: new Date(), finishedAt: new Date(), completedAt: new Date(), ...shiftUpdate } as any);
     }
 
     // Atualizar estado React de pedidos instantaneamente
@@ -5748,7 +5927,8 @@ const App: React.FC = () => {
       paymentStatus: 'paid',
       updatedAt: new Date(), 
       finishedAt: o.finishedAt || new Date(), 
-      completedAt: o.completedAt || new Date() 
+      completedAt: o.completedAt || new Date(),
+      ...(cashSession?.isOpen && cashSession.openedAt ? { shiftOpenedAt: cashSession.openedAt } : {})
     } : o));
 
     // Update courier balances
@@ -6558,20 +6738,34 @@ const App: React.FC = () => {
       // Helper to check if an order belongs to this cash session
       const isOrderInSession = (o: Order) => {
         if (!isMatchingTenant(o.tenantId)) return false;
-        const isTrueSubTicket = Boolean((o.isSubTicket || o.mergedIntoOrderId) && !financialRecords.some(r => r.orderId && (r.orderId === o.id || (o.docId && r.orderId === o.docId))));
+        const hasSessionFinancialRecord = financialRecords.some(r =>
+          r.orderId && (r.orderId === o.id || (o.docId && r.orderId === o.docId)) &&
+          parseToDate(r.date) >= openedDate
+        );
+        const isTrueSubTicket = Boolean((o.isSubTicket || o.mergedIntoOrderId) && !hasSessionFinancialRecord);
         if (o.status === 'cancelled' || isTrueSubTicket) return false;
         const isPaid = o.isSettled || o.paymentStatus === 'paid' || (o.payments && o.payments.length > 0) || o.status === 'finished' || o.status === 'delivered';
         if (!isPaid) return false;
 
-        // 1. Se o pedido possui vínculo explícito com o turno (shiftOpenedAt), validar estritamente contra a sessão atual
+        // 1. Se o pedido possui vínculo explícito com o turno atual (shiftOpenedAt), incluir diretamente
+        let hasShiftFromEarlierSession = false;
         if ((o as any).shiftOpenedAt) {
           const orderShiftDate = parseToDate((o as any).shiftOpenedAt);
           if (orderShiftDate.getTime() > 0) {
-            return Math.abs(orderShiftDate.getTime() - openedDate.getTime()) < 5000;
+            if (Math.abs(orderShiftDate.getTime() - openedDate.getTime()) < 5000) {
+              return true;
+            }
+            if (orderShiftDate.getTime() < openedDate.getTime() - 5000) {
+              hasShiftFromEarlierSession = true;
+            }
           }
         }
 
-        // 2. Validar pelo horário real do pagamento/liquidação (nunca incluir pedidos pagos antes da abertura deste caixa)
+        if (hasSessionFinancialRecord) {
+          return true;
+        }
+
+        // 2. Validar pelo horário real do pagamento/liquidação (incluir pedidos abertos antes mas pagos/finalizados neste caixa)
         if (o.paidAt) {
           const paidDate = parseToDate(o.paidAt);
           if (paidDate.getTime() > 0) {
@@ -6600,6 +6794,10 @@ const App: React.FC = () => {
           if (finishedDate.getTime() > 0) {
             return finishedDate >= openedDate;
           }
+        }
+
+        if (hasShiftFromEarlierSession) {
+          return false;
         }
 
         const createdAt = parseToDate(o.createdAt);
@@ -6687,16 +6885,45 @@ const App: React.FC = () => {
         conta_cliente: 0
       };
 
+      const accountedRecordIds = new Set<string>();
+      const sessionOrderIds = new Set<string>();
+
       salesSinceOpen.forEach(o => {
-        const orderTotal = Number(o.total) || 0;
+        if (o.id) sessionOrderIds.add(o.id);
+        if (o.docId) sessionOrderIds.add(o.docId);
+
+        const rawOrderTotal = Number(o.total) || 0;
+        const calculatedItemsTotal = (o.items && o.items.length > 0)
+          ? o.items.filter((i: any) => !i.cancelled).reduce((acc: number, i: any) => acc + (Number(i.price) || 0) * (Number(i.quantity) || 1), 0) +
+            (Number(o.deliveryFee) || 0) +
+            (Number((o as any).additionalFee) || 0) -
+            (Number((o as any).discount) || 0)
+          : rawOrderTotal;
+
         const matchingRecords = recordsDuringSession.filter(r => 
           r.orderId && (r.orderId === o.id || (o.docId && r.orderId === o.docId))
         );
+        matchingRecords.forEach(r => {
+          if (r.id) accountedRecordIds.add(r.id);
+        });
 
         let paymentsToUse = o.payments;
         let primaryMethod = o.paymentMethod;
 
-        if (o.isSubTicket || o.mergedIntoOrderId || (!paymentsToUse?.length && matchingRecords.length > 0)) {
+        const currentPaymentsSum = (paymentsToUse || []).reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+        const matchingRecordsSum = matchingRecords.reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
+
+        const orderTotal = (currentPaymentsSum > 0 && Math.abs(currentPaymentsSum - calculatedItemsTotal) < 0.05)
+          ? calculatedItemsTotal
+          : rawOrderTotal;
+
+        if (
+          o.isSubTicket ||
+          o.mergedIntoOrderId ||
+          (!paymentsToUse?.length && matchingRecords.length > 0) ||
+          (matchingRecords.length > (paymentsToUse?.length || 0) && Math.abs(matchingRecordsSum - orderTotal) < 0.05) ||
+          (currentPaymentsSum < orderTotal - 0.01 && matchingRecordsSum >= currentPaymentsSum && matchingRecords.length > 0)
+        ) {
           if (matchingRecords.length > 0) {
             paymentsToUse = matchingRecords.map(r => ({
               method: r.paymentMethod as any,
@@ -6722,7 +6949,7 @@ const App: React.FC = () => {
             }
           });
 
-          // Se a soma dos pagamentos for menor que o total, alocar a diferença
+          // Se a soma dos pagamentos for menor que o total real, alocar a diferença
           if (orderTotal > paymentsSum + 0.009) {
             const diff = orderTotal - paymentsSum;
             const fallbackMethod = getStandardPaymentMethod(primaryMethod || 'dinheiro') as PaymentMethod;
@@ -6738,6 +6965,41 @@ const App: React.FC = () => {
             salesByMethod[method] += orderTotal;
           } else {
             salesByMethod.dinheiro += orderTotal;
+          }
+        }
+      });
+
+      // Incluir pagamentos parciais já lançados no caixa de mesas/pedidos ainda em aberto
+      recordsDuringSession.forEach(r => {
+        const isPaid = r.status === 'paid' || !r.status;
+        if (!isPaid || r.type !== 'income') return;
+        if (r.id && accountedRecordIds.has(r.id)) return;
+        if (r.orderId && sessionOrderIds.has(r.orderId)) return;
+
+        const cat = (r.category || '').toLowerCase();
+        const desc = (r.description || '').toLowerCase();
+        if (!cat.startsWith('venda') && !desc.includes('pagamento parcial')) return;
+        if (!r.orderId && !desc.includes('pagamento parcial')) return;
+
+        if (!r.orderId) {
+          const alreadyInClosedOrder = salesSinceOpen.some(so =>
+            so.payments && so.payments.length > 1 &&
+            so.payments.some((p: any) =>
+              (p.id && p.id === r.id) ||
+              (getStandardPaymentMethod(p.method) === getStandardPaymentMethod(r.paymentMethod || 'dinheiro') &&
+               Math.abs((Number(p.amount) || 0) - (Number(r.amount) || 0)) < 0.01)
+            )
+          );
+          if (alreadyInClosedOrder) return;
+        }
+
+        const rAmount = Number(r.amount) || 0;
+        if (rAmount > 0) {
+          const method = getStandardPaymentMethod(r.paymentMethod || 'dinheiro') as PaymentMethod;
+          if (salesByMethod[method] !== undefined) {
+            salesByMethod[method] += rAmount;
+          } else {
+            salesByMethod.dinheiro += rAmount;
           }
         }
       });
@@ -7341,6 +7603,7 @@ const App: React.FC = () => {
                   setPdvEditOrder(found);
                 }
               }}
+              showToast={showToast}
             />
           ) : currentProject === 'PLATFORM' && !isSuperAdmin ? (
             <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-slate-50 min-h-[60vh]">

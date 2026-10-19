@@ -70,13 +70,6 @@ export const MarketplaceAlgorithmAuctionView: React.FC<MarketplaceAlgorithmAucti
             ⚡ Sistema de Leilão & Prioridade
           </button>
         </div>
-
-        <button
-          onClick={handleSave}
-          className="px-5 py-2.5 bg-emerald-600 text-white rounded-xl text-xs font-black hover:bg-emerald-500 transition-all flex items-center gap-1.5 shadow-md shadow-emerald-200 cursor-pointer"
-        >
-          <CheckCircle2 size={15} /> Salvar Configuração do Algoritmo
-        </button>
       </div>
 
       {savedSuccess && (

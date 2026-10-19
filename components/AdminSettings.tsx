@@ -1679,8 +1679,8 @@ wss.on('connection', ws => {
                     </p>
                   ) : (
                     <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
-                      {saiposLogs.map((log: any) => (
-                        <div key={log.id} className="p-2 bg-slate-950 rounded-lg border border-slate-800 flex items-center justify-between text-[10px]">
+                      {saiposLogs.map((log: any, idx: number) => (
+                        <div key={log.id || `saipos-log-${idx}`} className="p-2 bg-slate-950 rounded-lg border border-slate-800 flex items-center justify-between text-[10px]">
                           <div>
                             <span className="font-bold text-amber-300 mr-2">{log.eventType || 'ORDER_CREATED'}</span>
                             <span className="text-slate-400">ID: {log.id}</span>
@@ -1770,7 +1770,7 @@ wss.on('connection', ws => {
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                      {(settings.operators || []).map((op, idx) => (
-                       <div key={op.id} className={`p-2 bg-white rounded-xl border flex justify-between items-center ${op.active ? 'border-slate-200' : 'border-slate-100 opacity-60'}`}>
+                       <div key={op.id || `op-${idx}`} className={`p-2 bg-white rounded-xl border flex justify-between items-center ${op.active ? 'border-slate-200' : 'border-slate-100 opacity-60'}`}>
                           <input 
                             className="font-bold text-slate-800 bg-transparent border-none outline-none focus:ring-0 text-[10px] w-full" 
                             value={op.name}
@@ -1835,7 +1835,7 @@ wss.on('connection', ws => {
 
                <div className="grid grid-cols-1 gap-3">
                   {(settings.paymentMethods || []).map((method, idx) => (
-                    <div key={method.id} className={`p-4 bg-white border rounded-2xl transition-all ${method.active ? 'border-slate-200 shadow-sm' : 'border-slate-100 opacity-60 bg-slate-50'}`}>
+                    <div key={method.id || `pm-${idx}`} className={`p-4 bg-white border rounded-2xl transition-all ${method.active ? 'border-slate-200 shadow-sm' : 'border-slate-100 opacity-60 bg-slate-50'}`}>
                        <div className="flex flex-col md:flex-row gap-4 items-start md:items-center">
                           <div className="flex-1 grid grid-cols-1 md:grid-cols-4 gap-3 w-full">
                              <div className="space-y-1">
@@ -1926,8 +1926,8 @@ wss.on('connection', ws => {
                                     }}
                                   >
                                      <option value="">Nenhuma</option>
-                                     {(settings.operators || []).filter(op => op.active).map(op => (
-                                       <option key={op.id} value={op.id}>{op.name}</option>
+                                     {(settings.operators || []).filter(op => op.active).map((op, opIdx) => (
+                                       <option key={op.id || `active-op-${opIdx}`} value={op.id}>{op.name}</option>
                                      ))}
                                   </select>
                                </div>

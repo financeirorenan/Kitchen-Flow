@@ -3808,7 +3808,7 @@ const Inventory: React.FC<InventoryProps> = memo(({
 
                   <div className="space-y-4">
                     {editingProduct.optionCategories?.map((cat, catIdx) => (
-                      <div key={cat.id} className="bg-slate-50 rounded-2xl border border-slate-200 overflow-hidden">
+                      <div key={cat.id || cat.name || `cat-${catIdx}`} className="bg-slate-50 rounded-2xl border border-slate-200 overflow-hidden">
                         <div className="p-4 bg-white border-b flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
                           <div className="flex-1 space-y-1 w-full">
                             <label className="text-[8px] font-black uppercase text-slate-400 tracking-wider">Nome da Categoria</label>
@@ -3826,8 +3826,8 @@ const Inventory: React.FC<InventoryProps> = memo(({
                                 }}
                               />
                               <datalist id="all-option-categories">
-                                {allOptionCategories.map(oc => (
-                                  <option key={oc.id} value={oc.name} />
+                                {allOptionCategories.map((oc, ocIdx) => (
+                                  <option key={oc.id || oc.name || `oc-${ocIdx}`} value={oc.name} />
                                 ))}
                               </datalist>
                               {cat.name && allOptionCategories.find(oc => oc.name === cat.name) && cat.options.length === 0 && (
@@ -3908,7 +3908,7 @@ const Inventory: React.FC<InventoryProps> = memo(({
 
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                             {cat.options.map((opt, optIdx) => (
-                              <div key={opt.id} className="flex gap-2 items-center bg-white p-2 rounded-xl border border-slate-100 shadow-sm group">
+                              <div key={opt.id || opt.name || `opt-${catIdx}-${optIdx}`} className="flex gap-2 items-center bg-white p-2 rounded-xl border border-slate-100 shadow-sm group">
                                 <div className="flex-1">
                                   <input 
                                     type="text" 

@@ -11,7 +11,7 @@ import {
   Coins, CreditCard, DollarSign, Calculator, AlertTriangle, Edit3,
   Search, Filter, Store, Edit, Loader2, Printer, ChefHat, Upload, Receipt, RotateCcw
 } from 'lucide-react';
-import { generateReceiptHtml, handlePrintOrder } from '../services/printService';
+import { generateReceiptHtml, handlePrintOrder, resolveOrderPayments } from '../services/printService';
 import { maskPhone } from '../utils/masks';
 import { formatOrderNumber, getOrderNumericId } from '../utils/deduplicate';
 import EditOrderModal from './EditOrderModal';
@@ -106,6 +106,7 @@ const Delivery: React.FC<DeliveryProps> = memo(({
   const [quickPaymentOrder, setQuickPaymentOrder] = useState<Order | null>(null);
   const [quickPaymentMethod, setQuickPaymentMethod] = useState<string>('dinheiro');
   const [quickChangeFor, setQuickChangeFor] = useState<string>('');
+  const [quickSplitPayments, setQuickSplitPayments] = useState<Array<{ method: string; amount: string }>>([]);
   
   // States para filtros do monitor
   const [monitorSearch, setMonitorSearch] = useState('');
@@ -267,8 +268,18 @@ const Delivery: React.FC<DeliveryProps> = memo(({
       const ordersToSettle = courierOrders.filter(o => o.status === 'delivered' && !o.isSettled);
       
       const totalFees = ordersToSettle.reduce((acc, o) => acc + (o.courierEarnings || 0), 0);
-      const cashCollected = ordersToSettle.filter(o => o.paymentMethod === 'dinheiro').reduce((acc, o) => acc + o.total, 0);
-      const otherPayments = ordersToSettle.filter(o => o.paymentMethod !== 'dinheiro').reduce((acc, o) => acc + o.total, 0);
+      const cashCollected = ordersToSettle.reduce((acc, o) => {
+        if (o.payments && o.payments.length > 0) {
+          return acc + o.payments.filter(p => p.method === 'dinheiro').reduce((s, p) => s + (Number(p.amount) || 0), 0);
+        }
+        return o.paymentMethod === 'dinheiro' ? acc + (o.total || 0) : acc;
+      }, 0);
+      const otherPayments = ordersToSettle.reduce((acc, o) => {
+        if (o.payments && o.payments.length > 0) {
+          return acc + o.payments.filter(p => p.method !== 'dinheiro').reduce((s, p) => s + (Number(p.amount) || 0), 0);
+        }
+        return o.paymentMethod !== 'dinheiro' ? acc + (o.total || 0) : acc;
+      }, 0);
       const totalDeliveriesValue = ordersToSettle.reduce((acc, o) => acc + o.total, 0);
       
       // Quantidade de diárias (pode ser 1 se o motorista realizou entregas no período, ou 0 caso contrário)
@@ -612,8 +623,8 @@ const Delivery: React.FC<DeliveryProps> = memo(({
             </div>
 
             <div className="space-y-2 h-[calc(100vh-16rem)] overflow-y-auto pr-1 custom-scrollbar">
-              {filteredDispatchOrders.map(order => (
-                <div key={order.id} className={`bg-white p-2.5 rounded-xl border-2 shadow-sm space-y-2 hover:border-indigo-200 transition-colors ${order.status === 'ready' ? 'border-amber-100' : 'border-slate-50 opacity-80'}`}>
+              {filteredDispatchOrders.map((order, idx) => (
+                <div key={order.id || `disp-ord-${idx}`} className={`bg-white p-2.5 rounded-xl border-2 shadow-sm space-y-2 hover:border-indigo-200 transition-colors ${order.status === 'ready' ? 'border-amber-100' : 'border-slate-50 opacity-80'}`}>
                   <div className="flex justify-between items-start">
                     <div className="flex items-center gap-2">
                       <div>
@@ -664,10 +675,30 @@ const Delivery: React.FC<DeliveryProps> = memo(({
 
                   {/* Forma de Pagamento com Botão Alterar Rápido */}
                   <div className="flex items-center justify-between text-[8px] bg-slate-50 p-1.5 rounded-lg border border-slate-100">
-                    <span className="font-bold text-slate-600 uppercase flex items-center gap-1">
+                    <span className="font-bold text-slate-600 uppercase flex items-center gap-1 flex-wrap">
                       <CreditCard size={11} className="text-indigo-500 shrink-0" />
-                      <span>Pagamento: <strong className="text-slate-800 font-black">{order.paymentMethod ? order.paymentMethod.replace('_', ' ') : 'dinheiro'}</strong></span>
-                      {order.paymentMethod === 'dinheiro' && order.changeFor ? (
+                      {(() => {
+                        const resolved = resolveOrderPayments(order);
+                        if (resolved.length > 1) {
+                          return (
+                            <span>
+                              Pagto ({resolved.length}):{' '}
+                              <strong className="text-indigo-700 font-black">
+                                {resolved.map(p => `${p.label} R$ ${p.amount.toFixed(2)}`).join(' + ')}
+                              </strong>
+                            </span>
+                          );
+                        }
+                        return (
+                          <span>
+                            Pagamento:{' '}
+                            <strong className="text-slate-800 font-black">
+                              {resolved[0] ? resolved[0].label : (order.paymentMethod ? order.paymentMethod.replace('_', ' ') : 'dinheiro')}
+                            </strong>
+                          </span>
+                        );
+                      })()}
+                      {order.changeFor ? (
                         <span className="text-emerald-600 font-black"> (Troco p/ R$ {order.changeFor.toFixed(2)})</span>
                       ) : null}
                     </span>
@@ -677,8 +708,14 @@ const Delivery: React.FC<DeliveryProps> = memo(({
                         setQuickPaymentOrder(order);
                         setQuickPaymentMethod(order.paymentMethod || 'dinheiro');
                         setQuickChangeFor(order.changeFor ? String(order.changeFor) : '');
+                        const resolved = resolveOrderPayments(order);
+                        if (resolved.length > 1) {
+                          setQuickSplitPayments(resolved.map(p => ({ method: p.method, amount: p.amount.toFixed(2) })));
+                        } else {
+                          setQuickSplitPayments([]);
+                        }
                       }}
-                      className="px-2 py-0.5 bg-indigo-100 text-indigo-700 hover:bg-indigo-600 hover:text-white rounded font-black uppercase text-[8px] tracking-wider transition-all"
+                      className="px-2 py-0.5 bg-indigo-100 text-indigo-700 hover:bg-indigo-600 hover:text-white rounded font-black uppercase text-[8px] tracking-wider transition-all shrink-0"
                       title="Alterar forma de pagamento desta entrega"
                     >
                       Alterar
@@ -754,8 +791,8 @@ const Delivery: React.FC<DeliveryProps> = memo(({
               />
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                 {courierSettlementData.filter(c => c.courier.active).map(data => (
-                    <div key={data.courier.id} className="bg-white rounded-xl border shadow-sm overflow-hidden flex flex-col">
+                 {courierSettlementData.filter(c => c.courier.active).map((data, cIdx) => (
+                    <div key={data.courier.id || `courier-data-${cIdx}`} className="bg-white rounded-xl border shadow-sm overflow-hidden flex flex-col">
                        <div className="p-2.5 border-b flex justify-between items-center bg-slate-50/50">
                           <div className="flex items-center gap-2">
                              <div className="w-8 h-8 bg-indigo-100 text-indigo-600 rounded-lg flex items-center justify-center font-black text-xs">{data.courier.name.charAt(0)}</div>
@@ -796,8 +833,8 @@ const Delivery: React.FC<DeliveryProps> = memo(({
                           {deliveryOrders
                             .filter(o => o.courierId === data.courier.id && o.status === 'delivering')
                             .sort((a, b) => (a.routePosition || 0) - (b.routePosition || 0))
-                            .map(order => (
-                             <div key={order.id} className="flex items-center justify-between p-2 bg-white border border-indigo-100 rounded-lg shadow-sm">
+                            .map((order, oIdx) => (
+                             <div key={order.id || `del-ord-${oIdx}`} className="flex items-center justify-between p-2 bg-white border border-indigo-100 rounded-lg shadow-sm">
                                 <div className="flex items-center gap-1.5">
                                    <div className="w-6 h-6 bg-indigo-600 text-white rounded-md flex items-center justify-center text-[8px] font-black relative">
                                       {formatOrderNumber(order)}
@@ -810,14 +847,34 @@ const Delivery: React.FC<DeliveryProps> = memo(({
                                    <div>
                                      <p className="text-[8px] font-black text-slate-700 uppercase">{order.customerName?.split(' ')[0]}</p>
                                      <p className="text-[6px] text-slate-400 truncate w-24">{order.customerAddress}</p>
-                                     <div className="flex items-center gap-1 mt-0.5">
-                                       <span className="text-[7px] font-bold text-slate-500 uppercase">{order.paymentMethod ? order.paymentMethod.replace('_', ' ') : 'dinheiro'}</span>
+                                     <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                                       {(() => {
+                                         const resolved = resolveOrderPayments(order);
+                                         if (resolved.length > 1) {
+                                           return (
+                                             <span className="text-[7px] font-black text-indigo-700 uppercase">
+                                               {resolved.map(p => `${p.label}: R$${p.amount.toFixed(2)}`).join(' + ')}
+                                             </span>
+                                           );
+                                         }
+                                         return (
+                                           <span className="text-[7px] font-bold text-slate-500 uppercase">
+                                             {resolved[0] ? resolved[0].label : (order.paymentMethod ? order.paymentMethod.replace('_', ' ') : 'dinheiro')}
+                                           </span>
+                                         );
+                                       })()}
                                        <button
                                          onClick={(e) => {
                                            e.stopPropagation();
                                            setQuickPaymentOrder(order);
                                            setQuickPaymentMethod(order.paymentMethod || 'dinheiro');
                                            setQuickChangeFor(order.changeFor ? String(order.changeFor) : '');
+                                           const resolved = resolveOrderPayments(order);
+                                           if (resolved.length > 1) {
+                                             setQuickSplitPayments(resolved.map(p => ({ method: p.method, amount: p.amount.toFixed(2) })));
+                                           } else {
+                                             setQuickSplitPayments([]);
+                                           }
                                          }}
                                          className="text-[7px] text-indigo-600 font-black hover:underline uppercase"
                                          title="Alterar Pagamento"
@@ -828,6 +885,13 @@ const Delivery: React.FC<DeliveryProps> = memo(({
                                    </div>
                                 </div>
                                  <div className="flex items-center gap-1">
+                                   <button 
+                                     onClick={() => handlePrintOrder(order, adminSettings, { isFiscal: false })} 
+                                     title="Imprimir Guia/Recibo de Entrega" 
+                                     className="p-1 bg-slate-100 hover:bg-indigo-600 hover:text-white text-slate-600 rounded-md shadow-sm transition-all"
+                                   >
+                                     <Printer size={12} />
+                                   </button>
                                    <button 
                                      onClick={() => onEditOrderInPDV(order)} 
                                      title="Ver Detalhes do Pedido" 
@@ -872,8 +936,8 @@ const Delivery: React.FC<DeliveryProps> = memo(({
              <button onClick={() => { resetCourierForm(); setShowAddCourierModal(true); }} className="bg-indigo-600 text-white px-4 py-2 rounded-xl font-black text-[9px] uppercase tracking-widest flex items-center gap-1.5 shadow-md shadow-indigo-100"><Plus size={14} /> Cadastrar Entregador</button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {couriers.map(courier => (
-              <div key={courier.id} className="bg-white p-3 rounded-xl border shadow-sm space-y-3 group hover:shadow-md transition-all">
+            {couriers.map((courier, idx) => (
+              <div key={courier.id || `team-courier-${idx}`} className="bg-white p-3 rounded-xl border shadow-sm space-y-3 group hover:shadow-md transition-all">
                 <div className="flex items-center gap-2.5">
                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs ${courier.active ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-400'}`}>
                       {courier.name.charAt(0)}
@@ -1248,13 +1312,13 @@ const Delivery: React.FC<DeliveryProps> = memo(({
           <div className="bg-white w-full max-w-xs rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95">
             <div className="p-4 border-b bg-indigo-50/30 flex justify-between items-center"><div><h2 className="text-sm font-black text-slate-800">Despachar Pedido</h2><p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Pedido {formatOrderNumber(orders.find(o => o.id === selectedOrderId))}</p></div><button onClick={() => setSelectedOrderId(null)} className="p-1.5 hover:bg-white rounded-full"><X size={16} /></button></div>
             <div className="p-3 space-y-2">
-              {couriers.filter(c => c.active).map(courier => {
+              {couriers.filter(c => c.active).map((courier, idx) => {
                 const activeOrdersCount = orders.filter(o => o.courierId === courier.id && o.status === 'delivering').length;
                 const isDelivering = courier.status === 'delivering';
                 
                 return (
                     <button 
-                      key={courier.id} 
+                      key={courier.id || `modal-courier-${idx}`} 
                       onClick={() => { onAssignCourier(selectedOrderId, courier.id); setSelectedOrderId(null); }} 
                       className="w-full flex items-center justify-between p-3 rounded-xl border-2 border-slate-50 hover:border-indigo-600 hover:bg-indigo-50 transition-all text-left group"
                     >
@@ -1706,40 +1770,116 @@ const Delivery: React.FC<DeliveryProps> = memo(({
             </div>
 
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">
-                Selecione a Nova Forma de Pagamento
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  { id: 'dinheiro', label: 'Dinheiro', icon: Banknote },
-                  { id: 'pix', label: 'PIX', icon: QrCode },
-                  { id: 'cartao_credito', label: 'Cartão Crédito', icon: CreditCard },
-                  { id: 'cartao_debito', label: 'Cartão Débito', icon: CreditCard },
-                  { id: 'vale_refeicao', label: 'Vale Refeição', icon: Wallet },
-                  { id: 'conta_cliente', label: 'Conta Cliente', icon: UserCheck }
-                ].map((method) => {
-                  const Icon = method.icon;
-                  const isSelected = quickPaymentMethod === method.id;
-                  return (
-                    <button
-                      key={method.id}
-                      type="button"
-                      onClick={() => setQuickPaymentMethod(method.id)}
-                      className={`flex items-center gap-2 p-3 rounded-xl border-2 text-left font-black text-xs transition-all ${
-                        isSelected 
-                          ? 'border-indigo-600 bg-indigo-50/50 text-indigo-700 shadow-sm' 
-                          : 'border-slate-100 bg-white text-slate-600 hover:border-slate-200'
-                      }`}
-                    >
-                      <Icon size={16} className={isSelected ? 'text-indigo-600' : 'text-slate-400'} />
-                      <span className="truncate">{method.label}</span>
-                    </button>
-                  );
-                })}
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">
+                  {quickSplitPayments.length > 1 ? 'Formas de Pagamento Divididas' : 'Selecione a Forma de Pagamento'}
+                </label>
+                {quickSplitPayments.length <= 1 ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const half = (quickPaymentOrder.total / 2).toFixed(2);
+                      const rest = (quickPaymentOrder.total - parseFloat(half)).toFixed(2);
+                      setQuickSplitPayments([
+                        { method: quickPaymentMethod || 'pix', amount: half },
+                        { method: quickPaymentMethod === 'pix' ? 'cartao_debito' : 'pix', amount: rest }
+                      ]);
+                    }}
+                    className="text-[9px] font-black uppercase tracking-wider text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition-all flex items-center gap-1"
+                  >
+                    <Plus size={11} /> 2 Formas de Pagto
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setQuickSplitPayments([])}
+                    className="text-[9px] font-black uppercase tracking-wider text-rose-600 bg-rose-50 hover:bg-rose-100 px-2.5 py-1 rounded-lg transition-all"
+                  >
+                    1 Forma Única
+                  </button>
+                )}
               </div>
+
+              {quickSplitPayments.length > 1 ? (
+                <div className="space-y-2 bg-slate-50 p-3 rounded-2xl border border-slate-200">
+                  {quickSplitPayments.map((part, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <span className="text-[9px] font-black text-slate-500 uppercase w-12">
+                        {idx + 1}ª Parte:
+                      </span>
+                      <select
+                        value={part.method}
+                        onChange={(e) => {
+                          const m = e.target.value;
+                          setQuickSplitPayments(prev => prev.map((p, i) => i === idx ? { ...p, method: m } : p));
+                        }}
+                        className="flex-1 bg-white border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-black text-slate-700 outline-none focus:border-indigo-500"
+                      >
+                        <option value="dinheiro">Dinheiro</option>
+                        <option value="pix">PIX</option>
+                        <option value="cartao_credito">Cartão Crédito</option>
+                        <option value="cartao_debito">Cartão Débito</option>
+                        <option value="vale_refeicao">Vale Refeição</option>
+                        <option value="conta_cliente">Conta Cliente</option>
+                      </select>
+                      <div className="relative w-28">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-black text-slate-400">R$</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={part.amount}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setQuickSplitPayments(prev => {
+                              const next = prev.map((p, i) => i === idx ? { ...p, amount: val } : p);
+                              if (next.length === 2) {
+                                const otherIdx = idx === 0 ? 1 : 0;
+                                const numVal = parseFloat(val) || 0;
+                                const remaining = Math.max(0, quickPaymentOrder.total - numVal);
+                                next[otherIdx] = { ...next[otherIdx], amount: remaining.toFixed(2) };
+                              }
+                              return next;
+                            });
+                          }}
+                          className="w-full bg-white border border-slate-200 rounded-xl pl-7 pr-2 py-2 text-xs font-black text-slate-800 outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { id: 'dinheiro', label: 'Dinheiro', icon: Banknote },
+                    { id: 'pix', label: 'PIX', icon: QrCode },
+                    { id: 'cartao_credito', label: 'Cartão Crédito', icon: CreditCard },
+                    { id: 'cartao_debito', label: 'Cartão Débito', icon: CreditCard },
+                    { id: 'vale_refeicao', label: 'Vale Refeição', icon: Wallet },
+                    { id: 'conta_cliente', label: 'Conta Cliente', icon: UserCheck }
+                  ].map((method) => {
+                    const Icon = method.icon;
+                    const isSelected = quickPaymentMethod === method.id;
+                    return (
+                      <button
+                        key={method.id}
+                        type="button"
+                        onClick={() => setQuickPaymentMethod(method.id)}
+                        className={`flex items-center gap-2 p-3 rounded-xl border-2 text-left font-black text-xs transition-all ${
+                          isSelected 
+                            ? 'border-indigo-600 bg-indigo-50/50 text-indigo-700 shadow-sm' 
+                            : 'border-slate-100 bg-white text-slate-600 hover:border-slate-200'
+                        }`}
+                      >
+                        <Icon size={16} className={isSelected ? 'text-indigo-600' : 'text-slate-400'} />
+                        <span className="truncate">{method.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
-            {quickPaymentMethod === 'dinheiro' && (
+            {(quickPaymentMethod === 'dinheiro' || quickSplitPayments.some(p => p.method === 'dinheiro')) && (
               <div className="space-y-1.5 bg-amber-50/60 p-3 rounded-2xl border border-amber-200 animate-in fade-in">
                 <label className="text-[10px] font-black text-amber-800 uppercase tracking-wider block">
                   Troco para Quanto? (Deixe em branco se não precisar)
@@ -1755,11 +1895,16 @@ const Delivery: React.FC<DeliveryProps> = memo(({
                     className="flex-1 bg-white border border-amber-300 rounded-xl px-3 py-2 text-sm font-black text-slate-800 outline-none focus:border-amber-500"
                   />
                 </div>
-                {quickChangeFor && parseFloat(quickChangeFor) > quickPaymentOrder.total && (
-                  <p className="text-[9px] font-black text-emerald-700">
-                    Troco a devolver: R$ {(parseFloat(quickChangeFor) - quickPaymentOrder.total).toFixed(2)}
-                  </p>
-                )}
+                {(() => {
+                  const cashAmount = quickSplitPayments.length > 1
+                    ? quickSplitPayments.filter(p => p.method === 'dinheiro').reduce((a, b) => a + (parseFloat(b.amount) || 0), 0)
+                    : quickPaymentOrder.total;
+                  return quickChangeFor && parseFloat(quickChangeFor) > cashAmount ? (
+                    <p className="text-[9px] font-black text-emerald-700">
+                      Troco a devolver: R$ {(parseFloat(quickChangeFor) - cashAmount).toFixed(2)}
+                    </p>
+                  ) : null;
+                })()}
               </div>
             )}
 
@@ -1775,14 +1920,23 @@ const Delivery: React.FC<DeliveryProps> = memo(({
                 type="button"
                 onClick={async () => {
                   if (!quickPaymentOrder) return;
-                  const changeVal = quickPaymentMethod === 'dinheiro' && quickChangeFor ? parseFloat(quickChangeFor) : undefined;
-                  const updatedPayments = [{
-                    method: quickPaymentMethod as any,
-                    amount: quickPaymentOrder.total
-                  }];
+                  const validSplits = quickSplitPayments
+                    .map(p => ({ method: p.method as any, amount: parseFloat(p.amount) || 0 }))
+                    .filter(p => p.amount > 0);
+                  const hasCash = validSplits.length > 1
+                    ? validSplits.some(p => p.method === 'dinheiro')
+                    : quickPaymentMethod === 'dinheiro';
+                  const changeVal = hasCash && quickChangeFor ? parseFloat(quickChangeFor) : undefined;
+                  const updatedPayments = validSplits.length > 1
+                    ? validSplits
+                    : [{
+                        method: quickPaymentMethod as any,
+                        amount: quickPaymentOrder.total
+                      }];
+                  const primaryMethod = validSplits.length > 1 ? validSplits[0].method : (quickPaymentMethod as any);
                   
                   await onUpdateOrder(quickPaymentOrder.id, {
-                    paymentMethod: quickPaymentMethod as any,
+                    paymentMethod: primaryMethod,
                     changeFor: changeVal,
                     payments: updatedPayments
                   });

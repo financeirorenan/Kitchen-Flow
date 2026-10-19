@@ -28,6 +28,7 @@ interface CityBestSellersManagerViewProps {
   marketplaceProducts?: Product[];
   currentConfig?: CityBestSellersConfig;
   onSaveConfig: (newConfig: CityBestSellersConfig) => Promise<void>;
+  onChangeConfig?: (newConfig: CityBestSellersConfig) => void;
   showToast?: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -47,6 +48,7 @@ export const CityBestSellersManagerView: React.FC<CityBestSellersManagerViewProp
   marketplaceProducts = [],
   currentConfig,
   onSaveConfig,
+  onChangeConfig,
   showToast,
 }) => {
   // Extrair todas as cidades dos estabelecimentos cadastrados
@@ -130,12 +132,21 @@ export const CityBestSellersManagerView: React.FC<CityBestSellersManagerViewProp
       if (currentConfig.mode) setMode(currentConfig.mode);
       if (currentConfig.defaultCity) {
         setDefaultCity(currentConfig.defaultCity);
-        setSelectedCity(currentConfig.defaultCity);
       }
       if (currentConfig.maxItemsPerCity) setMaxItemsPerCity(currentConfig.maxItemsPerCity);
       if (currentConfig.customItemsByCity) setCustomItemsByCity(currentConfig.customItemsByCity);
     }
   }, [currentConfig]);
+
+  useEffect(() => {
+    onChangeConfig?.({
+      mode,
+      defaultCity,
+      maxItemsPerCity,
+      customItemsByCity,
+      allowMerchantHighlight: true,
+    });
+  }, [mode, defaultCity, maxItemsPerCity, customItemsByCity]);
 
   const [isSaving, setIsSaving] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -202,9 +213,9 @@ export const CityBestSellersManagerView: React.FC<CityBestSellersManagerViewProp
       id: product.id,
       name: product.name,
       storeName: tenant?.name || 'Restaurante Local',
-      tenantId: product.tenantId,
+      ...(product.tenantId ? { tenantId: product.tenantId } : {}),
       price: (product.isPromotional && product.promoPrice) ? product.promoPrice : product.price,
-      originalPrice: product.isPromotional ? product.price : undefined,
+      ...(product.isPromotional && product.price ? { originalPrice: product.price } : {}),
       image: product.image || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=600&auto=format&fit=crop',
       badge: currentCityItems.length === 0 ? `🔥 #1 EM ${selectedCity.toUpperCase()}` : '🍔 MAIS PEDIDO',
       city: selectedCity,
@@ -232,9 +243,9 @@ export const CityBestSellersManagerView: React.FC<CityBestSellersManagerViewProp
       id: editingItem.id || `dish-${Date.now()}`,
       name: editingItem.name || '',
       storeName: editingItem.storeName || '',
-      tenantId: editingItem.tenantId,
+      ...(editingItem.tenantId ? { tenantId: editingItem.tenantId } : {}),
       price: Number(editingItem.price) || 0,
-      originalPrice: editingItem.originalPrice ? Number(editingItem.originalPrice) : undefined,
+      ...(editingItem.originalPrice ? { originalPrice: Number(editingItem.originalPrice) } : {}),
       image: editingItem.image || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=600&auto=format&fit=crop',
       badge: editingItem.badge || `🔥 #1 EM ${selectedCity.toUpperCase()}`,
       city: selectedCity,
@@ -327,15 +338,6 @@ export const CityBestSellersManagerView: React.FC<CityBestSellersManagerViewProp
             Defina exatamente quais pratos, lanches e sobremesas são exibidos no carrossel "Mais Pedidos da Cidade" do Marketplace para clientes de cada município.
           </p>
         </div>
-
-        <button
-          onClick={handleSaveAll}
-          disabled={isSaving}
-          className="px-6 py-3.5 bg-white text-orange-600 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-orange-50 transition-all shadow-lg shadow-orange-950/20 flex items-center gap-2 shrink-0 active:scale-95 disabled:opacity-50 cursor-pointer"
-        >
-          <Save size={16} />
-          {isSaving ? 'Salvando...' : 'Salvar Alterações'}
-        </button>
       </div>
 
       {/* Global Config & Strategy Cards */}

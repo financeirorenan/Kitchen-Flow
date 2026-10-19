@@ -20,15 +20,122 @@ export const parseOrderDate = (val: any): Date => {
  * Traduz o método de pagamento para exibição amigável e legível
  */
 const paymentMethodLabel = (method: string): string => {
-  switch (method) {
-    case 'dinheiro': return 'Dinheiro';
-    case 'cartao_credito': return 'Cartão de Crédito';
-    case 'cartao_debito': return 'Cartão de Débito';
-    case 'pix': return 'Pix';
-    case 'vale_refeicao': return 'Vale Refeição';
-    case 'conta_cliente': return 'Conta Cliente';
-    default: return method || 'Outro';
+  if (!method) return 'Outro';
+  if (method.includes(',')) {
+    return method.split(',').map(m => paymentMethodLabel(m.trim())).join(' + ');
   }
+  const normalized = method.trim().toLowerCase();
+  switch (normalized) {
+    case 'dinheiro':
+    case 'cash':
+    case 'especie':
+    case 'espécie':
+      return 'Dinheiro';
+    case 'cartao_credito':
+    case 'credit':
+    case 'credito':
+    case 'crédito':
+    case 'cartão de crédito':
+    case 'cartao de credito':
+      return 'Cartão de Crédito';
+    case 'cartao_debito':
+    case 'debit':
+    case 'debito':
+    case 'débito':
+    case 'cartão de débito':
+    case 'cartao de debito':
+      return 'Cartão de Débito';
+    case 'pix':
+      return 'Pix';
+    case 'vale_refeicao':
+    case 'voucher':
+    case 'meal_voucher':
+    case 'va_vr':
+      return 'Vale Refeição';
+    case 'conta_cliente':
+    case 'fiado':
+      return 'Conta Cliente';
+    case 'split':
+      return 'Múltiplas Formas';
+    default:
+      return method || 'Outro';
+  }
+};
+
+const isCashPaymentMethod = (method?: string): boolean => {
+  if (!method) return false;
+  const n = method.trim().toLowerCase();
+  return n === 'dinheiro' || n === 'cash' || n === 'especie' || n === 'espécie';
+};
+
+export interface ResolvedOrderPayment {
+  method: string;
+  label: string;
+  amount: number;
+  customerName?: string;
+}
+
+/**
+ * Resolve e consolida todas as formas de pagamento de um pedido,
+ * garantindo que pagamentos divididos (2 ou mais formas) nunca fiquem ocultos.
+ */
+export const resolveOrderPayments = (order: Order): ResolvedOrderPayment[] => {
+  const orderTotal = Number(order.total || 0);
+  const rawPayments = Array.isArray(order.payments)
+    ? order.payments.filter(p => p && Number(p.amount) > 0)
+    : [];
+
+  if (rawPayments.length > 0) {
+    const resolved: ResolvedOrderPayment[] = rawPayments.map(p => ({
+      method: p.method || order.paymentMethod || 'Outro',
+      label: paymentMethodLabel(p.method || order.paymentMethod || 'Outro'),
+      amount: Number(p.amount || 0),
+      customerName: p.customerName,
+    }));
+
+    const sumPaid = resolved.reduce((acc, p) => acc + p.amount, 0);
+    const diff = Number((orderTotal - sumPaid).toFixed(2));
+
+    // Se houver diferença relevante em relação ao total do pedido (ex: 1ª parte lançada e 2ª parte ficou no paymentMethod principal)
+    if (diff > 0.05 && orderTotal > 0) {
+      let fallbackMethod = order.paymentMethod || 'Outro';
+      if (fallbackMethod.includes(',')) {
+        const parts = fallbackMethod.split(',').map(s => s.trim()).filter(Boolean);
+        const unused = parts.find(m => !resolved.some(r => r.label.toLowerCase() === paymentMethodLabel(m).toLowerCase()));
+        if (unused) fallbackMethod = unused;
+        else fallbackMethod = parts[parts.length - 1];
+      }
+      resolved.push({
+        method: fallbackMethod,
+        label: paymentMethodLabel(fallbackMethod),
+        amount: diff,
+      });
+    }
+    return resolved;
+  }
+
+  // Fallback caso order.payments não tenha sido preenchido mas paymentMethod contenha múltiplos métodos separados por vírgula
+  if (order.paymentMethod && order.paymentMethod.includes(',')) {
+    const methods = order.paymentMethod.split(',').map(s => s.trim()).filter(Boolean);
+    if (methods.length > 1) {
+      const equalShare = methods.length > 0 ? orderTotal / methods.length : orderTotal;
+      return methods.map(m => ({
+        method: m,
+        label: paymentMethodLabel(m),
+        amount: equalShare,
+      }));
+    }
+  }
+
+  if (order.paymentMethod) {
+    return [{
+      method: order.paymentMethod,
+      label: paymentMethodLabel(order.paymentMethod),
+      amount: orderTotal,
+    }];
+  }
+
+  return [];
 };
 
 /**
@@ -285,13 +392,31 @@ export const generateRawTextReceipt = (order: Partial<Order>, settings: AdminSet
   }
   
   if (order.type === 'delivery') {
+    const deliveryPayments = resolveOrderPayments(order);
+    const cashPortion = deliveryPayments
+      .filter(p => isCashPaymentMethod(p.method) || isCashPaymentMethod(p.label))
+      .reduce((acc, p) => acc + p.amount, 0);
     out += divider + '\n';
     out += center('DADOS DE ENTREGA', lineCharLimit) + '\n';
     out += `CLIENTE: ${order.customerName?.toUpperCase() || 'NÃO INFORMADO'}\n`;
     out += `FONE   : ${order.customerPhone || 'NÃO INFORMADO'}\n`;
-    out += `END.   : ${order.customerAddress?.toUpperCase() || 'NÃO INFORMADO'}\n`;
-    if (order.changeFor) {
-      out += `TROCO P/: R$ ${order.changeFor.toFixed(2).replace('.', ',')}\n`;
+    out += `END.   : ${(order.customerAddress || order.deliveryAddress)?.toUpperCase() || 'NÃO INFORMADO'}\n`;
+    if (deliveryPayments.length > 1) {
+      out += `COBRAR (${deliveryPayments.length} FORMAS DE PAGTO):\n`;
+      deliveryPayments.forEach((p, idx) => {
+        const valFormatted = p.amount.toFixed(2).replace('.', ',');
+        out += `  ${idx + 1}. ${p.label.toUpperCase()}${p.customerName ? ` (${p.customerName.toUpperCase()})` : ''}: R$ ${valFormatted}\n`;
+      });
+    } else if (deliveryPayments.length === 1) {
+      out += `PAGTO  : ${deliveryPayments[0].label.toUpperCase()} - R$ ${(order.total || 0).toFixed(2).replace('.', ',')}\n`;
+    }
+    if (order.changeFor && order.changeFor > 0) {
+      const baseCash = cashPortion > 0 ? cashPortion : (order.total || 0);
+      out += `TROCO P/: R$ ${order.changeFor.toFixed(2).replace('.', ',')}`;
+      if (order.changeFor > baseCash) {
+        out += ` (LEVAR R$ ${(order.changeFor - baseCash).toFixed(2).replace('.', ',')})`;
+      }
+      out += '\n';
     }
   } else if (order.customerName || order.customerPhone) {
     out += divider + '\n';
@@ -359,8 +484,27 @@ export const generateRawTextReceipt = (order: Partial<Order>, settings: AdminSet
   out += pad('TOTAL R$:', lineCharLimit - 12) + right(grandTotal, 12) + '\n';
   out += doubleDivider + '\n';
 
-  if (order.paymentMethod) {
-    out += `FORMA DE PAGAMENTO: ${paymentMethodLabel(order.paymentMethod).toUpperCase()} - R$ ${grandTotal}\n`;
+  const resolvedPayments = resolveOrderPayments(order);
+  if (resolvedPayments.length > 1) {
+    out += `FORMAS DE PAGAMENTO (${resolvedPayments.length}):\n`;
+    resolvedPayments.forEach((p, idx) => {
+      const pLabel = `${idx + 1}. ${p.label.toUpperCase()}${p.customerName ? ` (${p.customerName.toUpperCase()})` : ''}`;
+      const pVal = `R$ ${p.amount.toFixed(2).replace('.', ',')}`;
+      out += pad(pLabel, Math.max(1, lineCharLimit - pVal.length)) + pVal + '\n';
+    });
+    const cashPortion = resolvedPayments
+      .filter(p => isCashPaymentMethod(p.method) || isCashPaymentMethod(p.label))
+      .reduce((acc, p) => acc + p.amount, 0);
+    if (order.changeFor && order.changeFor > 0 && cashPortion > 0 && order.changeFor > cashPortion) {
+      out += `TROCO PARA: R$ ${order.changeFor.toFixed(2).replace('.', ',')} | DEVOLVER: R$ ${(order.changeFor - cashPortion).toFixed(2).replace('.', ',')}\n`;
+    }
+    out += divider + '\n';
+  } else if (order.paymentMethod || resolvedPayments.length === 1) {
+    const singleLabel = resolvedPayments[0] ? resolvedPayments[0].label : paymentMethodLabel(order.paymentMethod || '');
+    out += `FORMA DE PAGAMENTO: ${singleLabel.toUpperCase()} - R$ ${grandTotal}\n`;
+    if (order.changeFor && order.changeFor > (order.total || 0)) {
+      out += `TROCO PARA: R$ ${order.changeFor.toFixed(2).replace('.', ',')} | DEVOLVER: R$ ${(order.changeFor - (order.total || 0)).toFixed(2).replace('.', ',')}\n`;
+    }
     out += divider + '\n';
   }
 
@@ -682,10 +826,23 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
           <span>QTD. ITENS: ${totalQuantity}</span>
           <span>TOTAL R$ ${(order.total || 0).toFixed(2).replace('.', ',')}</span>
         </div>
-        <div style="display: flex; justify-content: space-between; font-size: ${fontSizeBase}; font-weight: 900; line-height: 1.15; margin: 1px 0; width: 100%;">
-          <span style="text-transform: uppercase;">PAGTO (${paymentMethodLabel(order.paymentMethod || 'cartao_credito')}):</span>
-          <span>R$ ${(order.total || 0).toFixed(2).replace('.', ',')}</span>
-        </div>
+        ${(() => {
+          const fiscalPayments = resolveOrderPayments(order);
+          if (fiscalPayments.length > 1) {
+            return fiscalPayments.map(p => `
+              <div style="display: flex; justify-content: space-between; font-size: ${fontSizeBase}; font-weight: 900; line-height: 1.15; margin: 1px 0; width: 100%;">
+                <span style="text-transform: uppercase;">PAGTO (${p.label}):</span>
+                <span>R$ ${p.amount.toFixed(2).replace('.', ',')}</span>
+              </div>
+            `).join('');
+          }
+          return `
+            <div style="display: flex; justify-content: space-between; font-size: ${fontSizeBase}; font-weight: 900; line-height: 1.15; margin: 1px 0; width: 100%;">
+              <span style="text-transform: uppercase;">PAGTO (${paymentMethodLabel(order.paymentMethod || 'cartao_credito')}):</span>
+              <span>R$ ${(order.total || 0).toFixed(2).replace('.', ',')}</span>
+            </div>
+          `;
+        })()}
 
         <div style="border-top: 1px solid #000; margin: 2px 0;"></div>
 
@@ -784,19 +941,46 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
   const minutes = timeElapsed % 60;
   const timeStr = hours > 0 ? `${hours}h${minutes}m` : `${minutes}m`;
 
+  const resolvedOrderPayments = resolveOrderPayments(order);
+  const cashPortionAmount = resolvedOrderPayments
+    .filter(p => isCashPaymentMethod(p.method) || isCashPaymentMethod(p.label))
+    .reduce((acc, p) => acc + p.amount, 0);
+
   const deliveryHtml = order.type === 'delivery' ? `
     <div class="divider"></div>
     <div style="font-size: ${fontSizeBase}; font-weight: 900; text-align: center; margin-bottom: 6px; border: 1.5px solid #000; padding: 3px; text-transform: uppercase; color: #000000 !important; width: 100%; box-sizing: border-box;">DADOS DE ENTREGA</div>
     <div style="font-size: ${fontSizeSmall}; margin-bottom: 2px; font-weight: 700; word-break: break-word;"><strong>CLIENTE:</strong> ${order.customerName?.toUpperCase() || 'NÃO INFORMADO'}</div>
     <div style="font-size: ${fontSizeSmall}; margin-bottom: 2px; font-weight: 700; word-break: break-word;"><strong>TELEFONE:</strong> ${order.customerPhone || 'NÃO INFORMADO'}</div>
-    <div style="font-size: ${fontSizeSmall}; margin-bottom: 2px; font-weight: 700; word-break: break-word;"><strong>ENDEREÇO:</strong> ${order.customerAddress?.toUpperCase() || 'NÃO INFORMADO'}</div>
-    ${order.changeFor ? `<div style="font-size: ${fontSizeSmall}; font-weight: 700;"><strong>TROCO PARA:</strong> R$ ${order.changeFor.toFixed(2).replace('.', ',')}</div>` : ''}
+    <div style="font-size: ${fontSizeSmall}; margin-bottom: 2px; font-weight: 700; word-break: break-word;"><strong>ENDEREÇO:</strong> ${(order.customerAddress || order.deliveryAddress)?.toUpperCase() || 'NÃO INFORMADO'}</div>
+    ${resolvedOrderPayments.length > 1 ? `
+      <div style="margin-top: 4px; border: 1.5px solid #000; padding: 3px 4px; width: 100%; box-sizing: border-box;">
+        <div style="font-size: ${fontSizeSmall}; font-weight: 900; text-transform: uppercase; border-bottom: 1px solid #000; padding-bottom: 2px; margin-bottom: 2px;">
+          COBRAR NA ENTREGA (${resolvedOrderPayments.length} FORMAS):
+        </div>
+        ${resolvedOrderPayments.map((p, idx) => `
+          <div style="display: flex; justify-content: space-between; font-size: ${fontSizeSmall}; font-weight: 900; margin-top: 1px; width: 100%;">
+            <span>${idx + 1}. ${p.label.toUpperCase()}${p.customerName ? ` (${p.customerName.toUpperCase()})` : ''}:</span>
+            <span>R$ ${p.amount.toFixed(2).replace('.', ',')}</span>
+          </div>
+        `).join('')}
+      </div>
+    ` : ''}
+    ${order.changeFor ? (() => {
+      const baseCash = cashPortionAmount > 0 ? cashPortionAmount : (order.total || 0);
+      const changeToReturn = order.changeFor - baseCash;
+      return `
+        <div style="font-size: ${fontSizeSmall}; font-weight: 900; margin-top: 3px;">
+          <strong>TROCO PARA:</strong> R$ ${order.changeFor.toFixed(2).replace('.', ',')}
+          ${changeToReturn > 0 ? ` <br/><strong>TROCO A DEVOLVER:</strong> R$ ${changeToReturn.toFixed(2).replace('.', ',')}` : ''}
+        </div>
+      `;
+    })() : ''}
   ` : (order.customerName || order.customerPhone) ? `
     <div class="divider"></div>
     <div style="font-size: ${fontSizeBase}; font-weight: 900; text-align: center; margin-bottom: 6px; border: 1.5px solid #000; padding: 3px; text-transform: uppercase; color: #000000 !important; width: 100%; box-sizing: border-box;">IDENTIFICAÇÃO DO CLIENTE</div>
     ${order.customerName ? `<div style="font-size: ${fontSizeSmall}; margin-bottom: 2px; font-weight: 700; word-break: break-word;"><strong>CLIENTE:</strong> ${order.customerName.toUpperCase()}</div>` : ''}
     ${order.customerPhone ? `<div style="font-size: ${fontSizeSmall}; margin-bottom: 2px; font-weight: 700; word-break: break-word;"><strong>TELEFONE:</strong> ${order.customerPhone}</div>` : ''}
-    ${order.customerAddress ? `<div style="font-size: ${fontSizeSmall}; margin-bottom: 2px; font-weight: 700; word-break: break-word;"><strong>ENDEREÇO:</strong> ${order.customerAddress.toUpperCase()}</div>` : ''}
+    ${(order.customerAddress || order.deliveryAddress) ? `<div style="font-size: ${fontSizeSmall}; margin-bottom: 2px; font-weight: 700; word-break: break-word;"><strong>ENDEREÇO:</strong> ${(order.customerAddress || order.deliveryAddress || '').toUpperCase()}</div>` : ''}
   ` : '';
 
   return `
@@ -877,13 +1061,50 @@ export const generateReceiptHtml = (order: Partial<Order>, settings: AdminSettin
         <span>${(order.total || 0).toFixed(2).replace('.', ',')}</span>
       </div>
 
-      ${order.paymentMethod ? `
+      ${resolvedOrderPayments.length > 1 ? `
+        <div class="divider"></div>
+        <div style="border: 1.5px solid #000; padding: 4px; margin: 2px 0; width: 100%; box-sizing: border-box;">
+          <div class="bold" style="font-size: ${fontSizeSmall}; margin-bottom: 3px; text-transform: uppercase; border-bottom: 1px solid #000; padding-bottom: 2px; text-align: center;">
+            FORMAS DE PAGAMENTO (${resolvedOrderPayments.length}):
+          </div>
+          ${resolvedOrderPayments.map((p, idx) => `
+            <div style="display: flex; justify-content: space-between; font-size: ${fontSizeBase}; font-weight: 900; color: #000000 !important; width: 100%; margin: 2px 0;">
+              <span style="text-transform: uppercase;">${idx + 1}. ${p.label}${p.customerName ? ` (${p.customerName})` : ''}</span>
+              <span class="bold">R$ ${p.amount.toFixed(2).replace('.', ',')}</span>
+            </div>
+          `).join('')}
+          ${order.changeFor && cashPortionAmount > 0 && order.changeFor > cashPortionAmount ? `
+            <div style="border-top: 1px dashed #000; margin-top: 3px; padding-top: 2px; font-size: ${fontSizeSmall}; font-weight: 900;">
+              <div style="display: flex; justify-content: space-between; width: 100%;">
+                <span>TROCO PARA:</span>
+                <span>R$ ${order.changeFor.toFixed(2).replace('.', ',')}</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; width: 100%;">
+                <span>TROCO A DEVOLVER:</span>
+                <span>R$ ${(order.changeFor - cashPortionAmount).toFixed(2).replace('.', ',')}</span>
+              </div>
+            </div>
+          ` : ''}
+        </div>
+      ` : (order.paymentMethod || resolvedOrderPayments.length === 1) ? `
         <div class="divider"></div>
         <div class="bold" style="font-size: ${fontSizeSmall}; margin-bottom: 2px; text-transform: uppercase;">FORMA DE PAGAMENTO:</div>
         <div style="display: flex; justify-content: space-between; font-size: ${fontSizeBase}; font-weight: 900; color: #000000 !important; width: 100%;">
-          <span style="text-transform: uppercase;">${paymentMethodLabel(order.paymentMethod)}</span>
+          <span style="text-transform: uppercase;">${resolvedOrderPayments[0] ? resolvedOrderPayments[0].label : paymentMethodLabel(order.paymentMethod || '')}</span>
           <span class="bold">R$ ${(order.total || 0).toFixed(2).replace('.', ',')}</span>
         </div>
+        ${order.changeFor && order.changeFor > (order.total || 0) ? `
+          <div style="margin-top: 2px; font-size: ${fontSizeSmall}; font-weight: 900;">
+            <div style="display: flex; justify-content: space-between; width: 100%;">
+              <span>TROCO PARA:</span>
+              <span>R$ ${order.changeFor.toFixed(2).replace('.', ',')}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; width: 100%;">
+              <span>TROCO A DEVOLVER:</span>
+              <span>R$ ${(order.changeFor - (order.total || 0)).toFixed(2).replace('.', ',')}</span>
+            </div>
+          </div>
+        ` : ''}
       ` : ''}
 
       ${(order.observations || order.notes || (order as any).observation) ? `

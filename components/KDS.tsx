@@ -232,8 +232,8 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
           <div className="border-t border-slate-100 pt-2 space-y-2.5 max-h-56 overflow-y-auto custom-scrollbar pr-1">
             <p className="text-[9px] font-black tracking-wider uppercase text-slate-400">Itens do Pedido ({order.items.length})</p>
             <div className="space-y-2.5">
-              {Object.entries(itemsByCategory).map(([category, items]) => (
-                <div key={category} className="space-y-1">
+              {Object.entries(itemsByCategory).map(([category, items], catIdx) => (
+                <div key={category || `cat-${catIdx}`} className="space-y-1">
                   <p className="text-[8.5px] font-black text-indigo-700 uppercase tracking-widest bg-indigo-50 px-2 py-0.5 rounded w-fit border border-indigo-100">
                     {category}
                   </p>
@@ -629,9 +629,9 @@ const KanbanColumn: React.FC<KanbanColumnProps> = memo(({
       {/* Column Cards List */}
       <div className="flex-1 p-3 overflow-y-auto space-y-3 custom-scrollbar-kds relative min-h-0">
         {orders.length > 0 ? (
-          orders.map(order => (
+          orders.map((order, idx) => (
             <OrderCard
-              key={order.id}
+              key={order.id || `kds-ord-${idx}`}
               order={order}
               isSelected={selectedOrderIds.includes(order.id)}
               onToggleSelect={onToggleSelectOrder}
@@ -1213,9 +1213,9 @@ const KDS: React.FC<KDSProps> = memo(({
             </div>
             <div className="p-4 space-y-2.5 max-h-80 overflow-y-auto custom-scrollbar">
               {couriers.filter(c => c.status !== 'offline').length > 0 ? (
-                couriers.filter(c => c.status !== 'offline').map(courier => (
+                couriers.filter(c => c.status !== 'offline').map((courier, idx) => (
                   <button 
-                    key={courier.id} 
+                    key={courier.id || `kds-courier-${idx}`} 
                     type="button"
                     onClick={() => {
                       onAssignCourier(dispatchModalOrder.id, courier.id);

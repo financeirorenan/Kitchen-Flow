@@ -80,9 +80,10 @@ export function deduplicateOrders(ordersList: Order[]): Order[] {
         winner.payments = loser.payments || winner.payments;
         winner.paidAt = loser.paidAt || winner.paidAt;
         winner.completedAt = loser.completedAt || winner.completedAt;
-      } else if (loser.payments && loser.payments.length > 0 && (!winner.payments || winner.payments.length === 0)) {
+      } else if (loser.payments && loser.payments.length > (winner.payments?.length || 0)) {
         winner.payments = loser.payments;
         if (loser.paymentMethod) winner.paymentMethod = loser.paymentMethod;
+        if (loser.changeFor !== undefined) winner.changeFor = loser.changeFor;
       }
 
       result[matchedIdx] = winner;
