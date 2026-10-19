@@ -681,9 +681,43 @@ const Tables: React.FC<TablesProps> = memo(
         return normalizePaymentMethod(method, adminSettings);
       };
 
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-      const sessionOpenedAt = cashSession.openedAt ? parseToDate(cashSession.openedAt) : todayStart;
+      const emptyTotals: Record<string, number> = {
+        dinheiro: 0,
+        cartao_credito: 0,
+        cartao_debito: 0,
+        pix: 0,
+        vale_refeicao: 0,
+        conta_cliente: 0,
+      };
+
+      if (!cashSession.isOpen || !cashSession.openedAt) {
+        return {
+          totalsByMethod: emptyTotals,
+          totalSales: 0,
+          electronicTotal: 0,
+          cashIncomes: 0,
+          cashExpenses: 0,
+          sessionRecords: [],
+          sessionOrders: [],
+          expectedFinalValue: 0,
+          count: 0,
+        };
+      }
+
+      const sessionOpenedAt = parseToDate(cashSession.openedAt);
+      if (sessionOpenedAt.getTime() <= 0) {
+        return {
+          totalsByMethod: emptyTotals,
+          totalSales: 0,
+          electronicTotal: 0,
+          cashIncomes: 0,
+          cashExpenses: 0,
+          sessionRecords: [],
+          sessionOrders: [],
+          expectedFinalValue: Number(cashSession.openingValue) || 0,
+          count: 0,
+        };
+      }
 
       const sessionRecords = deduplicateFinancialRecords(financialRecords.filter((r) => {
         const isPaid = r.status === "paid" || !r.status;
@@ -691,8 +725,8 @@ const Tables: React.FC<TablesProps> = memo(
 
         if (r.shiftOpenedAt) {
           const shiftDate = parseToDate(r.shiftOpenedAt);
-          if (Math.abs(shiftDate.getTime() - sessionOpenedAt.getTime()) < 10000) {
-            return true;
+          if (shiftDate.getTime() > 0) {
+            return Math.abs(shiftDate.getTime() - sessionOpenedAt.getTime()) < 5000;
           }
         }
 
@@ -712,26 +746,48 @@ const Tables: React.FC<TablesProps> = memo(
         if (o.status === "cancelled" || isTrueSubTicket) return false;
         const isPaid = o.isSettled || o.paymentStatus === "paid" || (o.payments && o.payments.length > 0) || o.status === "finished" || o.status === "delivered";
         if (!isPaid) return false;
-        
-        const createdAt = parseToDate(o.createdAt);
-        if (createdAt >= sessionOpenedAt) return true;
 
-        if (o.paidAt && parseToDate(o.paidAt) >= sessionOpenedAt) return true;
-        if (o.completedAt && parseToDate(o.completedAt) >= sessionOpenedAt) return true;
-        if (o.finishedAt && parseToDate(o.finishedAt) >= sessionOpenedAt) return true;
-        if (o.updatedAt && parseToDate(o.updatedAt) >= sessionOpenedAt) return true;
-        if (o.payments && o.payments.some((p: any) => p.timestamp && parseToDate(p.timestamp) >= sessionOpenedAt)) return true;
-
-        // Fallback to same calendar day if orders occurred today
-        try {
-          const sessionDateStr = sessionOpenedAt.toISOString().slice(0, 10);
-          const orderDateStr = createdAt.toISOString().slice(0, 10);
-          if (sessionDateStr === orderDateStr) return true;
-        } catch {
-          // ignore
+        // 1. Se o pedido possui vínculo explícito com o turno (shiftOpenedAt), validar estritamente contra a sessão atual
+        if ((o as any).shiftOpenedAt) {
+          const orderShiftDate = parseToDate((o as any).shiftOpenedAt);
+          if (orderShiftDate.getTime() > 0) {
+            return Math.abs(orderShiftDate.getTime() - sessionOpenedAt.getTime()) < 5000;
+          }
         }
 
-        return false;
+        // 2. Validar pelo horário real do pagamento/liquidação (nunca incluir pedidos pagos antes da abertura deste caixa)
+        if (o.paidAt) {
+          const paidDate = parseToDate(o.paidAt);
+          if (paidDate.getTime() > 0) {
+            return paidDate >= sessionOpenedAt;
+          }
+        }
+
+        if (o.payments && o.payments.length > 0) {
+          const paymentTimes = o.payments
+            .map((p: any) => (p.timestamp ? parseToDate(p.timestamp).getTime() : 0))
+            .filter((t: number) => t > 0);
+          if (paymentTimes.length > 0) {
+            return Math.max(...paymentTimes) >= sessionOpenedAt.getTime();
+          }
+        }
+
+        if (o.completedAt) {
+          const completedDate = parseToDate(o.completedAt);
+          if (completedDate.getTime() > 0) {
+            return completedDate >= sessionOpenedAt;
+          }
+        }
+
+        if (o.finishedAt) {
+          const finishedDate = parseToDate(o.finishedAt);
+          if (finishedDate.getTime() > 0) {
+            return finishedDate >= sessionOpenedAt;
+          }
+        }
+
+        const createdAt = parseToDate(o.createdAt);
+        return createdAt >= sessionOpenedAt;
       }));
 
       // Monetary sums should exclude automated sale records (which already exist in sessionOrders)
@@ -742,6 +798,8 @@ const Tables: React.FC<TablesProps> = memo(
           return r.type === "income" && 
                  getStandardPaymentMethod(r.paymentMethod || "dinheiro") === "dinheiro" &&
                  !cat.includes("abertura") && 
+                 !cat.includes("fechamento") &&
+                 !cat.includes("ajuste") &&
                  !cat.startsWith("venda") &&
                  !cat.includes("motoboy") &&
                  !cat.includes("entregador") &&
@@ -750,7 +808,12 @@ const Tables: React.FC<TablesProps> = memo(
         .reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
 
       const extraExpenses = sessionRecords
-        .filter((r) => r.type === "expense" && getStandardPaymentMethod(r.paymentMethod || "dinheiro") === "dinheiro")
+        .filter((r) => {
+          const cat = (r.category || "").toLowerCase();
+          return r.type === "expense" &&
+                 !cat.includes("ajuste") &&
+                 getStandardPaymentMethod(r.paymentMethod || "dinheiro") === "dinheiro";
+        })
         .reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
 
       const totalsByMethod: Record<string, number> = {
@@ -762,20 +825,19 @@ const Tables: React.FC<TablesProps> = memo(
         conta_cliente: 0,
       };
 
-      const matchedFinRecordIds = new Set<string>();
       const sessionOrders: Order[] = [];
 
       rawSessionOrders.forEach((o) => {
         const orderTotal = Number(o.total) || 0;
-        const matchingRecords = sessionRecords.filter(r => 
-          r.orderId && (r.orderId === o.id || (o.docId && r.orderId === o.docId))
+        const matchingRecords = financialRecords.filter(r => 
+          r.orderId && (r.orderId === o.id || (o.docId && r.orderId === o.docId)) &&
+          parseToDate(r.date) >= sessionOpenedAt
         );
-        matchingRecords.forEach(r => matchedFinRecordIds.add(r.id));
 
         let paymentsToUse = o.payments;
         let primaryMethod = o.paymentMethod;
 
-        // Se o pedido teve paymentMethod sobrescrito ou marcado como subticket por engano, restaurar dados do lançamento financeiro
+        // Se o pedido teve paymentMethod sobrescrito ou marcado como subticket por engano, restaurar dados do lançamento financeiro da sessão
         if (o.isSubTicket || o.mergedIntoOrderId || (!paymentsToUse?.length && matchingRecords.length > 0)) {
           if (matchingRecords.length > 0) {
             paymentsToUse = matchingRecords.map(r => ({
@@ -825,39 +887,6 @@ const Tables: React.FC<TablesProps> = memo(
             totalsByMethod[method] += orderTotal;
           } else {
             totalsByMethod.dinheiro += orderTotal;
-          }
-        }
-      });
-
-      // Reconciliar lançamentos de vendas do financeiro durante a sessão que não possuem pedido ativo correspondente
-      sessionRecords.forEach((r) => {
-        const cat = (r.category || "").toLowerCase();
-        const isSale = cat.startsWith("venda") || Boolean(r.orderId);
-        if (isSale && !matchedFinRecordIds.has(r.id)) {
-          const rAmount = Number(r.amount) || 0;
-          if (rAmount > 0) {
-            const method = getStandardPaymentMethod(r.paymentMethod || "dinheiro");
-            if (totalsByMethod.hasOwnProperty(method)) {
-              totalsByMethod[method] += rAmount;
-            } else {
-              totalsByMethod.pix += rAmount;
-            }
-
-            // Sintetizar pedido para que o lançamento apareça na listagem detalhada de pedidos do método no caixa
-            const syntheticOrder: Order = {
-              id: r.orderId || `fin-${r.id}`,
-              total: rAmount,
-              status: "finished",
-              paymentMethod: method as any,
-              payments: [{ method: method as any, amount: rAmount, timestamp: r.date }],
-              isSettled: true,
-              paymentStatus: "paid",
-              items: [],
-              createdAt: r.date,
-              customerName: r.description || "Venda Registrada",
-              type: cat.includes("entrega") ? "delivery" : (cat.includes("balcao") ? "takeout" : "table")
-            };
-            sessionOrders.push(syntheticOrder);
           }
         }
       });

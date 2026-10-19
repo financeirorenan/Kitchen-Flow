@@ -5228,6 +5228,7 @@ const App: React.FC = () => {
       deliveryMethod: isRealDelivery ? 'entrega' : undefined,
       createdAt: activeOrderObj?.createdAt || (pdvEditOrder ? pdvEditOrder.createdAt : new Date()),
       paidAt: new Date(),
+      shiftOpenedAt: cashSession.openedAt || undefined,
       paymentStatus: 'paid',
       paymentMethod: method,
       payments: payments?.map(p => ({ ...p, timestamp: new Date() })),
@@ -6562,25 +6563,47 @@ const App: React.FC = () => {
         const isPaid = o.isSettled || o.paymentStatus === 'paid' || (o.payments && o.payments.length > 0) || o.status === 'finished' || o.status === 'delivered';
         if (!isPaid) return false;
 
-        const createdAt = parseToDate(o.createdAt);
-        if (createdAt >= openedDate) return true;
-
-        if (o.paidAt && parseToDate(o.paidAt) >= openedDate) return true;
-        if (o.completedAt && parseToDate(o.completedAt) >= openedDate) return true;
-        if (o.finishedAt && parseToDate(o.finishedAt) >= openedDate) return true;
-        if (o.updatedAt && parseToDate(o.updatedAt) >= openedDate) return true;
-        if (o.payments && o.payments.some((p: any) => p.timestamp && parseToDate(p.timestamp) >= openedDate)) return true;
-
-        // Fallback to same calendar day if orders occurred today
-        try {
-          const sessionDateStr = openedDate.toISOString().slice(0, 10);
-          const orderDateStr = createdAt.toISOString().slice(0, 10);
-          if (sessionDateStr === orderDateStr) return true;
-        } catch {
-          // ignore
+        // 1. Se o pedido possui vínculo explícito com o turno (shiftOpenedAt), validar estritamente contra a sessão atual
+        if ((o as any).shiftOpenedAt) {
+          const orderShiftDate = parseToDate((o as any).shiftOpenedAt);
+          if (orderShiftDate.getTime() > 0) {
+            return Math.abs(orderShiftDate.getTime() - openedDate.getTime()) < 5000;
+          }
         }
 
-        return false;
+        // 2. Validar pelo horário real do pagamento/liquidação (nunca incluir pedidos pagos antes da abertura deste caixa)
+        if (o.paidAt) {
+          const paidDate = parseToDate(o.paidAt);
+          if (paidDate.getTime() > 0) {
+            return paidDate >= openedDate;
+          }
+        }
+
+        if (o.payments && o.payments.length > 0) {
+          const paymentTimes = o.payments
+            .map((p: any) => (p.timestamp ? parseToDate(p.timestamp).getTime() : 0))
+            .filter((t: number) => t > 0);
+          if (paymentTimes.length > 0) {
+            return Math.max(...paymentTimes) >= openedDate.getTime();
+          }
+        }
+
+        if (o.completedAt) {
+          const completedDate = parseToDate(o.completedAt);
+          if (completedDate.getTime() > 0) {
+            return completedDate >= openedDate;
+          }
+        }
+
+        if (o.finishedAt) {
+          const finishedDate = parseToDate(o.finishedAt);
+          if (finishedDate.getTime() > 0) {
+            return finishedDate >= openedDate;
+          }
+        }
+
+        const createdAt = parseToDate(o.createdAt);
+        return createdAt >= openedDate;
       };
 
       // ROBUST CALCULATION: Fetch ALL orders during the session
@@ -6592,7 +6615,9 @@ const App: React.FC = () => {
         if (!isPaid) return false;
         if (r.shiftOpenedAt) {
           const shiftDate = parseToDate(r.shiftOpenedAt);
-          if (Math.abs(shiftDate.getTime() - openedDate.getTime()) < 10000) return true;
+          if (shiftDate.getTime() > 0) {
+            return Math.abs(shiftDate.getTime() - openedDate.getTime()) < 5000;
+          }
         }
         const date = parseToDate(r.date);
         return date >= openedDate;
@@ -6617,7 +6642,8 @@ const App: React.FC = () => {
                 updatedAt: (data.updatedAt as any)?.toDate ? (data.updatedAt as any).toDate() : (data.updatedAt ? new Date(data.updatedAt) : undefined),
                 finishedAt: (data.finishedAt as any)?.toDate ? (data.finishedAt as any).toDate() : (data.finishedAt ? new Date(data.finishedAt) : undefined),
                 completedAt: (data.completedAt as any)?.toDate ? (data.completedAt as any).toDate() : (data.completedAt ? new Date(data.completedAt) : undefined),
-                paidAt: (data.paidAt as any)?.toDate ? (data.paidAt as any).toDate() : (data.paidAt ? new Date(data.paidAt) : undefined)
+                paidAt: (data.paidAt as any)?.toDate ? (data.paidAt as any).toDate() : (data.paidAt ? new Date(data.paidAt) : undefined),
+                shiftOpenedAt: (data.shiftOpenedAt as any)?.toDate ? (data.shiftOpenedAt as any).toDate() : (data.shiftOpenedAt ? new Date(data.shiftOpenedAt) : undefined)
               } as Order;
             });
             salesSinceOpen = deduplicateOrders([...orders, ...fetchedOrders].filter(isOrderInSession));
@@ -6639,7 +6665,9 @@ const App: React.FC = () => {
               if (!isPaid) return false;
               if (r.shiftOpenedAt) {
                 const shiftDate = parseToDate(r.shiftOpenedAt);
-                if (Math.abs(shiftDate.getTime() - openedDate.getTime()) < 10000) return true;
+                if (shiftDate.getTime() > 0) {
+                  return Math.abs(shiftDate.getTime() - openedDate.getTime()) < 5000;
+                }
               }
               const date = parseToDate(r.date);
               return date >= openedDate;
@@ -6659,14 +6687,11 @@ const App: React.FC = () => {
         conta_cliente: 0
       };
 
-      const matchedFinRecordIds = new Set<string>();
-
       salesSinceOpen.forEach(o => {
         const orderTotal = Number(o.total) || 0;
         const matchingRecords = recordsDuringSession.filter(r => 
           r.orderId && (r.orderId === o.id || (o.docId && r.orderId === o.docId))
         );
-        matchingRecords.forEach(r => matchedFinRecordIds.add(r.id));
 
         let paymentsToUse = o.payments;
         let primaryMethod = o.paymentMethod;
@@ -6717,41 +6742,31 @@ const App: React.FC = () => {
         }
       });
 
-      // Reconciliar lançamentos de vendas do financeiro que não estão associados a nenhum pedido da sessão
-      recordsDuringSession.forEach(r => {
-        const cat = (r.category || '').toLowerCase();
-        const isSale = cat.startsWith('venda') || Boolean(r.orderId);
-        if (isSale && !matchedFinRecordIds.has(r.id)) {
-          const rAmount = Number(r.amount) || 0;
-          if (rAmount > 0) {
-            const method = getStandardPaymentMethod(r.paymentMethod || 'dinheiro') as PaymentMethod;
-            if (salesByMethod[method] !== undefined) {
-              salesByMethod[method] += rAmount;
-            } else {
-              salesByMethod.pix += rAmount;
-            }
-          }
-        }
-      });
-
       const totalSales = Object.values(salesByMethod).reduce((acc, val) => acc + val, 0);
 
-       const cashIncomes = recordsDuringSession
-         .filter(r => {
-           const cat = (r.category || '').toLowerCase();
-           return r.type === 'income' && 
-                  getStandardPaymentMethod(r.paymentMethod || 'dinheiro') === 'dinheiro' && 
-                  !cat.includes('abertura') && 
-                  !cat.startsWith('venda') &&
-                  !cat.includes('motoboy') &&
-                  !cat.includes('entregador') &&
-                  !r.orderId;
-         })
-         .reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
+      const cashIncomes = recordsDuringSession
+        .filter(r => {
+          const cat = (r.category || '').toLowerCase();
+          return r.type === 'income' && 
+                 getStandardPaymentMethod(r.paymentMethod || 'dinheiro') === 'dinheiro' && 
+                 !cat.includes('abertura') && 
+                 !cat.includes('fechamento') &&
+                 !cat.includes('ajuste') &&
+                 !cat.startsWith('venda') &&
+                 !cat.includes('motoboy') &&
+                 !cat.includes('entregador') &&
+                 !r.orderId;
+        })
+        .reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
        
-       const cashExpenses = recordsDuringSession
-         .filter(r => r.type === 'expense' && getStandardPaymentMethod(r.paymentMethod || 'dinheiro') === 'dinheiro')
-         .reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
+      const cashExpenses = recordsDuringSession
+        .filter(r => {
+          const cat = (r.category || '').toLowerCase();
+          return r.type === 'expense' &&
+                 !cat.includes('ajuste') &&
+                 getStandardPaymentMethod(r.paymentMethod || 'dinheiro') === 'dinheiro';
+        })
+        .reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
 
       const expectedCash = (Number(cashSession.openingValue) || 0) + (salesByMethod.dinheiro || 0) + cashIncomes - cashExpenses;
 
