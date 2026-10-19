@@ -434,8 +434,6 @@ const Tables: React.FC<TablesProps> = memo(
             isDelivery: isDeliveryOrder,
           };
           onSendToKitchen(targetId, unsentItems, isCounterContext, customerData);
-          const updatedItems = selectedTable.items.map(i => ({ ...i, sentToKitchen: true }));
-          onUpdateTable(selectedTable.id, updatedItems, "occupied", isCounterContext, undefined, customerData);
         }
       }
 
@@ -543,7 +541,7 @@ const Tables: React.FC<TablesProps> = memo(
         isCounter,
         deliveryInfo,
         customerDocument,
-        payments,
+        computedPayments,
         receivedAmount,
         additionalFee,
         additionalFeeReason,
@@ -675,8 +673,6 @@ const Tables: React.FC<TablesProps> = memo(
     };
 
     const cashReport = useMemo(() => {
-      if (!cashSession.openedAt) return null;
-
       const parseToDate = (val: any): Date => {
         return toSafeDate(val, new Date(0));
       };
@@ -685,7 +681,9 @@ const Tables: React.FC<TablesProps> = memo(
         return normalizePaymentMethod(method, adminSettings);
       };
 
-      const sessionOpenedAt = parseToDate(cashSession.openedAt);
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const sessionOpenedAt = cashSession.openedAt ? parseToDate(cashSession.openedAt) : todayStart;
 
       const sessionRecords = deduplicateFinancialRecords(financialRecords.filter((r) => {
         const isPaid = r.status === "paid" || !r.status;
@@ -1028,7 +1026,42 @@ const Tables: React.FC<TablesProps> = memo(
         onUpdateTable(table.id, [], "occupied");
         setSelectedTable({ ...table, status: "occupied", items: [], total: 0 });
       } else {
-        setSelectedTable(table);
+        const activeOrder = (orders || []).find(o =>
+          o &&
+          !o.isSettled &&
+          o.paymentStatus !== 'paid' &&
+          o.status !== 'cancelled' &&
+          o.status !== 'finished' &&
+          ((table.currentOrderId && (o.id === table.currentOrderId || o.docId === table.currentOrderId)) ||
+            ((o.type === 'table' || !o.type) && String(o.tableNumber) === String(table.number)))
+        );
+        const syncedItems = (table.items || []).map((item, idx) => {
+          const matchInOrder = activeOrder?.items?.find(oi =>
+            Boolean(oi.id && item.id && oi.id === item.id) ||
+            (oi.productId === item.productId && oi.name === item.name && (oi.observation || '') === (item.observation || ''))
+          );
+          if (matchInOrder) {
+            return {
+              ...item,
+              id: item.id || matchInOrder.id || `item-sync-${idx}-${Date.now()}`,
+              sentToKitchen: true,
+              batchNumber: item.batchNumber ?? matchInOrder.batchNumber ?? 1,
+              isNew: item.isNew ?? matchInOrder.isNew ?? false,
+              kitchenDispatched: item.kitchenDispatched ?? matchInOrder.kitchenDispatched ?? false,
+              sentAt: item.sentAt ?? matchInOrder.sentAt
+            };
+          }
+          return {
+            ...item,
+            id: item.id || `item-sync-${idx}-${Date.now()}`,
+            sentToKitchen: activeOrder ? true : item.sentToKitchen
+          };
+        });
+        setSelectedTable({
+          ...table,
+          currentOrderId: table.currentOrderId || activeOrder?.id,
+          items: syncedItems
+        });
         if (table.customerName) setCustomerName(table.customerName);
         if (table.customerPhone) setCustomerPhone(table.customerPhone);
         if (table.customerAddress) setDeliveryAddress(table.customerAddress);
@@ -1374,12 +1407,14 @@ const Tables: React.FC<TablesProps> = memo(
           newItems = [
             ...selectedTable.items,
             {
+              id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
               productId: product.id,
               name: product.name,
               price: itemPrice,
               quantity: qty,
               category: product.category,
               seat: activeSeat,
+              sentToKitchen: false,
               selectedOptions:
                 finalOptions.length > 0 ? finalOptions : undefined,
               observation: observation || undefined,
@@ -1660,7 +1695,12 @@ const Tables: React.FC<TablesProps> = memo(
       if (!selectedTable || selectedTable.items.length === 0) return;
 
       const unsentItems = selectedTable.items.filter((i) => !i.sentToKitchen);
-      // Se não houver itens pendentes, reenviamos todos os itens da comanda/mesa para garantir sincronização no KDS
+      // Se já houver pedido ativo na cozinha e não houver itens novos pendentes, não reenvia itens antigos
+      if (unsentItems.length === 0 && selectedTable.currentOrderId) {
+        setShowKitchenSuccess(true);
+        setTimeout(() => setShowKitchenSuccess(false), 2000);
+        return;
+      }
       const itemsToSend = unsentItems.length > 0 ? unsentItems : selectedTable.items;
 
       const deliveryFeeVal = isDeliveryOrder && isCounterContext ? parseCurrency(deliveryFeeInput) : 0;
@@ -1678,20 +1718,12 @@ const Tables: React.FC<TablesProps> = memo(
       const targetId = pdvEditOrder ? pdvEditOrder.id : selectedTable.id;
       onSendToKitchen(targetId, itemsToSend, isCounterContext, customerData);
 
-      // Marcar itens como enviados no estado local
+      // Marcar itens como enviados no estado local da comanda/mesa
       const updatedItems = selectedTable.items.map((item) => ({
         ...item,
         sentToKitchen: true,
       }));
 
-      onUpdateTable(
-        selectedTable.id,
-        updatedItems,
-        "occupied",
-        isCounterContext,
-        undefined,
-        customerData
-      );
       setSelectedTable((prev) =>
         prev ? { 
           ...prev, 
@@ -2594,16 +2626,18 @@ const Tables: React.FC<TablesProps> = memo(
               Caixa {cashSession.isOpen ? "Aberto" : "Fechado"}
             </button>
 
-            {cashSession.isOpen && (
+            {(cashSession.isOpen || (cashReport?.totalSales || 0) > 0) && (
               <div className="hidden sm:flex gap-2">
-                <div className="text-left border-l pl-2">
-                  <p className="text-[7px] font-black text-slate-400 uppercase">
-                    Fundo Inicial
-                  </p>
-                  <p className="font-black text-slate-700 text-[10px]">
-                    R$ {cashSession.openingValue.toFixed(2)}
-                  </p>
-                </div>
+                {cashSession.isOpen && (
+                  <div className="text-left border-l pl-2">
+                    <p className="text-[7px] font-black text-slate-400 uppercase">
+                      Fundo Inicial
+                    </p>
+                    <p className="font-black text-slate-700 text-[10px]">
+                      R$ {cashSession.openingValue.toFixed(2)}
+                    </p>
+                  </div>
+                )}
                 <div className="text-left border-l pl-2">
                   <p className="text-[7px] font-black text-slate-400 uppercase">
                     Vendas Atual

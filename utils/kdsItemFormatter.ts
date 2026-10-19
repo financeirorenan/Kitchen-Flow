@@ -111,7 +111,8 @@ export function isAllergenAlert(text: string): boolean {
  */
 export function parseKdsItemDetails(
   item: OrderItem,
-  orderHasMultipleBatches = false
+  orderHasMultipleBatches = false,
+  maxBatchNumber = 1
 ): ParsedKdsItemDetails {
   const rawOptions: ProductOption[] = [
     ...(item.selectedOptions || []),
@@ -210,8 +211,9 @@ export function parseKdsItemDetails(
   }
 
   const batchNumber = item.batchNumber || (item as any).round || 1;
-  const isNewBatch = !!(item.isNew || batchNumber > 1);
-  const isPreviousBatch = orderHasMultipleBatches && batchNumber === 1 && !isNewBatch;
+  const effectiveMaxBatch = maxBatchNumber > 1 ? maxBatchNumber : batchNumber;
+  const isNewBatch = !item.kitchenDispatched && (item.isNew === true || (orderHasMultipleBatches && batchNumber > 1 && batchNumber >= effectiveMaxBatch && item.isNew !== false));
+  const isPreviousBatch = orderHasMultipleBatches && !isNewBatch;
   const isCancelled = !!item.cancelled;
 
   return {

@@ -119,7 +119,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
     const result: (Order & { mergedOrderIds?: string[] })[] = [];
 
     for (const order of validOrders) {
-      if (order.type === 'table' && order.tableNumber) {
+      if (order.type === 'table' && order.tableNumber && !order.isSettled) {
         const tableKey = String(order.tableNumber);
         if (tableOrdersMap.has(tableKey)) {
           const existing = tableOrdersMap.get(tableKey)!;
@@ -583,7 +583,24 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             <AnimatePresence>
               {filteredKitchenOrders.map(order => {
-                const itemsToDisplay = order.items || [];
+                const allSentItems = (order.items || []).filter(i => !i.cancelled && i.sentToKitchen !== false);
+                const undispatchedItems = allSentItems.filter(i => !i.kitchenDispatched);
+                const baseItemsToProduce = undispatchedItems.length > 0 ? undispatchedItems : allSentItems;
+                const stationFilteredItems = selectedStation === 'all'
+                  ? baseItemsToProduce
+                  : baseItemsToProduce.filter(item => {
+                      const prod = products.find(p => p.id === item.productId || p.name.toLowerCase() === item.name.split(' (')[0].trim().toLowerCase());
+                      return prod?.category === selectedStation;
+                    });
+                const maxBatchNumber = allSentItems.reduce((max, it) => Math.max(max, it.batchNumber || 1), 1);
+                const orderHasMultipleBatches = allSentItems.some(it => (it.batchNumber || 1) > 1 || it.isNew);
+                const itemsToDisplay = [...stationFilteredItems].sort((a, b) => {
+                  const aIsNew = Boolean(a.isNew) || (orderHasMultipleBatches && (a.batchNumber || 1) === maxBatchNumber && maxBatchNumber > 1);
+                  const bIsNew = Boolean(b.isNew) || (orderHasMultipleBatches && (b.batchNumber || 1) === maxBatchNumber && maxBatchNumber > 1);
+                  if (aIsNew && !bIsNew) return -1;
+                  if (!aIsNew && bIsNew) return 1;
+                  return (b.batchNumber || 1) - (a.batchNumber || 1);
+                });
                 if (itemsToDisplay.length === 0) return null;
 
                 const destInfo = getDestinationInfo(order);
@@ -684,13 +701,9 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                       {/* Lista de Itens com Adicionais, Remoções e Rodadas */}
                       <div className="space-y-3.5">
                         {(() => {
-                          const orderHasMultipleBatches = itemsToDisplay.some(
-                            (it) => ((it as any).batchNumber || 1) > 1 || (it as any).isNew
-                          );
-
                           return itemsToDisplay.map((item, idx) => {
                             const isMulti = item.quantity > 1;
-                            const details = parseKdsItemDetails(item, orderHasMultipleBatches);
+                            const details = parseKdsItemDetails(item, orderHasMultipleBatches, maxBatchNumber);
 
                             return (
                               <div

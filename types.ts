@@ -817,6 +817,7 @@ export interface OrderItem {
   sentAt?: string;
   round?: number;
   cancelled?: boolean;
+  kitchenDispatched?: boolean;
 }
 
 export interface OrderPayment {

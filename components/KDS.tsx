@@ -107,10 +107,17 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
     return tableRef ? String(tableRef.number) : tNum.slice(-4);
   }, [order.tableNumber, order.type, tables]);
 
-  // Group items by category
+  // Group items by category (quando em preparo na cozinha e houver nova rodada, exibe apenas os itens pendentes de produção)
   const itemsByCategory = useMemo(() => {
     if (!order.items || order.items.length === 0) return {};
-    return order.items.reduce<Record<string, typeof order.items>>((acc, item) => {
+    const sentItems = order.items.filter(i => i.sentToKitchen !== false);
+    const isCookingStage = order.status === 'pending' || order.status === 'preparing' || order.kitchenStatus === 'pending' || order.kitchenStatus === 'preparing';
+    const undispatched = sentItems.filter(i => !i.cancelled && !i.kitchenDispatched);
+    const sourceItems = (isCookingStage && undispatched.length > 0)
+      ? sentItems.filter(i => !i.kitchenDispatched)
+      : sentItems;
+
+    return sourceItems.reduce<Record<string, typeof order.items>>((acc, item) => {
       let category = item.category;
       if (!category && products && products.length > 0) {
         let prod = item.productId ? products.find(p => p.id === item.productId) : null;
@@ -132,7 +139,7 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
       acc[finalCat].push(item);
       return acc;
     }, {});
-  }, [order.items, products]);
+  }, [order.items, order.status, order.kitchenStatus, products]);
 
   const canGoBack = order.status === 'ready' || order.status === 'delivering';
   const canAdvance = order.status === 'pending' || order.status === 'preparing' || order.status === 'ready' || order.status === 'delivering';
@@ -235,10 +242,14 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
                       const orderHasMultipleBatches = order.items.some(
                         (it) => ((it as any).batchNumber || 1) > 1 || (it as any).isNew
                       );
+                      const maxBatchNumber = order.items.reduce(
+                        (max, it) => Math.max(max, (it as any).batchNumber || 1),
+                        1
+                      );
 
                       return items.map((item, idx) => {
                         const isMulti = item.quantity > 1;
-                        const details = parseKdsItemDetails(item, orderHasMultipleBatches);
+                        const details = parseKdsItemDetails(item, orderHasMultipleBatches, maxBatchNumber);
 
                         return (
                           <div
@@ -805,7 +816,7 @@ const KDS: React.FC<KDSProps> = memo(({
 
     for (const order of valid) {
       const isPendingOrPreparing = order.status === 'pending' || order.status === 'preparing';
-      if (order.type === 'table' && order.tableNumber && isPendingOrPreparing) {
+      if (order.type === 'table' && order.tableNumber && isPendingOrPreparing && !order.isSettled) {
         const tableKey = String(order.tableNumber);
         if (tableOrdersMap.has(tableKey)) {
           const existing = tableOrdersMap.get(tableKey)!;
