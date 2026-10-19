@@ -707,8 +707,9 @@ const Tables: React.FC<TablesProps> = memo(
         );
       }));
 
-      const sessionOrders = deduplicateOrders(orders.filter((o) => {
-        if (o.status === "cancelled" || o.isSubTicket || o.mergedIntoOrderId) return false;
+      const rawSessionOrders = deduplicateOrders(orders.filter((o) => {
+        const isTrueSubTicket = Boolean((o.isSubTicket || o.mergedIntoOrderId) && !financialRecords.some(r => r.orderId && (r.orderId === o.id || (o.docId && r.orderId === o.docId))));
+        if (o.status === "cancelled" || isTrueSubTicket) return false;
         const isPaid = o.isSettled || o.paymentStatus === "paid" || (o.payments && o.payments.length > 0) || o.status === "finished" || o.status === "delivered";
         if (!isPaid) return false;
         
@@ -761,27 +762,57 @@ const Tables: React.FC<TablesProps> = memo(
         conta_cliente: 0,
       };
 
-      sessionOrders.forEach((o) => {
+      const matchedFinRecordIds = new Set<string>();
+      const sessionOrders: Order[] = [];
+
+      rawSessionOrders.forEach((o) => {
         const orderTotal = Number(o.total) || 0;
-        if (o.payments && o.payments.length > 0) {
+        const matchingRecords = sessionRecords.filter(r => 
+          r.orderId && (r.orderId === o.id || (o.docId && r.orderId === o.docId))
+        );
+        matchingRecords.forEach(r => matchedFinRecordIds.add(r.id));
+
+        let paymentsToUse = o.payments;
+        let primaryMethod = o.paymentMethod;
+
+        // Se o pedido teve paymentMethod sobrescrito ou marcado como subticket por engano, restaurar dados do lançamento financeiro
+        if (o.isSubTicket || o.mergedIntoOrderId || (!paymentsToUse?.length && matchingRecords.length > 0)) {
+          if (matchingRecords.length > 0) {
+            paymentsToUse = matchingRecords.map(r => ({
+              method: r.paymentMethod as any,
+              amount: Number(r.amount) || 0,
+              timestamp: r.date
+            }));
+            primaryMethod = matchingRecords[0].paymentMethod as any;
+          }
+        }
+
+        const healedOrder: Order = {
+          ...o,
+          paymentMethod: primaryMethod || o.paymentMethod || "dinheiro",
+          payments: paymentsToUse || o.payments
+        };
+        sessionOrders.push(healedOrder);
+
+        if (paymentsToUse && paymentsToUse.length > 0) {
           let paymentsSum = 0;
-          o.payments.forEach((p) => {
+          paymentsToUse.forEach((p) => {
             const pAmount = Number(p.amount) || 0;
             if (pAmount > 0) {
               const method = getStandardPaymentMethod(p.method);
               if (totalsByMethod.hasOwnProperty(method)) {
                 totalsByMethod[method] += pAmount;
               } else {
-                totalsByMethod.dinheiro += pAmount;
+                totalsByMethod.pix += pAmount;
               }
               paymentsSum += pAmount;
             }
           });
 
-          // If payment records sum is less than total, allocate difference to primary paymentMethod
+          // Se a soma dos pagamentos for menor que o total, alocar diferença
           if (orderTotal > paymentsSum + 0.009) {
             const diff = orderTotal - paymentsSum;
-            const fallbackMethod = getStandardPaymentMethod(o.paymentMethod || "dinheiro");
+            const fallbackMethod = getStandardPaymentMethod(primaryMethod || "dinheiro");
             if (totalsByMethod.hasOwnProperty(fallbackMethod)) {
               totalsByMethod[fallbackMethod] += diff;
             } else {
@@ -789,11 +820,44 @@ const Tables: React.FC<TablesProps> = memo(
             }
           }
         } else {
-          const method = getStandardPaymentMethod(o.paymentMethod || "dinheiro");
+          const method = getStandardPaymentMethod(primaryMethod || "dinheiro");
           if (totalsByMethod.hasOwnProperty(method)) {
             totalsByMethod[method] += orderTotal;
           } else {
             totalsByMethod.dinheiro += orderTotal;
+          }
+        }
+      });
+
+      // Reconciliar lançamentos de vendas do financeiro durante a sessão que não possuem pedido ativo correspondente
+      sessionRecords.forEach((r) => {
+        const cat = (r.category || "").toLowerCase();
+        const isSale = cat.startsWith("venda") || Boolean(r.orderId);
+        if (isSale && !matchedFinRecordIds.has(r.id)) {
+          const rAmount = Number(r.amount) || 0;
+          if (rAmount > 0) {
+            const method = getStandardPaymentMethod(r.paymentMethod || "dinheiro");
+            if (totalsByMethod.hasOwnProperty(method)) {
+              totalsByMethod[method] += rAmount;
+            } else {
+              totalsByMethod.pix += rAmount;
+            }
+
+            // Sintetizar pedido para que o lançamento apareça na listagem detalhada de pedidos do método no caixa
+            const syntheticOrder: Order = {
+              id: r.orderId || `fin-${r.id}`,
+              total: rAmount,
+              status: "finished",
+              paymentMethod: method as any,
+              payments: [{ method: method as any, amount: rAmount, timestamp: r.date }],
+              isSettled: true,
+              paymentStatus: "paid",
+              items: [],
+              createdAt: r.date,
+              customerName: r.description || "Venda Registrada",
+              type: cat.includes("entrega") ? "delivery" : (cat.includes("balcao") ? "takeout" : "table")
+            };
+            sessionOrders.push(syntheticOrder);
           }
         }
       });

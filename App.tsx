@@ -1576,20 +1576,35 @@ const App: React.FC = () => {
           setOrders(prev => {
             const updated = [...prev];
             items.forEach((cloudOrder: any) => {
-              const existingIdx = updated.findIndex(o => o.id === cloudOrder.id);
+              const existingIdx = updated.findIndex(o => o.id === cloudOrder.id || (cloudOrder.docId && o.docId === cloudOrder.docId));
               if (existingIdx > -1) {
-                const localStatus = updated[existingIdx].status;
+                const localOrder = updated[existingIdx];
+                const localStatus = localOrder.status;
                 const cloudStatus = cloudOrder.status;
 
                 const terminalStatuses = ['delivered', 'finished', 'cancelled'];
                 const localIsTerminal = terminalStatuses.includes(localStatus);
                 const cloudIsTerminal = terminalStatuses.includes(cloudStatus);
+                const isNewBatchInKitchen =
+                  cloudStatus === 'preparing' ||
+                  cloudOrder.kitchenStatus === 'preparing' ||
+                  ((cloudOrder.currentBatch || 1) > ((localOrder as any).currentBatch || 1));
 
-                // Se o status local for terminal e o cloud não for, só ignora se não for cancelamento remoto
-                if (localIsTerminal && !cloudIsTerminal && cloudStatus !== 'cancelled') {
+                // Se o status local for terminal e o cloud não for, só ignora se não for cancelamento remoto nem nova rodada na cozinha
+                if (localIsTerminal && !cloudIsTerminal && cloudStatus !== 'cancelled' && !isNewBatchInKitchen) {
                   console.log(`Resilience: Keeping terminal status ${localStatus} for order ${cloudOrder.id}`);
                 } else {
-                  updated[existingIdx] = cloudOrder;
+                  // Blindagem de Pagamento: se o pedido local já foi liquidado, preservar as propriedades de liquidação
+                  const merged = { ...cloudOrder };
+                  if (localOrder.isSettled || localOrder.paymentStatus === 'paid' || (localOrder.payments && localOrder.payments.length > 0)) {
+                    merged.isSettled = true;
+                    merged.paymentStatus = 'paid';
+                    merged.paymentMethod = localOrder.paymentMethod || merged.paymentMethod;
+                    merged.payments = localOrder.payments || merged.payments;
+                    merged.paidAt = localOrder.paidAt || merged.paidAt;
+                    merged.completedAt = localOrder.completedAt || merged.completedAt;
+                  }
+                  updated[existingIdx] = merged;
                 }
               } else {
                 updated.push(cloudOrder);
@@ -2857,7 +2872,7 @@ const App: React.FC = () => {
             const rawCloudOrder = convertTimestamps({ ...docData, id: docData.id || change.doc.id, docId: change.doc.id }) as Order;
             const cloudOrder: Order = {
               ...rawCloudOrder,
-              paymentMethod: normalizePaymentMethod(rawCloudOrder.paymentMethod, adminSettings)
+              paymentMethod: rawCloudOrder.paymentMethod ? normalizePaymentMethod(rawCloudOrder.paymentMethod, adminSettings) : undefined
             };
 
             // Remover da fila de digitais pendentes se deixou de ser pending
@@ -2891,7 +2906,18 @@ const App: React.FC = () => {
               const idx = prev.findIndex(o => o.id === cloudOrder.id || o.docId === cloudOrder.docId);
               if (idx !== -1) {
                 const updatedList = [...prev];
-                updatedList[idx] = { ...updatedList[idx], ...cloudOrder };
+                const existing = updatedList[idx];
+                const merged: Order = { ...existing, ...cloudOrder };
+                // Blindagem de Pagamento: se o pedido local já estava liquidado, manter dados de liquidação
+                if (existing.isSettled || existing.paymentStatus === 'paid' || (existing.payments && existing.payments.length > 0)) {
+                  merged.isSettled = true;
+                  merged.paymentStatus = 'paid';
+                  merged.paymentMethod = existing.paymentMethod || merged.paymentMethod;
+                  merged.payments = existing.payments || merged.payments;
+                  merged.paidAt = existing.paidAt || merged.paidAt;
+                  merged.completedAt = existing.completedAt || merged.completedAt;
+                }
+                updatedList[idx] = merged;
                 return updatedList;
               }
               return [cloudOrder, ...prev];
@@ -3489,7 +3515,7 @@ const App: React.FC = () => {
     if (pdvEditOrder) {
       activeExistingOrder = orders.find(o => o.id === pdvEditOrder.id || o.docId === pdvEditOrder.id) || pdvEditOrder;
     } else if (tableInfo?.currentOrderId) {
-      activeExistingOrder = orders.find(o => (o.id === tableInfo.currentOrderId || o.docId === tableInfo.currentOrderId) && o.status !== 'cancelled' && o.status !== 'finished');
+      activeExistingOrder = orders.find(o => (o.id === tableInfo.currentOrderId || o.docId === tableInfo.currentOrderId) && o.status !== 'cancelled' && o.status !== 'finished' && !o.isSettled && o.paymentStatus !== 'paid');
     }
 
     if (!activeExistingOrder) {
@@ -3501,8 +3527,7 @@ const App: React.FC = () => {
           !o.isSettled &&
           o.paymentStatus !== 'paid' &&
           o.status !== 'cancelled' && 
-          o.status !== 'finished' &&
-          o.status !== 'delivered'
+          o.status !== 'finished'
         );
       } else {
         // Para balcão/delivery
@@ -3581,7 +3606,7 @@ const App: React.FC = () => {
           : displayTableNumber),
         items: existingItems,
         total: finalOrderTotal,
-        status: (activeExistingOrder.status === 'ready' || activeExistingOrder.status === 'delivering') ? 'preparing' : activeExistingOrder.status,
+        status: 'preparing',
         kitchenStatus: 'preparing',
         productionStatus: 'in_production',
         updatedAt: now,
@@ -4166,8 +4191,10 @@ const App: React.FC = () => {
     if (updates.paymentMethod || updates.total !== undefined) {
       const newMethod = updates.paymentMethod || oldOrder?.paymentMethod || 'dinheiro';
       const newTotal = updates.total !== undefined ? updates.total : (oldOrder?.total || 0);
-      if (oldOrder?.payments && oldOrder.payments.length > 0) {
-        updates.payments = [{ method: newMethod, amount: newTotal }];
+      if (!updates.payments) {
+        if (oldOrder?.payments && oldOrder.payments.length === 1) {
+          updates.payments = [{ method: updates.paymentMethod || oldOrder.payments[0].method, amount: newTotal }];
+        }
       }
     }
 
@@ -4705,11 +4732,13 @@ const App: React.FC = () => {
         ? counterOrders.find(t => t.id === tableId) 
         : tables.find(t => t.id === tableId || t.id === numericId || (t as any).docId === tableId);
 
-      // Remove pedidos de cozinha (KDS-) pendentes ou prontos para esta mesa/balcão
+      // Remove pedidos de cozinha (KDS-) pendentes ou prontos para esta mesa/balcão (NUNCA deletar pedidos já quitados!)
       const tableNumber = table?.number || tableId;
       const kitchenOrderIdsToRemove = orders
         .filter(o => 
           (o.status === 'preparing' || o.status === 'ready') && 
+          !o.isSettled && 
+          o.paymentStatus !== 'paid' &&
           o.id.startsWith('KDS-') && 
           (String(o.tableNumber) === String(tableNumber))
         )
@@ -5119,8 +5148,14 @@ const App: React.FC = () => {
 
     // Tentar localizar o pedido existente para reaproveitar seu ID e evitar duplicidade
     let existingOrderId = pdvEditOrder ? pdvEditOrder.id : table.currentOrderId;
+    if (existingOrderId) {
+      const linkedOrd = orders.find(o => o.id === existingOrderId || o.docId === existingOrderId);
+      if (linkedOrd && (linkedOrd.isSettled || linkedOrd.paymentStatus === 'paid' || linkedOrd.status === 'finished' || linkedOrd.status === 'cancelled')) {
+        existingOrderId = undefined;
+      }
+    }
     if (!existingOrderId) {
-      const match = orders.find(o => o.id === strTableId || o.docId === strTableId);
+      const match = orders.find(o => (o.id === strTableId || o.docId === strTableId) && !o.isSettled && o.paymentStatus !== 'paid' && o.status !== 'cancelled' && o.status !== 'finished');
       if (match) {
         existingOrderId = match.id;
       }
@@ -5128,9 +5163,12 @@ const App: React.FC = () => {
     if (!existingOrderId && !isCounter && !isRealDelivery) {
       const activeOrd = orders.find(o => 
         (String(o.tableNumber) === String(tableNumber)) && 
-        (o.type === 'table' || o.type === 'dine_in') && 
+        (o.type === 'table' || o.type === 'dine_in' || !o.type) && 
+        !o.isSettled &&
+        o.paymentStatus !== 'paid' &&
         o.status !== 'cancelled' && 
-        o.status !== 'finished'
+        o.status !== 'finished' &&
+        !o.isSubTicket
       );
       if (activeOrd) {
         existingOrderId = activeOrd.id;
@@ -5154,8 +5192,8 @@ const App: React.FC = () => {
 
     // Tentar localizar pedido ativo correspondente para preservar status da cozinha
     const activeOrderObj = existingOrderId 
-      ? orders.find(o => o.id === existingOrderId || o.docId === existingOrderId)
-      : orders.find(o => !isCounter && String(o.tableNumber) === String(tableNumber) && o.status !== 'cancelled' && o.status !== 'finished');
+      ? orders.find(o => (o.id === existingOrderId || o.docId === existingOrderId) && !o.isSettled && o.paymentStatus !== 'paid')
+      : orders.find(o => !isCounter && String(o.tableNumber) === String(tableNumber) && o.status !== 'cancelled' && o.status !== 'finished' && !o.isSettled && o.paymentStatus !== 'paid' && !o.isSubTicket);
 
     const activeStatus = activeOrderObj?.status;
 
@@ -5426,12 +5464,16 @@ const App: React.FC = () => {
         }
       }
 
-      // Atualizar pedidos relacionados a esta mesa/balcão para encerrá-los
+      // Atualizar pedidos relacionados a esta mesa/balcão para encerrá-los (NUNCA tocar em pedidos já quitados!)
       const relatedOrdersToUpdate = orders.filter(o => 
         o.id !== newOrder.id &&
+        (o as any).docId !== newOrder.id &&
         o.status !== 'cancelled' &&
+        o.status !== 'finished' &&
+        !o.isSettled &&
+        o.paymentStatus !== 'paid' &&
         (
-          (existingOrderId && o.id === existingOrderId) ||
+          (existingOrderId && (o.id === existingOrderId || (o as any).docId === existingOrderId)) ||
           (tableNumber !== undefined && tableNumber !== null && String(o.tableNumber) === String(tableNumber) && !isCounter)
         )
       );
@@ -6515,7 +6557,8 @@ const App: React.FC = () => {
       // Helper to check if an order belongs to this cash session
       const isOrderInSession = (o: Order) => {
         if (!isMatchingTenant(o.tenantId)) return false;
-        if (o.status === 'cancelled' || o.isSubTicket || o.mergedIntoOrderId) return false;
+        const isTrueSubTicket = Boolean((o.isSubTicket || o.mergedIntoOrderId) && !financialRecords.some(r => r.orderId && (r.orderId === o.id || (o.docId && r.orderId === o.docId))));
+        if (o.status === 'cancelled' || isTrueSubTicket) return false;
         const isPaid = o.isSettled || o.paymentStatus === 'paid' || (o.payments && o.payments.length > 0) || o.status === 'finished' || o.status === 'delivered';
         if (!isPaid) return false;
 
@@ -6616,27 +6659,48 @@ const App: React.FC = () => {
         conta_cliente: 0
       };
 
+      const matchedFinRecordIds = new Set<string>();
+
       salesSinceOpen.forEach(o => {
         const orderTotal = Number(o.total) || 0;
-        if (o.payments && o.payments.length > 0) {
+        const matchingRecords = recordsDuringSession.filter(r => 
+          r.orderId && (r.orderId === o.id || (o.docId && r.orderId === o.docId))
+        );
+        matchingRecords.forEach(r => matchedFinRecordIds.add(r.id));
+
+        let paymentsToUse = o.payments;
+        let primaryMethod = o.paymentMethod;
+
+        if (o.isSubTicket || o.mergedIntoOrderId || (!paymentsToUse?.length && matchingRecords.length > 0)) {
+          if (matchingRecords.length > 0) {
+            paymentsToUse = matchingRecords.map(r => ({
+              method: r.paymentMethod as any,
+              amount: Number(r.amount) || 0,
+              timestamp: r.date
+            }));
+            primaryMethod = matchingRecords[0].paymentMethod as any;
+          }
+        }
+
+        if (paymentsToUse && paymentsToUse.length > 0) {
           let paymentsSum = 0;
-          o.payments.forEach(p => {
+          paymentsToUse.forEach(p => {
             const pAmount = Number(p.amount) || 0;
             if (pAmount > 0) {
               const method = getStandardPaymentMethod(p.method) as PaymentMethod;
               if (salesByMethod[method] !== undefined) {
                 salesByMethod[method] += pAmount;
               } else {
-                salesByMethod.dinheiro += pAmount;
+                salesByMethod.pix += pAmount;
               }
               paymentsSum += pAmount;
             }
           });
 
-          // If payment records sum is less than total, allocate difference to primary paymentMethod
+          // Se a soma dos pagamentos for menor que o total, alocar a diferença
           if (orderTotal > paymentsSum + 0.009) {
             const diff = orderTotal - paymentsSum;
-            const fallbackMethod = getStandardPaymentMethod(o.paymentMethod || 'dinheiro') as PaymentMethod;
+            const fallbackMethod = getStandardPaymentMethod(primaryMethod || 'dinheiro') as PaymentMethod;
             if (salesByMethod[fallbackMethod] !== undefined) {
               salesByMethod[fallbackMethod] += diff;
             } else {
@@ -6644,11 +6708,28 @@ const App: React.FC = () => {
             }
           }
         } else {
-          const method = getStandardPaymentMethod(o.paymentMethod || 'dinheiro') as PaymentMethod;
+          const method = getStandardPaymentMethod(primaryMethod || 'dinheiro') as PaymentMethod;
           if (salesByMethod[method] !== undefined) {
             salesByMethod[method] += orderTotal;
           } else {
             salesByMethod.dinheiro += orderTotal;
+          }
+        }
+      });
+
+      // Reconciliar lançamentos de vendas do financeiro que não estão associados a nenhum pedido da sessão
+      recordsDuringSession.forEach(r => {
+        const cat = (r.category || '').toLowerCase();
+        const isSale = cat.startsWith('venda') || Boolean(r.orderId);
+        if (isSale && !matchedFinRecordIds.has(r.id)) {
+          const rAmount = Number(r.amount) || 0;
+          if (rAmount > 0) {
+            const method = getStandardPaymentMethod(r.paymentMethod || 'dinheiro') as PaymentMethod;
+            if (salesByMethod[method] !== undefined) {
+              salesByMethod[method] += rAmount;
+            } else {
+              salesByMethod.pix += rAmount;
+            }
           }
         }
       });
@@ -7354,13 +7435,22 @@ const App: React.FC = () => {
                   <div className="flex items-center gap-3">
                      <button
                        type="button"
-                       onClick={() => handleSelectTab('settings')}
+                       onClick={() => {
+                         const currentlyOpen = computeIsStoreOpen();
+                         if (currentlyOpen) {
+                           handleUpdateLogisticsSettings({ isStoreForceClosed: true, isStoreForceOpen: false });
+                           showToast('Loja fechada manualmente!', 'info');
+                         } else {
+                           handleUpdateLogisticsSettings({ isStoreForceClosed: false, isStoreForceOpen: true });
+                           showToast('Loja aberta com sucesso!', 'success');
+                         }
+                       }}
                        className={`px-3.5 py-2.5 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center gap-2 border shadow-2xs transition-all cursor-pointer hover:scale-[1.02] active:scale-95 ${
                          computeIsStoreOpen()
                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
                            : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
                        }`}
-                       title="Clique para gerenciar os Horários de Funcionamento e Status da Loja nas Configurações"
+                       title={computeIsStoreOpen() ? "Clique para fechar a loja" : "Clique para abrir a loja"}
                      >
                        <span className={`w-2.5 h-2.5 rounded-full ${computeIsStoreOpen() ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
                        <span>{computeIsStoreOpen() ? 'Loja Aberta' : 'Loja Fechada'}</span>

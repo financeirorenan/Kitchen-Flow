@@ -142,7 +142,7 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
   }, [order.items, order.status, order.kitchenStatus, products]);
 
   const canGoBack = order.status === 'ready' || order.status === 'delivering';
-  const canAdvance = order.status === 'pending' || order.status === 'preparing' || order.status === 'ready' || order.status === 'delivering';
+  const canAdvance = order.status === 'pending' || order.status === 'preparing' || order.status === 'ready' || order.status === 'delivering' || order.kitchenStatus === 'preparing' || order.kitchenStatus === 'pending';
 
   return (
     <div 
@@ -765,7 +765,7 @@ const KDS: React.FC<KDSProps> = memo(({
       ? (order as any).mergedOrderIds
       : [order.id];
 
-    if (order.status === 'pending' || order.status === 'preparing') {
+    if (order.status === 'pending' || order.status === 'preparing' || order.kitchenStatus === 'pending' || order.kitchenStatus === 'preparing') {
       ids.forEach(id => onUpdateStatus(id, 'ready'));
     } else if (order.status === 'ready') {
       ids.forEach(id => onUpdateStatus(id, 'delivering'));
@@ -911,7 +911,7 @@ const KDS: React.FC<KDSProps> = memo(({
 
     return {
       preparing: filteredOrders.filter(o => {
-        const isCooking = o.status === 'preparing' || o.status === 'pending' || ((o.kitchenStatus === 'preparing' || o.kitchenStatus === 'pending') && o.status !== 'ready' && o.status !== 'delivering' && o.status !== 'delivered');
+        const isCooking = o.status === 'preparing' || o.status === 'pending' || ((o.kitchenStatus === 'preparing' || o.kitchenStatus === 'pending') && o.status !== 'ready' && o.status !== 'delivering' && o.status !== 'finished' && o.status !== 'cancelled');
         return isCooking && isOrderFromCurrentShiftOrToday(o);
       }).sort(sortByLaunchOrder),
       ready: filteredOrders.filter(o => 

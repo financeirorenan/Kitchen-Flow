@@ -1,12 +1,25 @@
 import { AdminSettings } from '../types';
 
+let cachedPaymentMethods: AdminSettings['paymentMethods'] = undefined;
+
+export const setCachedPaymentMethods = (methods?: AdminSettings['paymentMethods']) => {
+  if (methods && methods.length > 0) {
+    cachedPaymentMethods = methods;
+  }
+};
+
 /**
  * Normaliza qualquer string ou identificador de método de pagamento para as chaves canônicas do sistema:
  * 'dinheiro' | 'cartao_credito' | 'cartao_debito' | 'pix' | 'vale_refeicao' | 'conta_cliente'
  */
 export const normalizePaymentMethod = (method: string | undefined | null, adminSettings?: AdminSettings): string => {
+  if (adminSettings?.paymentMethods && adminSettings.paymentMethods.length > 0) {
+    cachedPaymentMethods = adminSettings.paymentMethods;
+  }
+
   if (!method) return 'dinheiro';
   const cleanMethod = String(method).trim().toLowerCase();
+  const cleanNoAccents = cleanMethod.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
   const standardKeys = [
     'dinheiro',
@@ -19,23 +32,32 @@ export const normalizePaymentMethod = (method: string | undefined | null, adminS
   if (standardKeys.includes(cleanMethod)) return cleanMethod;
 
   // Equivalências diretas
-  if (cleanMethod === 'cash' || cleanMethod === 'especie' || cleanMethod === 'espécie' || cleanMethod === 'cedula' || cleanMethod === 'cédula') return 'dinheiro';
-  if (cleanMethod === 'credit' || cleanMethod === 'credito' || cleanMethod === 'crédito' || cleanMethod === 'cartao_credito') return 'cartao_credito';
-  if (cleanMethod === 'debit' || cleanMethod === 'debito' || cleanMethod === 'débito' || cleanMethod === 'cartao_debito') return 'cartao_debito';
-  if (cleanMethod === 'card' || cleanMethod === 'cartao' || cleanMethod === 'cartão') return 'cartao_credito';
-  if (cleanMethod === 'pix' || cleanMethod === 'qrcode' || cleanMethod === 'qr_code' || cleanMethod === 'transferencia' || cleanMethod === 'transferência' || cleanMethod === 'ted' || cleanMethod === 'doc') return 'pix';
-  if (cleanMethod === 'voucher' || cleanMethod === 'vr' || cleanMethod === 'va' || cleanMethod === 'ticket' || cleanMethod === 'sodexo' || cleanMethod === 'alelo' || cleanMethod === 'ben' || cleanMethod === 'pluxee') return 'vale_refeicao';
-  if (cleanMethod === 'account' || cleanMethod === 'fiado' || cleanMethod === 'carteira' || cleanMethod === 'promissoria' || cleanMethod === 'promissória' || cleanMethod === 'convenio' || cleanMethod === 'convênio') return 'conta_cliente';
+  if (cleanNoAccents === 'cash' || cleanNoAccents === 'especie' || cleanNoAccents === 'cedula') return 'dinheiro';
+  if (cleanNoAccents === 'debit' || cleanNoAccents === 'debito' || cleanNoAccents === 'cartao_debito' || cleanNoAccents === 'c. debito' || cleanNoAccents === 'c debito') return 'cartao_debito';
+  if (cleanNoAccents === 'credit' || cleanNoAccents === 'credito' || cleanNoAccents === 'cartao_credito' || cleanNoAccents === 'c. credito' || cleanNoAccents === 'c credito') return 'cartao_credito';
+  if (cleanNoAccents === 'card' || cleanNoAccents === 'cartao') return 'cartao_credito';
+  if (cleanNoAccents === 'pix' || cleanNoAccents === 'qrcode' || cleanNoAccents === 'qr_code' || cleanNoAccents === 'transferencia' || cleanNoAccents === 'ted' || cleanNoAccents === 'doc') return 'pix';
+  if (cleanNoAccents === 'voucher' || cleanNoAccents === 'vr' || cleanNoAccents === 'va' || cleanNoAccents === 'ticket' || cleanNoAccents === 'sodexo' || cleanNoAccents === 'alelo' || cleanNoAccents === 'ben' || cleanNoAccents === 'pluxee') return 'vale_refeicao';
+  if (cleanNoAccents === 'account' || cleanNoAccents === 'fiado' || cleanNoAccents === 'carteira' || cleanNoAccents === 'promissoria' || cleanNoAccents === 'convenio') return 'conta_cliente';
 
-  // Verificação no cadastro de métodos de pagamento das configurações
-  if (adminSettings && adminSettings.paymentMethods) {
-    const config = adminSettings.paymentMethods.find(
+  // Verificação no cadastro de métodos de pagamento das configurações (ou em cache)
+  const methodsPool = adminSettings?.paymentMethods || cachedPaymentMethods;
+  if (methodsPool && methodsPool.length > 0) {
+    const config = methodsPool.find(
       (m) =>
         m.id === method ||
         m.name.trim().toLowerCase() === cleanMethod ||
+        m.name.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') === cleanNoAccents ||
         m.type.trim().toLowerCase() === cleanMethod
     );
     if (config) {
+      const configNameNoAccents = config.name.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      if (configNameNoAccents.includes('debito') || configNameNoAccents.includes('debit')) return 'cartao_debito';
+      if (configNameNoAccents.includes('credito') || configNameNoAccents.includes('credit')) return 'cartao_credito';
+      if (configNameNoAccents.includes('pix')) return 'pix';
+      if (configNameNoAccents.includes('vale') || configNameNoAccents.includes('refeicao') || configNameNoAccents.includes('alimentacao')) return 'vale_refeicao';
+      if (configNameNoAccents.includes('fiado') || configNameNoAccents.includes('conta')) return 'conta_cliente';
+
       switch (config.type) {
         case 'cash': return 'dinheiro';
         case 'credit': return 'cartao_credito';
@@ -43,6 +65,8 @@ export const normalizePaymentMethod = (method: string | undefined | null, adminS
         case 'pix': return 'pix';
         case 'voucher': return 'vale_refeicao';
         case 'account': return 'conta_cliente';
+        case 'other':
+          return 'pix';
       }
     }
   }

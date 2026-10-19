@@ -63,9 +63,29 @@ export function deduplicateOrders(ordersList: Order[]): Order[] {
     }
 
     if (matchedIdx !== undefined) {
-      if (shouldReplace(result[matchedIdx], o)) {
-        result[matchedIdx] = o;
+      const existing = result[matchedIdx];
+      const replaceWithIncoming = shouldReplace(existing, o);
+      const winner = replaceWithIncoming ? { ...o } : { ...existing };
+      const loser = replaceWithIncoming ? existing : o;
+
+      // Blindagem de Pagamento: se o loser possuir dados de pagamento quitado (isSettled, paymentStatus: 'paid', payments, ou método não-dinheiro)
+      // e o winner não possuir pagamento quitado, preservar estritamente os dados de pagamento!
+      const loserHasSettledPayment = Boolean(loser.isSettled || loser.paymentStatus === 'paid' || (loser.payments && loser.payments.length > 0));
+      const winnerHasSettledPayment = Boolean(winner.isSettled || winner.paymentStatus === 'paid' || (winner.payments && winner.payments.length > 0));
+
+      if (loserHasSettledPayment && !winnerHasSettledPayment) {
+        winner.isSettled = true;
+        winner.paymentStatus = 'paid';
+        winner.paymentMethod = loser.paymentMethod || winner.paymentMethod;
+        winner.payments = loser.payments || winner.payments;
+        winner.paidAt = loser.paidAt || winner.paidAt;
+        winner.completedAt = loser.completedAt || winner.completedAt;
+      } else if (loser.payments && loser.payments.length > 0 && (!winner.payments || winner.payments.length === 0)) {
+        winner.payments = loser.payments;
+        if (loser.paymentMethod) winner.paymentMethod = loser.paymentMethod;
       }
+
+      result[matchedIdx] = winner;
       for (const k of candidateKeys) {
         keyToIndex.set(k, matchedIdx);
       }

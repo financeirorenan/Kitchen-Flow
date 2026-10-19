@@ -102,14 +102,16 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
     const validOrders = deduplicateOrders(orders).filter(o => {
       if (!o) return false;
       if (o.isSubTicket || o.mergedIntoOrderId) return false;
-      // Pedidos já prontos, despachados, entregues ou cancelados NÃO ficam na cozinha de produção
-      if (o.status === 'ready' || o.status === 'delivering' || o.status === 'delivered' || o.status === 'finished' || o.status === 'cancelled') {
+      if (o.status === 'finished' || o.status === 'cancelled') {
         return false;
       }
-      if (o.kitchenStatus === 'ready' || o.kitchenStatus === 'delivered') {
+      if (o.kitchenStatus === 'preparing' || o.kitchenStatus === 'pending') {
+        return true;
+      }
+      if (o.status === 'ready' || o.status === 'delivering' || o.status === 'delivered' || o.kitchenStatus === 'ready' || o.kitchenStatus === 'delivered') {
         return false;
       }
-      const isKitchenStatus = o.status === 'pending' || o.status === 'preparing' || o.kitchenStatus === 'pending' || o.kitchenStatus === 'preparing';
+      const isKitchenStatus = o.status === 'pending' || o.status === 'preparing';
       return isKitchenStatus;
     });
 
@@ -750,29 +752,11 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                                         {details.displayName}
                                       </span>
 
-                                      {/* Badge de Rodada / Momento do Pedido na Mesa */}
-                                      {details.isCancelled ? (
+                                      {details.isCancelled && (
                                         <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-rose-600 text-white shrink-0">
                                           CANCELADO
                                         </span>
-                                      ) : details.isNewBatch ? (
-                                        <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-amber-500 text-slate-950 shrink-0 shadow-xs flex items-center gap-1">
-                                          <span>⚡ NOVO</span>
-                                          {details.batchNumber && details.batchNumber > 1 && (
-                                            <span>(RODADA #{details.batchNumber})</span>
-                                          )}
-                                        </span>
-                                      ) : details.isPreviousBatch ? (
-                                        <span
-                                          className={`px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider shrink-0 ${
-                                            isLight
-                                              ? 'bg-slate-100 text-slate-500 border border-slate-200'
-                                              : 'bg-zinc-800 text-zinc-400 border border-zinc-700'
-                                          }`}
-                                        >
-                                          ✓ 1ª Rodada (Já na Cozinha)
-                                        </span>
-                                      ) : null}
+                                      )}
                                     </div>
 
                                     {/* ALERTA DE ALERGÊNICOS COM DESTAQUE MÁXIMO VISUAL */}

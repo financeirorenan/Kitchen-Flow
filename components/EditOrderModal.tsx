@@ -336,7 +336,11 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
               Cancelar
             </button>
             <button 
-              onClick={() => onSave({ items, total, paymentMethod })}
+              onClick={() => onSave({ 
+                items, 
+                total, 
+                ...(order?.paymentMethod || order?.isSettled || order?.paymentStatus === 'paid' ? { paymentMethod } : {}) 
+              })}
               className="px-8 py-2 bg-indigo-600 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all"
             >
               Salvar Alterações
