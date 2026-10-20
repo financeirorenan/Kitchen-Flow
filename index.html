@@ -15,19 +15,37 @@
     <link rel="dns-prefetch" href="https://cdn.tailwindcss.com">
 
     <!-- PWA Settings -->
-    <link rel="manifest" href="/manifest.json">
-    <meta name="theme-color" content="#FF4F18">
+    <link rel="manifest" id="app-manifest-link" href="/manifest.json">
+    <meta name="theme-color" id="app-theme-color" content="#FF4F18">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="KitchenFlow">
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-    <meta http-equiv="Pragma" content="no-cache">
-    <meta http-equiv="Expires" content="0">
-    <link rel="apple-touch-icon" href="/icon.svg">
+    <meta name="apple-mobile-web-app-title" id="apple-app-title" content="KF Motoboy">
+    <link rel="apple-touch-icon" href="/icon-192.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="icon" type="image/svg+xml" href="/icon.svg">
-    <link rel="shortcut icon" href="/favicon.svg">
+    <link rel="shortcut icon" href="/icon-192.png">
+    <script>
+      // Capture beforeinstallprompt early so Courier PWA install button always has it ready
+      window.__deferredPwaPrompt = null;
+      window.addEventListener('beforeinstallprompt', function(e) {
+        e.preventDefault();
+        window.__deferredPwaPrompt = e;
+        window.dispatchEvent(new CustomEvent('pwa-install-available', { detail: e }));
+      });
+      window.addEventListener('appinstalled', function() {
+        window.__deferredPwaPrompt = null;
+        window.dispatchEvent(new CustomEvent('pwa-installed'));
+      });
+      // Automatically switch manifest to Courier Manifest when on /entregador
+      if (window.location.pathname.indexOf('/entregador') === 0) {
+        var mLink = document.getElementById('app-manifest-link');
+        if (mLink) mLink.setAttribute('href', '/manifest-courier.json');
+        var tMeta = document.getElementById('app-theme-color');
+        if (tMeta) tMeta.setAttribute('content', '#0A0A0A');
+      }
+    </script>
     <script>
       (function() {
         function isFirestoreAssertionOrQuota(msg) {

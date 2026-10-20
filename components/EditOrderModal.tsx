@@ -14,7 +14,10 @@ interface EditOrderModalProps {
 }
 
 const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], onClose, onSave }) => {
-  const [items, setItems] = useState<OrderItem[]>(order?.items ? [...order.items] : []);
+  const [items, setItems] = useState<OrderItem[]>(
+    order?.items ? order.items.filter(i => !i.cancelled).map(i => ({ ...i })) : []
+  );
+  const [confirmCancelOrder, setConfirmCancelOrder] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(order?.paymentMethod || 'dinheiro');
   const [splitPayments, setSplitPayments] = useState<Array<{ method: PaymentMethod; amount: string }>>(() => {
     if (order?.payments && order.payments.length > 1) {
@@ -34,6 +37,7 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
   const [optionsModalObs, setOptionsModalObs] = useState('');
 
   const total = useMemo(() => {
+    if (items.length === 0) return 0;
     return items.reduce((acc, item) => acc + (item.price * item.quantity), 0) + (order?.deliveryFee || 0);
   }, [items, order?.deliveryFee]);
 
@@ -220,56 +224,70 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
               <Package size={14} /> Itens do Pedido
             </h3>
             <div className="space-y-2">
-              {items.map((item, idx) => (
-                <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
-                  <div className="flex-1">
-                    {(() => {
-                      let displayName = item.name;
-                      if (item.selectedOptions && item.selectedOptions.length > 0) {
-                        displayName = displayName.replace(/\s*\(([^)]+)\)/g, (match, inner) => {
-                          const innerLower = inner.toLowerCase();
-                          return item.selectedOptions!.some(opt => opt.name && innerLower.includes(opt.name.trim().toLowerCase())) ? '' : match;
-                        }).trim();
-                      }
-                      return <p className="font-bold text-slate-800">{displayName}</p>;
-                    })()}
-                    {item.selectedOptions && item.selectedOptions.length > 0 && (
-                      <p className="text-[9px] font-bold text-indigo-500 uppercase tracking-tighter">
-                        {item.selectedOptions.map(o => `${(o.quantity && o.quantity > 1) ? `${o.quantity}x ` : ''}${o.name}`).join(', ')}
-                      </p>
-                    )}
-                    {item.observation && (
-                      <p className="text-[10px] font-bold text-rose-600 bg-rose-50 border border-rose-100 px-2 py-0.5 rounded-md w-fit mt-1 whitespace-pre-line">
-                        Obs: {item.observation}
-                      </p>
-                    )}
-                    <p className="text-[10px] font-bold text-slate-400">R$ {item.price.toFixed(2)} un.</p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center bg-white rounded-lg border shadow-sm">
+              {items.length === 0 ? (
+                <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-center space-y-1">
+                  <p className="text-xs font-black text-rose-700 uppercase">Todos os itens foram removidos</p>
+                  <p className="text-[10px] font-bold text-rose-600">Ao salvar as alterações, esta venda será cancelada automaticamente.</p>
+                </div>
+              ) : (
+                items.map((item, idx) => (
+                  <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                    <div className="flex-1 pr-2">
+                      {(() => {
+                        let displayName = item.name;
+                        if (item.selectedOptions && item.selectedOptions.length > 0) {
+                          displayName = displayName.replace(/\s*\(([^)]+)\)/g, (match, inner) => {
+                            const innerLower = inner.toLowerCase();
+                            return item.selectedOptions!.some(opt => opt.name && innerLower.includes(opt.name.trim().toLowerCase())) ? '' : match;
+                          }).trim();
+                        }
+                        return <p className="font-bold text-slate-800">{displayName}</p>;
+                      })()}
+                      {item.selectedOptions && item.selectedOptions.length > 0 && (
+                        <p className="text-[9px] font-bold text-indigo-500 uppercase tracking-tighter">
+                          {item.selectedOptions.map(o => `${(o.quantity && o.quantity > 1) ? `${o.quantity}x ` : ''}${o.name}`).join(', ')}
+                        </p>
+                      )}
+                      {item.observation && (
+                        <p className="text-[10px] font-bold text-rose-600 bg-rose-50 border border-rose-100 px-2 py-0.5 rounded-md w-fit mt-1 whitespace-pre-line">
+                          Obs: {item.observation}
+                        </p>
+                      )}
+                      <p className="text-[10px] font-bold text-slate-400">R$ {item.price.toFixed(2)} un.</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex items-center bg-white rounded-lg border shadow-sm">
+                        <button 
+                          type="button"
+                          onClick={() => handleUpdateQuantity(idx, -1)}
+                          className="p-2 hover:bg-rose-50 text-slate-500 hover:text-rose-600 transition-colors cursor-pointer"
+                          title="Diminuir quantidade"
+                        >
+                          <Minus size={14} />
+                        </button>
+                        <span className="w-8 text-center font-black text-slate-700 text-xs">{item.quantity}</span>
+                        <button 
+                          type="button"
+                          onClick={() => handleUpdateQuantity(idx, 1)}
+                          className="p-2 hover:bg-emerald-50 text-slate-500 hover:text-emerald-600 transition-colors cursor-pointer"
+                          title="Aumentar quantidade"
+                        >
+                          <Plus size={14} />
+                        </button>
+                      </div>
                       <button 
-                        onClick={() => handleUpdateQuantity(idx, -1)}
-                        className="p-1.5 hover:bg-slate-50 text-slate-400 hover:text-rose-500 transition-colors"
+                        type="button"
+                        onClick={() => handleUpdateQuantity(idx, -item.quantity)}
+                        className="p-2 bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white border border-rose-200 rounded-lg transition-all cursor-pointer flex items-center gap-1 text-[10px] font-black uppercase"
+                        title="Remover item do pedido"
                       >
-                        <Minus size={14} />
-                      </button>
-                      <span className="w-8 text-center font-black text-slate-700 text-xs">{item.quantity}</span>
-                      <button 
-                        onClick={() => handleUpdateQuantity(idx, 1)}
-                        className="p-1.5 hover:bg-slate-50 text-slate-400 hover:text-emerald-500 transition-colors"
-                      >
-                        <Plus size={14} />
+                        <Trash2 size={14} />
+                        <span className="hidden sm:inline">Remover</span>
                       </button>
                     </div>
-                    <button 
-                      onClick={() => handleUpdateQuantity(idx, -item.quantity)}
-                      className="p-2 text-slate-300 hover:text-rose-500 transition-colors"
-                    >
-                      <Trash2 size={16} />
-                    </button>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
 
@@ -430,29 +448,94 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
           </div>
         </div>
 
-        <div className="p-4 border-t bg-slate-50 flex items-center justify-between">
-          <div className="text-left">
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total do Pedido</p>
-            <p className="text-2xl font-black text-slate-800">R$ {total.toFixed(2)}</p>
+        <div className="p-4 border-t bg-slate-50 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          <div className="flex items-center justify-between sm:justify-start gap-4">
+            <div className="text-left">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total do Pedido</p>
+              <p className="text-2xl font-black text-slate-800">R$ {total.toFixed(2)}</p>
+            </div>
+            {order.status !== 'cancelled' && (
+              !confirmCancelOrder ? (
+                <button
+                  type="button"
+                  onClick={() => setConfirmCancelOrder(true)}
+                  className="px-3 py-2 bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white border border-rose-200 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Trash2 size={14} />
+                  Cancelar Venda
+                </button>
+              ) : (
+                <div className="flex items-center gap-1.5 bg-rose-50 p-1.5 rounded-xl border border-rose-200">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSave({
+                        status: 'cancelled',
+                        kitchenStatus: 'cancelled',
+                        isSettled: false,
+                        paymentStatus: 'pending'
+                      } as any);
+                    }}
+                    className="px-3 py-1.5 bg-rose-600 text-white rounded-lg font-black text-[10px] uppercase tracking-wider hover:bg-rose-700 transition-all cursor-pointer"
+                  >
+                    Confirmar Cancelamento
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmCancelOrder(false)}
+                    className="px-2 py-1.5 text-slate-500 hover:text-slate-700 font-black text-[10px] uppercase cursor-pointer"
+                  >
+                    Não
+                  </button>
+                </div>
+              )
+            )}
           </div>
-          <div className="flex gap-3">
+          <div className="flex gap-2 justify-end">
             <button 
+              type="button"
               onClick={onClose}
-              className="px-6 py-2 rounded-xl font-black text-xs uppercase tracking-widest text-slate-500 hover:bg-slate-100 transition-all"
+              className="px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest text-slate-500 hover:bg-slate-100 transition-all cursor-pointer"
             >
-              Cancelar
+              Fechar
             </button>
             <button 
+              type="button"
               onClick={() => {
+                if (items.length === 0) {
+                  onSave({
+                    items: [],
+                    total: 0,
+                    status: 'cancelled',
+                    kitchenStatus: 'cancelled',
+                    isSettled: false,
+                    paymentStatus: 'pending'
+                  } as any);
+                  return;
+                }
                 const validSplits = splitPayments
                   .map(p => ({ method: p.method || 'dinheiro', amount: parseFloat(p.amount) || 0 }))
                   .filter(p => p.amount > 0);
                 if (validSplits.length > 1) {
+                  const sumSplits = validSplits.reduce((s, p) => s + p.amount, 0);
+                  let adjustedSplits = validSplits;
+                  if (Math.abs(sumSplits - total) > 0.01 && sumSplits > 0) {
+                    const ratio = total / sumSplits;
+                    let running = 0;
+                    adjustedSplits = validSplits.map((p, idx) => {
+                      if (idx === validSplits.length - 1) {
+                        return { ...p, amount: Math.max(0, Number((total - running).toFixed(2))) };
+                      }
+                      const amt = Number((p.amount * ratio).toFixed(2));
+                      running += amt;
+                      return { ...p, amount: amt };
+                    });
+                  }
                   onSave({
                     items,
                     total,
-                    paymentMethod: validSplits[0].method,
-                    payments: validSplits,
+                    paymentMethod: adjustedSplits[0].method,
+                    payments: adjustedSplits,
                   });
                 } else {
                   onSave({
@@ -463,9 +546,9 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
                   });
                 }
               }}
-              className="px-8 py-2 bg-indigo-600 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all"
+              className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all cursor-pointer"
             >
-              Salvar Alterações
+              {items.length === 0 ? 'Confirmar Cancelamento' : 'Salvar Alterações'}
             </button>
           </div>
         </div>

@@ -417,16 +417,22 @@ export const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout })
   };
 
   useEffect(() => {
+    // Dynamically ensure Courier PWA manifest and theme-color when inside CourierApp
+    const manifestEl = document.getElementById('app-manifest-link') as HTMLLinkElement | null;
+    const themeEl = document.getElementById('app-theme-color') as HTMLMetaElement | null;
+    if (manifestEl) manifestEl.href = '/manifest-courier.json';
+    if (themeEl) themeEl.content = '#020617';
+    document.title = 'KF Motoboy • Painel do Entregador';
+
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js')
-        .then(async (reg) => {
-          await navigator.serviceWorker.ready;
+      navigator.serviceWorker.ready
+        .then(() => {
           if (currentUser) {
             syncServiceWorkerConfig();
           }
         })
         .catch(err => {
-          console.error('Erro ao registrar Service Worker:', err);
+          console.warn('Aviso ao sincronizar Service Worker:', err);
         });
     }
   }, [currentUser]);
@@ -972,22 +978,24 @@ export const CourierApp: React.FC<CourierAppProps> = ({ currentUser, onLogout })
         )}
       </AnimatePresence>
 
-      {/* Main Container */}
-      <div className="w-full max-w-lg mx-auto flex-1 flex flex-col px-3 sm:px-4">
-        {/* Header */}
+      {/* Main Container - Mobile-First with Desktop 2-Column Expansion */}
+      <div className="w-full max-w-lg lg:max-w-5xl mx-auto flex-1 flex flex-col px-3 sm:px-5">
+        {/* Sticky App Bar Header */}
         <CourierHeader 
           currentUser={currentUser}
           courierData={courierData}
           isOnline={isOnline}
           pendingSyncCount={pendingSyncCount}
+          unreadNotificationsCount={unreadNotificationsCount}
           onProfileClick={() => setActiveTab('profile')}
+          onNotificationsClick={() => setActiveTab('notifications')}
           onLogout={onLogout}
           onToggleStatus={toggleStatus}
           onSyncNow={triggerIndexedDBSync}
         />
 
         {/* Content Tabs Switcher */}
-        <main className="flex-1 mt-2">
+        <main className="flex-1 mt-3">
           <AnimatePresence mode="wait">
             {activeTab === 'home' && (
               <motion.div

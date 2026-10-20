@@ -28,6 +28,7 @@ import { maskCurrency, parseCurrency, maskPhone } from "../utils/masks";
 import { normalizePaymentMethod, getPaymentMethodLabel } from "../utils/paymentUtils";
 import { deduplicateOrders, deduplicateFinancialRecords, getOrderNumericId, formatOrderNumber } from "../utils/deduplicate";
 import { safeParseDate, toSafeDate } from "../utils/dateUtils";
+import EditOrderModal from "./EditOrderModal";
 import {
   Users,
   CreditCard,
@@ -261,6 +262,8 @@ const Tables: React.FC<TablesProps> = memo(
     const [isSendingToKitchen, setIsSendingToKitchen] = useState(false);
     const [showCancelModal, setShowCancelModal] = useState(false);
     const [isCancelling, setIsCancelling] = useState(false);
+    const [editingShiftOrder, setEditingShiftOrder] = useState<Order | null>(null);
+    const [confirmCancelShiftOrderId, setConfirmCancelShiftOrderId] = useState<string | null>(null);
     const [showTransferModal, setShowTransferModal] = useState(false);
     const [transferToTableId, setTransferToTableId] = useState<
       number | string | null
@@ -418,10 +421,10 @@ const Tables: React.FC<TablesProps> = memo(
       setDiscount(0);
     }, []);
 
-    const handleExitOrder = useCallback(() => {
-      // Se houver itens na mesa que ainda não foram despachados para a cozinha, despacha automaticamente para o KDS
-      if (selectedTable && selectedTable.items && selectedTable.items.length > 0) {
-        const unsentItems = selectedTable.items.filter(i => !i.sentToKitchen);
+    const handleExitOrder = useCallback((skipAutoSend?: boolean) => {
+      // Se houver itens na mesa que ainda não foram despachados para a cozinha (e não for saída por cancelamento), despacha automaticamente para o KDS
+      if (!skipAutoSend && selectedTable && selectedTable.items && selectedTable.items.length > 0) {
+        const unsentItems = selectedTable.items.filter(i => !i.sentToKitchen && !i.cancelled);
         if (unsentItems.length > 0) {
           const targetId = pdvEditOrder ? pdvEditOrder.id : selectedTable.id;
           const deliveryFeeVal = isDeliveryOrder && isCounterContext ? parseCurrency(deliveryFeeInput) : 0;
@@ -533,17 +536,20 @@ const Tables: React.FC<TablesProps> = memo(
           ? tables.find(t => t.currentOrderId === pdvEditOrder.id || (pdvEditOrder.tableNumber && String(t.number) === String(pdvEditOrder.tableNumber)))
           : null;
 
+        const cleanEditItems = (pdvEditOrder.items || []).filter(it => !it.cancelled);
+        const cleanEditSubtotal = cleanEditItems.reduce((acc, it) => acc + it.price * it.quantity, 0);
+
         const mockTable: Table = existingTable ? {
           ...existingTable,
-          items: pdvEditOrder.items || [],
-          total: (pdvEditOrder.total || 0) - (pdvEditOrder.deliveryFee || 0),
+          items: cleanEditItems,
+          total: cleanEditSubtotal,
           currentOrderId: pdvEditOrder.id,
           partialPayments: pdvEditOrder.payments || existingTable.partialPayments,
         } : {
           id: pdvEditOrder.tableNumber ? `tbl_${pdvEditOrder.tableNumber}` : (pdvEditOrder.id || `ord_${Date.now()}`),
           number: Number(pdvEditOrder.tableNumber) || 0,
-          items: pdvEditOrder.items || [],
-          total: (pdvEditOrder.total || 0) - (pdvEditOrder.deliveryFee || 0),
+          items: cleanEditItems,
+          total: cleanEditSubtotal,
           status: "occupied",
           tenantId: pdvEditOrder.tenantId,
           currentOrderId: pdvEditOrder.id,
@@ -717,7 +723,15 @@ const Tables: React.FC<TablesProps> = memo(
         );
         const isTrueSubTicket = Boolean((o.isSubTicket || o.mergedIntoOrderId) && !hasSessionFinancialRecord);
         if (o.status === "cancelled" || isTrueSubTicket) return false;
-        const isPaid = o.isSettled || o.paymentStatus === "paid" || (o.payments && o.payments.length > 0) || o.status === "finished" || o.status === "delivered";
+        const isTableOrd = o.type === "table" || o.type === "dine_in" || (!o.type && o.tableNumber !== undefined && !String(o.tableNumber).toLowerCase().includes("balcão"));
+        const hasExplicitPayment = Boolean(o.paymentMethod || (o.payments && o.payments.length > 0));
+        const isPaid = Boolean(
+          o.isSettled ||
+          o.paymentStatus === "paid" ||
+          (o.payments && o.payments.length > 0) ||
+          hasSessionFinancialRecord ||
+          (!isTableOrd && hasExplicitPayment && (o.status === "finished" || o.status === "delivered"))
+        );
         if (!isPaid) return false;
 
         // 1. Se o pedido possui vínculo explícito com o turno atual (shiftOpenedAt), incluir diretamente
@@ -1034,7 +1048,14 @@ const Tables: React.FC<TablesProps> = memo(
         const closedAt = toSafeDate(lastClosingReport.closedAt);
         sourceOrders = orders.filter((o) => {
           if (o.status === "cancelled" || o.isSubTicket || o.mergedIntoOrderId) return false;
-          const isPaid = o.isSettled || o.paymentStatus === "paid" || (o.payments && o.payments.length > 0) || o.status === "finished" || o.status === "delivered";
+          const isTableOrd = o.type === "table" || o.type === "dine_in" || (!o.type && o.tableNumber !== undefined && !String(o.tableNumber).toLowerCase().includes("balcão"));
+          const hasExplicitPayment = Boolean(o.paymentMethod || (o.payments && o.payments.length > 0));
+          const isPaid = Boolean(
+            o.isSettled ||
+            o.paymentStatus === "paid" ||
+            (o.payments && o.payments.length > 0) ||
+            (!isTableOrd && hasExplicitPayment && (o.status === "finished" || o.status === "delivered"))
+          );
           if (!isPaid) return false;
           const created = toSafeDate(o.createdAt);
           const paid = safeParseDate(o.paidAt);
@@ -1055,7 +1076,14 @@ const Tables: React.FC<TablesProps> = memo(
         const openedAt = toSafeDate(cashSession.openedAt);
         sourceOrders = orders.filter((o) => {
           if (o.status === "cancelled" || o.isSubTicket || o.mergedIntoOrderId) return false;
-          const isPaid = o.isSettled || o.paymentStatus === "paid" || (o.payments && o.payments.length > 0) || o.status === "finished" || o.status === "delivered";
+          const isTableOrd = o.type === "table" || o.type === "dine_in" || (!o.type && o.tableNumber !== undefined && !String(o.tableNumber).toLowerCase().includes("balcão"));
+          const hasExplicitPayment = Boolean(o.paymentMethod || (o.payments && o.payments.length > 0));
+          const isPaid = Boolean(
+            o.isSettled ||
+            o.paymentStatus === "paid" ||
+            (o.payments && o.payments.length > 0) ||
+            (!isTableOrd && hasExplicitPayment && (o.status === "finished" || o.status === "delivered"))
+          );
           if (!isPaid) return false;
           const created = toSafeDate(o.createdAt);
           const paid = safeParseDate(o.paidAt);
@@ -1194,16 +1222,19 @@ const Tables: React.FC<TablesProps> = memo(
         const activeOrder = (orders || []).find(o =>
           o &&
           !o.isSettled &&
-          o.paymentStatus !== 'paid' &&
+          (o.paymentStatus !== 'paid' || !o.paymentMethod) &&
           o.status !== 'cancelled' &&
-          o.status !== 'finished' &&
           ((table.currentOrderId && (o.id === table.currentOrderId || o.docId === table.currentOrderId)) ||
             ((o.type === 'table' || !o.type) && String(o.tableNumber) === String(table.number)))
         );
-        const syncedItems = (table.items || []).map((item, idx) => {
+        const syncedItems = (table.items || [])
+          .filter(item => !item.cancelled)
+          .map((item, idx) => {
           const matchInOrder = activeOrder?.items?.find(oi =>
-            Boolean(oi.id && item.id && oi.id === item.id) ||
-            (oi.productId === item.productId && oi.name === item.name && (oi.observation || '') === (item.observation || ''))
+            !oi.cancelled && (
+              Boolean(oi.id && item.id && oi.id === item.id) ||
+              (oi.productId === item.productId && oi.name === item.name && (oi.observation || '') === (item.observation || ''))
+            )
           );
           if (matchInOrder) {
             return {
@@ -1244,7 +1275,10 @@ const Tables: React.FC<TablesProps> = memo(
       if (order.deliveryFee) setDeliveryFeeInput(String(order.deliveryFee).replace(".", ","));
       if (order.isDelivery !== undefined) setIsDeliveryOrder(!!order.isDelivery);
       if (order.customerId) setSelectedCustomerId(order.customerId);
-      setSelectedTable(order);
+      setSelectedTable({
+        ...order,
+        items: (order.items || []).filter(item => !item.cancelled)
+      });
       setActiveSeat("Geral");
     };
 
@@ -1252,9 +1286,8 @@ const Tables: React.FC<TablesProps> = memo(
     const isOrderSettledWithPayment = useCallback((ord: Order): boolean => {
       if (!ord) return true;
       if (ord.status === 'cancelled') return true;
-      if (ord.status === 'finished') return true;
-      if (ord.isSettled === true) return true;
-      if (ord.paymentStatus === 'paid' || ord.paymentStatus === 'completed') return true;
+      if (ord.isSettled === true && Boolean(ord.paymentMethod || (ord.payments && ord.payments.length > 0))) return true;
+      if ((ord.paymentStatus === 'paid' || ord.paymentStatus === 'completed') && Boolean(ord.paymentMethod || (ord.payments && ord.payments.length > 0))) return true;
 
       // Se possui registro explícito de pagamentos que cobrem o total
       if (ord.payments && ord.payments.length > 0) {
@@ -1363,7 +1396,7 @@ const Tables: React.FC<TablesProps> = memo(
 
       // 2. Processar pedidos de orders (KDS / Delivery / Balcão) não vinculados às comandas acima
       (orders || []).forEach((ord) => {
-        if (!ord || ord.status === 'cancelled' || ord.status === 'finished') return;
+        if (!ord || ord.status === 'cancelled') return;
 
         // Apenas pedidos que não são de mesa física (balcão, delivery, retirada ou sem mesa associada)
         const isNonTable = ord.type === 'delivery' || ord.type === 'takeout' || (ord.type as any) === 'balcao' || !ord.tableNumber;
@@ -1734,29 +1767,50 @@ const Tables: React.FC<TablesProps> = memo(
     const removeItem = useCallback(
       (index: number) => {
         if (!selectedTable) return;
-        const itemToRemove = selectedTable.items[index];
-        const isSent = !!itemToRemove?.sentToKitchen;
+        const newItems = selectedTable.items.filter((it, i) => i !== index && !it.cancelled);
 
-        let newItems: OrderItem[];
-        if (isSent) {
-          // Marca o item como cancelado para manter histórico da comanda e atualizar KDS sem reenviar
-          newItems = selectedTable.items.map((it, i) =>
-            i === index ? { ...it, cancelled: true, cancelledAt: new Date().toISOString() } : it
-          );
-        } else {
-          // Item ainda não foi enviado à cozinha: pode ser removido diretamente
-          newItems = selectedTable.items.filter((_, i) => i !== index);
-        }
-
-        const newTotal = newItems
-          .filter(it => !it.cancelled)
-          .reduce((acc, item) => acc + item.price * item.quantity, 0);
+        const newTotal = newItems.reduce(
+          (acc, item) => acc + item.price * item.quantity,
+          0,
+        );
 
         const updated = { ...selectedTable, items: newItems, total: newTotal };
         setSelectedTable(updated);
         onUpdateTable(selectedTable.id, newItems, "occupied", isCounterContext);
 
-        // Se a mesa possuir pedido ativo na cozinha, sincroniza imediatamente a remoção/cancelamento
+        // Se estivermos editando um pedido ou houver pedido ativo na cozinha e ainda restarem itens, sincroniza imediatamente
+        const activeOrderId = pdvEditOrder ? pdvEditOrder.id : selectedTable.currentOrderId;
+        if (activeOrderId && onUpdateOrder && newItems.length > 0) {
+          onUpdateOrder(String(activeOrderId), {
+            items: newItems,
+            total: newTotal + (selectedTable.deliveryFee || 0)
+          });
+        }
+        if (showToast) {
+          showToast("Item removido do pedido", "info");
+        }
+      },
+      [selectedTable, isCounterContext, onUpdateTable, pdvEditOrder, onUpdateOrder, showToast],
+    );
+
+    const updateItemQuantity = useCallback(
+      (index: number, delta: number) => {
+        if (!selectedTable) return;
+        const targetItem = selectedTable.items[index];
+        if (!targetItem) return;
+        const nextQty = targetItem.quantity + delta;
+        if (nextQty <= 0) {
+          removeItem(index);
+          return;
+        }
+        const newItems = selectedTable.items
+          .map((it, i) => (i === index ? { ...it, quantity: nextQty } : it))
+          .filter(it => !it.cancelled);
+        const newTotal = newItems.reduce((acc, item) => acc + item.price * item.quantity, 0);
+        const updated = { ...selectedTable, items: newItems, total: newTotal };
+        setSelectedTable(updated);
+        onUpdateTable(selectedTable.id, newItems, "occupied", isCounterContext);
+
         const activeOrderId = pdvEditOrder ? pdvEditOrder.id : selectedTable.currentOrderId;
         if (activeOrderId && onUpdateOrder) {
           onUpdateOrder(String(activeOrderId), {
@@ -1765,7 +1819,7 @@ const Tables: React.FC<TablesProps> = memo(
           });
         }
       },
-      [selectedTable, isCounterContext, onUpdateTable, pdvEditOrder, onUpdateOrder],
+      [selectedTable, isCounterContext, onUpdateTable, pdvEditOrder, onUpdateOrder, removeItem],
     );
 
     const startEditItem = async (index: number) => {
@@ -1792,21 +1846,36 @@ const Tables: React.FC<TablesProps> = memo(
 
     const saveItemEdit = () => {
       if (!selectedTable || editingItemIndex === null) return;
+      if (tempQty <= 0) {
+        const idxToRemove = editingItemIndex;
+        setEditingItemIndex(null);
+        removeItem(idxToRemove);
+        return;
+      }
       const newItems = [...selectedTable.items];
       newItems[editingItemIndex] = {
         ...newItems[editingItemIndex],
         observation: tempObs.trim(),
         seat: tempSeat.trim() || "Geral",
-        quantity: tempQty > 0 ? tempQty : 1,
+        quantity: tempQty,
         sentToKitchen: false, // Reset so it can be sent to the kitchen again if edited
       };
-      const newTotal = newItems.reduce(
+      const cleanItems = newItems.filter(it => !it.cancelled);
+      const newTotal = cleanItems.reduce(
         (acc, item) => acc + item.price * item.quantity,
         0,
       );
-      const updated = { ...selectedTable, items: newItems, total: newTotal };
+      const updated = { ...selectedTable, items: cleanItems, total: newTotal };
       setSelectedTable(updated);
-      onUpdateTable(selectedTable.id, newItems, "occupied", isCounterContext);
+      onUpdateTable(selectedTable.id, cleanItems, "occupied", isCounterContext);
+
+      const activeOrderId = pdvEditOrder ? pdvEditOrder.id : selectedTable.currentOrderId;
+      if (activeOrderId && onUpdateOrder) {
+        onUpdateOrder(String(activeOrderId), {
+          items: cleanItems,
+          total: newTotal + (selectedTable.deliveryFee || 0)
+        });
+      }
       setEditingItemIndex(null);
     };
 
@@ -1935,8 +2004,19 @@ const Tables: React.FC<TablesProps> = memo(
       selectedCustomerId,
     ]);
 
-    const handleSavePdvEditOrder = useCallback(() => {
+    const handleSavePdvEditOrder = useCallback(async () => {
       if (!pdvEditOrder || !selectedTable || !onUpdateOrder) return;
+
+      const activeItems = selectedTable.items.filter(it => !it.cancelled);
+      if (activeItems.length === 0) {
+        await onCancelTable(pdvEditOrder.id, isCounterContext);
+        if (selectedTable.id !== pdvEditOrder.id) {
+          await onCancelTable(selectedTable.id, isCounterContext);
+        }
+        if (onCancelPdvEdit) onCancelPdvEdit();
+        setSelectedTable(null);
+        return;
+      }
 
       const deliveryFeeVal = isDeliveryOrder && isCounterContext ? parseCurrency(deliveryFeeInput) : 0;
       const updatedTotal =
@@ -1945,7 +2025,7 @@ const Tables: React.FC<TablesProps> = memo(
         (additionalFee || 0) -
         (discount || 0);
 
-      const updatedItems = selectedTable.items.map((item) => ({
+      const updatedItems = activeItems.map((item) => ({
         ...item,
         sentToKitchen: true,
       }));
@@ -3700,26 +3780,83 @@ const Tables: React.FC<TablesProps> = memo(
                           </div>
                         </div>
 
-                        {/* Payments Breakdown if multiple payments */}
-                        {order.payments && order.payments.length > 0 && (
-                          <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                            <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider">
-                              Pagamentos:
-                            </span>
-                            {order.payments.map((p, pIdx) => (
-                              <span
-                                key={pIdx}
-                                className={`px-2 py-0.5 rounded-md text-[9px] font-bold border ${
-                                  getStandardPaymentMethodKey(p.method) === selectedMethodReport.id
-                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200 font-black'
-                                    : 'bg-slate-100 text-slate-600 border-slate-200'
-                                }`}
-                              >
-                                {p.method}: R$ {p.amount.toFixed(2)}
-                              </span>
-                            ))}
+                        {/* Payments Breakdown & Actions */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {order.payments && order.payments.length > 0 && (
+                              <>
+                                <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider">
+                                  Pagamentos:
+                                </span>
+                                {order.payments.map((p, pIdx) => (
+                                  <span
+                                    key={pIdx}
+                                    className={`px-2 py-0.5 rounded-md text-[9px] font-bold border ${
+                                      getStandardPaymentMethodKey(p.method) === selectedMethodReport.id
+                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200 font-black'
+                                        : 'bg-slate-100 text-slate-600 border-slate-200'
+                                    }`}
+                                  >
+                                    {p.method}: R$ {p.amount.toFixed(2)}
+                                  </span>
+                                ))}
+                              </>
+                            )}
                           </div>
-                        )}
+
+                          <div className="flex items-center gap-1.5 ml-auto">
+                            <button
+                              type="button"
+                              onClick={() => setEditingShiftOrder(order)}
+                              className="px-2.5 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white border border-indigo-200 rounded-lg font-black text-[9px] uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer"
+                              title="Editar itens ou pagamento da venda"
+                            >
+                              <Edit3 size={12} />
+                              Editar / Itens
+                            </button>
+
+                            {confirmCancelShiftOrderId === order.id ? (
+                              <div className="flex items-center gap-1 bg-rose-50 px-2 py-1 rounded-lg border border-rose-200">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (onUpdateOrder) {
+                                      onUpdateOrder(order.id, {
+                                        status: 'cancelled',
+                                        kitchenStatus: 'cancelled',
+                                        isSettled: false,
+                                        paymentStatus: 'pending'
+                                      } as any);
+                                    } else {
+                                      onCancelTable(order.id, order.type !== 'table');
+                                    }
+                                    setConfirmCancelShiftOrderId(null);
+                                  }}
+                                  className="px-2 py-1 bg-rose-600 text-white rounded font-black text-[9px] uppercase hover:bg-rose-700 transition-all cursor-pointer"
+                                >
+                                  Confirmar
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmCancelShiftOrderId(null)}
+                                  className="px-1.5 py-1 text-slate-500 hover:text-slate-700 font-black text-[9px] uppercase cursor-pointer"
+                                >
+                                  Não
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmCancelShiftOrderId(order.id)}
+                                className="px-2.5 py-1.5 bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white border border-rose-200 rounded-lg font-black text-[9px] uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer"
+                                title="Cancelar esta venda"
+                              >
+                                <Trash2 size={12} />
+                                Cancelar Venda
+                              </button>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     );
                   })
@@ -3752,6 +3889,18 @@ const Tables: React.FC<TablesProps> = memo(
               </div>
             </div>
           </div>
+        )}
+
+        {editingShiftOrder && onUpdateOrder && (
+          <EditOrderModal
+            order={editingShiftOrder}
+            products={products}
+            onClose={() => setEditingShiftOrder(null)}
+            onSave={(updates) => {
+              onUpdateOrder(editingShiftOrder.id, updates);
+              setEditingShiftOrder(null);
+            }}
+          />
         )}
 
         {/* Confirmação de Fechamento */}
@@ -4264,9 +4413,16 @@ const Tables: React.FC<TablesProps> = memo(
                   onClick={async () => {
                     setIsCancelling(true);
                     try {
-                      await onCancelTable(selectedTable.id, isCounterContext);
+                      if (pdvEditOrder) {
+                        await onCancelTable(pdvEditOrder.id, isCounterContext);
+                        if (selectedTable.id !== pdvEditOrder.id) {
+                          await onCancelTable(selectedTable.id, isCounterContext);
+                        }
+                      } else {
+                        await onCancelTable(selectedTable.id, isCounterContext);
+                      }
                       setShowCancelModal(false);
-                      handleExitOrder();
+                      handleExitOrder(true);
                     } catch (error) {
                       console.error("Erro ao cancelar:", error);
                     } finally {
@@ -4611,14 +4767,14 @@ const Tables: React.FC<TablesProps> = memo(
                         </p>
                       </div>
                     ) : (
-                      selectedTable.items.map((item, index) => (
+                      selectedTable.items.filter(it => !it.cancelled).map((item, index) => (
                         <div
                           key={`titem-${selectedTable.id}-${item.productId}-${index}`}
                           onClick={() => startEditItem(index)}
                           className="group relative bg-slate-50 rounded-2xl border border-slate-100 p-3 hover:border-indigo-200 transition-all cursor-pointer hover:bg-indigo-50/30"
                         >
-                          <div className="flex justify-between items-start mb-1">
-                            <div className="flex-1 pr-6">
+                          <div className="flex justify-between items-start mb-1.5">
+                            <div className="flex-1 pr-2">
                               {(() => {
                                 let displayName = item.name;
                                 if (item.selectedOptions && item.selectedOptions.length > 0) {
@@ -4646,20 +4802,46 @@ const Tables: React.FC<TablesProps> = memo(
                               })()}
                             </div>
                             <button
+                              type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 removeItem(index);
                               }}
-                              className="absolute top-2 right-2 p-1 text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"
+                              title="Remover item do pedido"
+                              className="p-1.5 bg-rose-50 text-rose-500 hover:bg-rose-600 hover:text-white border border-rose-100 rounded-lg transition-all shrink-0 cursor-pointer"
                             >
-                              <Trash2 size={14} />
+                              <Trash2 size={13} />
                             </button>
                           </div>
-                          <div className="flex justify-between items-end">
-                            <div className="flex items-center gap-2">
-                              <span className="text-[10px] font-bold text-slate-400">
-                                {item.quantity}x
-                              </span>
+                          <div className="flex justify-between items-center pt-1">
+                            <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                              <div className="flex items-center bg-white border border-slate-200 rounded-lg shadow-2xs">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    updateItemQuantity(index, -1);
+                                  }}
+                                  title="Diminuir / Remover"
+                                  className="w-6 h-6 flex items-center justify-center text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-l-lg transition-colors cursor-pointer"
+                                >
+                                  <Minus size={11} strokeWidth={3} />
+                                </button>
+                                <span className="px-2 text-[11px] font-black text-slate-800">
+                                  {item.quantity}x
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    updateItemQuantity(index, 1);
+                                  }}
+                                  title="Aumentar quantidade"
+                                  className="w-6 h-6 flex items-center justify-center text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-r-lg transition-colors cursor-pointer"
+                                >
+                                  <Plus size={11} strokeWidth={3} />
+                                </button>
+                              </div>
                               <span className="text-[10px] font-bold text-slate-400">
                                 R$ {item.price.toFixed(2)}
                               </span>
@@ -5068,16 +5250,29 @@ const Tables: React.FC<TablesProps> = memo(
                 </div>
               </div>
 
-              <div className="p-8 border-t bg-slate-50 flex gap-4">
+              <div className="p-6 lg:p-8 border-t bg-slate-50 flex flex-wrap gap-3">
                 <button
-                  onClick={() => setEditingItemIndex(null)}
-                  className="flex-1 py-4 font-black text-slate-400 uppercase tracking-widest text-xs"
+                  type="button"
+                  onClick={() => {
+                    const idxToRemove = editingItemIndex;
+                    setEditingItemIndex(null);
+                    if (idxToRemove !== null) removeItem(idxToRemove);
+                  }}
+                  className="px-4 py-4 bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white border border-rose-200 rounded-2xl font-black uppercase tracking-widest text-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
-                  Descartar
+                  <Trash2 size={16} /> Remover Item
                 </button>
                 <button
+                  type="button"
+                  onClick={() => setEditingItemIndex(null)}
+                  className="px-4 py-4 font-black text-slate-400 uppercase tracking-widest text-xs hover:text-slate-600 cursor-pointer"
+                >
+                  Fechar
+                </button>
+                <button
+                  type="button"
                   onClick={saveItemEdit}
-                  className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl shadow-indigo-100 flex items-center justify-center gap-2 hover:bg-indigo-700 transition-all"
+                  className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl shadow-indigo-100 flex items-center justify-center gap-2 hover:bg-indigo-700 transition-all cursor-pointer"
                 >
                   <Save size={18} /> Salvar Alterações
                 </button>

@@ -46,6 +46,12 @@ export const CourierBottomNav: React.FC<CourierBottomNavProps> = ({
       icon: History
     },
     {
+      id: 'notifications' as CourierTabType,
+      label: 'Alertas',
+      icon: Bell,
+      badge: unreadNotificationsCount > 0 ? unreadNotificationsCount : undefined
+    },
+    {
       id: 'profile' as CourierTabType,
       label: 'Perfil',
       icon: UserIcon
@@ -53,36 +59,38 @@ export const CourierBottomNav: React.FC<CourierBottomNavProps> = ({
   ];
 
   return (
-    <nav className="fixed bottom-4 left-4 right-4 max-w-lg mx-auto h-20 bg-slate-900/95 backdrop-blur-xl rounded-[2.2rem] shadow-[0_20px_40px_rgba(0,0,0,0.6)] border border-slate-800/90 flex items-center justify-around px-2 z-50">
-      {tabs.map(tab => {
-        const Icon = tab.icon;
-        const isActive = activeTab === tab.id;
+    <nav className="fixed bottom-0 left-0 right-0 z-40 bg-slate-950/95 backdrop-blur-md border-t border-slate-800/80 pb-safe">
+      <div className="max-w-3xl mx-auto grid grid-cols-6 items-center h-16 px-2">
+        {tabs.map(tab => {
+          const Icon = tab.icon;
+          const isActive = activeTab === tab.id;
 
-        return (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => onChangeTab(tab.id)}
-            className={`flex flex-col items-center justify-center w-14 h-14 rounded-2xl gap-1 transition-all relative cursor-pointer ${
-              isActive 
-                ? 'text-brand-primary font-black scale-105 bg-orange-950/30' 
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Icon size={21} strokeWidth={isActive ? 2.5 : 2} />
-            <span className="text-[7.5px] font-black uppercase tracking-wider">
-              {tab.label}
-            </span>
-
-            {/* Badge */}
-            {tab.badge !== undefined && tab.badge > 0 && (
-              <span className="absolute top-1 right-1.5 min-w-[17px] h-[17px] px-1 bg-rose-500 rounded-full border-2 border-slate-900 flex items-center justify-center text-[8px] font-black text-white shadow-sm">
-                {tab.badge}
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => onChangeTab(tab.id)}
+              className={`min-h-[48px] flex flex-col items-center justify-center rounded-xl transition-colors relative cursor-pointer ${
+                isActive 
+                  ? 'text-brand-primary font-semibold' 
+                  : 'text-slate-400 hover:text-slate-200 font-medium'
+              }`}
+            >
+              <div className="relative flex items-center justify-center">
+                <Icon size={21} strokeWidth={isActive ? 2.4 : 1.9} />
+                {tab.badge !== undefined && tab.badge > 0 && (
+                  <span className="absolute -top-1.5 -right-2.5 min-w-[16px] h-[16px] px-1 bg-rose-500 rounded-full border border-slate-950 flex items-center justify-center text-[9px] font-bold tabular-nums text-white">
+                    {tab.badge}
+                  </span>
+                )}
+              </div>
+              <span className="text-[10px] tracking-tight mt-1 whitespace-nowrap">
+                {tab.label}
               </span>
-            )}
-          </button>
-        );
-      })}
+            </button>
+          );
+        })}
+      </div>
     </nav>
   );
 };

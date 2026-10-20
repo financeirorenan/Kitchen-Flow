@@ -11,7 +11,8 @@ import {
   UserCircle, 
   ShoppingBag, 
   CreditCard,
-  Bike
+  Bike,
+  MessageCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Order } from '../../types';
@@ -37,6 +38,16 @@ export const CourierOrderDetailModal: React.FC<CourierOrderDetailModalProps> = (
 
   const orderNum = formatOrderNumber(order);
   const itemsCount = (order.items || []).reduce((sum, item) => sum + item.quantity, 0);
+
+  const openCustomerWhatsApp = () => {
+    if (!order.customerPhone) return;
+    const digits = order.customerPhone.replace(/\D/g, '');
+    const phoneWithCountry = digits.startsWith('55') ? digits : `55${digits}`;
+    const msg = encodeURIComponent(
+      `Olá ${order.customerName || ''}! Sou o entregador do seu pedido #${orderNum}. Estou a caminho do seu endereço!`
+    );
+    window.open(`https://wa.me/${phoneWithCountry}?text=${msg}`, '_blank');
+  };
 
   return (
     <AnimatePresence>
@@ -77,7 +88,7 @@ export const CourierOrderDetailModal: React.FC<CourierOrderDetailModalProps> = (
             <button 
               type="button"
               onClick={onClose} 
-              className="p-2.5 bg-slate-850 hover:bg-slate-800 text-slate-400 hover:text-white rounded-2xl transition-all border border-slate-750 cursor-pointer"
+              className="w-11 h-11 flex items-center justify-center bg-slate-850 hover:bg-slate-800 text-slate-400 hover:text-white rounded-2xl transition-all border border-slate-750 cursor-pointer"
             >
               <X size={18} />
             </button>
@@ -95,7 +106,7 @@ export const CourierOrderDetailModal: React.FC<CourierOrderDetailModalProps> = (
                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
                     Sua Comissão Nesta Entrega
                   </p>
-                  <h3 className="text-2xl sm:text-3xl font-black text-orange-400 tracking-tight">
+                  <h3 className="text-2xl sm:text-3xl font-black text-orange-400 tracking-tight font-mono tabular-nums">
                     + R$ {(order.courierEarnings || 0).toFixed(2)}
                   </h3>
                 </div>
@@ -107,19 +118,29 @@ export const CourierOrderDetailModal: React.FC<CourierOrderDetailModalProps> = (
 
             {/* Customer & Address Details */}
             <div className="bg-slate-950 p-4.5 rounded-3xl border border-slate-800 space-y-3.5">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <span className="text-[9.5px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
                   <UserCircle size={14} className="text-orange-400" />
                   Dados do Cliente
                 </span>
                 {order.customerPhone && (
-                  <a 
-                    href={`tel:${order.customerPhone.replace(/\D/g, '')}`}
-                    className="flex items-center gap-1.5 text-[9.5px] font-black uppercase tracking-wider text-emerald-400 bg-emerald-950/30 px-2.5 py-1 rounded-xl border border-emerald-900/30 hover:bg-emerald-900/40 transition-colors"
-                  >
-                    <Phone size={12} />
-                    Ligar
-                  </a>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={openCustomerWhatsApp}
+                      className="flex items-center gap-1.5 text-[9.5px] font-black uppercase tracking-wider text-emerald-400 bg-emerald-950/40 px-2.5 py-1.5 rounded-xl border border-emerald-500/30 hover:bg-emerald-900/50 transition-colors cursor-pointer"
+                    >
+                      <MessageCircle size={12} />
+                      WhatsApp
+                    </button>
+                    <a 
+                      href={`tel:${order.customerPhone.replace(/\D/g, '')}`}
+                      className="flex items-center gap-1.5 text-[9.5px] font-black uppercase tracking-wider text-slate-200 bg-slate-900 px-2.5 py-1.5 rounded-xl border border-slate-800 hover:bg-slate-800 transition-colors"
+                    >
+                      <Phone size={12} className="text-orange-400" />
+                      Ligar
+                    </a>
+                  </div>
                 )}
               </div>
 

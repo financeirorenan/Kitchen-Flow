@@ -1598,7 +1598,17 @@ const App: React.FC = () => {
                   const merged = { ...cloudOrder };
                   const localUpdatedMs = localOrder.updatedAt ? toSafeDate(localOrder.updatedAt).getTime() : 0;
                   const cloudUpdatedMs = merged.updatedAt ? toSafeDate(merged.updatedAt).getTime() : 0;
-                  if (localOrder.isSettled || localOrder.paymentStatus === 'paid' || (localOrder.payments && localOrder.payments.length > 0)) {
+                  if (localUpdatedMs > cloudUpdatedMs) {
+                    merged.items = localOrder.items || merged.items;
+                    merged.total = localOrder.total !== undefined ? localOrder.total : merged.total;
+                    merged.status = localOrder.status || merged.status;
+                    merged.kitchenStatus = localOrder.kitchenStatus || merged.kitchenStatus;
+                    merged.paymentMethod = localOrder.paymentMethod || merged.paymentMethod;
+                    merged.payments = localOrder.payments || merged.payments;
+                    if (localOrder.changeFor !== undefined) merged.changeFor = localOrder.changeFor;
+                    merged.updatedAt = localOrder.updatedAt;
+                  }
+                  if (merged.status !== 'cancelled' && (localOrder.isSettled || localOrder.paymentStatus === 'paid' || (localOrder.payments && localOrder.payments.length > 0))) {
                     merged.isSettled = localOrder.isSettled || merged.isSettled;
                     merged.paymentStatus = localOrder.paymentStatus || merged.paymentStatus;
                     merged.paymentMethod = localOrder.paymentMethod || merged.paymentMethod;
@@ -1610,10 +1620,6 @@ const App: React.FC = () => {
                     merged.completedAt = localOrder.completedAt || merged.completedAt;
                     merged.finishedAt = localOrder.finishedAt || merged.finishedAt;
                     if ((localOrder as any).shiftOpenedAt) (merged as any).shiftOpenedAt = (localOrder as any).shiftOpenedAt;
-                  } else if (localUpdatedMs > cloudUpdatedMs) {
-                    merged.paymentMethod = localOrder.paymentMethod || merged.paymentMethod;
-                    merged.payments = localOrder.payments || merged.payments;
-                    if (localOrder.changeFor !== undefined) merged.changeFor = localOrder.changeFor;
                   }
                   updated[existingIdx] = merged;
                 }
@@ -1626,6 +1632,12 @@ const App: React.FC = () => {
 
           // Sincronizar comandas de balcão ativas em tempo real para múltiplos terminais e servidor
           setCounterOrders(prev => {
+            const inactiveOrderIds = new Set(
+              items
+                .filter((o: any) => o && (o.status === 'cancelled' || o.status === 'finished' || o.isSettled || o.paymentStatus === 'paid'))
+                .flatMap((o: any) => [String(o.id), o.docId ? String(o.docId) : '', o.counterId ? String(o.counterId) : ''].filter(Boolean))
+            );
+
             const activeUnsettled = items.filter((o: any) =>
               o && 
               (o.type === 'takeout' || o.type === 'delivery' || o.type === 'counter' || o.counterId || (!o.tableNumber && o.type !== 'table')) &&
@@ -1634,17 +1646,25 @@ const App: React.FC = () => {
               !o.isSettled && 
               o.paymentStatus !== 'paid'
             );
-            if (activeUnsettled.length === 0) return prev;
-            const updatedCounters = [...prev];
+
+            const updatedCounters = prev.filter(c =>
+              c &&
+              !inactiveOrderIds.has(String(c.id)) &&
+              !(c.currentOrderId && inactiveOrderIds.has(String(c.currentOrderId)))
+            );
+
+            if (activeUnsettled.length === 0) return updatedCounters;
+
             activeUnsettled.forEach((ord: any) => {
               const counterId = ord.counterId || ord.id;
               const idx = updatedCounters.findIndex(c => c && (c.id === counterId || String(c.id) === String(counterId) || c.currentOrderId === ord.id));
+              const activeItems = (ord.items || []).filter((it: any) => !it.cancelled);
               const counterObj: Table = {
                 id: counterId,
                 number: ord.dailyNumber || (typeof counterId === 'number' ? counterId : 1),
                 status: 'occupied',
-                items: ord.items || [],
-                total: ord.total || 0,
+                items: activeItems,
+                total: ord.total ?? activeItems.reduce((s: number, it: any) => s + it.price * it.quantity, 0),
                 tenantId: ord.tenantId,
                 currentOrderId: ord.id,
                 customerName: ord.customerName,
@@ -3928,6 +3948,15 @@ const App: React.FC = () => {
 
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || 'default-tenant';
 
+    const isTableOrder =
+      order.type === 'table' ||
+      order.type === 'dine_in' ||
+      (!order.type && order.tableNumber !== undefined && !String(order.tableNumber).toLowerCase().includes('balcão'));
+    const hasExplicitPayment = Boolean(order.paymentMethod || (order.payments && order.payments.length > 0));
+    const isAlreadyPaid = Boolean(order.isSettled || order.paymentStatus === 'paid' || order.paymentStatus === 'completed');
+    // Pedidos de mesa (ou comandas de PDV ainda sem forma de pagamento definida) só devem ser baixados financeiramente no fechamento da mesa/conta (handleCloseTable)
+    const canSettleOnStatusFinal = !isTableOrder && (isAlreadyPaid || hasExplicitPayment);
+
     // Add specific timestamps and synchronized kitchenStatus for lifecycle tracking
     if (status === 'preparing') {
       updates.acceptedAt = now;
@@ -3957,13 +3986,15 @@ const App: React.FC = () => {
       updates.deliveredAt = now;
       updates.completedAt = order.completedAt || now;
       updates.finishedAt = order.finishedAt || now;
-      updates.paidAt = order.paidAt || now;
-      updates.paymentStatus = 'paid';
-      if (status === 'finished') {
-        updates.isSettled = true;
-      }
-      if (cashSession?.isOpen && cashSession.openedAt) {
-        (updates as any).shiftOpenedAt = cashSession.openedAt;
+      if (canSettleOnStatusFinal) {
+        updates.paidAt = order.paidAt || now;
+        updates.paymentStatus = 'paid';
+        if (status === 'finished') {
+          updates.isSettled = true;
+        }
+        if (cashSession?.isOpen && cashSession.openedAt) {
+          (updates as any).shiftOpenedAt = cashSession.openedAt;
+        }
       }
       updates.kitchenStatus = 'delivered';
       updates.kitchen_status = 'delivered';
@@ -3977,12 +4008,64 @@ const App: React.FC = () => {
       updates.kitchenStatus = 'pending';
       updates.kitchen_status = 'pending';
       updates.productionStatus = 'pending';
+    } else if (status === 'cancelled') {
+      updates.kitchenStatus = 'cancelled';
+      updates.kitchen_status = 'cancelled';
+      updates.productionStatus = 'cancelled';
+      updates.isSettled = false;
+      updates.paymentStatus = 'pending';
+      (updates as any).cancelledAt = now;
     }
 
     // 1. Instant optimistic state update (0ms latency for UI response)
     setOrders(prev => prev.map(o => (o.id === id || o.docId === id || o.id === order.id) ? { ...o, ...updates } as Order : o));
 
-    if (updates.items) {
+    if (status === 'cancelled') {
+      // Remover de comandas de balcão ativas
+      setCounterOrders(prev => prev.filter(c =>
+        c.id !== order.id &&
+        String(c.id) !== String(order.id) &&
+        String(c.id) !== String((order as any).counterId) &&
+        c.currentOrderId !== order.id &&
+        c.currentOrderId !== order.docId
+      ));
+
+      // Liberar mesa vinculada se for pedido de mesa ativo
+      const linkedTable = tables.find(t =>
+        t.currentOrderId === order.id ||
+        (order.docId && t.currentOrderId === order.docId) ||
+        (order.type === 'table' && order.tableNumber !== undefined && String(t.number) === String(order.tableNumber) && !order.isSettled)
+      );
+      if (linkedTable) {
+        const numericTblId = typeof linkedTable.id === 'string' ? Number(linkedTable.id.replace(/\D/g, '')) : linkedTable.id;
+        setTables(prev => prev.map(t => t.id === linkedTable.id ? {
+          ...t,
+          items: [],
+          status: 'available',
+          total: 0,
+          currentOrderId: undefined,
+          partialPayments: []
+        } : t));
+        if (!isNaN(numericTblId)) {
+          localDb.diningTables.update(numericTblId, { items: [], status: 'available', total: 0, currentOrderId: undefined } as any).catch(() => {});
+        }
+        if (effectiveTenantId) {
+          const tblDocId = (linkedTable as any).docId;
+          if (tblDocId) {
+            updateDoc(doc(db, 'diningTables', tblDocId), { items: [], status: 'available', total: 0, currentOrderId: null, partialPayments: [], updatedAt: now }).catch(() => {});
+          } else if (!isNaN(numericTblId)) {
+            getDocs(query(collection(db, 'diningTables'), where('id', '==', numericTblId), where('tenantId', '==', effectiveTenantId)))
+              .then(snap => {
+                if (!snap.empty) {
+                  updateDoc(snap.docs[0].ref, { items: [], status: 'available', total: 0, currentOrderId: null, partialPayments: [], updatedAt: now }).catch(() => {});
+                }
+              })
+              .catch(() => {});
+          }
+        }
+      }
+      showToast(`Pedido #${order.dailyNumber || (order.id || '').slice(-4)} cancelado com sucesso!`, 'info');
+    } else if (updates.items) {
       setTables(prev => prev.map(t => (t.currentOrderId === order.id || (order.type === 'table' && String(t.number) === String(order.tableNumber))) ? {
         ...t,
         items: t.items.map(ti => {
@@ -4009,26 +4092,27 @@ const App: React.FC = () => {
 
     // 3. Side effects and cloud sync asynchronously in background
     (async () => {
-      // Ciclo Final para pedidos de Marketplace/Delivery (Igual às Mesas)
-      if (status === 'finished' || status === 'delivered') {
+      // Ciclo Final apenas para pedidos que NÃO são de mesa e que já possuem forma de pagamento definida
+      // (Pedidos de mesa só dão baixa financeira quando a mesa é efetivamente fechada em handleCloseTable)
+      if ((status === 'finished' || status === 'delivered') && !isTableOrder && hasExplicitPayment) {
         const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
         const alreadyHasRecords = financialRecords.some(r => r.orderId && (r.orderId === order.id || (order.docId && r.orderId === order.docId)));
         if (effectiveTenantId && !order.isSettled && !alreadyHasRecords) {
           try {
             // Registrar Receita
-            let recordCategory = 'Vendas Mesa';
+            let recordCategory = 'Vendas Entrega';
             const shortOrdNum = order.dailyNumber ? String(order.dailyNumber) : order.id.slice(-4);
             let recordDesc = `Pedido #${shortOrdNum} (${order.type.toUpperCase()}) - Finalizado`;
             
             if (order.source === 'marketplace' || order.source === 'iFood') {
               recordCategory = 'Vendas Marketplace';
               recordDesc = `Pedido #${shortOrdNum} (Marketplace) - Finalizado`;
-            } else if (order.source === 'whatsapp' || order.source === 'partner_app' || (order.source as string) === 'digital_menu' || order.tableNumber !== undefined) {
+            } else if (order.source === 'whatsapp' || order.source === 'partner_app' || (order.source as string) === 'digital_menu') {
               recordCategory = 'Vendas Cardápio Digital';
               recordDesc = `Pedido #${shortOrdNum} (Cardápio Digital) - Finalizado`;
             } else {
-              recordCategory = order.type === 'delivery' ? 'Vendas Entrega' : (order.type === 'takeout' ? 'Vendas Balcão' : 'Vendas Mesa');
-              recordDesc = `Pedido #${shortOrdNum} (${order.type === 'delivery' ? 'DELIVERY' : (order.type === 'takeout' ? 'BALCÃO' : 'MESA')}) - Finalizado`;
+              recordCategory = order.type === 'delivery' ? 'Vendas Entrega' : 'Vendas Balcão';
+              recordDesc = `Pedido #${shortOrdNum} (${order.type === 'delivery' ? 'DELIVERY' : 'BALCÃO'}) - Finalizado`;
             }
 
             if (order.payments && order.payments.length > 0) {
@@ -4048,15 +4132,15 @@ const App: React.FC = () => {
                   });
                 }
               }
-            } else {
+            } else if (order.paymentMethod) {
               await handleAddFinancialRecord({
-                id: `fin-${order.id}-${order.paymentMethod || 'dinheiro'}-${order.total}`,
+                id: `fin-${order.id}-${order.paymentMethod}-${order.total}`,
                 type: 'income',
                 amount: order.total,
                 category: recordCategory,
-                description: `${recordDesc} - Pagamento: ${order.paymentMethod || 'dinheiro'}`,
+                description: `${recordDesc} - Pagamento: ${order.paymentMethod}`,
                 date: new Date(),
-                paymentMethod: order.paymentMethod || 'dinheiro',
+                paymentMethod: order.paymentMethod,
                 orderId: order.id
               });
             }
@@ -4135,13 +4219,51 @@ const App: React.FC = () => {
         }
       }
 
+      // Se o pedido foi cancelado, estornar lançamentos financeiros e saldo Fiado se existirem
+      if (status === 'cancelled') {
+        const shortId = order.dailyNumber ? String(order.dailyNumber) : order.id.slice(-4);
+        const exactShortIdRegex = new RegExp(`Pedido #${shortId}(?:\\b|\\s|-|\\)|$)`, 'i');
+        const recordsToRemove = financialRecords.filter(r =>
+          r.orderId === order.id ||
+          (order.docId && r.orderId === order.docId) ||
+          (!r.orderId && r.description && exactShortIdRegex.test(r.description))
+        );
+        for (const rec of recordsToRemove) {
+          await handleDeleteFinancialRecord(rec.id).catch(e => console.warn("Erro ao remover lançamento de pedido cancelado:", e));
+        }
+
+        // Estornar Fiado se aplicável
+        const isFiado = order.paymentMethod === 'conta_cliente' || order.paymentMethod === 'fiado' ||
+          (order.payments && order.payments.some(p => p.method === 'conta_cliente' || (p.method as string) === 'fiado'));
+        if (isFiado && order.customerId) {
+          const customer = customers.find(c => c.id === order.customerId);
+          if (customer) {
+            const fiadoAmount = (order.payments && order.payments.length > 0)
+              ? order.payments.filter(p => p.method === 'conta_cliente' || (p.method as string) === 'fiado').reduce((s, p) => s + (Number(p.amount) || 0), 0)
+              : (order.total || 0);
+            if (fiadoAmount > 0) {
+              const transaction: CustomerTransaction = {
+                id: `tr-canc-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                type: 'credit',
+                amount: fiadoAmount,
+                description: `Estorno por Cancelamento - Pedido #${shortId}`,
+                date: new Date()
+              };
+              await handleUpdateCustomer(order.customerId, {
+                balance: Math.max(0, (customer.balance || 0) - fiadoAmount),
+                history: [transaction, ...(customer.history || [])]
+              });
+            }
+          }
+        }
+      }
+
       // Sync status to cloud if we are in a tenant context
       if (effectiveTenantId) {
         try {
           const targetDocId = order.docId || order.id || id;
           await setDoc(doc(db, 'orders', targetDocId), cleanObject({
             ...updates,
-            // Se for concluído, registrar horário legível para relatórios simples
             ...(status === 'delivered' || status === 'finished' ? { completedAt: now } : {})
           }), { merge: true });
         } catch (e) {
@@ -4236,6 +4358,16 @@ const App: React.FC = () => {
     const oldOrder = orders.find(o => o.id === id || o.docId === id);
     const targetId = oldOrder?.id || id;
     const targetDocId = oldOrder?.docId || oldOrder?.id || id;
+
+    // Se a atualização estiver cancelando o pedido ou removendo todos os itens, executar fluxo completo de cancelamento
+    if (updates.status === 'cancelled' || (updates.items !== undefined && updates.items.filter(it => !it.cancelled).length === 0)) {
+      await handleUpdateOrderStatus(targetId, 'cancelled');
+      return;
+    }
+
+    if (updates.items) {
+      updates.items = updates.items.filter(it => !it.cancelled);
+    }
     
     updates.updatedAt = new Date();
 
@@ -4261,12 +4393,21 @@ const App: React.FC = () => {
     setOrders(prev => prev.map(o => (o.id === targetId || o.docId === targetDocId || o.id === targetDocId || (o.docId && o.docId === targetId)) ? { ...o, ...updates } : o));
     
     // Sincronizar mesa se for um pedido de mesa
-    if (updates.items && oldOrder?.tableNumber) {
-      setTables(prev => prev.map(t => (String(t.number) === String(oldOrder.tableNumber) || t.currentOrderId === targetId) ? {
-        ...t,
-        items: updates.items || t.items,
-        total: updates.total !== undefined ? updates.total : t.total
-      } : t));
+    if (updates.items) {
+      const itemsSubtotal = updates.items.reduce((acc, it) => acc + (it.price * it.quantity), 0);
+      if (oldOrder?.tableNumber || oldOrder?.type === 'table') {
+        setTables(prev => prev.map(t => (String(t.number) === String(oldOrder?.tableNumber) || t.currentOrderId === targetId || t.currentOrderId === targetDocId) ? {
+          ...t,
+          items: updates.items || t.items,
+          total: itemsSubtotal
+        } : t));
+      }
+      // Sincronizar comanda de balcão se aplicável
+      setCounterOrders(prev => prev.map(c => (c.currentOrderId === targetId || c.currentOrderId === targetDocId || String(c.id) === String(targetId) || String(c.id) === String((oldOrder as any)?.counterId)) ? {
+        ...c,
+        items: updates.items || c.items,
+        total: itemsSubtotal
+      } : c));
     }
 
     if (effectiveTenantId) {
@@ -4365,10 +4506,21 @@ const App: React.FC = () => {
 
       const effectivePayments = updates.payments || order?.payments;
       const recCategory = order?.type === 'delivery' ? 'Vendas Entrega' : (order?.type === 'takeout' ? 'Vendas Balcão' : 'Vendas Mesa');
+      const isTableOrd = Boolean(
+        order && (
+          order.type === 'table' ||
+          order.type === 'dine_in' ||
+          (!order.type && order.tableNumber !== undefined && !String(order.tableNumber).toLowerCase().includes('balcão'))
+        )
+      );
       const isCompleted = Boolean(
         updates.isSettled ||
         updates.paymentStatus === 'paid' ||
-        (order && (order.status === 'delivered' || order.status === 'finished' || order.isSettled || order.paymentStatus === 'paid'))
+        (order && (
+          order.isSettled ||
+          order.paymentStatus === 'paid' ||
+          (!isTableOrd && Boolean(order.paymentMethod || updates.paymentMethod) && (order.status === 'delivered' || order.status === 'finished'))
+        ))
       );
 
       if (effectivePayments && effectivePayments.length > 1) {
@@ -4458,7 +4610,7 @@ const App: React.FC = () => {
 
     orders.forEach(o => {
       if (!o || !o.payments || o.payments.length <= 1) return;
-      const isPaid = o.isSettled || o.paymentStatus === 'paid' || o.status === 'finished' || o.status === 'delivered';
+      const isPaid = o.isSettled || o.paymentStatus === 'paid' || Boolean(o.payments && o.payments.length > 0);
       if (!isPaid || o.status === 'cancelled') return;
 
       const sig = `${o.id}_${o.payments.map(p => `${p.method}:${p.amount}`).join('|')}`;
@@ -4517,6 +4669,83 @@ const App: React.FC = () => {
       }
     });
   }, [orders, financialRecords, cashSession?.isOpen, cashSession?.openedAt]);
+
+  // Auto-reparo para pedidos de mesa que receberam baixa automática em dinheiro ao finalizar no KDS antes do fechamento da mesa
+  const healedTableDuplicatesRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!cashSession?.isOpen || !cashSession.openedAt || orders.length === 0) return;
+
+    orders.forEach(o => {
+      if (!o || o.status === 'cancelled') return;
+      const isTableOrd = o.type === 'table' || o.type === 'dine_in' || (!o.type && o.tableNumber !== undefined && !String(o.tableNumber).toLowerCase().includes('balcão'));
+      if (!isTableOrd) return;
+
+      // Procurar lançamentos financeiros gerados automaticamente pelo KDS ("- Finalizado - Pagamento: dinheiro") para este pedido de mesa
+      const kdsAutoRecords = financialRecords.filter(r =>
+        r.orderId &&
+        (r.orderId === o.id || (o.docId && r.orderId === o.docId)) &&
+        r.description &&
+        r.description.includes('- Finalizado') &&
+        !r.description.startsWith('Mesa ')
+      );
+
+      if (kdsAutoRecords.length === 0) return;
+
+      const isTableStillOpen = tables.some(t =>
+        t.status === 'occupied' &&
+        (t.currentOrderId === o.id || (o.docId && t.currentOrderId === o.docId) || (o.tableNumber !== undefined && String(t.number) === String(o.tableNumber)))
+      );
+
+      // Procurar se já existe outro pedido fechado/quitado para a mesma mesa no mesmo turno (gerado quando fechou a mesa depois)
+      const duplicateClosedTableOrder = orders.find(other =>
+        other.id !== o.id &&
+        other.status !== 'cancelled' &&
+        !other.isSubTicket &&
+        (other.type === 'table' || other.type === 'dine_in' || !other.type) &&
+        String(other.tableNumber) === String(o.tableNumber) &&
+        other.isSettled &&
+        other.paymentStatus === 'paid' &&
+        !o.paymentMethod &&
+        financialRecords.some(r => r.orderId === other.id && r.description?.startsWith('Mesa '))
+      );
+
+      if (isTableStillOpen || duplicateClosedTableOrder) {
+        const healKey = `tbl_heal_${o.id}_${kdsAutoRecords.map(r => r.id).join(',')}`;
+        if (healedTableDuplicatesRef.current.has(healKey)) return;
+        healedTableDuplicatesRef.current.add(healKey);
+
+        (async () => {
+          for (const rec of kdsAutoRecords) {
+            await handleDeleteFinancialRecord(rec.id).catch(() => {});
+          }
+          if (duplicateClosedTableOrder) {
+            const subUpdates: Partial<Order> = {
+              isSubTicket: true,
+              mergedIntoOrderId: duplicateClosedTableOrder.id,
+              isSettled: true
+            };
+            setOrders(prev => prev.map(ord => ord.id === o.id ? { ...ord, ...subUpdates } : ord));
+            await localDb.orders.update(o.id, subUpdates).catch(() => {});
+            const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+            if (effectiveTenantId) {
+              await setDoc(doc(db, 'orders', o.docId || o.id), cleanObject(subUpdates), { merge: true }).catch(() => {});
+            }
+          } else if (isTableStillOpen && !o.paymentMethod) {
+            const openUpdates: Partial<Order> = {
+              isSettled: false,
+              paymentStatus: 'pending'
+            };
+            setOrders(prev => prev.map(ord => ord.id === o.id ? { ...ord, ...openUpdates } : ord));
+            await localDb.orders.update(o.id, openUpdates).catch(() => {});
+            const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+            if (effectiveTenantId) {
+              await setDoc(doc(db, 'orders', o.docId || o.id), cleanObject(openUpdates), { merge: true }).catch(() => {});
+            }
+          }
+        })();
+      }
+    });
+  }, [orders, financialRecords, tables, cashSession?.isOpen, cashSession?.openedAt]);
 
   const handleAssignCourier = async (orderId: string, courierId: string) => {
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
@@ -4747,11 +4976,12 @@ const App: React.FC = () => {
       isDelivery?: boolean;
     }
   ) => {
-    const total = items.reduce((a, b) => a + (b.price * b.quantity), 0);
+    const activeItems = (items || []).filter(it => !it.cancelled);
+    const total = activeItems.reduce((a, b) => a + (b.price * b.quantity), 0);
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || (isSuperAdmin ? `saas-admin-${user?.uid}` : null);
     const numericId = typeof id === 'string' ? Number(id) : id;
 
-    const tableUpdates: Record<string, any> = { items, status, total };
+    const tableUpdates: Record<string, any> = { items: activeItems, status, total };
     const existingTable = (!isCounter ? tables : counterOrders).find(t => t.id === id || t.id === numericId || (t as any).docId === id);
     if (existingTable?.currentOrderId) {
       tableUpdates.currentOrderId = existingTable.currentOrderId;
@@ -4778,23 +5008,33 @@ const App: React.FC = () => {
           id: id,
           number: typeof id === 'number' ? id : prev.length + 1,
           status: status || 'occupied',
-          items: items || [],
+          items: activeItems,
           total: total || 0,
           tenantId: effectiveTenantId || '',
           ...tableUpdates
         }];
       });
 
-      // Se houver pedido vinculado a esta comanda de balcão, atualiza no Firestore para o servidor reconhecer
-      if (effectiveTenantId && existingTable?.currentOrderId) {
-        setDoc(doc(db, 'orders', existingTable.currentOrderId), cleanObject({
-          items,
-          total,
-          updatedAt: new Date(),
-          customerName: tableUpdates.customerName,
-          customerPhone: tableUpdates.customerPhone,
-          customerAddress: tableUpdates.customerAddress
-        }), { merge: true }).catch(e => console.warn("Erro ao sincronizar comanda de balcão no Firestore:", e));
+      // Se houver pedido vinculado a esta comanda de balcão, atualiza no estado e no Firestore
+      const counterOrderId = existingTable?.currentOrderId || (orders.some(o => o.id === String(id) || o.docId === String(id)) ? String(id) : null);
+      if (counterOrderId) {
+        setOrders(prev => prev.map(o => (o.id === counterOrderId || o.docId === counterOrderId) ? {
+          ...o,
+          items: activeItems,
+          total: total + (o.deliveryFee || 0) + (o.additionalFee || 0) - (o.discount || 0),
+          updatedAt: new Date()
+        } : o));
+        localDb.orders.update(counterOrderId, { items: activeItems, total, updatedAt: new Date() }).catch(() => {});
+        if (effectiveTenantId) {
+          setDoc(doc(db, 'orders', counterOrderId), cleanObject({
+            items: activeItems,
+            total,
+            updatedAt: new Date(),
+            customerName: tableUpdates.customerName,
+            customerPhone: tableUpdates.customerPhone,
+            customerAddress: tableUpdates.customerAddress
+          }), { merge: true }).catch(e => console.warn("Erro ao sincronizar comanda de balcão no Firestore:", e));
+        }
       }
     } else {
       // Local update
@@ -4803,45 +5043,50 @@ const App: React.FC = () => {
         localDb.diningTables.update(numericId, tableUpdates).catch(e => console.warn("LocalDb table update error:", e));
       }
 
-      // Se houver pedido ativo vinculado a esta mesa no KDS, sincroniza apenas itens já enviados (preservando metadados de lote/produção)
+      // Se houver pedido ativo vinculado a esta mesa no KDS, sincroniza itens já enviados (inclusive quando zerados)
       if (existingTable?.currentOrderId) {
         const orderIdToSync = existingTable.currentOrderId;
-        const sentItemsOnly = items.filter(it => it.sentToKitchen !== false);
-        if (sentItemsOnly.length > 0) {
-          const currentOrderObj = orders.find(o => o.id === orderIdToSync || o.docId === orderIdToSync);
-          const existingOrderItems = currentOrderObj?.items || [];
-          const mergedOrderItems = sentItemsOnly.map(it => {
-            const prevMatch = existingOrderItems.find(oi =>
-              Boolean(oi.id && it.id && oi.id === it.id) ||
-              (oi.productId === it.productId && oi.name === it.name && (oi.observation || '') === (it.observation || ''))
-            );
-            return prevMatch ? {
-              ...prevMatch,
-              ...it,
-              id: prevMatch.id || it.id,
-              batchNumber: it.batchNumber ?? prevMatch.batchNumber ?? 1,
-              isNew: it.isNew ?? prevMatch.isNew ?? false,
-              sentAt: it.sentAt ?? prevMatch.sentAt,
-              kitchenDispatched: it.kitchenDispatched ?? prevMatch.kitchenDispatched ?? false,
-              sentToKitchen: true
-            } : it;
-          });
-          const activeItemsTotal = mergedOrderItems.filter(it => !it.cancelled).reduce((acc, it) => acc + (it.price * it.quantity), 0);
+        const sentItemsOnly = activeItems.filter(it => it.sentToKitchen !== false);
+        const currentOrderObj = orders.find(o => o.id === orderIdToSync || o.docId === orderIdToSync);
+        const existingOrderItems = currentOrderObj?.items || [];
+        const mergedOrderItems = sentItemsOnly.map(it => {
+          const prevMatch = existingOrderItems.find(oi =>
+            Boolean(oi.id && it.id && oi.id === it.id) ||
+            (oi.productId === it.productId && oi.name === it.name && (oi.observation || '') === (it.observation || ''))
+          );
+          return prevMatch ? {
+            ...prevMatch,
+            ...it,
+            id: prevMatch.id || it.id,
+            batchNumber: it.batchNumber ?? prevMatch.batchNumber ?? 1,
+            isNew: it.isNew ?? prevMatch.isNew ?? false,
+            sentAt: it.sentAt ?? prevMatch.sentAt,
+            kitchenDispatched: it.kitchenDispatched ?? prevMatch.kitchenDispatched ?? false,
+            sentToKitchen: true
+          } : it;
+        });
+        const activeItemsTotal = mergedOrderItems.reduce((acc, it) => acc + (it.price * it.quantity), 0);
 
-          setOrders(prev => prev.map(o => (o.id === orderIdToSync || o.docId === orderIdToSync) ? {
-            ...o,
+        setOrders(prev => prev.map(o => (o.id === orderIdToSync || o.docId === orderIdToSync) ? {
+          ...o,
+          items: mergedOrderItems,
+          total: activeItemsTotal + (o.deliveryFee || 0) + (o.additionalFee || 0) - (o.discount || 0),
+          updatedAt: new Date()
+        } : o));
+
+        localDb.orders.update(orderIdToSync, {
+          items: mergedOrderItems,
+          total: activeItemsTotal,
+          updatedAt: new Date()
+        }).catch(() => {});
+
+        if (effectiveTenantId) {
+          const targetDocId = currentOrderObj?.docId || orderIdToSync;
+          setDoc(doc(db, 'orders', targetDocId), cleanObject({
             items: mergedOrderItems,
-            total: activeItemsTotal + (o.deliveryFee || 0) + (o.additionalFee || 0) - (o.discount || 0),
+            total: activeItemsTotal,
             updatedAt: new Date()
-          } : o));
-
-          if (effectiveTenantId) {
-            setDoc(doc(db, 'orders', orderIdToSync), cleanObject({
-              items: mergedOrderItems,
-              total: activeItemsTotal,
-              updatedAt: new Date()
-            }), { merge: true }).catch(e => console.warn("Erro ao sincronizar pedido de mesa no Firestore:", e));
-          }
+          }), { merge: true }).catch(e => console.warn("Erro ao sincronizar pedido de mesa no Firestore:", e));
         }
       }
 
@@ -4850,7 +5095,7 @@ const App: React.FC = () => {
         (async () => {
           try {
             const table = tables.find(t => t.id === id || t.id === numericId || (t as any).docId === id);
-            const docId = (table as any).docId || (typeof id === 'string' && isNaN(numericId) ? id : null);
+            const docId = (table as any)?.docId || (typeof id === 'string' && isNaN(numericId) ? id : null);
 
             if (docId) {
               await setDoc(doc(db, 'diningTables', docId), cleanObject({ ...tableUpdates, updatedAt: new Date() }), { merge: true });
@@ -4894,74 +5139,122 @@ const App: React.FC = () => {
       const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || (isSuperAdmin ? `saas-admin-${user?.uid}` : null);
       const strId = String(tableId);
       const numericId = Number(strId.replace(/\D/g, ''));
+      const now = new Date();
       
       const table = isCounter 
-        ? counterOrders.find(t => t.id === tableId) 
-        : tables.find(t => t.id === tableId || t.id === numericId || (t as any).docId === tableId);
+        ? counterOrders.find(t => t.id === tableId || String(t.id) === strId || t.id === numericId || t.currentOrderId === strId) 
+        : tables.find(t => t.id === tableId || String(t.id) === strId || t.id === numericId || (t as any).docId === tableId || t.currentOrderId === strId);
 
-      // Remove pedidos de cozinha (KDS-) pendentes ou prontos para esta mesa/balcão (NUNCA deletar pedidos já quitados!)
-      const tableNumber = table?.number || tableId;
-      const kitchenOrderIdsToRemove = orders
-        .filter(o => 
-          (o.status === 'preparing' || o.status === 'ready') && 
-          !o.isSettled && 
-          o.paymentStatus !== 'paid' &&
-          o.id.startsWith('KDS-') && 
-          (String(o.tableNumber) === String(tableNumber))
-        )
-        .map(o => o.id);
-      
-      if (kitchenOrderIdsToRemove.length > 0) {
-        await localDb.orders.bulkDelete(kitchenOrderIdsToRemove);
-        setOrders(prev => prev.filter(o => !kitchenOrderIdsToRemove.includes(o.id)));
-        
-        if (effectiveTenantId) {
-           for (const kid of kitchenOrderIdsToRemove) {
-             try {
-               await deleteDoc(doc(db, 'orders', kid));
-             } catch (e) {
-               console.error(`Error deleting cloud KDS order ${kid}:`, e);
-             }
-           }
+      const tableNumber = table?.number || (!isCounter && !isNaN(numericId) ? numericId : tableId);
+
+      // Identificar TODOS os pedidos ativos vinculados a esta mesa, comanda de balcão ou ID de pedido
+      const ordersToCancel = orders.filter(o => {
+        if (!o || o.status === 'cancelled') return false;
+        // Se foi passado o próprio ID do pedido (ex: pdvEditOrder ou card virtual de pedido ativo)
+        if (String(o.id) === strId || (o.docId && String(o.docId) === strId)) return true;
+        // Se a mesa/comanda aponta para currentOrderId
+        if (table?.currentOrderId && (String(o.id) === String(table.currentOrderId) || (o.docId && String(o.docId) === String(table.currentOrderId)))) {
+          return true;
         }
-      }
+        // Se for comanda de balcão vinculada por counterId
+        if (isCounter && (String((o as any).counterId) === strId || String(o.id) === strId)) {
+          return true;
+        }
+        // Se for mesa, cancelar pedidos em aberto (não quitados) desta mesa
+        if (!isCounter && (o.type === 'table' || o.tableNumber !== undefined) && String(o.tableNumber) === String(tableNumber)) {
+          if (o.status !== 'finished' && o.status !== 'delivered' && !o.isSettled && o.paymentStatus !== 'paid') {
+            return true;
+          }
+        }
+        return false;
+      });
 
-      // Estorno de pagamentos parciais se houver
-      const partialPayments = (table as any)?.partialPayments || [];
-      if (partialPayments.length > 0) {
-        const now = new Date();
-        for (const part of partialPayments) {
-          const refundAmount = Number(part.amount || 0);
-          if (refundAmount > 0) {
-            const refundRecord: FinancialRecord = {
-              id: `estorno-canc-${tableId}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-              tenantId: effectiveTenantId || 't1',
-              type: 'expense',
-              amount: refundAmount,
-              category: 'Estorno de Pagamento Parcial',
-              description: `Estorno por cancelamento de ${isCounter ? 'Balcão' : `Mesa ${tableNumber}`} - Forma: ${part.method || 'Não informada'}`,
-              date: now,
-              status: 'paid',
-              paymentMethod: part.method || 'dinheiro'
-            };
-            await handleAddFinancialRecord(refundRecord);
+      if (ordersToCancel.length > 0) {
+        const cancelIds = new Set(ordersToCancel.flatMap(o => [String(o.id), o.docId ? String(o.docId) : ''].filter(Boolean)));
+        const cancelUpdates = {
+          status: 'cancelled' as const,
+          kitchenStatus: 'cancelled' as const,
+          kitchen_status: 'cancelled',
+          productionStatus: 'cancelled' as const,
+          isSettled: false,
+          paymentStatus: 'pending' as const,
+          cancelledAt: now,
+          updatedAt: now
+        };
+
+        setOrders(prev => prev.map(o =>
+          (cancelIds.has(String(o.id)) || (o.docId && cancelIds.has(String(o.docId))))
+            ? { ...o, ...cancelUpdates } as Order
+            : o
+        ));
+
+        for (const ord of ordersToCancel) {
+          await localDb.orders.update(ord.id, cancelUpdates).catch(() => {});
+          if (effectiveTenantId) {
+            const targetDocId = ord.docId || ord.id;
+            setDoc(doc(db, 'orders', targetDocId), cleanObject(cancelUpdates), { merge: true }).catch(e =>
+              console.error(`Error cancelling cloud order ${targetDocId}:`, e)
+            );
+          }
+
+          // Remover lançamentos financeiros vinculados a este pedido se houver
+          const linkedRecords = financialRecords.filter(r =>
+            r.orderId && (r.orderId === ord.id || (ord.docId && r.orderId === ord.docId))
+          );
+          for (const rec of linkedRecords) {
+            await handleDeleteFinancialRecord(rec.id).catch(() => {});
           }
         }
       }
 
-      if (isCounter) {
-        setCounterOrders(prev => prev.filter(t => t.id !== tableId && t.id !== numericId));
-      } else {
-        // Redefinir localmente
-        if (!isNaN(numericId)) {
-          await localDb.diningTables.update(numericId, { items: [], status: 'available', total: 0, currentOrderId: undefined } as any);
+      // Remover ou estornar pagamentos parciais da mesa/balcão se houver
+      const partialPayments = (table as any)?.partialPayments || [];
+      if (partialPayments.length > 0) {
+        for (const part of partialPayments) {
+          if (part.id && financialRecords.some(r => r.id === part.id)) {
+            await handleDeleteFinancialRecord(part.id).catch(() => {});
+          } else {
+            const refundAmount = Number(part.amount || 0);
+            if (refundAmount > 0) {
+              const refundRecord: FinancialRecord = {
+                id: `estorno-canc-${tableId}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                tenantId: effectiveTenantId || 't1',
+                type: 'expense',
+                amount: refundAmount,
+                category: 'Estorno de Pagamento Parcial',
+                description: `Estorno por cancelamento de ${isCounter ? 'Balcão' : `Mesa ${tableNumber}`} - Forma: ${part.method || 'Não informada'}`,
+                date: now,
+                status: 'paid',
+                paymentMethod: part.method || 'dinheiro'
+              };
+              await handleAddFinancialRecord(refundRecord);
+            }
+          }
         }
-        setTables(prev => prev.map(t => t.id === tableId || t.id === numericId || (t as any).docId === tableId ? { ...t, items: [], status: 'available', total: 0, currentOrderId: undefined } : t));
+      }
+
+      // Sempre limpar tanto comandas de balcão quanto mesa correspondente se aplicável
+      setCounterOrders(prev => prev.filter(t =>
+        t.id !== tableId &&
+        String(t.id) !== strId &&
+        t.id !== numericId &&
+        t.currentOrderId !== strId &&
+        !(table?.currentOrderId && t.currentOrderId === table.currentOrderId)
+      ));
+
+      if (!isCounter || tables.some(t => t.id === tableId || t.id === numericId || (t as any).docId === tableId || t.currentOrderId === strId)) {
+        if (!isNaN(numericId)) {
+          await localDb.diningTables.update(numericId, { items: [], status: 'available', total: 0, currentOrderId: undefined, partialPayments: [] } as any).catch(() => {});
+        }
+        setTables(prev => prev.map(t =>
+          (t.id === tableId || String(t.id) === strId || t.id === numericId || (t as any).docId === tableId || t.currentOrderId === strId)
+            ? { ...t, items: [], status: 'available', total: 0, currentOrderId: undefined, partialPayments: [] }
+            : t
+        ));
         
-        // Sincronização Cloud Robusta
         if (effectiveTenantId) {
           try {
-            const docId = (table as any)?.docId || (typeof tableId === 'string' && isNaN(numericId) ? tableId : null);
+            const docId = (table as any)?.docId || (typeof tableId === 'string' && isNaN(numericId) && !ordersToCancel.some(o => o.id === tableId) ? tableId : null);
             
             if (docId) {
               await updateDoc(doc(db, 'diningTables', docId), { 
@@ -4969,13 +5262,14 @@ const App: React.FC = () => {
                 status: 'available', 
                 total: 0, 
                 currentOrderId: null, 
-                updatedAt: new Date() 
+                partialPayments: [],
+                updatedAt: now 
               });
             } else if (!isNaN(numericId)) {
               const q = query(collection(db, 'diningTables'), where('id', '==', numericId), where('tenantId', '==', effectiveTenantId));
               const snapshot = await getDocs(q);
               if (!snapshot.empty) {
-                await updateDoc(snapshot.docs[0].ref, { items: [], status: 'available', total: 0, currentOrderId: null, updatedAt: new Date() });
+                await updateDoc(snapshot.docs[0].ref, { items: [], status: 'available', total: 0, currentOrderId: null, partialPayments: [], updatedAt: now });
               }
             }
           } catch (e) {
@@ -4983,6 +5277,8 @@ const App: React.FC = () => {
           }
         }
       }
+
+      showToast(`${isCounter ? 'Venda de balcão' : `Venda da Mesa ${table?.number || tableId}`} cancelada com sucesso!`, 'info');
       addLog('u1', 'CANCELAMENTO', `${isCounter ? 'Balcão' : `Mesa ${table?.number || tableId}`} cancelado`);
     } catch (error) {
       console.error('Erro ao cancelar venda:', error);
@@ -5315,15 +5611,22 @@ const App: React.FC = () => {
     const isRealDelivery = !!(deliveryInfo && (deliveryInfo.address || (deliveryInfo.fee && deliveryInfo.fee > 0)));
 
     // Tentar localizar o pedido existente para reaproveitar seu ID e evitar duplicidade
+    // (Mesmo que o pedido da mesa já tenha sido marcado como 'delivered' ou 'finished' no KDS, ele ainda pertence a esta mesa aberta!)
     let existingOrderId = pdvEditOrder ? pdvEditOrder.id : table.currentOrderId;
     if (existingOrderId) {
       const linkedOrd = orders.find(o => o.id === existingOrderId || o.docId === existingOrderId);
-      if (linkedOrd && (linkedOrd.isSettled || linkedOrd.paymentStatus === 'paid' || linkedOrd.status === 'finished' || linkedOrd.status === 'cancelled')) {
+      const isAlreadyClosedTableOrd = Boolean(
+        linkedOrd && (
+          linkedOrd.status === 'cancelled' ||
+          (linkedOrd.isSettled && linkedOrd.paymentStatus === 'paid' && Boolean(linkedOrd.paymentMethod || (linkedOrd.payments && linkedOrd.payments.length > 0)))
+        )
+      );
+      if (isAlreadyClosedTableOrd && existingOrderId !== table.currentOrderId) {
         existingOrderId = undefined;
       }
     }
     if (!existingOrderId) {
-      const match = orders.find(o => (o.id === strTableId || o.docId === strTableId) && !o.isSettled && o.paymentStatus !== 'paid' && o.status !== 'cancelled' && o.status !== 'finished');
+      const match = orders.find(o => (o.id === strTableId || o.docId === strTableId) && !o.isSettled && (o.paymentStatus !== 'paid' || !o.paymentMethod) && o.status !== 'cancelled');
       if (match) {
         existingOrderId = match.id;
       }
@@ -5333,9 +5636,8 @@ const App: React.FC = () => {
         (String(o.tableNumber) === String(tableNumber)) && 
         (o.type === 'table' || o.type === 'dine_in' || !o.type) && 
         !o.isSettled &&
-        o.paymentStatus !== 'paid' &&
+        (o.paymentStatus !== 'paid' || !o.paymentMethod) &&
         o.status !== 'cancelled' && 
-        o.status !== 'finished' &&
         !o.isSubTicket
       );
       if (activeOrd) {
@@ -5360,8 +5662,8 @@ const App: React.FC = () => {
 
     // Tentar localizar pedido ativo correspondente para preservar status da cozinha
     const activeOrderObj = existingOrderId 
-      ? orders.find(o => (o.id === existingOrderId || o.docId === existingOrderId) && !o.isSettled && o.paymentStatus !== 'paid')
-      : orders.find(o => !isCounter && String(o.tableNumber) === String(tableNumber) && o.status !== 'cancelled' && o.status !== 'finished' && !o.isSettled && o.paymentStatus !== 'paid' && !o.isSubTicket);
+      ? orders.find(o => (o.id === existingOrderId || o.docId === existingOrderId) && o.status !== 'cancelled')
+      : orders.find(o => !isCounter && String(o.tableNumber) === String(tableNumber) && o.status !== 'cancelled' && !o.isSettled && (o.paymentStatus !== 'paid' || !o.paymentMethod) && !o.isSubTicket);
 
     const activeStatus = activeOrderObj?.status;
 
@@ -6744,7 +7046,15 @@ const App: React.FC = () => {
         );
         const isTrueSubTicket = Boolean((o.isSubTicket || o.mergedIntoOrderId) && !hasSessionFinancialRecord);
         if (o.status === 'cancelled' || isTrueSubTicket) return false;
-        const isPaid = o.isSettled || o.paymentStatus === 'paid' || (o.payments && o.payments.length > 0) || o.status === 'finished' || o.status === 'delivered';
+        const isTableOrd = o.type === 'table' || o.type === 'dine_in' || (!o.type && o.tableNumber !== undefined && !String(o.tableNumber).toLowerCase().includes('balcão'));
+        const hasExplicitPayment = Boolean(o.paymentMethod || (o.payments && o.payments.length > 0));
+        const isPaid = Boolean(
+          o.isSettled ||
+          o.paymentStatus === 'paid' ||
+          (o.payments && o.payments.length > 0) ||
+          hasSessionFinancialRecord ||
+          (!isTableOrd && hasExplicitPayment && (o.status === 'finished' || o.status === 'delivered'))
+        );
         if (!isPaid) return false;
 
         // 1. Se o pedido possui vínculo explícito com o turno atual (shiftOpenedAt), incluir diretamente

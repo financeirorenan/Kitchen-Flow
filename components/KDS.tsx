@@ -416,8 +416,16 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
           <div className="flex items-center gap-1.5 text-[9px] min-w-0">
             <CreditCard size={12} className="text-slate-400 shrink-0" />
             <span className="font-black text-slate-500 uppercase tracking-tighter shrink-0">PAGAMENTO:</span>
-            <span className="font-black text-indigo-700 uppercase bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 text-[9px] tracking-wide truncate">
-              {order.paymentMethod ? order.paymentMethod.replace('_', ' ') : 'dinheiro'}
+            <span className={`font-black uppercase px-2 py-0.5 rounded border text-[9px] tracking-wide truncate ${
+              order.paymentMethod || (order.payments && order.payments.length > 0)
+                ? 'text-indigo-700 bg-indigo-50 border-indigo-100'
+                : 'text-amber-700 bg-amber-50 border-amber-200'
+            }`}>
+              {order.paymentMethod
+                ? order.paymentMethod.replace('_', ' ')
+                : (order.payments && order.payments.length > 0)
+                  ? order.payments.map(p => p.method.replace('_', ' ')).join(' + ')
+                  : 'A pagar no fechamento'}
             </span>
           </div>
           {order.total !== undefined && (

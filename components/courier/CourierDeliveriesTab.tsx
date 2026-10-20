@@ -4,27 +4,17 @@ import {
   MapPin, 
   Navigation, 
   Phone, 
-  DollarSign, 
-  Clock, 
   Check, 
   Copy, 
-  ChevronRight, 
-  AlertCircle, 
-  Radio, 
-  Layers, 
-  Map as MapIcon, 
   Eye, 
-  ExternalLink,
-  Store,
-  CheckCircle2,
-  Navigation2
+  Navigation2,
+  MessageCircle,
+  AlertTriangle
 } from 'lucide-react';
-import { motion } from 'framer-motion';
-import { Order, Courier, AdminSettings } from '../../types';
+import { Order, AdminSettings } from '../../types';
 import { CourierTimeline } from './CourierTimeline';
 import { CourierNavigation } from '../CourierNavigation';
 import { formatOrderNumber } from '../../utils/deduplicate';
-import { maskPhone } from '../../utils/masks';
 
 interface CourierDeliveriesTabProps {
   activeDeliveries: Order[];
@@ -40,7 +30,6 @@ interface CourierDeliveriesTabProps {
 
 export const CourierDeliveriesTab: React.FC<CourierDeliveriesTabProps> = ({
   activeDeliveries,
-  adminSettings,
   courierLocation,
   copiedAddress,
   onUpdateOrderStatus,
@@ -49,18 +38,29 @@ export const CourierDeliveriesTab: React.FC<CourierDeliveriesTabProps> = ({
   onSelectOrderSummary,
   onOpenMultiRoute
 }) => {
+  const openWhatsAppCustomer = (order: Order) => {
+    if (!order.customerPhone) return;
+    const cleanPhone = order.customerPhone.replace(/\D/g, '');
+    const fullPhone = cleanPhone.startsWith('55') ? cleanPhone : `55${cleanPhone}`;
+    const orderNum = formatOrderNumber(order);
+    const statusText = order.status === 'ready'
+      ? `Olá ${order.customerName || ''}! Sou o entregador do seu pedido #${orderNum}. Já estou saindo do estabelecimento com sua entrega!`
+      : `Olá ${order.customerName || ''}! Sou o entregador do seu pedido #${orderNum}. Estou chegando no endereço de entrega!`;
+    window.open(`https://wa.me/${fullPhone}?text=${encodeURIComponent(statusText)}`, '_blank');
+  };
+
   return (
     <div className="space-y-5 pb-28">
       {/* 1. Header with Active Route Summary */}
-      <div className="flex items-center justify-between px-1">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-1">
         <div>
-          <h2 className="text-lg font-black text-white tracking-tight">
+          <h2 className="text-lg font-bold text-white tracking-tight">
             Rotas e Entregas Ativas
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
             {activeDeliveries.length === 0 
               ? 'Nenhuma entrega atribuída no momento' 
-              : `${activeDeliveries.length} ${activeDeliveries.length === 1 ? 'pedido em rota' : 'pedidos para entregar'}`}
+              : `${activeDeliveries.length} ${activeDeliveries.length === 1 ? 'pedido em rota' : 'pedidos ordenados por parada'}`}
           </p>
         </div>
 
@@ -68,23 +68,23 @@ export const CourierDeliveriesTab: React.FC<CourierDeliveriesTabProps> = ({
           <button
             type="button"
             onClick={onOpenMultiRoute}
-            className="flex items-center gap-1.5 py-2.5 px-3.5 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-2xl text-[9.5px] font-black uppercase tracking-wider transition-all shadow-md active:scale-95 cursor-pointer"
+            className="min-h-[44px] flex items-center gap-2 py-2.5 px-4 bg-brand-primary hover:bg-[#E03D0C] text-white rounded-2xl text-xs font-semibold transition-all shadow-md active:scale-95 cursor-pointer whitespace-nowrap"
           >
-            <Navigation2 size={14} />
-            <span>Rota Total no Maps</span>
+            <Navigation2 size={15} />
+            <span>Abrir Rota Completa no Maps</span>
           </button>
         )}
       </div>
 
       {/* 2. Empty State if no deliveries */}
       {activeDeliveries.length === 0 ? (
-        <div className="bg-slate-900 rounded-[2.5rem] border border-slate-800 p-8 text-center space-y-4 shadow-xl">
-          <div className="w-16 h-16 bg-slate-950 text-slate-500 rounded-3xl flex items-center justify-center mx-auto border border-slate-800">
-            <Bike size={32} />
+        <div className="bg-slate-900 rounded-3xl border border-slate-800 p-8 text-center space-y-4">
+          <div className="w-16 h-16 bg-slate-950 text-slate-500 rounded-2xl flex items-center justify-center mx-auto border border-slate-800">
+            <Bike size={30} />
           </div>
 
           <div className="space-y-1">
-            <h3 className="text-base font-black text-white tracking-tight">
+            <h3 className="text-base font-bold text-white">
               Tudo pronto por aqui!
             </h3>
             <p className="text-xs text-slate-400 max-w-xs mx-auto leading-relaxed">
@@ -94,48 +94,49 @@ export const CourierDeliveriesTab: React.FC<CourierDeliveriesTabProps> = ({
         </div>
       ) : (
         /* 3. List of Active Delivery Cards */
-        <div className="space-y-5">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
           {activeDeliveries.map((order, index) => {
             const isFirst = index === 0;
             const orderNum = formatOrderNumber(order);
+            const itemsCount = (order.items || []).reduce((acc, it) => acc + it.quantity, 0);
 
             return (
               <div 
                 key={order.id || index}
-                className={`bg-slate-900 rounded-[2.5rem] p-5 sm:p-6 border shadow-xl space-y-5 relative overflow-hidden transition-all ${
-                  isFirst ? 'border-orange-500/60 shadow-orange-950/30' : 'border-slate-800'
+                className={`bg-slate-900 rounded-3xl p-5 sm:p-6 border space-y-4 relative overflow-hidden transition-all ${
+                  isFirst ? 'border-orange-500/60 shadow-xl' : 'border-slate-800'
                 }`}
               >
-                {/* Header Badge */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className={`w-7 h-7 rounded-xl flex items-center justify-center text-xs font-black ${
+                {/* Header Stop Number & Commission */}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className={`w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold tabular-nums shrink-0 ${
                       isFirst ? 'bg-brand-primary text-white' : 'bg-slate-800 text-slate-300'
                     }`}>
-                      {index + 1}
+                      {index + 1}ª
                     </span>
-                    <div>
-                      <span className="text-xs font-bold text-white block">
-                        Pedido #{orderNum}
-                      </span>
-                      <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">
-                        {order.status === 'ready' ? 'Pronto na Cozinha' : 'Em Transporte'}
-                      </span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 text-xs text-slate-400">
+                        <span className="font-mono font-bold text-white tabular-nums">#{orderNum}</span>
+                        <span aria-hidden="true">·</span>
+                        <span>{itemsCount} {itemsCount === 1 ? 'item' : 'itens'}</span>
+                      </div>
+                      <h3 className="text-base font-bold text-white truncate mt-0.5">
+                        {order.customerName || 'Cliente'}
+                      </h3>
                     </div>
                   </div>
 
-                  <div className="text-right">
-                    <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 block">
-                      Comissão
-                    </span>
-                    <span className="text-base font-black text-orange-400">
+                  <div className="text-right shrink-0">
+                    <span className="text-xs text-slate-400 block">Comissão</span>
+                    <span className="text-base font-bold text-orange-400 tabular-nums">
                       + R$ {(order.courierEarnings || 0).toFixed(2)}
                     </span>
                   </div>
                 </div>
 
                 {/* Timeline */}
-                <div className="bg-slate-950/70 p-3 rounded-2xl border border-slate-800/80">
+                <div className="bg-slate-950/80 p-3 rounded-2xl border border-slate-800/80">
                   <CourierTimeline 
                     status={order.status}
                     dispatchedAt={order.dispatchedAt}
@@ -143,93 +144,119 @@ export const CourierDeliveriesTab: React.FC<CourierDeliveriesTabProps> = ({
                   />
                 </div>
 
-                {/* Turn-by-Turn GPS Navigation Component (Expanded on primary order) */}
-                {isFirst && (
-                  <div className="rounded-2xl overflow-hidden border border-slate-800">
-                    <CourierNavigation 
-                      order={order}
-                      courierLatitude={courierLocation?.latitude}
-                      courierLongitude={courierLocation?.longitude}
-                    />
-                  </div>
-                )}
+                {/* Turn-by-Turn GPS Navigation Component */}
+                <CourierNavigation 
+                  order={order}
+                  courierLatitude={courierLocation?.latitude}
+                  courierLongitude={courierLocation?.longitude}
+                />
 
-                {/* Destination & Customer Details */}
+                {/* Destination & Customer Contact */}
                 <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="text-[9px] font-black uppercase tracking-wider text-slate-500 block">
-                        Cliente
-                      </span>
-                      <p className="text-sm font-bold text-white">
-                        {order.customerName || 'Cliente'}
-                      </p>
-                    </div>
-
-                    {order.customerPhone && (
-                      <a
-                        href={`tel:${order.customerPhone.replace(/\D/g, '')}`}
-                        className="flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-emerald-400 bg-emerald-950/30 px-2.5 py-1 rounded-xl border border-emerald-900/30 hover:bg-emerald-900/40"
-                      >
-                        <Phone size={12} />
-                        Ligar
-                      </a>
-                    )}
-                  </div>
-
                   {order.customerAddress && (
-                    <div className="pt-2 border-t border-slate-850 flex items-start gap-2">
-                      <MapPin size={16} className="text-rose-400 shrink-0 mt-0.5" />
+                    <div className="flex items-start gap-2.5">
+                      <MapPin size={17} className="text-rose-400 shrink-0 mt-0.5" />
                       <div className="min-w-0 flex-1">
-                        <span className="text-[9px] font-black uppercase tracking-wider text-slate-500 block">
-                          Endereço de Entrega
-                        </span>
-                        <p className="text-xs font-medium text-slate-200 leading-relaxed font-mono">
+                        <span className="text-xs text-slate-500 block">Endereço de Entrega</span>
+                        <p className="text-xs sm:text-sm font-semibold text-white leading-relaxed mt-0.5">
                           {order.customerAddress}
                         </p>
                       </div>
                     </div>
                   )}
 
-                  {/* Copy & External Maps */}
-                  <div className="pt-2 border-t border-slate-850 flex items-center gap-2">
+                  {/* Contact & Copy Actions (44px+ touch targets) */}
+                  <div className="pt-2 border-t border-slate-800/80 grid grid-cols-3 gap-2">
                     <button
                       type="button"
                       onClick={() => onCopyAddress(order.customerAddress || '')}
-                      className="flex-1 py-2 bg-slate-900 hover:bg-slate-850 text-slate-300 rounded-xl text-[9px] font-black uppercase tracking-wider border border-slate-800 flex items-center justify-center gap-1.5 cursor-pointer"
+                      className="min-h-[44px] px-2.5 py-2 bg-slate-900 hover:bg-slate-800 text-slate-200 rounded-xl text-xs font-medium border border-slate-800 flex items-center justify-center gap-1.5 cursor-pointer"
                     >
                       {copiedAddress ? (
                         <>
-                          <Check size={12} className="text-emerald-400" />
+                          <Check size={14} className="text-emerald-400" />
                           <span className="text-emerald-400">Copiado</span>
                         </>
                       ) : (
                         <>
-                          <Copy size={12} />
-                          <span>Copiar Endereço</span>
+                          <Copy size={14} className="text-slate-400" />
+                          <span>Copiar</span>
                         </>
                       )}
+                    </button>
+
+                    {order.customerPhone ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => openWhatsAppCustomer(order)}
+                          className="min-h-[44px] px-2.5 py-2 bg-emerald-950/40 hover:bg-emerald-900/50 text-emerald-300 rounded-xl text-xs font-semibold border border-emerald-500/30 flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <MessageCircle size={14} />
+                          <span>WhatsApp</span>
+                        </button>
+
+                        <a
+                          href={`tel:${order.customerPhone.replace(/\D/g, '')}`}
+                          className="min-h-[44px] px-2.5 py-2 bg-slate-900 hover:bg-slate-800 text-slate-200 rounded-xl text-xs font-medium border border-slate-800 flex items-center justify-center gap-1.5"
+                        >
+                          <Phone size={14} className="text-sky-400" />
+                          <span>Ligar</span>
+                        </a>
+                      </>
+                    ) : (
+                      <div className="col-span-2 flex items-center justify-center text-xs text-slate-500 bg-slate-900/40 rounded-xl border border-slate-800/50">
+                        Sem telefone
+                      </div>
+                    )}
+                  </div>
+
+                  {/* External GPS Apps */}
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => onOpenExternalNavigation(order.customerAddress || '', 'waze')}
+                      className="min-h-[44px] py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-200 rounded-xl text-xs font-semibold border border-slate-800 flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Navigation size={14} className="text-sky-400" />
+                      <span>Waze</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => onOpenExternalNavigation(order.customerAddress || '', 'google')}
-                      className="flex-1 py-2 bg-slate-900 hover:bg-slate-850 text-slate-300 rounded-xl text-[9px] font-black uppercase tracking-wider border border-slate-800 flex items-center justify-center gap-1.5 cursor-pointer"
+                      className="min-h-[44px] py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-200 rounded-xl text-xs font-semibold border border-slate-800 flex items-center justify-center gap-1.5 cursor-pointer"
                     >
-                      <Navigation size={12} className="text-emerald-400" />
+                      <Navigation size={14} className="text-emerald-400" />
                       <span>Google Maps</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => onOpenExternalNavigation(order.customerAddress || '', 'waze')}
-                      className="flex-1 py-2 bg-slate-900 hover:bg-slate-850 text-slate-300 rounded-xl text-[9px] font-black uppercase tracking-wider border border-slate-800 flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Navigation size={12} className="text-sky-400" />
-                      <span>Waze</span>
                     </button>
                   </div>
                 </div>
+
+                {/* Cash Payment / Change Warning */}
+                {order.paymentMethod === 'dinheiro' ? (
+                  <div className="p-3.5 bg-amber-950/30 border border-amber-500/40 rounded-2xl flex items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-2 text-amber-300">
+                      <AlertTriangle size={16} className="shrink-0" />
+                      <div>
+                        <span className="font-bold block">Receber em Dinheiro</span>
+                        {order.changeFor && order.changeFor > order.total && (
+                          <span className="text-amber-200/80 tabular-nums">
+                            Troco p/ R$ {order.changeFor.toFixed(2)} (Devolver R$ {(order.changeFor - order.total).toFixed(2)})
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <span className="font-bold text-sm text-amber-300 tabular-nums shrink-0">
+                      R$ {order.total.toFixed(2)}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="px-3.5 py-2.5 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between text-xs text-slate-400">
+                    <span>Total: <strong className="text-slate-200 tabular-nums">R$ {order.total.toFixed(2)}</strong></span>
+                    <span className="text-emerald-400 font-semibold">{order.paymentMethod?.toUpperCase() || 'PAGO ONLINE'}</span>
+                  </div>
+                )}
 
                 {/* Primary State Transition Action */}
                 <div className="pt-1">
@@ -237,34 +264,32 @@ export const CourierDeliveriesTab: React.FC<CourierDeliveriesTabProps> = ({
                     <button
                       type="button"
                       onClick={() => onUpdateOrderStatus(order, 'delivering')}
-                      className="w-full py-4 bg-brand-primary hover:bg-[#E03D0C] text-white rounded-2xl text-xs font-black uppercase tracking-widest transition-all shadow-xl shadow-orange-950/50 flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                      className="w-full min-h-[50px] py-3.5 bg-brand-primary hover:bg-[#E03D0C] text-white rounded-2xl text-xs font-bold transition-all shadow-lg shadow-orange-950/50 flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
                     >
-                      <Bike size={18} strokeWidth={2.5} />
+                      <Bike size={18} strokeWidth={2.4} />
                       <span>Iniciar Rota deste Pedido</span>
                     </button>
                   ) : (
                     <button
                       type="button"
                       onClick={() => onUpdateOrderStatus(order, 'delivered')}
-                      className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl text-xs font-black uppercase tracking-widest transition-all shadow-xl shadow-emerald-950/50 flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                      className="w-full min-h-[50px] py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl text-xs font-bold transition-all shadow-lg shadow-emerald-950/50 flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
                     >
-                      <Check size={18} strokeWidth={3} />
+                      <Check size={18} strokeWidth={2.8} />
                       <span>Confirmar Entrega Realizada</span>
                     </button>
                   )}
                 </div>
 
                 {/* View Details Link */}
-                <div className="text-center pt-1">
-                  <button
-                    type="button"
-                    onClick={() => onSelectOrderSummary(order)}
-                    className="text-[9px] font-black uppercase tracking-wider text-slate-500 hover:text-slate-300 inline-flex items-center gap-1 cursor-pointer"
-                  >
-                    <Eye size={12} />
-                    Ver Itens e Comprovante do Pedido
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => onSelectOrderSummary(order)}
+                  className="w-full min-h-[40px] text-xs font-medium text-slate-400 hover:text-white flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Eye size={13} />
+                  <span>Ver Itens e Comprovante do Pedido</span>
+                </button>
               </div>
             );
           })}

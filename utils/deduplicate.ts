@@ -9,12 +9,12 @@ const ORDER_STATUS_PRIORITY: Record<string, number> = {
   delivering: 5,
   delivered: 6,
   finished: 7,
-  cancelled: 0,
+  cancelled: 8,
 };
 
 /**
  * Deduplicates orders strictly by ID, docId, clientOrderId, and fingerprint signature.
- * When duplicates exist, keeps the instance with the most advanced operational status.
+ * When duplicates exist, keeps the instance with the most advanced operational status or most recent update.
  * Prevents double counting in reports, cash closings, and financial analytics.
  */
 export function deduplicateOrders(ordersList: Order[]): Order[] {
@@ -24,10 +24,22 @@ export function deduplicateOrders(ordersList: Order[]): Order[] {
   const keyToIndex = new Map<string, number>();
 
   const shouldReplace = (existing: Order, incoming: Order): boolean => {
+    const existingUpdatedMs = safeParseDate(existing.updatedAt)?.getTime() || 0;
+    const incomingUpdatedMs = safeParseDate(incoming.updatedAt)?.getTime() || 0;
+
+    // Se um dos dois está cancelado e o outro foi explicitamente atualizado depois (ex: restaurado), respeita o mais recente
+    if ((existing.status === 'cancelled' || incoming.status === 'cancelled') && existing.status !== incoming.status) {
+      if (existingUpdatedMs > 0 && incomingUpdatedMs > 0 && existingUpdatedMs !== incomingUpdatedMs) {
+        return incomingUpdatedMs > existingUpdatedMs;
+      }
+      return incoming.status === 'cancelled';
+    }
+
     const pOld = ORDER_STATUS_PRIORITY[existing.status] ?? 0;
     const pNew = ORDER_STATUS_PRIORITY[incoming.status] ?? 0;
     if (pNew !== pOld) return pNew > pOld;
     if (Boolean(incoming.isSettled) && !existing.isSettled) return true;
+    if (incomingUpdatedMs > existingUpdatedMs) return true;
     return false;
   };
 
@@ -69,21 +81,23 @@ export function deduplicateOrders(ordersList: Order[]): Order[] {
       const loser = replaceWithIncoming ? existing : o;
 
       // Blindagem de Pagamento: se o loser possuir dados de pagamento quitado (isSettled, paymentStatus: 'paid', payments, ou método não-dinheiro)
-      // e o winner não possuir pagamento quitado, preservar estritamente os dados de pagamento!
-      const loserHasSettledPayment = Boolean(loser.isSettled || loser.paymentStatus === 'paid' || (loser.payments && loser.payments.length > 0));
-      const winnerHasSettledPayment = Boolean(winner.isSettled || winner.paymentStatus === 'paid' || (winner.payments && winner.payments.length > 0));
+      // e o winner não possuir pagamento quitado (e não estiver cancelado), preservar estritamente os dados de pagamento!
+      if (winner.status !== 'cancelled') {
+        const loserHasSettledPayment = Boolean(loser.isSettled || loser.paymentStatus === 'paid' || (loser.payments && loser.payments.length > 0));
+        const winnerHasSettledPayment = Boolean(winner.isSettled || winner.paymentStatus === 'paid' || (winner.payments && winner.payments.length > 0));
 
-      if (loserHasSettledPayment && !winnerHasSettledPayment) {
-        winner.isSettled = true;
-        winner.paymentStatus = 'paid';
-        winner.paymentMethod = loser.paymentMethod || winner.paymentMethod;
-        winner.payments = loser.payments || winner.payments;
-        winner.paidAt = loser.paidAt || winner.paidAt;
-        winner.completedAt = loser.completedAt || winner.completedAt;
-      } else if (loser.payments && loser.payments.length > (winner.payments?.length || 0)) {
-        winner.payments = loser.payments;
-        if (loser.paymentMethod) winner.paymentMethod = loser.paymentMethod;
-        if (loser.changeFor !== undefined) winner.changeFor = loser.changeFor;
+        if (loserHasSettledPayment && !winnerHasSettledPayment) {
+          winner.isSettled = true;
+          winner.paymentStatus = 'paid';
+          winner.paymentMethod = loser.paymentMethod || winner.paymentMethod;
+          winner.payments = loser.payments || winner.payments;
+          winner.paidAt = loser.paidAt || winner.paidAt;
+          winner.completedAt = loser.completedAt || winner.completedAt;
+        } else if (loser.payments && loser.payments.length > (winner.payments?.length || 0)) {
+          winner.payments = loser.payments;
+          if (loser.paymentMethod) winner.paymentMethod = loser.paymentMethod;
+          if (loser.changeFor !== undefined) winner.changeFor = loser.changeFor;
+        }
       }
 
       result[matchedIdx] = winner;

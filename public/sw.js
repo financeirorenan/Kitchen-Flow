@@ -1,308 +1,358 @@
-/* KitchenFlow AI - Service Worker for Courier Notifications */
+/* KitchenFlow Courier & PWA Service Worker (InjectManifest + Offline Cache + Firestore Push) */
+const WB_MANIFEST = self.__WB_MANIFEST || [];
+const CACHE_NAME = 'kitchenflow-courier-pwa-v6';
+const MAP_CACHE_NAME = 'kitchenflow-map-tiles-v2';
+const FONT_CACHE_NAME = 'kitchenflow-fonts-v2';
 
-// Import Firebase Compat safely in the background Service Worker
+const CORE_ASSETS = [
+  '/manifest.json',
+  '/manifest-courier.json',
+  '/icon-192.png',
+  '/icon-512.png',
+  '/icon.svg',
+  '/favicon.svg'
+];
+
 try {
   importScripts('https://www.gstatic.com/firebasejs/10.10.0/firebase-app-compat.js');
   importScripts('https://www.gstatic.com/firebasejs/10.10.0/firebase-firestore-compat.js');
-} catch (e) {
-  console.warn('[SW] Could not import external Firebase scripts in SW:', e);
+} catch (err) {
+  console.warn('[SW Courier] Aviso ao importar Firebase scripts:', err);
 }
 
-const CACHE_NAME = 'kitchenflow-courier-cache-v6';
-let firebaseApp = null;
-let firestoreDb = null;
-let ordersListener = null;
-
-// Keep track of order IDs that have already been notified
-let notifiedOrderIds = new Set();
-
-// Cache and setup essentials
 self.addEventListener('install', (event) => {
   self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll([
-        '/manifest.json',
-        '/icon-192.png',
-        '/icon-512.png',
-        '/icon.svg'
-      ]).catch((err) => console.warn('[SW] Pre-cache initial assets warning:', err));
+      const precacheUrls = WB_MANIFEST
+        .map((entry) => (typeof entry === 'string' ? entry : entry.url))
+        .filter((url) => url && !url.includes('/node_modules/') && !url.endsWith('.tsx') && !url.endsWith('.ts'));
+      const allUrls = Array.from(new Set([...CORE_ASSETS, ...precacheUrls]));
+      return Promise.allSettled(allUrls.map((url) => cache.add(url).catch(() => {})));
     })
   );
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cache) => {
-          if (cache !== CACHE_NAME) {
-            console.log('[SW] Clearing old cache:', cache);
-            return caches.delete(cache);
-          }
-        })
-      );
-    }).then(() => self.clients.claim())
+    caches.keys().then((cacheNames) =>
+      Promise.all(
+        cacheNames
+          .filter((name) => ![CACHE_NAME, MAP_CACHE_NAME, FONT_CACHE_NAME].includes(name))
+          .map((name) => caches.delete(name))
+      )
+    ).then(() => self.clients.claim())
   );
 });
 
-// Fetch handler: purely network passthrough for app scripts and assets to prevent stale code across deploys
+// Runtime Fetch Caching (Map Tiles, Fonts, Built Production Assets, Offline Navigation Fallback)
 self.addEventListener('fetch', (event) => {
-  // Let the browser handle standard HTTP caching and network requests directly
-  return;
-});
+  if (event.request.method !== 'GET') return;
+  const url = new URL(event.request.url);
 
-// Cache Storage helper to persist credentials and states
-async function getStoredConfig() {
-  try {
-    const cache = await caches.open(CACHE_NAME);
-    const configResp = await cache.match('/sw-config.json');
-    if (configResp) {
-      return await configResp.json();
-    }
-  } catch (e) {
-    console.error('[SW] Error reading stored config:', e);
-  }
-  return null;
-}
-
-async function saveStoredConfig(config) {
-  try {
-    const cache = await caches.open(CACHE_NAME);
-    await cache.put('/sw-config.json', new Response(JSON.stringify(config)));
-  } catch (e) {
-    console.error('[SW] Error saving config:', e);
-  }
-}
-
-async function getNotifiedOrders() {
-  try {
-    const cache = await caches.open(CACHE_NAME);
-    const notifiedResp = await cache.match('/notified-orders.json');
-    if (notifiedResp) {
-      const list = await notifiedResp.json();
-      return new Set(list);
-    }
-  } catch (e) {
-    console.error('[SW] Error reading notified orders:', e);
-  }
-  return new Set();
-}
-
-async function saveNotifiedOrders(set) {
-  try {
-    const cache = await caches.open(CACHE_NAME);
-    await cache.put('/notified-orders.json', new Response(JSON.stringify([...set])));
-  } catch (e) {
-    console.error('[SW] Error saving notified orders:', e);
-  }
-}
-
-// Function to handle showing browser system-level notifications
-function showNotification(title, options) {
-  const defaultOptions = {
-    icon: '/icon-192.png',
-    badge: '/icon-192.png',
-    vibrate: [200, 100, 200],
-    data: {
-      url: self.registration.scope
-    },
-    ...options
-  };
-  
-  return self.registration.showNotification(title, defaultOptions);
-}
-
-// Initialize active background Firestore listener
-async function setupBackgroundFirestore(config) {
-  if (!config || !config.apiKey || !config.projectId || !config.userId || !config.tenantId) {
+  // Never intercept API, Firestore, Auth, or Vite Dev Server / Source Modules
+  if (
+    url.hostname.includes('firestore.googleapis.com') ||
+    url.hostname.includes('identitytoolkit.googleapis.com') ||
+    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/node_modules/') ||
+    url.pathname.startsWith('/@') ||
+    url.pathname.startsWith('/src/') ||
+    url.pathname.startsWith('/components/') ||
+    url.pathname.startsWith('/hooks/') ||
+    url.pathname.startsWith('/services/') ||
+    url.pathname.startsWith('/utils/') ||
+    url.pathname.endsWith('.tsx') ||
+    url.pathname.endsWith('.ts') ||
+    url.pathname.endsWith('.jsx') ||
+    url.search.includes('v=') ||
+    url.search.includes('t=') ||
+    url.search.includes('import') ||
+    url.search.includes('html-proxy')
+  ) {
     return;
   }
 
-  // Load previously notified orders to avoid duplication
-  const loadedSet = await getNotifiedOrders();
-  notifiedOrderIds = loadedSet;
-
-  // Unsubscribe existing listener if any
-  if (ordersListener) {
-    try {
-      ordersListener();
-    } catch (e) {}
-    ordersListener = null;
-  }
-
-  try {
-    // If firebase is not yet initialized
-    if (!firebaseApp) {
-      // Create a unique app name to avoid multi-init errors
-      firebaseApp = firebase.initializeApp({
-        apiKey: config.apiKey,
-        authDomain: config.authDomain,
-        projectId: config.projectId,
-        appId: config.appId
-      }, 'kitchenflow-sw-app');
-      
-      firestoreDb = firebaseApp.firestore();
-    }
-
-    console.log('[SW] Background Firestore initialized successfully for courier:', config.userId);
-
-    // Dynamic yesterday query to watch for new orders
-    const yesterday = new Date();
-    yesterday.setHours(yesterday.getHours() - 24);
-
-    // Setup active background orders listener
-    ordersListener = firestoreDb.collection('orders')
-      .where('tenantId', '==', config.tenantId)
-      .where('courierId', '==', config.userId)
-      .where('createdAt', '>=', yesterday)
-      .onSnapshot((snapshot) => {
-        let isFirstRun = notifiedOrderIds.size === 0;
-        
-        snapshot.docChanges().forEach((change) => {
-          const docId = change.id;
-          const data = change.doc.data();
-          
-          if (change.type === 'added') {
-            if (!notifiedOrderIds.has(docId)) {
-              notifiedOrderIds.add(docId);
-              
-              // Only trigger notification if it's not the initial page loading of old orders
-              if (!isFirstRun && data.status !== 'delivered' && data.status !== 'cancelled') {
-                showNotification(`Novo pedido atribuído! (#${docId.slice(-4)})`, {
-                  body: `Você tem uma nova entrega disponível! Clique para visualizar no KitchenFlow AI.`,
-                  tag: `order-${docId}`
-                });
+  // Cache CartoDB / OSM Map Tiles for Courier GPS navigation
+  if (url.hostname.includes('basemaps.cartocdn.com') || url.hostname.includes('tile.openstreetmap.org')) {
+    event.respondWith(
+      caches.open(MAP_CACHE_NAME).then((cache) =>
+        cache.match(event.request).then((cached) => {
+          const networkFetch = fetch(event.request)
+            .then((response) => {
+              if (response && (response.status === 200 || response.status === 0)) {
+                cache.put(event.request, response.clone());
               }
-            }
-          } else if (change.type === 'modified') {
-            // Warn if status has changed
-            if (data.status === 'ready' && !notifiedOrderIds.has(`${docId}-ready`)) {
-              notifiedOrderIds.add(`${docId}-ready`);
-              showNotification(`Pedido Pronto! (#${docId.slice(-4)})`, {
-                body: `O pedido #${docId.slice(-4)} já está pronto para entrega!`,
-                tag: `ready-${docId}`
-              });
-            }
-          }
-        });
-        
-        saveNotifiedOrders(notifiedOrderIds);
-      }, (err) => {
-        console.warn('[SW] Background database listener exception (usually offline/permissions):', err);
-      });
-
-  } catch (error) {
-    console.warn('[SW] Firestore bootstrap failed:', error);
+              return response;
+            })
+            .catch(() => cached);
+          return cached || networkFetch;
+        })
+      )
+    );
+    return;
   }
-}
 
-// Message parser
-self.addEventListener('message', (event) => {
-  const data = event.data;
-  if (!data) return;
+  // Cache Google Fonts
+  if (url.hostname.includes('fonts.googleapis.com') || url.hostname.includes('fonts.gstatic.com')) {
+    event.respondWith(
+      caches.open(FONT_CACHE_NAME).then((cache) =>
+        cache.match(event.request).then((cached) => {
+          if (cached) return cached;
+          return fetch(event.request).then((response) => {
+            if (response && (response.status === 200 || response.status === 0)) {
+              cache.put(event.request, response.clone());
+            }
+            return response;
+          });
+        })
+      )
+    );
+    return;
+  }
 
-  switch (data.type) {
-    case 'INIT_COURIER_CONFIG':
-      const newConfig = {
-        userId: data.userId,
-        tenantId: data.tenantId,
-        apiKey: data.apiKey,
-        authDomain: data.authDomain,
-        projectId: data.projectId,
-        appId: data.appId,
-        firestoreDatabaseId: data.firestoreDatabaseId
-      };
-      
-      saveStoredConfig(newConfig).then(() => {
-        setupBackgroundFirestore(newConfig);
-      });
-      break;
-
-    case 'SEND_NOTIFICATION':
-      showNotification(data.title || 'Alerta KitchenFlow', {
-        body: data.body || 'Atualização sobre seu pedido.',
-        icon: data.icon || '/icon-192.png',
-        badge: data.badge || '/icon-192.png',
-        tag: data.tag || undefined,
-        vibrate: data.vibrate || [200, 100, 200],
-        data: {
-          url: data.url || (data.data && data.data.url) || self.registration.scope
-        }
-      });
-      break;
-
-    case 'SCHEDULE_TEST_NOTIFICATION':
-      const delay = data.delayMs || 5000;
-      setTimeout(() => {
-        showNotification(data.title || 'Alerta KitchenFlow 🛵', {
-          body: data.body || 'As notificações no celular estão funcionando perfeitamente!',
-          tag: 'test-notification',
-          icon: '/icon-192.png',
-          badge: '/icon-192.png',
-          vibrate: [200, 100, 200],
-          data: {
-            url: self.registration.scope
+  // Navigation requests (e.g., /entregador): Network first, fallback to cached response only if offline
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response && response.status === 200) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
           }
-        });
-      }, delay);
-      break;
-      
-    case 'CLEAR_NOTIFIED_HISTORY':
-      notifiedOrderIds.clear();
-      saveNotifiedOrders(notifiedOrderIds);
-      break;
+          return response;
+        })
+        .catch(() =>
+          caches.match(event.request).then((cached) => cached || caches.match('/index.html'))
+        )
+    );
+    return;
+  }
+
+  // Only cache built static assets (/assets/*, icons, manifests, fonts) on same-origin
+  const isStaticAsset =
+    url.origin === self.location.origin &&
+    (url.pathname.startsWith('/assets/') ||
+      url.pathname.startsWith('/icon') ||
+      url.pathname.startsWith('/favicon') ||
+      url.pathname.startsWith('/manifest') ||
+      /\.(png|jpg|jpeg|svg|ico|webp|woff|woff2|ttf)$/i.test(url.pathname));
+
+  if (isStaticAsset) {
+    event.respondWith(
+      caches.match(event.request).then((cached) => {
+        const fetchPromise = fetch(event.request)
+          .then((networkResponse) => {
+            if (networkResponse && networkResponse.status === 200) {
+              const copy = networkResponse.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+            }
+            return networkResponse;
+          })
+          .catch(() => cached);
+        return cached || fetchPromise;
+      })
+    );
   }
 });
 
-// On click, focus or open app
+let unsubscribeOrders = null;
+let currentCourierId = null;
+let knownOrderStates = new Map();
+let isInitialSnapshot = true;
+
+self.addEventListener('message', (event) => {
+  if (!event.data) return;
+
+  if (event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+
+  if (event.data.type === 'SCHEDULE_TEST_NOTIFICATION') {
+    const delayMs = event.data.delayMs || 5000;
+    const customTitle = event.data.title || 'Nova Entrega Disponível 🛵 (R$ 16,50)';
+    const customBody =
+      event.data.body ||
+      'Restaurante: Pizzaria Bella Napoli • Coleta a 1.2km • Toque para abrir o painel e aceitar a corrida!';
+    const customVibrate = event.data.vibrate || [300, 150, 300, 150, 400];
+
+    const promise = new Promise((resolve) => {
+      setTimeout(() => {
+        self.registration
+          .showNotification(customTitle, {
+            body: customBody,
+            icon: '/icon-192.png',
+            badge: '/icon-192.png',
+            vibrate: customVibrate,
+            tag: 'test-push-notification-' + Date.now(),
+            renotify: true,
+            requireInteraction: true,
+            data: { url: '/entregador' }
+          })
+          .then(resolve)
+          .catch(resolve);
+      }, delayMs);
+    });
+    event.waitUntil(promise);
+  }
+
+  if (event.data.type === 'INIT_COURIER_CONFIG') {
+    const {
+      userId,
+      tenantId,
+      apiKey,
+      authDomain,
+      projectId,
+      appId,
+      firestoreDatabaseId
+    } = event.data;
+
+    if (!userId || !projectId || !apiKey) return;
+    if (currentCourierId === userId && unsubscribeOrders) return;
+
+    currentCourierId = userId;
+    isInitialSnapshot = true;
+    knownOrderStates.clear();
+
+    try {
+      if (typeof firebase !== 'undefined') {
+        if (!firebase.apps.length) {
+          firebase.initializeApp({
+            apiKey,
+            authDomain,
+            projectId,
+            appId
+          });
+        }
+
+        let db;
+        try {
+          if (firestoreDatabaseId && firestoreDatabaseId !== '(default)') {
+            db = firebase.app().firestore(firestoreDatabaseId);
+          } else {
+            db = firebase.firestore();
+          }
+        } catch (e) {
+          db = firebase.firestore();
+        }
+
+        if (unsubscribeOrders) {
+          unsubscribeOrders();
+        }
+
+        let queryRef = db.collection('orders').where('courierId', '==', userId);
+        if (tenantId) {
+          queryRef = queryRef.where('tenantId', '==', tenantId);
+        }
+
+        unsubscribeOrders = queryRef.onSnapshot(
+          (snapshot) => {
+            if (isInitialSnapshot) {
+              snapshot.docs.forEach((docSnap) => {
+                const data = docSnap.data();
+                knownOrderStates.set(docSnap.id, data.status);
+              });
+              isInitialSnapshot = false;
+              return;
+            }
+
+            snapshot.docChanges().forEach((change) => {
+              const docId = change.doc.id;
+              const order = change.doc.data();
+              const prevStatus = knownOrderStates.get(docId);
+
+              knownOrderStates.set(docId, order.status);
+
+              const shortNumber = order.orderNumber
+                ? String(order.orderNumber).padStart(3, '0')
+                : docId.slice(-4).toUpperCase();
+
+              if (
+                change.type === 'added' &&
+                ['ready', 'delivering', 'preparing'].includes(order.status)
+              ) {
+                self.registration.showNotification(
+                  `🛵 Nova Entrega Atribuída! (#${shortNumber})`,
+                  {
+                    body: `Cliente: ${order.customerName || 'Cliente'} • Comissão: R$ ${(order.courierEarnings || 0).toFixed(2)}\nEnd: ${order.customerAddress || 'Retirada no balcão'}`,
+                    icon: '/icon-192.png',
+                    badge: '/icon-192.png',
+                    vibrate: [400, 150, 400, 150, 500],
+                    tag: `new-order-${docId}`,
+                    renotify: true,
+                    requireInteraction: true,
+                    data: { url: '/entregador' }
+                  }
+                );
+              } else if (
+                change.type === 'modified' &&
+                prevStatus !== 'ready' &&
+                order.status === 'ready'
+              ) {
+                self.registration.showNotification(
+                  `🍳 Pedido #${shortNumber} Pronto para Retirada!`,
+                  {
+                    body: `Dirija-se ao balcão para retirar o pedido de ${order.customerName || 'Cliente'}.`,
+                    icon: '/icon-192.png',
+                    badge: '/icon-192.png',
+                    vibrate: [300, 100, 300],
+                    tag: `ready-order-${docId}`,
+                    renotify: true,
+                    data: { url: '/entregador' }
+                  }
+                );
+              }
+            });
+          },
+          (err) => {
+            console.warn('[SW Courier] Erro no listener Firestore:', err);
+          }
+        );
+      }
+    } catch (err) {
+      console.error('[SW Courier] Falha ao configurar Firestore no SW:', err);
+    }
+  }
+});
+
+self.addEventListener('push', (event) => {
+  const data = event.data ? event.data.json() : {};
+  const title = data.title || 'Nova Atualização KitchenFlow';
+  const options = {
+    body: data.body || 'Você tem uma nova atualização nas suas entregas.',
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    vibrate: [200, 100, 200, 100, 200],
+    tag: data.tag || 'order-notification',
+    renotify: true,
+    data: {
+      url: data.url || '/entregador'
+    }
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  
-  const targetUrl = event.notification.data?.url || self.registration.scope;
+  const targetUrl =
+    event.notification.data && event.notification.data.url
+      ? event.notification.data.url
+      : '/entregador';
 
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      for (const client of clientList) {
-        if ('focus' in client) {
-          if (client.url.includes('/marketplace') || client.url.includes(self.registration.scope)) {
-            if (client.navigate && targetUrl && targetUrl !== client.url) {
-              client.navigate(targetUrl).catch(() => {});
-            }
+    self.clients
+      .matchAll({ type: 'window', includeUncontrolled: true })
+      .then((windowClients) => {
+        for (let i = 0; i < windowClients.length; i++) {
+          const client = windowClients[i];
+          if ('focus' in client) {
             return client.focus();
           }
         }
-      }
-      if (self.clients.openWindow) {
-        return self.clients.openWindow(targetUrl);
-      }
-    })
+        if (self.clients.openWindow) {
+          return self.clients.openWindow(targetUrl);
+        }
+      })
   );
-});
-
-// Try to self heal on sync/wake
-self.addEventListener('sync', (event) => {
-  event.waitUntil(
-    getStoredConfig().then((config) => {
-      if (config) setupBackgroundFirestore(config);
-    })
-  );
-});
-
-// Standby for push
-self.addEventListener('push', (event) => {
-  let title = 'Mensagem KitchenFlow AI';
-  let body = 'Novidades no seu painel de entregas.';
-  
-  if (event.data) {
-    try {
-      const payload = event.data.json();
-      title = payload.title || title;
-      body = payload.body || body;
-    } catch (e) {
-      body = event.data.text() || body;
-    }
-  }
-  
-  event.waitUntil(showNotification(title, { body }));
 });

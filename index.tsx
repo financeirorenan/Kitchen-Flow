@@ -1,19 +1,41 @@
-
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import ErrorBoundary from './components/ErrorBoundary';
 
-// Register PWA Service Worker
-if ('serviceWorker' in navigator && typeof window !== 'undefined') {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').then((reg) => {
-      console.log('KitchenFlow Service Worker registrado com sucesso:', reg.scope);
-    }).catch((err) => {
-      console.warn('Erro ao registrar Service Worker:', err);
+// Purge stale Service Worker caches that may have cached Vite dev modules and register /sw.js
+if (typeof window !== 'undefined') {
+  if ('caches' in window) {
+    const validCaches = [
+      'kitchenflow-courier-pwa-v6',
+      'kitchenflow-map-tiles-v2',
+      'kitchenflow-fonts-v2'
+    ];
+    caches.keys().then((names) => {
+      names.forEach((name) => {
+        if (!validCaches.includes(name)) {
+          caches.delete(name).catch(() => {});
+        }
+      });
+    }).catch(() => {});
+  }
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker
+        .register('/sw.js')
+        .then((reg) => {
+          reg.update().catch(() => {});
+          if (reg.waiting) {
+            reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+          }
+        })
+        .catch((err) => {
+          console.warn('Aviso ao registrar Service Worker:', err);
+        });
     });
-  });
+  }
 }
 
 const rootElement = document.getElementById('root');

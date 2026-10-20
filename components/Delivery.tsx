@@ -9,7 +9,7 @@ import {
   Save, UserPlus, Wallet, ArrowRightLeft,
   Banknote, QrCode, ClipboardList, Timer, Clock,
   Coins, CreditCard, DollarSign, Calculator, AlertTriangle, Edit3,
-  Search, Filter, Store, Edit, Loader2, Printer, ChefHat, Upload, Receipt, RotateCcw
+  Search, Filter, Store, Edit, Loader2, Printer, ChefHat, Upload, Receipt, RotateCcw, Trash2
 } from 'lucide-react';
 import { generateReceiptHtml, handlePrintOrder, resolveOrderPayments } from '../services/printService';
 import { maskPhone } from '../utils/masks';
@@ -660,6 +660,13 @@ const Delivery: React.FC<DeliveryProps> = memo(({
                         >
                           <Printer size={12} />
                         </button>
+                        <button 
+                          onClick={() => onUpdateStatus(order.id, 'cancelled')}
+                          className="p-1 text-rose-500 hover:bg-rose-600 hover:text-white bg-rose-50 rounded-md transition-all cursor-pointer"
+                          title="Cancelar Pedido"
+                        >
+                          <Trash2 size={12} />
+                        </button>
                       </div>
                     </div>
                     <p className="text-sm font-black text-indigo-600">R$ {order.total.toFixed(2)}</p>
@@ -912,6 +919,13 @@ const Delivery: React.FC<DeliveryProps> = memo(({
                                      className="p-1 bg-emerald-500 hover:bg-emerald-600 text-white rounded-md shadow-sm transition-all"
                                    >
                                      <CheckCircle2 size={12} />
+                                   </button>
+                                   <button 
+                                     onClick={() => onUpdateStatus(order.id, 'cancelled')} 
+                                     title="Cancelar Pedido" 
+                                     className="p-1 bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white border border-rose-200 rounded-md shadow-sm transition-all cursor-pointer"
+                                   >
+                                     <Trash2 size={12} />
                                    </button>
                                  </div>
                              </div>

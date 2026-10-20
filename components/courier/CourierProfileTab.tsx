@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { Courier, User } from '../../types';
 import { maskPhone } from '../../utils/masks';
+import { CourierPWAInstallBanner } from './CourierPWAInstallBanner';
 
 export interface CourierPushPreferences {
   soundEnabled: boolean;
@@ -208,6 +209,9 @@ export const CourierProfileTab: React.FC<CourierProfileTabProps> = ({
           </span>
         </div>
       </div>
+
+      {/* 1.5 PWA App Installation & Status Card */}
+      <CourierPWAInstallBanner />
 
       {/* 2. Personal & Contact Details Form */}
       <div className="bg-slate-900 rounded-[2.5rem] p-6 border border-slate-800 space-y-4 shadow-xl">

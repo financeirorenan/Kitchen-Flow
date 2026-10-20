@@ -1,0 +1,49 @@
+{
+  "id": "/entregador",
+  "short_name": "KF Motoboy",
+  "name": "KitchenFlow Entregador - App de Rotas",
+  "description": "Aplicativo profissional de rotas, navegação GPS em tempo real, ganhos e alertas offline para entregadores parceiros.",
+  "start_url": "/entregador",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0A0A0A",
+  "theme_color": "#FF4F18",
+  "categories": ["navigation", "business", "productivity"],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Rotas Ativas",
+      "short_name": "Rotas",
+      "description": "Ver entregas em rota agora",
+      "url": "/entregador?tab=deliveries",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Meus Ganhos",
+      "short_name": "Ganhos",
+      "description": "Consultar comissões e carteira do dia",
+      "url": "/entregador?tab=earnings",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
+}

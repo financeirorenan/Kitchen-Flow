@@ -1,25 +1,32 @@
 {
-  "short_name": "Zupi Delivery",
-  "name": "Zupi Delivery - O App da Sua Cidade",
-  "icons": [
-    {
-      "src": "/favicon.svg",
-      "type": "image/svg+xml",
-      "sizes": "128x128",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "/icon.svg",
-      "type": "image/svg+xml",
-      "sizes": "512x512",
-      "purpose": "any maskable"
-    }
-  ],
-  "start_url": "/marketplace",
-  "background_color": "#111111",
-  "theme_color": "#FF4500",
+  "id": "/",
+  "short_name": "KF Motoboy",
+  "name": "KitchenFlow - Entregador & Delivery",
+  "description": "Aplicativo oficial KitchenFlow para entregadores parceiros e pedidos.",
+  "start_url": "/entregador",
+  "scope": "/",
   "display": "standalone",
   "orientation": "portrait-primary",
-  "scope": "/",
-  "description": "Zupi Delivery - Conectando os melhores restaurantes e comércios locais da sua cidade."
+  "background_color": "#0A0A0A",
+  "theme_color": "#FF4F18",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "maskable"
+    }
+  ]
 }
