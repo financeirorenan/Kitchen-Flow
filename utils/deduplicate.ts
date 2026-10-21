@@ -43,14 +43,53 @@ export function deduplicateOrders(ordersList: Order[]): Order[] {
     return false;
   };
 
-  for (const o of ordersList) {
-    if (!o) continue;
+  const sanitizeOrderPayments = (ord: Order): Order => {
+    if (!ord || !Array.isArray(ord.payments) || ord.payments.length === 0) return ord;
+    const orderTotal = Number(ord.total || 0);
+    if (orderTotal <= 0) return ord;
+    const paymentsSum = ord.payments.reduce((acc, p) => acc + Number(p?.amount || 0), 0);
+    if (paymentsSum > orderTotal + 0.05) {
+      const uniqueMethods = Array.from(new Set(ord.payments.map(p => p?.method || ord.paymentMethod || 'dinheiro')));
+      if (uniqueMethods.length === 1) {
+        return {
+          ...ord,
+          paymentMethod: uniqueMethods[0] as any,
+          payments: [{ method: uniqueMethods[0] as any, amount: Number(orderTotal.toFixed(2)) }]
+        };
+      }
+      // If multiple methods exist but sum exceeds orderTotal (e.g. old full payment + new payment),
+      // keep from the latest payment backwards up to orderTotal
+      const kept: typeof ord.payments = [];
+      let remaining = Number(orderTotal.toFixed(2));
+      for (let i = ord.payments.length - 1; i >= 0 && remaining > 0.009; i--) {
+        const p = ord.payments[i];
+        const amt = Math.min(Number(p?.amount || 0), remaining);
+        if (amt > 0) {
+          kept.unshift({ ...p, amount: Number(amt.toFixed(2)) });
+          remaining = Number((remaining - amt).toFixed(2));
+        }
+      }
+      if (kept.length > 0) {
+        return {
+          ...ord,
+          paymentMethod: (kept.length > 1 ? 'multiplo' : kept[0].method) as any,
+          payments: kept
+        };
+      }
+    }
+    return ord;
+  };
+
+  for (const rawOrder of ordersList) {
+    if (!rawOrder) continue;
+    const o = sanitizeOrderPayments(rawOrder);
 
     const primaryId = String(o.id || o.docId || '').trim();
     const docId = o.docId ? String(o.docId).trim() : '';
     const clientOrderId = (o as any).clientOrderId ? String((o as any).clientOrderId).trim() : '';
 
     let signature = '';
+    let lineageKey = '';
     const parsedDate = safeParseDate(o.createdAt);
     const timeMs = parsedDate ? parsedDate.getTime() : 0;
     if (timeMs > 0 && o.items && o.items.length > 0) {
@@ -59,12 +98,17 @@ export function deduplicateOrders(ordersList: Order[]): Order[] {
       const totalAmount = typeof o.total === 'number' ? o.total.toFixed(2) : '0.00';
       signature = `sig:${o.tenantId || ''}_${o.type || ''}_${o.tableNumber ?? ''}_${totalAmount}_${itemsFingerprint}_${timeBucket}`;
     }
+    if (timeMs > 0 && typeof o.dailyNumber === 'number' && o.dailyNumber > 0) {
+      const lineageBucket = Math.floor(timeMs / 5000);
+      lineageKey = `lin:${o.tenantId || ''}_${o.type || ''}_${o.dailyNumber}_${lineageBucket}`;
+    }
 
     const candidateKeys: string[] = [];
     if (primaryId) candidateKeys.push(`id:${primaryId}`);
     if (docId) candidateKeys.push(`id:${docId}`);
     if (clientOrderId) candidateKeys.push(`cid:${clientOrderId}`);
     if (signature) candidateKeys.push(signature);
+    if (lineageKey) candidateKeys.push(lineageKey);
 
     let matchedIdx: number | undefined;
     for (const k of candidateKeys) {
@@ -77,7 +121,7 @@ export function deduplicateOrders(ordersList: Order[]): Order[] {
     if (matchedIdx !== undefined) {
       const existing = result[matchedIdx];
       const replaceWithIncoming = shouldReplace(existing, o);
-      const winner = replaceWithIncoming ? { ...o } : { ...existing };
+      let winner = replaceWithIncoming ? { ...o } : { ...existing };
       const loser = replaceWithIncoming ? existing : o;
 
       // Blindagem de Pagamento: se o loser possuir dados de pagamento quitado (isSettled, paymentStatus: 'paid', payments, ou método não-dinheiro)
@@ -93,13 +137,10 @@ export function deduplicateOrders(ordersList: Order[]): Order[] {
           winner.payments = loser.payments || winner.payments;
           winner.paidAt = loser.paidAt || winner.paidAt;
           winner.completedAt = loser.completedAt || winner.completedAt;
-        } else if (loser.payments && loser.payments.length > (winner.payments?.length || 0)) {
-          winner.payments = loser.payments;
-          if (loser.paymentMethod) winner.paymentMethod = loser.paymentMethod;
-          if (loser.changeFor !== undefined) winner.changeFor = loser.changeFor;
         }
       }
 
+      winner = sanitizeOrderPayments(winner);
       result[matchedIdx] = winner;
       for (const k of candidateKeys) {
         keyToIndex.set(k, matchedIdx);

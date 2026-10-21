@@ -427,7 +427,7 @@ const Tables: React.FC<TablesProps> = memo(
         const unsentItems = selectedTable.items.filter(i => !i.sentToKitchen && !i.cancelled);
         if (unsentItems.length > 0) {
           const targetId = pdvEditOrder ? pdvEditOrder.id : selectedTable.id;
-          const deliveryFeeVal = isDeliveryOrder && isCounterContext ? parseCurrency(deliveryFeeInput) : 0;
+          const deliveryFeeVal = isDeliveryOrder && isCounterContext ? parseCurrency(deliveryFeeInput) : (selectedTable.deliveryFee || 0);
           const customerData = {
             customerName: customerName ? customerName.trim() : undefined,
             customerPhone: customerPhone ? customerPhone.trim() : undefined,
@@ -436,7 +436,7 @@ const Tables: React.FC<TablesProps> = memo(
             customerId: selectedCustomerId || undefined,
             isDelivery: isDeliveryOrder,
           };
-          onSendToKitchen(targetId, unsentItems, isCounterContext, customerData);
+          onSendToKitchen(targetId, selectedTable.items.filter(i => !i.cancelled), isCounterContext, customerData);
         }
       }
 
@@ -499,8 +499,10 @@ const Tables: React.FC<TablesProps> = memo(
         },
       ];
 
+      const targetCloseId = pdvEditOrder ? pdvEditOrder.id : selectedTable!.id;
+
       onCloseTable(
-        selectedTable!.id as any,
+        targetCloseId as any,
         method,
         isFiscal,
         customerId,
@@ -513,10 +515,6 @@ const Tables: React.FC<TablesProps> = memo(
         additionalFeeReason,
         discount,
       );
-
-      if (pdvEditOrder && onCancelPdvEdit) {
-        onCancelPdvEdit();
-      }
 
       if (pdvEditOrder && onCancelPdvEdit) {
         onCancelPdvEdit();
@@ -536,24 +534,46 @@ const Tables: React.FC<TablesProps> = memo(
           ? tables.find(t => t.currentOrderId === pdvEditOrder.id || (pdvEditOrder.tableNumber && String(t.number) === String(pdvEditOrder.tableNumber)))
           : null;
 
-        const cleanEditItems = (pdvEditOrder.items || []).filter(it => !it.cancelled);
+        const existingCounter = pdvEditOrder.type !== "table"
+          ? (counterOrders || []).find(c => c && (c.id === pdvEditOrder.id || c.currentOrderId === pdvEditOrder.id || (pdvEditOrder.counterId && String(c.id) === String(pdvEditOrder.counterId))))
+          : null;
+
+        const cleanEditItems = (pdvEditOrder.items || []).filter(it => !it.cancelled).map((it, idx) => ({
+          ...it,
+          id: it.id || `item-edit-${idx}-${pdvEditOrder.id}`,
+          sentToKitchen: true,
+        }));
         const cleanEditSubtotal = cleanEditItems.reduce((acc, it) => acc + it.price * it.quantity, 0);
+
+        // Se o pedido já está pago/quitado, NÃO carregar os pagamentos finais como partialPayments abertos,
+        // pois isso faria o modal de pagamento somar o novo valor ao valor antigo já pago.
+        const isAlreadyPaidOrder = Boolean(pdvEditOrder.isSettled || pdvEditOrder.paymentStatus === "paid");
+        const openPartialPayments = isAlreadyPaidOrder
+          ? []
+          : (pdvEditOrder.payments || existingTable?.partialPayments || existingCounter?.partialPayments || []);
 
         const mockTable: Table = existingTable ? {
           ...existingTable,
           items: cleanEditItems,
           total: cleanEditSubtotal,
           currentOrderId: pdvEditOrder.id,
-          partialPayments: pdvEditOrder.payments || existingTable.partialPayments,
+          partialPayments: openPartialPayments,
+          deliveryFee: pdvEditOrder.deliveryFee || 0,
         } : {
-          id: pdvEditOrder.tableNumber ? `tbl_${pdvEditOrder.tableNumber}` : (pdvEditOrder.id || `ord_${Date.now()}`),
-          number: Number(pdvEditOrder.tableNumber) || 0,
+          id: existingCounter ? existingCounter.id : (pdvEditOrder.id || `ord_${Date.now()}`),
+          number: pdvEditOrder.type === "table" ? (Number(pdvEditOrder.tableNumber) || 0) : (pdvEditOrder.dailyNumber || Number(pdvEditOrder.tableNumber) || 0),
           items: cleanEditItems,
           total: cleanEditSubtotal,
           status: "occupied",
           tenantId: pdvEditOrder.tenantId,
           currentOrderId: pdvEditOrder.id,
-          partialPayments: pdvEditOrder.payments,
+          partialPayments: openPartialPayments,
+          deliveryFee: pdvEditOrder.deliveryFee || 0,
+          isDelivery: pdvEditOrder.type === "delivery",
+          customerName: pdvEditOrder.customerName,
+          customerPhone: pdvEditOrder.customerPhone,
+          customerAddress: pdvEditOrder.customerAddress,
+          customerId: pdvEditOrder.customerId,
         };
 
         setSelectedTable(mockTable);
@@ -565,6 +585,9 @@ const Tables: React.FC<TablesProps> = memo(
         );
         setIsDeliveryOrder(pdvEditOrder.type === "delivery");
         setSelectedPaymentMethod(pdvEditOrder.paymentMethod || null);
+        setAdditionalFee(pdvEditOrder.additionalFee || 0);
+        setAdditionalFeeReason(pdvEditOrder.additionalFeeReason || "");
+        setDiscount(pdvEditOrder.discount || 0);
         if (pdvEditOrder.customerId) {
           setSelectedCustomerId(pdvEditOrder.customerId);
         }
@@ -864,9 +887,9 @@ const Tables: React.FC<TablesProps> = memo(
         if (
           o.isSubTicket ||
           o.mergedIntoOrderId ||
-          (!paymentsToUse?.length && matchingRecords.length > 0) ||
+          (!paymentsToUse?.length && matchingRecords.length > 0 && matchingRecordsSum <= orderTotal + 0.05) ||
           (matchingRecords.length > (paymentsToUse?.length || 0) && Math.abs(matchingRecordsSum - orderTotal) < 0.05) ||
-          (currentPaymentsSum < orderTotal - 0.01 && matchingRecordsSum >= currentPaymentsSum && matchingRecords.length > 0)
+          (currentPaymentsSum < orderTotal - 0.01 && matchingRecordsSum >= currentPaymentsSum && matchingRecordsSum <= orderTotal + 0.05 && matchingRecords.length > 0)
         ) {
           if (matchingRecords.length > 0) {
             paymentsToUse = matchingRecords.map(r => ({
@@ -881,6 +904,27 @@ const Tables: React.FC<TablesProps> = memo(
         let normalizedPayments = paymentsToUse ? [...paymentsToUse] : undefined;
 
         if (normalizedPayments && normalizedPayments.length > 0) {
+          // Blindagem contra pagamentos duplicados de edições anteriores (soma maior que o total do pedido)
+          const rawSum = normalizedPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+          if (orderTotal > 0 && rawSum > orderTotal + 0.05) {
+            const uniqueMethods = Array.from(new Set(normalizedPayments.map(p => p.method || primaryMethod || "dinheiro")));
+            if (uniqueMethods.length === 1) {
+              normalizedPayments = [{ method: uniqueMethods[0] as any, amount: Number(orderTotal.toFixed(2)) }];
+            } else {
+              const capped: typeof normalizedPayments = [];
+              let rem = Number(orderTotal.toFixed(2));
+              for (let idx = normalizedPayments.length - 1; idx >= 0 && rem > 0.009; idx--) {
+                const p = normalizedPayments[idx];
+                const amt = Math.min(Number(p.amount) || 0, rem);
+                if (amt > 0) {
+                  capped.unshift({ ...p, amount: Number(amt.toFixed(2)) });
+                  rem = Number((rem - amt).toFixed(2));
+                }
+              }
+              normalizedPayments = capped;
+            }
+          }
+
           let paymentsSum = 0;
           normalizedPayments.forEach((p) => {
             const pAmount = Number(p.amount) || 0;
@@ -1781,16 +1825,17 @@ const Tables: React.FC<TablesProps> = memo(
         // Se estivermos editando um pedido ou houver pedido ativo na cozinha e ainda restarem itens, sincroniza imediatamente
         const activeOrderId = pdvEditOrder ? pdvEditOrder.id : selectedTable.currentOrderId;
         if (activeOrderId && onUpdateOrder && newItems.length > 0) {
+          const currentDeliveryFee = isDeliveryOrder ? parseCurrency(deliveryFeeInput) : (selectedTable.deliveryFee || pdvEditOrder?.deliveryFee || 0);
           onUpdateOrder(String(activeOrderId), {
             items: newItems,
-            total: newTotal + (selectedTable.deliveryFee || 0)
+            total: Math.max(0, newTotal + currentDeliveryFee + (additionalFee || 0) - (discount || 0))
           });
         }
         if (showToast) {
           showToast("Item removido do pedido", "info");
         }
       },
-      [selectedTable, isCounterContext, onUpdateTable, pdvEditOrder, onUpdateOrder, showToast],
+      [selectedTable, isCounterContext, onUpdateTable, pdvEditOrder, onUpdateOrder, showToast, isDeliveryOrder, deliveryFeeInput, additionalFee, discount],
     );
 
     const updateItemQuantity = useCallback(
@@ -1813,13 +1858,14 @@ const Tables: React.FC<TablesProps> = memo(
 
         const activeOrderId = pdvEditOrder ? pdvEditOrder.id : selectedTable.currentOrderId;
         if (activeOrderId && onUpdateOrder) {
+          const currentDeliveryFee = isDeliveryOrder ? parseCurrency(deliveryFeeInput) : (selectedTable.deliveryFee || pdvEditOrder?.deliveryFee || 0);
           onUpdateOrder(String(activeOrderId), {
             items: newItems,
-            total: newTotal + (selectedTable.deliveryFee || 0)
+            total: Math.max(0, newTotal + currentDeliveryFee + (additionalFee || 0) - (discount || 0))
           });
         }
       },
-      [selectedTable, isCounterContext, onUpdateTable, pdvEditOrder, onUpdateOrder, removeItem],
+      [selectedTable, isCounterContext, onUpdateTable, pdvEditOrder, onUpdateOrder, removeItem, isDeliveryOrder, deliveryFeeInput, additionalFee, discount],
     );
 
     const startEditItem = async (index: number) => {
@@ -1871,9 +1917,10 @@ const Tables: React.FC<TablesProps> = memo(
 
       const activeOrderId = pdvEditOrder ? pdvEditOrder.id : selectedTable.currentOrderId;
       if (activeOrderId && onUpdateOrder) {
+        const currentDeliveryFee = isDeliveryOrder ? parseCurrency(deliveryFeeInput) : (selectedTable.deliveryFee || pdvEditOrder?.deliveryFee || 0);
         onUpdateOrder(String(activeOrderId), {
           items: cleanItems,
-          total: newTotal + (selectedTable.deliveryFee || 0)
+          total: Math.max(0, newTotal + currentDeliveryFee + (additionalFee || 0) - (discount || 0))
         });
       }
       setEditingItemIndex(null);
@@ -1928,16 +1975,16 @@ const Tables: React.FC<TablesProps> = memo(
     const handleSendToKitchenLocal = useCallback(() => {
       if (!selectedTable || selectedTable.items.length === 0) return;
 
-      const unsentItems = selectedTable.items.filter((i) => !i.sentToKitchen);
-      // Se já houver pedido ativo na cozinha e não houver itens novos pendentes, não reenvia itens antigos
-      if (unsentItems.length === 0 && selectedTable.currentOrderId) {
+      const activeItems = selectedTable.items.filter((i) => !i.cancelled);
+      const unsentItems = activeItems.filter((i) => !i.sentToKitchen);
+      // Se já houver pedido ativo na cozinha (e não estivermos salvando uma edição) e não houver itens novos pendentes, não reenvia itens antigos
+      if (unsentItems.length === 0 && selectedTable.currentOrderId && !pdvEditOrder) {
         setShowKitchenSuccess(true);
         setTimeout(() => setShowKitchenSuccess(false), 2000);
         return;
       }
-      const itemsToSend = unsentItems.length > 0 ? unsentItems : selectedTable.items;
 
-      const deliveryFeeVal = isDeliveryOrder && isCounterContext ? parseCurrency(deliveryFeeInput) : 0;
+      const deliveryFeeVal = isDeliveryOrder && isCounterContext ? parseCurrency(deliveryFeeInput) : (selectedTable.deliveryFee || 0);
       const customerData = {
         customerName: customerName ? customerName.trim() : undefined,
         customerPhone: customerPhone ? customerPhone.trim() : undefined,
@@ -1950,10 +1997,10 @@ const Tables: React.FC<TablesProps> = memo(
       setIsSendingToKitchen(true);
       // Se estivermos em modo de edição de pedido (pdvEditOrder), usar o ID do pedido diretamente
       const targetId = pdvEditOrder ? pdvEditOrder.id : selectedTable.id;
-      onSendToKitchen(targetId, itemsToSend, isCounterContext, customerData);
+      onSendToKitchen(targetId, activeItems, isCounterContext, customerData);
 
       // Marcar itens como enviados no estado local da comanda/mesa
-      const updatedItems = selectedTable.items.map((item) => ({
+      const updatedItems = activeItems.map((item) => ({
         ...item,
         sentToKitchen: true,
       }));
@@ -1962,6 +2009,7 @@ const Tables: React.FC<TablesProps> = memo(
         prev ? { 
           ...prev, 
           items: updatedItems,
+          currentOrderId: pdvEditOrder ? pdvEditOrder.id : prev.currentOrderId,
           customerName: customerData.customerName,
           customerPhone: customerData.customerPhone,
           customerAddress: customerData.customerAddress,
@@ -1970,19 +2018,6 @@ const Tables: React.FC<TablesProps> = memo(
           isDelivery: customerData.isDelivery,
         } : null,
       );
-
-      // Se estiver editando um pedido vindo de KDS/Delivery, sincronizar as alterações do pedido
-      if (pdvEditOrder && onUpdateOrder) {
-        onUpdateOrder(pdvEditOrder.id, {
-          items: updatedItems,
-          total: selectedTable.total + deliveryFeeVal + (additionalFee || 0) - (discount || 0),
-          customerName: customerName ? customerName.trim() : undefined,
-          customerPhone: customerPhone ? customerPhone.trim() : undefined,
-          customerAddress: deliveryAddress ? deliveryAddress.trim() : undefined,
-          deliveryFee: isDeliveryOrder ? deliveryFeeVal : undefined,
-          customerId: selectedCustomerId || undefined,
-        });
-      }
 
       setIsSendingToKitchen(false);
       setShowKitchenSuccess(true);

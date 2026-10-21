@@ -21,10 +21,16 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(order?.paymentMethod || 'dinheiro');
   const [splitPayments, setSplitPayments] = useState<Array<{ method: PaymentMethod; amount: string }>>(() => {
     if (order?.payments && order.payments.length > 1) {
-      return order.payments.map(p => ({
-        method: (p.method || 'dinheiro') as PaymentMethod,
-        amount: Number(p.amount || 0).toFixed(2)
-      }));
+      const orderTotal = Number(order.total || 0);
+      const sum = order.payments.reduce((acc, p) => acc + Number(p?.amount || 0), 0);
+      const uniqueMethods = new Set(order.payments.map(p => p?.method));
+      // Only treat as split payment if the sum does not exceed orderTotal (or has distinct valid parts)
+      if (sum <= orderTotal + 0.05 || uniqueMethods.size > 1) {
+        return order.payments.map(p => ({
+          method: (p.method || 'dinheiro') as PaymentMethod,
+          amount: Number(p.amount || 0).toFixed(2)
+        }));
+      }
     }
     return [];
   });
@@ -38,8 +44,9 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
 
   const total = useMemo(() => {
     if (items.length === 0) return 0;
-    return items.reduce((acc, item) => acc + (item.price * item.quantity), 0) + (order?.deliveryFee || 0);
-  }, [items, order?.deliveryFee]);
+    const subtotal = items.reduce((acc, item) => acc + (item.price * item.quantity), 0);
+    return Math.max(0, subtotal + (order?.deliveryFee || 0) + (order?.additionalFee || 0) - (order?.discount || 0));
+  }, [items, order?.deliveryFee, order?.additionalFee, order?.discount]);
 
   const filteredProducts = useMemo(() => {
     if (!searchTerm || !products) return [];
@@ -89,6 +96,7 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
 
       const itemPrice = product.price + finalOptions.reduce((acc, o) => acc + (o.price * (o.quantity || 1)), 0);
       setItems([...items, {
+        id: `item-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         productId: product.id,
         name: product.name,
         quantity: optionsModalQty,

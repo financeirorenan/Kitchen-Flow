@@ -2939,14 +2939,15 @@ const App: React.FC = () => {
                 const updatedList = [...prev];
                 const existing = updatedList[idx];
                 const merged: Order = { ...existing, ...cloudOrder };
-                // Blindagem de Pagamento: se o pedido local já estava liquidado, manter dados de liquidação
+                // Blindagem de Pagamento: se o pedido local já estava liquidado, manter dados de liquidação,
+                // mas priorizar payments/paymentMethod vindos da nuvem quando o pedido foi editado/atualizado
                 if (existing.isSettled || existing.paymentStatus === 'paid' || (existing.payments && existing.payments.length > 0)) {
                   merged.isSettled = true;
                   merged.paymentStatus = 'paid';
-                  merged.paymentMethod = existing.paymentMethod || merged.paymentMethod;
-                  merged.payments = existing.payments || merged.payments;
-                  merged.paidAt = existing.paidAt || merged.paidAt;
-                  merged.completedAt = existing.completedAt || merged.completedAt;
+                  merged.paymentMethod = cloudOrder.paymentMethod || existing.paymentMethod;
+                  merged.payments = (cloudOrder.payments && cloudOrder.payments.length > 0) ? cloudOrder.payments : existing.payments;
+                  merged.paidAt = cloudOrder.paidAt || existing.paidAt;
+                  merged.completedAt = cloudOrder.completedAt || existing.completedAt;
                 }
                 updatedList[idx] = merged;
                 return updatedList;
@@ -3059,11 +3060,22 @@ const App: React.FC = () => {
       return;
     }
 
-    // Prevenção estrita contra duplicidade real por id único
+    // Prevenção estrita contra duplicidade por id único: se já existir, atualiza o registro existente in-place
     if (record.id) {
-      const isAlreadyRecorded = financialRecords.some(r => r.id === record.id);
-      if (isAlreadyRecorded) {
-        console.warn(`[Financial] Lançamento com ID ${record.id} já registrado anteriormente.`);
+      const existingRec = financialRecords.find(r => r.id === record.id);
+      if (existingRec) {
+        if (
+          Math.abs((existingRec.amount || 0) - record.amount) > 0.01 ||
+          existingRec.paymentMethod !== record.paymentMethod ||
+          existingRec.description !== record.description
+        ) {
+          await handleUpdateFinancialRecord(record.id, {
+            amount: record.amount,
+            paymentMethod: record.paymentMethod,
+            description: record.description,
+            orderId: record.orderId ?? existingRec.orderId
+          });
+        }
         return;
       }
     }
@@ -3545,8 +3557,19 @@ const App: React.FC = () => {
 
     if (pdvEditOrder) {
       activeExistingOrder = orders.find(o => o.id === pdvEditOrder.id || o.docId === pdvEditOrder.id) || pdvEditOrder;
-    } else if (tableInfo?.currentOrderId) {
-      activeExistingOrder = orders.find(o => (o.id === tableInfo.currentOrderId || o.docId === tableInfo.currentOrderId) && o.status !== 'cancelled' && o.status !== 'finished' && !o.isSettled && o.paymentStatus !== 'paid');
+    } else {
+      // Verificar primeiro se tableId já é o próprio ID de um pedido existente (mesmo que já esteja pago/quitado!)
+      activeExistingOrder = orders.find(o =>
+        (o.id === String(tableId) || o.docId === String(tableId)) &&
+        o.status !== 'cancelled'
+      );
+    }
+
+    if (!activeExistingOrder && tableInfo?.currentOrderId) {
+      activeExistingOrder = orders.find(o =>
+        (o.id === tableInfo.currentOrderId || o.docId === tableInfo.currentOrderId) &&
+        o.status !== 'cancelled'
+      );
     }
 
     if (!activeExistingOrder) {
@@ -3564,11 +3587,8 @@ const App: React.FC = () => {
         // Para balcão/delivery
         activeExistingOrder = orders.find(o => 
           (o.id === tableId || o.docId === tableId || o.counterId === tableId || (tableInfo && o.counterId === tableInfo.id)) &&
-          !o.isSettled &&
-          o.paymentStatus !== 'paid' &&
           o.status !== 'cancelled' && 
-          o.status !== 'finished' &&
-          o.status !== 'delivered'
+          o.status !== 'finished'
         );
       }
     }
@@ -3581,53 +3601,61 @@ const App: React.FC = () => {
         activeExistingOrder.status === 'delivering' ||
         activeExistingOrder.status === 'delivered';
 
-      const existingItems = (activeExistingOrder.items || []).map((item, idx) => ({
-        ...item,
-        id: item.id || `item-prev-${idx}-${Date.now()}`,
-        isNew: item.sentToKitchen ? false : item.isNew,
-        batchNumber: item.batchNumber || 1,
-        kitchenDispatched: item.kitchenDispatched || (item.sentToKitchen ? wasKitchenReady : false)
-      }));
-      const maxExistingBatch = existingItems.reduce((max, i) => Math.max(max, i.batchNumber || 1), (activeExistingOrder as any)?.currentBatch || 1);
+      const prevItems = (activeExistingOrder.items || []).filter(i => !i.cancelled);
+      const maxExistingBatch = prevItems.reduce((max, i) => Math.max(max, i.batchNumber || 1), (activeExistingOrder as any)?.currentBatch || 1);
       const nextBatchNumber = maxExistingBatch + 1;
-      
-      // Incorporar novos itens ou atualizar existentes (nunca comparar undefined === undefined)
-      items.forEach((newItem, idx) => {
-        const ensuredId = newItem.id || `item-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 5)}`;
-        const existingIndex = existingItems.findIndex(i => 
-          Boolean(i.id && newItem.id && i.id === newItem.id) || 
-          (!i.sentToKitchen && i.productId === newItem.productId && i.name === newItem.name && (i.observation || '') === (newItem.observation || ''))
-        );
-        if (existingIndex !== -1) {
-          if (existingItems[existingIndex].sentToKitchen) {
-            return;
+      let hasNewKitchenItems = false;
+
+      // Construir a lista de itens atualizada sem nunca duplicar itens já existentes no pedido
+      const usedPrevIndices = new Set<number>();
+      const existingItems: OrderItem[] = items.filter(i => !i.cancelled).map((incomingItem, idx) => {
+        const ensuredId = incomingItem.id || `item-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 5)}`;
+        const matchIdx = prevItems.findIndex((prev, pIdx) => {
+          if (usedPrevIndices.has(pIdx)) return false;
+          if (prev.id && incomingItem.id && prev.id === incomingItem.id) return true;
+          const prevOpts = (prev.selectedOptions || []).map(o => `${o.quantity || 1}x_${o.name}`).sort().join('|');
+          const incOpts = (incomingItem.selectedOptions || []).map(o => `${o.quantity || 1}x_${o.name}`).sort().join('|');
+          return prev.productId === incomingItem.productId &&
+            prev.name === incomingItem.name &&
+            (prev.observation || '') === (incomingItem.observation || '') &&
+            prevOpts === incOpts;
+        });
+
+        if (matchIdx !== -1) {
+          usedPrevIndices.add(matchIdx);
+          const prev = prevItems[matchIdx];
+          const qtyIncreased = incomingItem.quantity > prev.quantity;
+          const wasUnsent = !incomingItem.sentToKitchen && !prev.sentToKitchen;
+          if (qtyIncreased || wasUnsent) {
+            hasNewKitchenItems = true;
           }
-          existingItems[existingIndex] = {
-            ...existingItems[existingIndex],
-            ...newItem,
-            id: existingItems[existingIndex].id || ensuredId,
+          return {
+            ...prev,
+            ...incomingItem,
+            id: prev.id || ensuredId,
             sentToKitchen: true,
-            isNew: true,
-            batchNumber: nextBatchNumber,
-            sentAt: now.toISOString(),
-            kitchenDispatched: false
+            isNew: (qtyIncreased || wasUnsent) ? true : false,
+            batchNumber: (qtyIncreased || wasUnsent) ? nextBatchNumber : (prev.batchNumber || 1),
+            sentAt: (qtyIncreased || wasUnsent) ? now.toISOString() : (prev.sentAt || now.toISOString()),
+            kitchenDispatched: (qtyIncreased || wasUnsent) ? false : (prev.kitchenDispatched || (prev.sentToKitchen ? wasKitchenReady : false))
           };
-        } else {
-          existingItems.push({
-            ...newItem,
-            id: ensuredId,
-            sentToKitchen: true,
-            isNew: true,
-            batchNumber: nextBatchNumber,
-            sentAt: now.toISOString(),
-            kitchenDispatched: false
-          });
         }
+
+        hasNewKitchenItems = true;
+        return {
+          ...incomingItem,
+          id: ensuredId,
+          sentToKitchen: true,
+          isNew: true,
+          batchNumber: nextBatchNumber,
+          sentAt: now.toISOString(),
+          kitchenDispatched: false
+        };
       });
 
       const updatedDeliveryFee = effectiveDeliveryFee !== undefined ? effectiveDeliveryFee : (activeExistingOrder.deliveryFee || 0);
       const newItemsTotal = existingItems.filter(i => !i.cancelled).reduce((acc, i) => acc + (i.price * i.quantity), 0);
-      const finalOrderTotal = newItemsTotal + updatedDeliveryFee + (activeExistingOrder.additionalFee || 0) - (activeExistingOrder.discount || 0);
+      const finalOrderTotal = Math.max(0, newItemsTotal + updatedDeliveryFee + (activeExistingOrder.additionalFee || 0) - (activeExistingOrder.discount || 0));
 
       const updates: Partial<Order> = {
         tenantId: effectiveTenantId,
@@ -3637,9 +3665,9 @@ const App: React.FC = () => {
           : displayTableNumber),
         items: existingItems,
         total: finalOrderTotal,
-        status: 'preparing',
-        kitchenStatus: 'preparing',
-        productionStatus: 'in_production',
+        status: hasNewKitchenItems ? 'preparing' : activeExistingOrder.status,
+        kitchenStatus: hasNewKitchenItems ? 'preparing' : (activeExistingOrder.kitchenStatus || 'preparing'),
+        productionStatus: hasNewKitchenItems ? 'in_production' : (activeExistingOrder.productionStatus || 'in_production'),
         updatedAt: now,
         customerName: effectiveCustomerName || activeExistingOrder.customerName,
         customerPhone: effectiveCustomerPhone || activeExistingOrder.customerPhone,
@@ -3647,8 +3675,21 @@ const App: React.FC = () => {
         customerId: effectiveCustomerId || activeExistingOrder.customerId,
         deliveryFee: updatedDeliveryFee,
         deliveryMethod: effectiveIsDelivery ? 'entrega' : (activeExistingOrder.deliveryMethod || (isCounter ? 'retirada' : undefined)),
-        currentBatch: nextBatchNumber
+        currentBatch: hasNewKitchenItems ? nextBatchNumber : ((activeExistingOrder as any)?.currentBatch || maxExistingBatch)
       };
+
+      // Se o pedido já estava pago e teve seu valor alterado, manter o pagamento e o financeiro sincronizados sem duplicar
+      if ((activeExistingOrder.isSettled || activeExistingOrder.paymentStatus === 'paid') && Math.abs((activeExistingOrder.total || 0) - finalOrderTotal) > 0.01) {
+        const payMethod = activeExistingOrder.paymentMethod || activeExistingOrder.payments?.[0]?.method || 'dinheiro';
+        updates.payments = [{ method: payMethod, amount: finalOrderTotal, timestamp: now }];
+        const matchingFin = financialRecords.filter(r => r.orderId === activeExistingOrder!.id || (activeExistingOrder!.docId && r.orderId === activeExistingOrder!.docId));
+        if (matchingFin.length > 0) {
+          handleUpdateFinancialRecord(matchingFin[0].id, { amount: finalOrderTotal, orderId: activeExistingOrder.id }).catch(() => {});
+          for (let i = 1; i < matchingFin.length; i++) {
+            handleDeleteFinancialRecord(matchingFin[i].id).catch(() => {});
+          }
+        }
+      }
 
       const updatedOrder = { ...activeExistingOrder, ...updates };
 
@@ -4372,12 +4413,18 @@ const App: React.FC = () => {
     updates.updatedAt = new Date();
 
     // Se a forma de pagamento mudou ou total mudou, atualizar também o array 'payments' do pedido se ele existir,
-    // para que relatórios e o fechamento de caixa (que leem o.payments) reflitam a nova forma de pagamento
+    // para que relatórios e o fechamento de caixa (que leem o.payments) reflitam a nova forma de pagamento e o novo valor sem duplicar
     if (updates.paymentMethod || updates.total !== undefined) {
       const newTotal = updates.total !== undefined ? updates.total : (oldOrder?.total || 0);
-      if (!updates.payments) {
-        if (oldOrder?.payments && oldOrder.payments.length === 1) {
-          updates.payments = [{ method: updates.paymentMethod || oldOrder.payments[0].method, amount: newTotal, timestamp: oldOrder.payments[0].timestamp || new Date() }];
+      if (!updates.payments && oldOrder?.payments && oldOrder.payments.length > 0) {
+        const uniqueOldMethods = Array.from(new Set(oldOrder.payments.map(p => p.method)));
+        if (oldOrder.payments.length === 1 || uniqueOldMethods.length === 1 || updates.paymentMethod) {
+          const targetMethod = updates.paymentMethod || oldOrder.payments[oldOrder.payments.length - 1].method || oldOrder.paymentMethod || 'dinheiro';
+          updates.payments = [{
+            method: targetMethod,
+            amount: newTotal,
+            timestamp: oldOrder.payments[0].timestamp || new Date()
+          }];
         }
       }
     }
@@ -4747,6 +4794,108 @@ const App: React.FC = () => {
     });
   }, [orders, financialRecords, tables, cashSession?.isOpen, cashSession?.openedAt]);
 
+  // Auto-reparo para pedidos duplicados em edições anteriores (mesmo dailyNumber, tipo e horário de criação) e pagamentos somados indevidamente
+  const healedEditedOrdersRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (orders.length === 0) return;
+    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+
+    // 1. Detectar clones de edição (mesmo dailyNumber > 0, mesmo type e createdAt dentro de 5s com IDs diferentes)
+    const groupsByLineage = new Map<string, Order[]>();
+    orders.forEach(o => {
+      if (!o || o.status === 'cancelled' || !o.dailyNumber || o.dailyNumber <= 0) return;
+      const createdMs = toSafeDate(o.createdAt).getTime();
+      if (createdMs <= 0) return;
+      const bucket = Math.floor(createdMs / 5000);
+      const key = `${o.tenantId || ''}_${o.type || ''}_${o.dailyNumber}_${bucket}`;
+      const list = groupsByLineage.get(key) || [];
+      list.push(o);
+      groupsByLineage.set(key, list);
+    });
+
+    groupsByLineage.forEach((group, key) => {
+      if (group.length <= 1) return;
+      const healGroupKey = `clone_${key}_${group.map(g => g.id).sort().join(',')}`;
+      if (healedEditedOrdersRef.current.has(healGroupKey)) return;
+      healedEditedOrdersRef.current.add(healGroupKey);
+
+      // Ordenar para manter o pedido com atualização mais recente (ou maior valor/itens se editado)
+      const sorted = [...group].sort((a, b) => {
+        const upA = toSafeDate(a.updatedAt || a.paidAt || a.createdAt).getTime();
+        const upB = toSafeDate(b.updatedAt || b.paidAt || b.createdAt).getTime();
+        if (Math.abs(upB - upA) > 1000) return upB - upA;
+        return (Number(b.total) || 0) - (Number(a.total) || 0);
+      });
+
+      const winner = sorted[0];
+      const losers = sorted.slice(1);
+
+      (async () => {
+        for (const loser of losers) {
+          // Remover registros financeiros do pedido clonado antigo
+          const loserRecords = financialRecords.filter(r => r.orderId === loser.id || (loser.docId && r.orderId === loser.docId));
+          for (const rec of loserRecords) {
+            await handleDeleteFinancialRecord(rec.id).catch(() => {});
+          }
+          // Remover o pedido clonado antigo do estado, localDb e Firestore
+          setOrders(prev => prev.filter(ord => ord.id !== loser.id && ord.docId !== loser.id));
+          await localDb.orders.delete(loser.id).catch(() => {});
+          if (loser.docId) await localDb.orders.delete(loser.docId).catch(() => {});
+          if (effectiveTenantId) {
+            await deleteDoc(doc(db, 'orders', loser.docId || loser.id)).catch(() => {});
+          }
+        }
+      })();
+    });
+
+    // 2. Detectar pedidos cujo array payments ou lançamentos financeiros somam mais que o total do pedido (ex: R$ 24 + R$ 40 = R$ 64 para pedido de R$ 44)
+    orders.forEach(o => {
+      if (!o || o.status === 'cancelled') return;
+      const orderTotal = Number(o.total || 0);
+      if (orderTotal <= 0) return;
+
+      const paymentsSum = (o.payments || []).reduce((acc, p) => acc + (Number(p?.amount) || 0), 0);
+      const matchingFin = financialRecords.filter(r => r.orderId && (r.orderId === o.id || (o.docId && r.orderId === o.docId)));
+      const finSum = matchingFin.reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
+
+      if (paymentsSum > orderTotal + 0.05 || finSum > orderTotal + 0.05) {
+        const overKey = `overpay_${o.id}_${paymentsSum.toFixed(2)}_${finSum.toFixed(2)}_${orderTotal.toFixed(2)}`;
+        if (healedEditedOrdersRef.current.has(overKey)) return;
+        healedEditedOrdersRef.current.add(overKey);
+
+        const primaryMethod = (o.payments && o.payments.length > 0 ? o.payments[o.payments.length - 1].method : o.paymentMethod) || 'dinheiro';
+        const fixedPayments = [{ method: primaryMethod as any, amount: Number(orderTotal.toFixed(2)), timestamp: new Date() }];
+
+        (async () => {
+          if (paymentsSum > orderTotal + 0.05) {
+            const ordUpdates: Partial<Order> = {
+              paymentMethod: primaryMethod as any,
+              payments: fixedPayments
+            };
+            setOrders(prev => prev.map(ord => ord.id === o.id ? { ...ord, ...ordUpdates } : ord));
+            await localDb.orders.update(o.id, ordUpdates).catch(() => {});
+            if (effectiveTenantId) {
+              await setDoc(doc(db, 'orders', o.docId || o.id), cleanObject(ordUpdates), { merge: true }).catch(() => {});
+            }
+          }
+
+          if (matchingFin.length > 0 && finSum > orderTotal + 0.05) {
+            const shortId = o.dailyNumber ? String(o.dailyNumber) : o.id.slice(-4);
+            await handleUpdateFinancialRecord(matchingFin[0].id, {
+              amount: Number(orderTotal.toFixed(2)),
+              paymentMethod: primaryMethod as any,
+              description: `Pedido #${shortId} - Pagamento: ${primaryMethod}`,
+              orderId: o.id
+            }).catch(() => {});
+            for (let i = 1; i < matchingFin.length; i++) {
+              await handleDeleteFinancialRecord(matchingFin[i].id).catch(() => {});
+            }
+          }
+        })();
+      }
+    });
+  }, [orders, financialRecords, viewingTenantId, currentUserData?.tenantId]);
+
   const handleAssignCourier = async (orderId: string, courierId: string) => {
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
     const courier = couriers.find(c => c.id === courierId);
@@ -4999,10 +5148,16 @@ const App: React.FC = () => {
     }
 
     if (isCounter) {
+      const counterOrderId = existingTable?.currentOrderId || (pdvEditOrder ? pdvEditOrder.id : null) || (orders.some(o => o.id === String(id) || o.docId === String(id)) ? String(id) : null);
+
       setCounterOrders(prev => {
-        const match = prev.find(t => t.id === id || t.id === numericId);
+        const match = prev.find(t => t.id === id || t.id === numericId || (counterOrderId && t.currentOrderId === counterOrderId));
         if (match) {
-          return prev.map(t => (t.id === id || t.id === numericId) ? { ...t, ...tableUpdates } : t);
+          return prev.map(t => (t.id === match.id) ? { ...t, ...tableUpdates } : t);
+        }
+        // Se for edição direta de um pedido já existente em orders, não criar comanda fantasma avulsa
+        if (counterOrderId || pdvEditOrder) {
+          return prev;
         }
         return [...prev, {
           id: id,
@@ -5015,20 +5170,21 @@ const App: React.FC = () => {
         }];
       });
 
-      // Se houver pedido vinculado a esta comanda de balcão, atualiza no estado e no Firestore
-      const counterOrderId = existingTable?.currentOrderId || (orders.some(o => o.id === String(id) || o.docId === String(id)) ? String(id) : null);
+      // Se houver pedido vinculado a esta comanda de balcão, atualiza no estado e no Firestore preservando taxas
       if (counterOrderId) {
+        const targetOrd = orders.find(o => o.id === counterOrderId || o.docId === counterOrderId);
+        const fullOrderTotal = Math.max(0, total + (targetOrd?.deliveryFee || 0) + (targetOrd?.additionalFee || 0) - (targetOrd?.discount || 0));
         setOrders(prev => prev.map(o => (o.id === counterOrderId || o.docId === counterOrderId) ? {
           ...o,
           items: activeItems,
-          total: total + (o.deliveryFee || 0) + (o.additionalFee || 0) - (o.discount || 0),
+          total: fullOrderTotal,
           updatedAt: new Date()
         } : o));
-        localDb.orders.update(counterOrderId, { items: activeItems, total, updatedAt: new Date() }).catch(() => {});
+        localDb.orders.update(counterOrderId, { items: activeItems, total: fullOrderTotal, updatedAt: new Date() }).catch(() => {});
         if (effectiveTenantId) {
-          setDoc(doc(db, 'orders', counterOrderId), cleanObject({
+          setDoc(doc(db, 'orders', targetOrd?.docId || counterOrderId), cleanObject({
             items: activeItems,
-            total,
+            total: fullOrderTotal,
             updatedAt: new Date(),
             customerName: tableUpdates.customerName,
             customerPhone: tableUpdates.customerPhone,
@@ -5066,17 +5222,18 @@ const App: React.FC = () => {
           } : it;
         });
         const activeItemsTotal = mergedOrderItems.reduce((acc, it) => acc + (it.price * it.quantity), 0);
+        const fullTableOrderTotal = Math.max(0, activeItemsTotal + (currentOrderObj?.deliveryFee || 0) + (currentOrderObj?.additionalFee || 0) - (currentOrderObj?.discount || 0));
 
         setOrders(prev => prev.map(o => (o.id === orderIdToSync || o.docId === orderIdToSync) ? {
           ...o,
           items: mergedOrderItems,
-          total: activeItemsTotal + (o.deliveryFee || 0) + (o.additionalFee || 0) - (o.discount || 0),
+          total: fullTableOrderTotal,
           updatedAt: new Date()
         } : o));
 
         localDb.orders.update(orderIdToSync, {
           items: mergedOrderItems,
-          total: activeItemsTotal,
+          total: fullTableOrderTotal,
           updatedAt: new Date()
         }).catch(() => {});
 
@@ -5084,7 +5241,7 @@ const App: React.FC = () => {
           const targetDocId = currentOrderObj?.docId || orderIdToSync;
           setDoc(doc(db, 'orders', targetDocId), cleanObject({
             items: mergedOrderItems,
-            total: activeItemsTotal,
+            total: fullTableOrderTotal,
             updatedAt: new Date()
           }), { merge: true }).catch(e => console.warn("Erro ao sincronizar pedido de mesa no Firestore:", e));
         }
@@ -5560,28 +5717,18 @@ const App: React.FC = () => {
       );
     }
 
-    // Fallback: se for pdvEditOrder
-    if (!table && pdvEditOrder) {
-      table = {
-        id: pdvEditOrder.tableNumber ? Number(pdvEditOrder.tableNumber) : (typeof tableId === 'number' ? tableId : Date.now()),
-        number: Number(pdvEditOrder.tableNumber) || 0,
-        items: pdvEditOrder.items || [],
-        total: (pdvEditOrder.total || 0) - (pdvEditOrder.deliveryFee || 0),
-        status: 'occupied',
-        tenantId: pdvEditOrder.tenantId,
-        currentOrderId: pdvEditOrder.id
-      } as Table;
-    }
-
-    // Fallback: se estiver registrado em orders
+    // Fallback: se estiver registrado em orders ou se for pdvEditOrder (priorizando a versão viva de orders que contém itens recém-editados)
     if (!table) {
-      const matchedOrder = orders.find(o => o.id === strTableId || o.docId === strTableId);
+      const targetLookupId = pdvEditOrder ? pdvEditOrder.id : strTableId;
+      const matchedOrder = orders.find(o => o.id === targetLookupId || o.docId === targetLookupId || o.id === strTableId || o.docId === strTableId) || pdvEditOrder;
       if (matchedOrder) {
+        const activeItems = (matchedOrder.items || []).filter(i => !i.cancelled);
+        const itemsSum = activeItems.reduce((acc, i) => acc + (Number(i.price) || 0) * (Number(i.quantity) || 1), 0);
         table = {
-          id: typeof tableId === 'number' ? tableId : Date.now(),
-          number: Number(matchedOrder.tableNumber) || 0,
-          items: matchedOrder.items || [],
-          total: (matchedOrder.total || 0) - (matchedOrder.deliveryFee || 0),
+          id: matchedOrder.id,
+          number: Number(matchedOrder.tableNumber) || matchedOrder.dailyNumber || 0,
+          items: activeItems,
+          total: itemsSum > 0 ? itemsSum : Math.max(0, (matchedOrder.total || 0) - (matchedOrder.deliveryFee || 0)),
           status: 'occupied',
           tenantId: matchedOrder.tenantId,
           currentOrderId: matchedOrder.id
@@ -5611,24 +5758,24 @@ const App: React.FC = () => {
     const isRealDelivery = !!(deliveryInfo && (deliveryInfo.address || (deliveryInfo.fee && deliveryInfo.fee > 0)));
 
     // Tentar localizar o pedido existente para reaproveitar seu ID e evitar duplicidade
-    // (Mesmo que o pedido da mesa já tenha sido marcado como 'delivered' ou 'finished' no KDS, ele ainda pertence a esta mesa aberta!)
+    // (Mesmo que o pedido já tenha sido pago e esteja sendo editado via pdvEditOrder, NUNCA devemos gerar outro ID!)
     let existingOrderId = pdvEditOrder ? pdvEditOrder.id : table.currentOrderId;
-    if (existingOrderId) {
+    if (!existingOrderId) {
+      const directMatch = orders.find(o => (o.id === strTableId || o.docId === strTableId) && o.status !== 'cancelled');
+      if (directMatch) {
+        existingOrderId = directMatch.id;
+      }
+    }
+    if (existingOrderId && !pdvEditOrder && existingOrderId !== strTableId) {
       const linkedOrd = orders.find(o => o.id === existingOrderId || o.docId === existingOrderId);
       const isAlreadyClosedTableOrd = Boolean(
         linkedOrd && (
           linkedOrd.status === 'cancelled' ||
-          (linkedOrd.isSettled && linkedOrd.paymentStatus === 'paid' && Boolean(linkedOrd.paymentMethod || (linkedOrd.payments && linkedOrd.payments.length > 0)))
+          (!isCounter && linkedOrd.isSettled && linkedOrd.paymentStatus === 'paid' && Boolean(linkedOrd.paymentMethod || (linkedOrd.payments && linkedOrd.payments.length > 0)))
         )
       );
       if (isAlreadyClosedTableOrd && existingOrderId !== table.currentOrderId) {
         existingOrderId = undefined;
-      }
-    }
-    if (!existingOrderId) {
-      const match = orders.find(o => (o.id === strTableId || o.docId === strTableId) && !o.isSettled && (o.paymentStatus !== 'paid' || !o.paymentMethod) && o.status !== 'cancelled');
-      if (match) {
-        existingOrderId = match.id;
       }
     }
     if (!existingOrderId && !isCounter && !isRealDelivery) {
@@ -6041,7 +6188,20 @@ const App: React.FC = () => {
         }
       }
 
-      // Financial Records
+      // Financial Records: Antes de registrar o pagamento final (ou atualizado), remover quaisquer lançamentos financeiros antigos
+      // deste mesmo pedido que não façam parte dos pagamentos parciais já registrados (evita duplicar pagamento ao editar pedido)
+      const preservedPartialIds = new Set(
+        (payments || []).filter(p => (p as any).alreadyRecorded && (p as any).id).map(p => String((p as any).id))
+      );
+      const staleOrderRecords = financialRecords.filter(r =>
+        r.orderId &&
+        (r.orderId === newOrder.id || (newOrder.docId && r.orderId === newOrder.docId)) &&
+        !preservedPartialIds.has(String(r.id))
+      );
+      for (const staleRec of staleOrderRecords) {
+        await handleDeleteFinancialRecord(staleRec.id).catch(() => {});
+      }
+
       if (payments && payments.length > 0) {
         const customerUpdates: Record<string, { totalDebit: number, transactions: CustomerTransaction[] }> = {};
         
