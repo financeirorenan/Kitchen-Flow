@@ -1280,6 +1280,9 @@ const App: React.FC = () => {
     // Reset states when switching tenants to avoid leaking previous tenant data or placeholders
     setProducts([]);
     setTables([]);
+    setCounterOrders([]);
+    setIncomingDigitalOrders([]);
+    setPdvEditOrder(null);
     setCustomers([]);
     setOrders([]);
     setFinancialRecords([]);
@@ -1451,7 +1454,7 @@ const App: React.FC = () => {
       }).catch(e => console.warn("LocalDb settings read warning:", e));
     }
 
-    ensureLojistaTenantWithData();
+    ensureLojistaTenantWithData(effectiveTenantId);
     notifiedOrdersRef.current.clear();
 
     const isRemoteAuthValid = Boolean(auth.currentUser?.uid) || Boolean(user?.uid);
@@ -1727,10 +1730,10 @@ const App: React.FC = () => {
         } else {
           handleFirestoreError(error, OperationType.LIST, col.name);
         }
-        // Fallback to localDb filtered by effectiveTenantId if cloud snapshot fails
+        // Fallback to localDb strictly filtered by effectiveTenantId if cloud snapshot fails
         if (localDb && (localDb as any)[col.name]) {
           (localDb as any)[col.name].toArray().then((localItems: any[]) => {
-            const filtered = localItems.filter(it => !it.tenantId || it.tenantId === effectiveTenantId || (effectiveTenantId === 'lojista' && it.tenantId === 't1'));
+            const filtered = localItems.filter(it => it && (it.tenantId === effectiveTenantId || (effectiveTenantId === 'lojista' && it.tenantId === 't1')));
             if (filtered.length > 0) {
               col.setter(filtered);
             }
@@ -3164,25 +3167,43 @@ const App: React.FC = () => {
   };
 
   const handleClearSalesAndFinance = async () => {
-    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
-    
-    // 1. Clear Local Database (IndexedDB)
-    await localDb.orders.clear();
-    await localDb.financialRecords.clear();
-    await localDb.cashClosings.clear();
-    await localDb.counterOrders.clear();
-    
+    const effectiveTenantId = getCanonicalTenantId(currentUserData, viewingTenantId, tenantData);
+    const isSameTenantRecord = (tId?: string) =>
+      !effectiveTenantId || tId === effectiveTenantId || ((effectiveTenantId === 'lojista' || effectiveTenantId === 't1') && (tId === 'lojista' || tId === 't1'));
+
+    // 1. Clear Local Database (IndexedDB) strictly for the current tenant
+    const [allLocalOrders, allLocalFin, allLocalClosings, allLocalCounters] = await Promise.all([
+      localDb.orders.toArray(),
+      localDb.financialRecords.toArray(),
+      localDb.cashClosings.toArray(),
+      localDb.counterOrders.toArray()
+    ]);
+
+    const orderIdsToDel = allLocalOrders.filter(o => isSameTenantRecord(o.tenantId)).map(o => o.id);
+    if (orderIdsToDel.length > 0) await localDb.orders.bulkDelete(orderIdsToDel);
+
+    const finIdsToDel = allLocalFin.filter(f => isSameTenantRecord(f.tenantId)).map(f => f.id);
+    if (finIdsToDel.length > 0) await localDb.financialRecords.bulkDelete(finIdsToDel);
+
+    const closingIdsToDel = allLocalClosings.filter(c => isSameTenantRecord(c.tenantId)).map(c => c.id);
+    if (closingIdsToDel.length > 0) await localDb.cashClosings.bulkDelete(closingIdsToDel);
+
+    const counterIdsToDel = allLocalCounters.filter(c => isSameTenantRecord(c.tenantId)).map(c => c.id);
+    if (counterIdsToDel.length > 0) await localDb.counterOrders.bulkDelete(counterIdsToDel);
+
     const localTables = await localDb.diningTables.toArray();
     for (const t of localTables) {
-      await localDb.diningTables.update(t.id, {
-        status: 'available',
-        items: [],
-        total: 0,
-        currentOrderId: null
-      } as any);
+      if (isSameTenantRecord(t.tenantId)) {
+        await localDb.diningTables.update(t.id, {
+          status: 'available',
+          items: [],
+          total: 0,
+          currentOrderId: null
+        } as any);
+      }
     }
-    
-    const s = await localDb.settings.get('global');
+
+    const s = await localDb.settings.get(effectiveTenantId || 'global');
     if (s) {
       await localDb.settings.put({
         ...s,
@@ -3192,6 +3213,7 @@ const App: React.FC = () => {
 
     // 2. Reset React State
     setOrders([]);
+    setCounterOrders([]);
     setFinancialRecords([]);
     setCashClosings([]);
     setTables(prev => prev.map(t => ({ ...t, status: 'available', items: [], total: 0, currentOrderId: null } as any)));
@@ -4648,22 +4670,26 @@ const App: React.FC = () => {
     addLog('u1', 'PEDIDO', `Pedido ${id} atualizado: ${Object.keys(updates).join(', ')}`);
   };
 
-  // Auto-reparo de registros financeiros de pedidos com pagamento dividido no turno ativo (ex: Pedido #8 Viva La Fome)
+  // Auto-reparo de registros financeiros de pedidos com pagamento dividido no turno ativo (disponível para todos os tenants com isolamento por tenantId)
   const healedSplitOrdersRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!cashSession?.isOpen || !cashSession.openedAt || orders.length === 0) return;
     const sessionOpenTime = toSafeDate(cashSession.openedAt).getTime();
     if (sessionOpenTime <= 0) return;
+    const effectiveTenantId = getCanonicalTenantId(currentUserData, viewingTenantId, tenantData);
+    const isTenantMatch = (tId?: string) =>
+      !effectiveTenantId || !tId || tId === effectiveTenantId || ((effectiveTenantId === 'lojista' || effectiveTenantId === 't1') && (tId === 'lojista' || tId === 't1'));
 
     orders.forEach(o => {
-      if (!o || !o.payments || o.payments.length <= 1) return;
+      if (!o || !isTenantMatch(o.tenantId) || !o.payments || o.payments.length <= 1) return;
       const isPaid = o.isSettled || o.paymentStatus === 'paid' || Boolean(o.payments && o.payments.length > 0);
       if (!isPaid || o.status === 'cancelled') return;
 
-      const sig = `${o.id}_${o.payments.map(p => `${p.method}:${p.amount}`).join('|')}`;
+      const sig = `${effectiveTenantId}_${o.id}_${o.payments.map(p => `${p.method}:${p.amount}`).join('|')}`;
       if (healedSplitOrdersRef.current.has(sig)) return;
 
       const matching = financialRecords.filter(r =>
+        isTenantMatch(r.tenantId) &&
         r.orderId && (r.orderId === o.id || (o.docId && r.orderId === o.docId))
       );
 
@@ -4715,20 +4741,24 @@ const App: React.FC = () => {
         healedSplitOrdersRef.current.add(sig);
       }
     });
-  }, [orders, financialRecords, cashSession?.isOpen, cashSession?.openedAt]);
+  }, [orders, financialRecords, cashSession?.isOpen, cashSession?.openedAt, viewingTenantId, currentUserData?.tenantId, tenantData?.id]);
 
   // Auto-reparo para pedidos de mesa que receberam baixa automática em dinheiro ao finalizar no KDS antes do fechamento da mesa
   const healedTableDuplicatesRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!cashSession?.isOpen || !cashSession.openedAt || orders.length === 0) return;
+    const effectiveTenantId = getCanonicalTenantId(currentUserData, viewingTenantId, tenantData);
+    const isTenantMatch = (tId?: string) =>
+      !effectiveTenantId || !tId || tId === effectiveTenantId || ((effectiveTenantId === 'lojista' || effectiveTenantId === 't1') && (tId === 'lojista' || tId === 't1'));
 
     orders.forEach(o => {
-      if (!o || o.status === 'cancelled') return;
+      if (!o || !isTenantMatch(o.tenantId) || o.status === 'cancelled') return;
       const isTableOrd = o.type === 'table' || o.type === 'dine_in' || (!o.type && o.tableNumber !== undefined && !String(o.tableNumber).toLowerCase().includes('balcão'));
       if (!isTableOrd) return;
 
       // Procurar lançamentos financeiros gerados automaticamente pelo KDS ("- Finalizado - Pagamento: dinheiro") para este pedido de mesa
       const kdsAutoRecords = financialRecords.filter(r =>
+        isTenantMatch(r.tenantId) &&
         r.orderId &&
         (r.orderId === o.id || (o.docId && r.orderId === o.docId)) &&
         r.description &&
@@ -4739,6 +4769,7 @@ const App: React.FC = () => {
       if (kdsAutoRecords.length === 0) return;
 
       const isTableStillOpen = tables.some(t =>
+        isTenantMatch(t.tenantId) &&
         t.status === 'occupied' &&
         (t.currentOrderId === o.id || (o.docId && t.currentOrderId === o.docId) || (o.tableNumber !== undefined && String(t.number) === String(o.tableNumber)))
       );
@@ -4746,6 +4777,7 @@ const App: React.FC = () => {
       // Procurar se já existe outro pedido fechado/quitado para a mesma mesa no mesmo turno (gerado quando fechou a mesa depois)
       const duplicateClosedTableOrder = orders.find(other =>
         other.id !== o.id &&
+        isTenantMatch(other.tenantId) &&
         other.status !== 'cancelled' &&
         !other.isSubTicket &&
         (other.type === 'table' || other.type === 'dine_in' || !other.type) &&
@@ -4753,11 +4785,11 @@ const App: React.FC = () => {
         other.isSettled &&
         other.paymentStatus === 'paid' &&
         !o.paymentMethod &&
-        financialRecords.some(r => r.orderId === other.id && r.description?.startsWith('Mesa '))
+        financialRecords.some(r => isTenantMatch(r.tenantId) && r.orderId === other.id && r.description?.startsWith('Mesa '))
       );
 
       if (isTableStillOpen || duplicateClosedTableOrder) {
-        const healKey = `tbl_heal_${o.id}_${kdsAutoRecords.map(r => r.id).join(',')}`;
+        const healKey = `tbl_heal_${effectiveTenantId}_${o.id}_${kdsAutoRecords.map(r => r.id).join(',')}`;
         if (healedTableDuplicatesRef.current.has(healKey)) return;
         healedTableDuplicatesRef.current.add(healKey);
 
@@ -4773,7 +4805,6 @@ const App: React.FC = () => {
             };
             setOrders(prev => prev.map(ord => ord.id === o.id ? { ...ord, ...subUpdates } : ord));
             await localDb.orders.update(o.id, subUpdates).catch(() => {});
-            const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
             if (effectiveTenantId) {
               await setDoc(doc(db, 'orders', o.docId || o.id), cleanObject(subUpdates), { merge: true }).catch(() => {});
             }
@@ -4784,7 +4815,6 @@ const App: React.FC = () => {
             };
             setOrders(prev => prev.map(ord => ord.id === o.id ? { ...ord, ...openUpdates } : ord));
             await localDb.orders.update(o.id, openUpdates).catch(() => {});
-            const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
             if (effectiveTenantId) {
               await setDoc(doc(db, 'orders', o.docId || o.id), cleanObject(openUpdates), { merge: true }).catch(() => {});
             }
@@ -4792,22 +4822,24 @@ const App: React.FC = () => {
         })();
       }
     });
-  }, [orders, financialRecords, tables, cashSession?.isOpen, cashSession?.openedAt]);
+  }, [orders, financialRecords, tables, cashSession?.isOpen, cashSession?.openedAt, viewingTenantId, currentUserData?.tenantId, tenantData?.id]);
 
   // Auto-reparo para pedidos duplicados em edições anteriores (mesmo dailyNumber, tipo e horário de criação) e pagamentos somados indevidamente
   const healedEditedOrdersRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (orders.length === 0) return;
-    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    const effectiveTenantId = getCanonicalTenantId(currentUserData, viewingTenantId, tenantData);
+    const isTenantMatch = (tId?: string) =>
+      !effectiveTenantId || !tId || tId === effectiveTenantId || ((effectiveTenantId === 'lojista' || effectiveTenantId === 't1') && (tId === 'lojista' || tId === 't1'));
 
     // 1. Detectar clones de edição (mesmo dailyNumber > 0, mesmo type e createdAt dentro de 5s com IDs diferentes)
     const groupsByLineage = new Map<string, Order[]>();
     orders.forEach(o => {
-      if (!o || o.status === 'cancelled' || !o.dailyNumber || o.dailyNumber <= 0) return;
+      if (!o || !isTenantMatch(o.tenantId) || o.status === 'cancelled' || !o.dailyNumber || o.dailyNumber <= 0) return;
       const createdMs = toSafeDate(o.createdAt).getTime();
       if (createdMs <= 0) return;
       const bucket = Math.floor(createdMs / 5000);
-      const key = `${o.tenantId || ''}_${o.type || ''}_${o.dailyNumber}_${bucket}`;
+      const key = `${o.tenantId || effectiveTenantId}_${o.type || ''}_${o.dailyNumber}_${bucket}`;
       const list = groupsByLineage.get(key) || [];
       list.push(o);
       groupsByLineage.set(key, list);
@@ -4850,16 +4882,16 @@ const App: React.FC = () => {
 
     // 2. Detectar pedidos cujo array payments ou lançamentos financeiros somam mais que o total do pedido (ex: R$ 24 + R$ 40 = R$ 64 para pedido de R$ 44)
     orders.forEach(o => {
-      if (!o || o.status === 'cancelled') return;
+      if (!o || !isTenantMatch(o.tenantId) || o.status === 'cancelled') return;
       const orderTotal = Number(o.total || 0);
       if (orderTotal <= 0) return;
 
       const paymentsSum = (o.payments || []).reduce((acc, p) => acc + (Number(p?.amount) || 0), 0);
-      const matchingFin = financialRecords.filter(r => r.orderId && (r.orderId === o.id || (o.docId && r.orderId === o.docId)));
+      const matchingFin = financialRecords.filter(r => isTenantMatch(r.tenantId) && r.orderId && (r.orderId === o.id || (o.docId && r.orderId === o.docId)));
       const finSum = matchingFin.reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
 
       if (paymentsSum > orderTotal + 0.05 || finSum > orderTotal + 0.05) {
-        const overKey = `overpay_${o.id}_${paymentsSum.toFixed(2)}_${finSum.toFixed(2)}_${orderTotal.toFixed(2)}`;
+        const overKey = `overpay_${effectiveTenantId}_${o.id}_${paymentsSum.toFixed(2)}_${finSum.toFixed(2)}_${orderTotal.toFixed(2)}`;
         if (healedEditedOrdersRef.current.has(overKey)) return;
         healedEditedOrdersRef.current.add(overKey);
 
@@ -7029,7 +7061,7 @@ const App: React.FC = () => {
       }
     }
 
-    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    const effectiveTenantId = getCanonicalTenantId(currentUserData, viewingTenantId, tenantData);
     const now = new Date();
 
     if (!order.stockDeducted && order.items && order.items.length > 0) {
@@ -7038,7 +7070,7 @@ const App: React.FC = () => {
 
     const rawAcceptedOrder: Order = { 
       ...order, 
-      tenantId: order.tenantId || effectiveTenantId || 'HCL1177LRQVPEKCTYRAHU7IGBQ42',
+      tenantId: order.tenantId || effectiveTenantId,
       source: order.source || 'whatsapp',
       status: 'preparing',
       stockDeducted: true,

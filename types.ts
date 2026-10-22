@@ -1,7 +1,7 @@
 
 export type OrderStatus = 'pending' | 'preparing' | 'ready' | 'delivering' | 'delivered' | 'cancelled' | 'finished';
 
-export type UserRole = 'ADMIN' | 'MANAGER' | 'WAITER' | 'CASHIER' | 'CHEF' | 'KDS' | 'SAAS_ADMIN' | 'COURIER' | 'CUSTOMER' | 'OWNER' | 'STOCK_ANALYST';
+export type UserRole = 'ADMIN' | 'MANAGER' | 'WAITER' | 'CASHIER' | 'CHEF' | 'KDS' | 'SAAS_ADMIN' | 'COURIER' | 'CUSTOMER' | 'OWNER' | 'LOJISTA' | 'STOCK_ANALYST';
 
 export type PaymentMethod = 'dinheiro' | 'cartao_credito' | 'cartao_debito' | 'pix' | 'vale_refeicao' | 'conta_cliente' | string;
 

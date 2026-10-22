@@ -594,15 +594,35 @@ const Tables: React.FC<TablesProps> = memo(
       }
     }, [pdvEditOrder]);
 
+    // Reset local PDV selection and modals when switching tenants
+    const prevTenantIdRef = useRef<string>(tenantId);
+    useEffect(() => {
+      if (prevTenantIdRef.current !== tenantId) {
+        prevTenantIdRef.current = tenantId;
+        setSelectedTable(null);
+        setIsCounterContext(false);
+        setShowPaymentModal(false);
+        setShowCashModal(false);
+        setShowCancelModal(false);
+        setShowTransferModal(false);
+        setShowChangeModal(false);
+        setShowMovementsModal(false);
+        setEditingShiftOrder(null);
+        setSelectedMethodReport(null);
+        setLastClosingReport(null);
+        resetCustomerFields();
+      }
+    }, [tenantId, resetCustomerFields]);
+
     const handleConfirmMovement = () => {
       const amount = parseCurrency(movementAmount);
       if (amount <= 0) {
-        alert("Por favor, informe um valor válido.");
+        showToast?.("Por favor, informe um valor válido.", "error");
         return;
       }
 
       if (!movementReason.trim()) {
-        alert("Por favor, informe o motivo do lançamento.");
+        showToast?.("Por favor, informe o motivo do lançamento.", "error");
         return;
       }
 
@@ -717,7 +737,15 @@ const Tables: React.FC<TablesProps> = memo(
         };
       }
 
+      const isMatchingTenant = (id?: string) => {
+        if (!tenantId || !id) return true;
+        if (id === tenantId) return true;
+        if ((tenantId === "lojista" || tenantId === "t1") && (id === "lojista" || id === "t1")) return true;
+        return false;
+      };
+
       const sessionRecords = deduplicateFinancialRecords(financialRecords.filter((r) => {
+        if (!isMatchingTenant(r.tenantId)) return false;
         const isPaid = r.status === "paid" || !r.status;
         if (!isPaid) return false;
 
@@ -740,7 +768,9 @@ const Tables: React.FC<TablesProps> = memo(
       }));
 
       const rawSessionOrders = deduplicateOrders(orders.filter((o) => {
+        if (!isMatchingTenant(o.tenantId)) return false;
         const hasSessionFinancialRecord = financialRecords.some(r =>
+          isMatchingTenant(r.tenantId) &&
           r.orderId && (r.orderId === o.id || (o.docId && r.orderId === o.docId)) &&
           parseToDate(r.date) >= sessionOpenedAt
         );
@@ -1046,7 +1076,7 @@ const Tables: React.FC<TablesProps> = memo(
           extraExpenses,
         count: sessionOrders.length,
       };
-    }, [orders, financialRecords, cashSession, adminSettings]);
+    }, [orders, financialRecords, cashSession, adminSettings, tenantId]);
 
     const getStandardPaymentMethodKey = (method: string): string => {
       return normalizePaymentMethod(method, adminSettings);

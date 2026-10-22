@@ -4,6 +4,7 @@ import { db } from '../firebase';
 import { collection, onSnapshot, doc, setDoc, updateDoc, query, orderBy, deleteDoc, addDoc, where, getDocs, getDoc, limit } from 'firebase/firestore';
 import { compressImage } from '../lib/imageUtils';
 import { ensureLojistaTenantWithData } from '../lib/ensureLojistaTenant';
+import { provisionNewTenantStandardized, recordSecurityAuditEvent } from '../services/tenantIsolationService';
 import { isQuotaError } from '../lib/firestoreErrors';
 import { Tenant, Plan, Permission, User, MarketplaceInvoice, MarketplaceSettings, MarketplacePromotion, SaasAuditLog, SaasNotification, Order, FinancialRecord, Customer, Product, CashClosingReport, BankAccount, AuditLog, CityBestSellersConfig } from '../types';
 import { maskPhone } from '../utils/masks';
@@ -2194,136 +2195,115 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
 
   const handleSaveTenant = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Calcula o próximo ID de lojista e número de cliente de forma sequencial (iniciando em 1)
-    let tenantId = editingTenant?.id;
-    let clientNumber = editingTenant?.clientNumber;
 
-    if (!clientNumber) {
-      if (tenants.length > 0) {
-        const nums = tenants.map((t, index) => getClientNumber(t, index));
-        const maxNum = Math.max(...nums, 0);
-        clientNumber = maxNum + 1;
-      } else {
-        clientNumber = 1;
-      }
-    }
-
-    if (!tenantId) {
-      tenantId = String(clientNumber);
-    }
-    
     const selectedPlan = plans.find(p => p.id === selectedPlanId);
-    
     if (!selectedPlan) {
-      alert('Selecione um plano válido.');
+      if (showToast) {
+        showToast('Selecione um plano válido.', 'error');
+      } else {
+        alert('Selecione um plano válido.');
+      }
       return;
     }
 
-    const tenantData: Partial<Tenant> = {
-      id: tenantId,
-      clientNumber,
-      name,
-      ownerId,
-      planId: selectedPlanId,
-      active: true,
-      logoUrl,
-      category,
-      description,
-      autoAcceptOrders,
-      customModules: tenantModules,
-      createdAt: editingTenant?.createdAt || new Date(),
-      subscription: {
-        plan: selectedPlan.name as any,
-        status: 'active',
-        startDate: editingTenant?.subscription.startDate || new Date(),
-        expiryDate: new Date(expiryDate),
-        allowedModules: selectedPlan.modules
-      }
-    };
-
     try {
-      await setDoc(doc(db, 'tenants', tenantId), tenantData);
-      
-      // Se for um novo tenant, criar o primeiro usuário (Admin do Cliente)
-      if (!editingTenant) {
-        let email = `${name.toLowerCase().replace(/\s+/g, '')}@admin.com`.trim().toLowerCase();
-        
-        // Evitar duplicidade de e-mail ao criar o primeiro usuário do tenant
-        try {
-          const q = query(collection(db, 'users'), where('email', '==', email));
-          const snap = await getDocs(q);
-          const qCourier = query(collection(db, 'couriers'), where('email', '==', email));
-          const snapCourier = await getDocs(qCourier);
-          
-          if (!snap.empty || !snapCourier.empty) {
-            const suffix = Math.floor(100 + Math.random() * 900);
-            email = `${name.toLowerCase().replace(/\s+/g, '')}${suffix}@admin.com`.trim().toLowerCase();
+      // Se for edição de uma loja já existente
+      if (editingTenant) {
+        const tenantId = editingTenant.id;
+        const clientNumber = editingTenant.clientNumber || 1;
+        const tenantData: Partial<Tenant> = {
+          id: tenantId,
+          clientNumber,
+          name,
+          ownerId,
+          planId: selectedPlanId,
+          active: editingTenant.active !== false,
+          logoUrl,
+          category,
+          description,
+          autoAcceptOrders,
+          customModules: tenantModules,
+          createdAt: editingTenant.createdAt || new Date(),
+          subscription: {
+            plan: selectedPlan.name as any,
+            planId: selectedPlanId,
+            status: editingTenant.subscription?.status || 'active',
+            startDate: editingTenant.subscription?.startDate || new Date(),
+            expiryDate: new Date(expiryDate),
+            allowedModules: tenantModules.length > 0 ? tenantModules : selectedPlan.modules,
+          },
+        };
+
+        await setDoc(doc(db, 'tenants', tenantId), tenantData, { merge: true });
+        addAuditLog(
+          'Atualizou cadastro e permissões da loja',
+          name,
+          editingTenant.subscription?.plan,
+          selectedPlan.name,
+          'Organizações'
+        );
+        recordSecurityAuditEvent({
+          eventType: 'SUPER_ADMIN_ACTION',
+          actorId: 'saas_admin',
+          actorName: 'Super Admin',
+          actorRole: 'SAAS_ADMIN',
+          tenantId,
+          result: 'SUCCESS',
+          details: `Organização '${name}' (${tenantId}) atualizada pelo Super Admin.`,
+        });
+      } else {
+        // Fluxo padronizado e idempotente de 10 etapas para criação de nova loja (Seções 12 e 13)
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        const rawOwnerEmail = (ownerId || '').trim().toLowerCase();
+        const fallbackEmail = `${name.toLowerCase().replace(/[^a-z0-9]/g, '')}@admin.com`;
+        const resolvedOwnerEmail = emailRegex.test(rawOwnerEmail) ? rawOwnerEmail : fallbackEmail;
+
+        const provisionResult = await provisionNewTenantStandardized(
+          {
+            name,
+            ownerEmail: resolvedOwnerEmail,
+            ownerName: `Admin ${name}`,
+            category,
+            description,
+            logoUrl,
+            planId: selectedPlanId,
+            planName: selectedPlan.name,
+            allowedModules: tenantModules.length > 0 ? tenantModules : selectedPlan.modules,
+            expiryDate: expiryDate ? new Date(expiryDate) : new Date(Date.now() + 30 * 86400000),
+            autoAcceptOrders,
+            initialTablesCount: 12,
+          },
+          tenants,
+          saasUsers
+        );
+
+        if (!provisionResult.success) {
+          if (showToast) {
+            showToast(provisionResult.error || 'Erro ao provisionar nova loja.', 'error');
+          } else {
+            alert(provisionResult.error || 'Erro ao provisionar nova loja.');
           }
-        } catch (e) {
-          console.warn("Could not check email uniqueness:", e);
+          return;
         }
 
-        const password = generateStrongRandomPassword();
-        
-        const firstUser: Partial<User> = {
-          id: ownerId, // Assume que o ownerId é o UID do usuário já criado ou a ser criado
-          tenantId: tenantId,
-          name: `Admin ${name}`,
-          email: email,
-          role: 'ADMIN',
-          permissions: selectedPlan.modules,
-          status: 'offline',
-          active: true,
-          createdAt: new Date()
-        };
-        await setDoc(doc(db, 'users', ownerId), firstUser, { merge: true });
+        addAuditLog(
+          provisionResult.alreadyExisted
+            ? 'Provisionamento Idempotente (Loja Existente Preservada)'
+            : 'Provisionou Nova Organização (10 Etapas Concluídas)',
+          name,
+          'Novo Cadastro',
+          `ID: ${provisionResult.tenantId} • Isolamento Verificado`,
+          'Provisionamento'
+        );
 
-        // Inicializar configurações padrão para o novo tenant (Isso habilita o sistema para o cliente)
-        const defaultAdminConfig = {
-          companyName: name,
-          deliveryFee: 7.00,
-          isDeliveryEnabled: true,
-          isPickupEnabled: true,
-          minOrderValue: 20.00,
-          estimatedDeliveryTime: '30-45 min',
-          estimatedPickupTime: '15-20 min',
-          autoAcceptOrders: false,
-          notifications: true,
-          printing: { paperWidth: '80mm', autoPrintOrder: false },
-        };
-        const defaultDigitalMenuConfig = {
-          restaurantName: name,
-          welcomeMessage: `Bem-vindo ao ${name}!`,
-          themeColor: '#4f46e5',
-          logoUrl: logoUrl || ''
-        };
-        await setDoc(doc(db, 'settings', tenantId), {
-          admin: defaultAdminConfig,
-          digitalMenu: defaultDigitalMenuConfig,
-          updatedAt: new Date()
-        });
-        await setDoc(doc(db, 'publicStorefronts', tenantId), {
-          tenantId,
-          admin: defaultAdminConfig,
-          digitalMenu: defaultDigitalMenuConfig,
-          updatedAt: new Date()
-        });
-        
-        setGeneratedUser({ email, password });
-        setShowUserGenModal(true);
-
-        // Inicializar com 10 mesas padrão para o novo cliente
-        for (let i = 1; i <= 10; i++) {
-          await addDoc(collection(db, 'diningTables'), {
-            id: i,
-            number: i,
-            tenantId: tenantId,
-            status: 'available',
-            items: [],
-            total: 0,
-            updatedAt: new Date()
+        if (!provisionResult.alreadyExisted && provisionResult.temporaryPassword) {
+          setGeneratedUser({
+            email: provisionResult.adminEmail,
+            password: provisionResult.temporaryPassword,
           });
+          setShowUserGenModal(true);
+        } else if (provisionResult.alreadyExisted && showToast) {
+          showToast(`Organização '${name}' já existente (${provisionResult.tenantId}). Duplicidade prevenida com sucesso!`, 'info');
         }
       }
 

@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { PayrollSimulator } from './PayrollSimulator';
 import { sendWelcomeEmailResend } from '../services/emailService';
+import { recordSecurityAuditEvent } from '../services/tenantIsolationService';
 
 interface UsersPanelProps {
   users: User[];
@@ -59,6 +60,7 @@ const ROLE_DETAILS: Record<UserRole, { label: string; description: string; color
   COURIER: { label: 'Entregador', description: 'Acesso ao App mobile do entregador.', color: 'text-orange-600 bg-orange-50 border-orange-100' },
   CUSTOMER: { label: 'Cliente', description: 'Conta de cliente do Marketplace.', color: 'text-slate-600 bg-slate-50 border-slate-100' },
   OWNER: { label: 'Proprietário', description: 'Acesso total ao estabelecimento.', color: 'text-brand-primary bg-brand-primary/10 border-brand-primary/20' },
+  LOJISTA: { label: 'Lojista', description: 'Gestão completa da loja e operação.', color: 'text-indigo-600 bg-indigo-50 border-indigo-100' },
   STOCK_ANALYST: { label: 'Analista de Estoque', description: 'Monitora insumos, custos e CMV.', color: 'text-teal-600 bg-teal-50 border-teal-100' },
 };
 
@@ -440,40 +442,57 @@ const UsersPanel: React.FC<UsersPanelProps> = memo(({
           <table className="w-full text-left">
             <thead className="bg-slate-50 border-b">
               <tr>
-                <th className="px-6 py-4 font-bold text-slate-500 text-sm rounded-tl-3xl">Usuário</th>
-                <th className="px-6 py-4 font-bold text-slate-500 text-sm">Função / Nível</th>
+                <th className="px-6 py-4 font-bold text-slate-500 text-sm rounded-tl-3xl">Usuário / Criação</th>
+                <th className="px-6 py-4 font-bold text-slate-500 text-sm">Organização & Função</th>
                 <th className="px-6 py-4 font-bold text-slate-500 text-sm">Permissões Ativas</th>
-                <th className="px-6 py-4 font-bold text-slate-500 text-sm">Status</th>
+                <th className="px-6 py-4 font-bold text-slate-500 text-sm">Status & Último Acesso</th>
                 <th className="px-6 py-4 font-bold text-slate-500 text-sm text-right rounded-tr-3xl">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y">
-              {users.map((user, index) => (
+              {users.map((user, index) => {
+                const roleInfo = ROLE_DETAILS[user.role] || { label: user.role, color: 'text-slate-600 bg-slate-50 border-slate-100' };
+                const createdLabel = (user as any).createdAt
+                  ? new Date((user as any).createdAt).toLocaleDateString('pt-BR')
+                  : 'Registro Ativo';
+                const lastAccessLabel = (user as any).lastAccess
+                  ? new Date((user as any).lastAccess).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
+                  : user.status === 'online' ? 'Sessão Ativa Agora' : 'Acesso Registrado';
+
+                return (
                 <tr key={user.id} className="hover:bg-slate-50 transition-colors">
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-4">
                       <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-500 border">
-                        {user.name.charAt(0)}
+                        {(user.name || 'U').charAt(0)}
                       </div>
                       <div>
                         <p className="font-bold text-slate-800">{user.name}</p>
                         <p className="text-xs text-slate-400 flex items-center gap-1">
                           <Mail size={12} /> {user.email}
                         </p>
+                        <p className="text-[10px] text-slate-400 font-medium mt-0.5 flex items-center gap-1">
+                          <Calendar size={10} /> Criado: {createdLabel}
+                        </p>
                       </div>
                     </div>
                   </td>
                   <td className="px-6 py-4">
-                    <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-bold ${ROLE_DETAILS[user.role].color}`}>
-                      {getRoleIcon(user.role)}
-                      {user.role}
+                    <div className="flex flex-col items-start gap-1.5">
+                      <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-bold ${roleInfo.color}`}>
+                        {getRoleIcon(user.role)}
+                        {user.role}
+                      </div>
+                      <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-200">
+                        Tenant: {user.tenantId || 'default-tenant'}
+                      </span>
                     </div>
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex flex-wrap gap-1 max-w-[200px]">
                       {(user.permissions || []).slice(0, 3).map(p => (
                         <span key={p} className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-medium">
-                          {ALL_PERMISSIONS.find(ap => ap.id === p)?.label}
+                          {ALL_PERMISSIONS.find(ap => ap.id === p)?.label || p}
                         </span>
                       ))}
                       {(user.permissions || []).length > 3 && (
@@ -482,9 +501,14 @@ const UsersPanel: React.FC<UsersPanelProps> = memo(({
                     </div>
                   </td>
                   <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      <span className={`w-2 h-2 rounded-full ${user.active ? (user.status === 'online' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300') : 'bg-rose-500'}`}></span>
-                      <span className="text-sm text-slate-600 capitalize">{user.active ? user.status : 'Inativo'}</span>
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-2">
+                        <span className={`w-2 h-2 rounded-full ${user.active ? (user.status === 'online' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300') : 'bg-rose-500'}`}></span>
+                        <span className="text-sm text-slate-600 capitalize font-bold">{user.active ? (user.status || 'Ativo') : 'Suspenso / Inativo'}</span>
+                      </div>
+                      <span className="text-[10px] text-slate-400 font-medium">
+                        Último acesso: {lastAccessLabel}
+                      </span>
                     </div>
                   </td>
                   <td className="px-6 py-4 text-right relative">
@@ -496,18 +520,81 @@ const UsersPanel: React.FC<UsersPanelProps> = memo(({
                     </button>
 
                     {userMenuOpen === user.id && (
-                      <div ref={userMenuRef} className={`absolute right-6 ${index === users.length - 1 && users.length > 1 ? 'bottom-full mb-1' : 'top-12'} z-20 w-48 bg-white border rounded-2xl shadow-xl py-2 animate-in fade-in zoom-in-95 duration-200`}>
+                      <div ref={userMenuRef} className={`absolute right-6 ${index === users.length - 1 && users.length > 1 ? 'bottom-full mb-1' : 'top-12'} z-20 w-56 bg-white border rounded-2xl shadow-xl py-2 animate-in fade-in zoom-in-95 duration-200`}>
                         <button 
                           onClick={() => handleOpenEditUser(user)}
                           className="w-full px-4 py-2 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2"
                         >
-                          <Edit3 size={16} /> Editar Perfil
+                          <Edit3 size={16} /> Editar Perfil & Acessos
                         </button>
                         <button 
                           onClick={() => setShowPresetsModal(user)}
                           className="w-full px-4 py-2 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2"
                         >
                           <Settings2 size={16} /> Presets do Usuário
+                        </button>
+                        <button 
+                          onClick={() => {
+                            confirmAction(
+                              'Recuperação Segura de Senha',
+                              `Enviar link seguro de redefinição de senha para "${user.email}"? Nenhuma senha existente é exibida em texto puro.`,
+                              async () => {
+                                try {
+                                  await fetch('/api/email/send-password-reset', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ email: user.email, name: user.name })
+                                  });
+                                  recordSecurityAuditEvent({
+                                    category: 'USER_PERMISSION_CHANGED',
+                                    actorId: 'admin',
+                                    actorName: 'Administrador',
+                                    actorRole: isSuperAdmin ? 'SAAS_ADMIN' : 'OWNER',
+                                    tenantId: user.tenantId || 'default-tenant',
+                                    action: 'PASSWORD_RECOVERY_INVITE_SENT',
+                                    description: `Convite seguro de recuperação de senha enviado para ${user.email}`,
+                                    severity: 'INFO'
+                                  });
+                                } catch (e) {
+                                  console.warn('Password recovery email dispatch warning:', e);
+                                }
+                              },
+                              'info'
+                            );
+                            setUserMenuOpen(null);
+                          }}
+                          className="w-full px-4 py-2 text-left text-sm font-bold text-indigo-600 hover:bg-indigo-50 flex items-center gap-2"
+                        >
+                          <Mail size={16} /> Enviar Recuperação de Senha
+                        </button>
+                        <button 
+                          onClick={() => {
+                            confirmAction(
+                              'Revogar Sessões Ativas',
+                              `Encerrar imediatamente todas as sessões ativas do usuário "${user.name}" e exigir novo login?`,
+                              async () => {
+                                try {
+                                  await fetch('/api/saas/users/revoke-session', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                      userId: user.id,
+                                      tenantId: user.tenantId || 'default-tenant',
+                                      reason: 'Revogação administrativa de sessão'
+                                    })
+                                  });
+                                  await onUpdateUser(user.id, { status: 'offline' } as any);
+                                } catch (e) {
+                                  console.warn('Revoke session warning:', e);
+                                }
+                              },
+                              'warning'
+                            );
+                            setUserMenuOpen(null);
+                          }}
+                          className="w-full px-4 py-2 text-left text-sm font-bold text-amber-600 hover:bg-amber-50 flex items-center gap-2"
+                        >
+                          <Shield size={16} /> Revogar Sessões Ativas
                         </button>
                         <div className="h-px bg-slate-100 my-1" />
                         <button 
@@ -529,13 +616,14 @@ const UsersPanel: React.FC<UsersPanelProps> = memo(({
                           className={`w-full px-4 py-2 text-left text-sm font-bold flex items-center gap-2 ${user.active ? 'text-rose-600 hover:bg-rose-50' : 'text-emerald-600 hover:bg-emerald-50'}`}
                         >
                           {user.active ? <Lock size={16} /> : <Check size={16} />}
-                          {user.active ? 'Inativar Usuário' : 'Ativar Usuário'}
+                          {user.active ? 'Suspender / Inativar' : 'Ativar Usuário'}
                         </button>
                       </div>
                     )}
                   </td>
                 </tr>
-              ))}
+              );
+              })}
             </tbody>
           </table>
         </div>
