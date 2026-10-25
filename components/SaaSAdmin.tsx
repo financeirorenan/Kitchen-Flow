@@ -1820,7 +1820,11 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
           body: JSON.stringify({
             userId,
             email,
-            newPassword: password
+            newPassword: password,
+            name,
+            tenantId: selectedTenantForUser.id,
+            role: role || 'ADMIN',
+            permissions: defaultPermissions
           })
         });
       } catch (syncErr) {
@@ -2330,6 +2334,10 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                   userId: adminDocId,
                   email: targetEmail,
                   newPassword: ownerPassword.trim(),
+                  name: `Admin ${name}`,
+                  tenantId,
+                  role: 'OWNER',
+                  permissions: resolvedAllowedModules,
                 }),
               });
             } catch {}
@@ -2500,8 +2508,11 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         
         let foundConflict = false;
         if (!snapUser.empty) {
-          const existingUser = snapUser.docs[0].data();
-          if (existingUser.tenantId && existingUser.tenantId !== tenant.id) {
+          const hasOtherTenant = snapUser.docs.some(d => {
+            const u = d.data();
+            return (u.tenantId && u.tenantId !== tenant.id) || u.role === 'SAAS_ADMIN';
+          });
+          if (hasOtherTenant) {
             foundConflict = true;
           }
         }
@@ -2523,7 +2534,10 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
       
       let userId = `usr_${tenant.id}_owner`;
       if (!snap.empty) {
-        userId = snap.docs[0].id;
+        const sameTenantDoc = snap.docs.find(d => d.data()?.tenantId === tenant.id);
+        if (sameTenantDoc) {
+          userId = sameTenantDoc.id;
+        }
       }
 
       const permissions = tenant.customModules || tenant.subscription?.allowedModules || ['dashboard_view'];
@@ -2553,7 +2567,11 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
           body: JSON.stringify({
             userId,
             email,
-            newPassword: password
+            newPassword: password,
+            name: `Admin ${tenant.name}`,
+            tenantId: tenant.id,
+            role: 'OWNER',
+            permissions
           })
         });
       } catch (syncErr) {

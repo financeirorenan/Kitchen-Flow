@@ -56,37 +56,63 @@ export const getCanonicalTenantId = (
     return clean;
   };
 
-  // 1. Explicit viewing tenant (Admin Support / Multi-Tenant selector)
-  const normViewing = normalize(viewingTenantId);
-  if (normViewing) return normViewing;
+  const isSuperAdminUser =
+    currentUserData?.role === 'SAAS_ADMIN' ||
+    (typeof currentUserData?.email === 'string' &&
+      currentUserData.email.trim().toLowerCase() === 'financeirorenanuk@gmail.com');
 
-  // 2. User's assigned tenant
+  // 1. Explicit viewing tenant ONLY when authenticated user is Super Admin (SAAS_ADMIN)
+  if (isSuperAdminUser) {
+    const normViewing = normalize(viewingTenantId);
+    if (normViewing) return normViewing;
+  }
+
+  // 2. Authenticated user's assigned tenant (strict priority for all tenant users)
   const normUser = normalize(currentUserData?.tenantId);
   if (normUser) return normUser;
 
-  // 3. Loaded tenant data
-  const normTenant = normalize(tenantData?.id);
-  if (normTenant) return normTenant;
+  // If currentUserData is loaded and is NOT Super Admin, never leak another tenant from cache
+  if (currentUserData && !isSuperAdminUser) {
+    return 'default-tenant';
+  }
 
-  // 4. Cached tenant from localStorage
+  // 3. Loaded tenant data (only if compatible with Super Admin or before user state hydration)
+  const normTenant = normalize(tenantData?.id);
+  if (normTenant && isSuperAdminUser) return normTenant;
+
+  // 4. Cached user & tenant from localStorage (prioritize cachedUser.tenantId over cachedTenant)
   try {
+    const cachedUserRaw = localStorage.getItem('kitchenflow_cached_user');
+    let parsedUser: any = null;
+    if (cachedUserRaw) {
+      parsedUser = JSON.parse(cachedUserRaw);
+      const isCachedSuper =
+        parsedUser?.role === 'SAAS_ADMIN' ||
+        (typeof parsedUser?.email === 'string' &&
+          parsedUser.email.trim().toLowerCase() === 'financeirorenanuk@gmail.com');
+
+      if (isCachedSuper) {
+        const normViewing = normalize(viewingTenantId);
+        if (normViewing) return normViewing;
+      }
+
+      const normCachedUser = normalize(parsedUser?.tenantId);
+      if (normCachedUser) return normCachedUser;
+    }
+
     const cachedTenant = localStorage.getItem('kitchenflow_cached_tenant_data');
     if (cachedTenant) {
-      const parsed = JSON.parse(cachedTenant);
-      const normCachedTenant = normalize(parsed?.id);
-      if (normCachedTenant) return normCachedTenant;
-    }
-    const cachedUser = localStorage.getItem('kitchenflow_cached_user');
-    if (cachedUser) {
-      const parsed = JSON.parse(cachedUser);
-      const normCachedUser = normalize(parsed?.tenantId);
-      if (normCachedUser) return normCachedUser;
+      const parsedTenant = JSON.parse(cachedTenant);
+      const normCachedTenant = normalize(parsedTenant?.id);
+      if (normCachedTenant && (!parsedUser || parsedUser?.role === 'SAAS_ADMIN')) {
+        return normCachedTenant;
+      }
     }
   } catch (e) {
     console.warn("[OrderService] Erro ao ler tenant do cache:", e);
   }
 
-  // 5. Default production merchant ID in Firestore
+  // 5. Default fallback
   return 'default-tenant';
 };
 

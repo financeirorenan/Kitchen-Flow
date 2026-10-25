@@ -956,7 +956,12 @@ const App: React.FC = () => {
             return;
           }
         } else {
-          // Lojista acessando o painel
+          // Lojista acessando o painel: limpar qualquer resquício de inspeção do Super Admin
+          if (viewingTenantId || viewingTenantName || viewingTenantLogo) {
+            setViewingTenantId(null);
+            setViewingTenantName(null);
+            setViewingTenantLogo(null);
+          }
           if (userTenantId) {
             if (urlTenantParam && urlTenantParam !== userTenantId && urlTenantParam !== tenantData?.slug) {
               const sub = parts[2] ? `/${parts[2]}` : '';
@@ -1128,10 +1133,11 @@ const App: React.FC = () => {
   }, [location.pathname, isSuperAdmin, currentProject, activeTab, navigate, user, currentUserData, tenantData?.slug, viewingTenantId, authLoading]);
 
   useEffect(() => {
+    const activeViewName = isSuperAdmin && viewingTenantId ? viewingTenantName : null;
     if (currentProject === 'PLATFORM') {
       document.title = 'KitchenFlow - Painel SaaS Admin';
     } else if (currentProject === 'RESTAURANT') {
-      const storeName = viewingTenantName || tenantData?.name || adminSettings.companyName || 'Lojista';
+      const storeName = activeViewName || tenantData?.name || adminSettings.companyName || 'Lojista';
       document.title = `${storeName} | KitchenFlow - Sistema de Gestão para Restaurantes`;
     } else if (currentProject === 'COURIER') {
       document.title = 'KitchenFlow - Portal do Entregador';
@@ -1140,7 +1146,7 @@ const App: React.FC = () => {
     } else {
       document.title = 'KitchenFlow - Sistema de Gestão para Restaurantes';
     }
-  }, [currentProject, viewingTenantName, tenantData?.name, adminSettings.companyName]);
+  }, [currentProject, isSuperAdmin, viewingTenantId, viewingTenantName, tenantData?.name, adminSettings.companyName]);
 
   useEffect(() => {
     (window as any).setActiveTab = (tab: string) => {
@@ -1297,13 +1303,20 @@ const App: React.FC = () => {
     setCashClosings([]);
     setCashSession({ isOpen: false, openingValue: 0, openedAt: null });
 
+    // Se o usuário logado NÃO for Super Admin, jamais manter estado de inspeção de outro tenant
+    if (currentUserData && !isSuperAdmin) {
+      if (viewingTenantId) setViewingTenantId(null);
+      if (viewingTenantName) setViewingTenantName(null);
+      if (viewingTenantLogo) setViewingTenantLogo(null);
+    }
+
     // PRIORIDADE: Primeiro o ID canônico consolidado para todos os módulos (Caixa, KDS, Salão, Delivery)
-    const effectiveTenantId = getCanonicalTenantId(currentUserData, viewingTenantId, tenantData);
+    const effectiveTenantId = getCanonicalTenantId(currentUserData, isSuperAdmin ? viewingTenantId : null, tenantData);
     const canonicalStoreId = getCanonicalStoreId(effectiveTenantId);
 
-    // Try pre-populating tenantData immediately from SaaS cached tenants if viewing a tenant
+    // Try pre-populating tenantData immediately from SaaS cached tenants if matching effectiveTenantId
     let cachedSelectedTenant: Tenant | null = null;
-    if (effectiveTenantId) {
+    if (effectiveTenantId && effectiveTenantId !== 'default-tenant') {
       try {
         const rawCachedTenants = localStorage.getItem('kitchenflow_saas_cached_tenants');
         if (rawCachedTenants) {
@@ -1312,11 +1325,9 @@ const App: React.FC = () => {
           if (found) {
             cachedSelectedTenant = found;
             setTenantData(found);
-            if (!viewingTenantName && found.name) {
-              setViewingTenantName(found.name);
-            }
-            if (!viewingTenantLogo && found.logoUrl) {
-              setViewingTenantLogo(found.logoUrl);
+            if (isSuperAdmin && viewingTenantId) {
+              setViewingTenantName(found.name || null);
+              setViewingTenantLogo(found.logoUrl || null);
             }
           }
         }
@@ -1325,8 +1336,10 @@ const App: React.FC = () => {
       }
     }
 
-    const initialName = viewingTenantName || cachedSelectedTenant?.name || '';
-    const initialLogo = viewingTenantLogo || cachedSelectedTenant?.logoUrl || '';
+    const activeViewingName = isSuperAdmin && viewingTenantId ? viewingTenantName : null;
+    const activeViewingLogo = isSuperAdmin && viewingTenantId ? viewingTenantLogo : null;
+    const initialName = cachedSelectedTenant?.name || activeViewingName || '';
+    const initialLogo = cachedSelectedTenant?.logoUrl || activeViewingLogo || '';
 
     setAdminSettings({
       companyName: initialName,
@@ -1891,10 +1904,17 @@ const App: React.FC = () => {
     const tenantUnsub = onSnapshot(doc(db, 'tenants', effectiveTenantId), (snapshot) => {
       setQuotaExceeded(false);
       if (snapshot.exists()) {
-        const loadedTenant = convertTimestamps(snapshot.data()) as Tenant;
+        const loadedTenant = { ...(convertTimestamps(snapshot.data()) as Tenant), id: snapshot.id };
         setTenantData(loadedTenant);
         activeTenantName = loadedTenant.name;
         activeTenantLogo = loadedTenant.logoUrl || null;
+        try {
+          localStorage.setItem('kitchenflow_cached_tenant_data', JSON.stringify(loadedTenant));
+        } catch {}
+        if (isSuperAdmin && viewingTenantId === effectiveTenantId) {
+          setViewingTenantName(loadedTenant.name || null);
+          setViewingTenantLogo(loadedTenant.logoUrl || null);
+        }
         
         // Garante que os nomes de exibição nas configurações administrativas e do menu digital
         // correspondam exatamente ao nome do cliente (tenant) selecionado em tempo real,
@@ -1945,6 +1965,16 @@ const App: React.FC = () => {
 
       setUser(firebaseUser);
       if (firebaseUser) {
+        const cleanAuthEmail = (firebaseUser.email || '').toLowerCase().trim();
+        const isMaster = cleanAuthEmail === 'financeirorenanuk@gmail.com';
+
+        // Se não for o Super Admin Master, limpar imediatamente qualquer estado de visualização herdado
+        if (!isMaster) {
+          setViewingTenantId(null);
+          setViewingTenantName(null);
+          setViewingTenantLogo(null);
+        }
+
         try {
           // 1. Buscar dados do usuário no Firestore pelo UID
           const userDocRef = doc(db, 'users', firebaseUser.uid);
@@ -1955,33 +1985,135 @@ const App: React.FC = () => {
           if (userDoc.exists()) {
             // Usuário já vinculado via UID
             finalUserData = convertTimestamps(userDoc.data()) as User;
-          } else if (firebaseUser.email) {
-            // 2. Se não encontrou pelo UID, tentar encontrar por EMAIL (Pré-cadastro ou alterado)
-            const searchEmail = firebaseUser.email.toLowerCase().trim();
-            const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', searchEmail), limit(1));
+          }
+
+          // 2. Buscar também por EMAIL para vincular pré-cadastros (usr_${tenantId}_owner)
+          // OU auto-curar usuários não-master cujo doc com UID foi poluído pelo antigo fallback 'HCL1177LRQVPEKCTYRAHU7IGBQ42'
+          const needsTenantHealing =
+            !isMaster &&
+            (!finalUserData ||
+              !finalUserData.tenantId ||
+              finalUserData.tenantId === 'HCL1177LRQVPEKCTYRAHU7IGBQ42' ||
+              finalUserData.tenantId === 'default-tenant');
+
+          if (cleanAuthEmail && (!finalUserData || needsTenantHealing)) {
+            const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', cleanAuthEmail));
             let usersByEmailSnap = await getDocs(usersByEmailQuery);
             
-            if (usersByEmailSnap.empty && searchEmail !== firebaseUser.email) {
-              const exactQuery = query(collection(db, 'users'), where('email', '==', firebaseUser.email), limit(1));
+            if (usersByEmailSnap.empty && firebaseUser.email && cleanAuthEmail !== firebaseUser.email) {
+              const exactQuery = query(collection(db, 'users'), where('email', '==', firebaseUser.email));
               usersByEmailSnap = await getDocs(exactQuery);
             }
             
             if (!usersByEmailSnap.empty) {
-              // Encontrou um pré-cadastro ou cadastro coincidente por email
-              const existingUserDoc = usersByEmailSnap.docs[0];
-              const existingUserData = existingUserDoc.data() as User;
-              
-              // Vincular o UID do Auth ao documento do Firestore (Convertendo random ID p/ UID)
+              // Priorizar documento que possua um tenantId próprio (diferente do fallback legado de Viva la fome para não-masters)
+              const preferredDoc = !isMaster
+                ? (usersByEmailSnap.docs.find(d => {
+                    const tId = d.data()?.tenantId;
+                    return tId && tId !== 'HCL1177LRQVPEKCTYRAHU7IGBQ42' && tId !== 'GLOBAL' && tId !== 'default-tenant';
+                  }) || usersByEmailSnap.docs[0])
+                : usersByEmailSnap.docs[0];
+
+              const existingUserData = convertTimestamps(preferredDoc.data()) as User;
+              const previousTenantId = finalUserData?.tenantId;
+
               finalUserData = {
+                ...(finalUserData || {}),
                 ...existingUserData,
                 id: firebaseUser.uid,
+                tenantId: existingUserData.tenantId || finalUserData?.tenantId || '',
                 updatedAt: new Date()
               } as any;
 
-              // Criar novo documento com UID e remover o antigo
-              await setDoc(userDocRef, finalUserData);
-              if (existingUserDoc.id !== firebaseUser.uid) {
-                await deleteDoc(existingUserDoc.ref);
+              // Sincronizar o documento definitivo com UID e remover documentos temporários duplicados (usr_*_owner)
+              try {
+                if (previousTenantId && previousTenantId !== finalUserData!.tenantId) {
+                  await deleteDoc(userDocRef);
+                }
+                await setDoc(userDocRef, finalUserData!, { merge: true });
+                for (const d of usersByEmailSnap.docs) {
+                  if (d.id !== firebaseUser.uid) {
+                    await deleteDoc(d.ref);
+                  }
+                }
+              } catch (migErr) {
+                console.warn("Aviso ao unificar documento de usuário por UID:", migErr);
+              }
+            }
+
+            // 2b. Se ainda estiver sem tenantId próprio (ou com o fallback legado HCL1177LRQVPEKCTYRAHU7IGBQ42 sendo não-master),
+            // consultar a coleção 'tenants' por e-mail ou pelo nome da loja ("Admin <Nome da Loja>") para auto-curar o vínculo!
+            if (
+              !isMaster &&
+              (!finalUserData ||
+                !finalUserData.tenantId ||
+                finalUserData.tenantId === 'HCL1177LRQVPEKCTYRAHU7IGBQ42' ||
+                finalUserData.tenantId === 'default-tenant')
+            ) {
+              try {
+                let matchedTenant: Tenant | null = null;
+                const qTenantsByEmail = query(collection(db, 'tenants'), where('email', '==', cleanAuthEmail));
+                const snapTenantsByEmail = await getDocs(qTenantsByEmail);
+                if (!snapTenantsByEmail.empty) {
+                  const foundDoc = snapTenantsByEmail.docs.find(d => d.id !== 'HCL1177LRQVPEKCTYRAHU7IGBQ42') || snapTenantsByEmail.docs[0];
+                  matchedTenant = { ...(convertTimestamps(foundDoc.data()) as Tenant), id: foundDoc.id };
+                }
+
+                if (!matchedTenant) {
+                  const allTenantsSnap = await getDocs(query(collection(db, 'tenants'), limit(100)));
+                  const candidateName = (finalUserData?.name || firebaseUser.displayName || '')
+                    .replace(/^Admin\s+/i, '')
+                    .trim()
+                    .toLowerCase();
+
+                  for (const tDoc of allTenantsSnap.docs) {
+                    if (tDoc.id === 'HCL1177LRQVPEKCTYRAHU7IGBQ42') continue;
+                    const tData = tDoc.data();
+                    const tEmail = String(tData.email || tData.ownerEmail || tData.ownerId || '').toLowerCase().trim();
+                    const tName = String(tData.name || tData.companyName || '').trim().toLowerCase();
+                    if (
+                      (tEmail && tEmail === cleanAuthEmail) ||
+                      (candidateName && candidateName.length >= 3 && tName === candidateName)
+                    ) {
+                      matchedTenant = { ...(convertTimestamps(tData) as Tenant), id: tDoc.id };
+                      break;
+                    }
+                  }
+                }
+
+                if (matchedTenant && matchedTenant.id) {
+                  const allowedPerms =
+                    matchedTenant.customModules ||
+                    matchedTenant.subscription?.allowedModules ||
+                    finalUserData?.permissions ||
+                    (['dashboard_view', 'pos_access', 'tables_manage', 'kds_view', 'delivery_manage', 'digital_menu_manage', 'customers_manage', 'inventory_edit', 'finance_view', 'users_manage', 'admin_settings_manage'] as any);
+
+                  finalUserData = {
+                    ...(finalUserData || {}),
+                    id: firebaseUser.uid,
+                    name: finalUserData?.name || firebaseUser.displayName || `Admin ${matchedTenant.name}`,
+                    email: cleanAuthEmail,
+                    role: finalUserData?.role || 'OWNER',
+                    tenantId: matchedTenant.id,
+                    permissions: allowedPerms,
+                    status: 'online',
+                    active: true,
+                    createdAt: finalUserData?.createdAt || new Date(),
+                    updatedAt: new Date(),
+                  } as User;
+
+                  setTenantData(matchedTenant);
+                  try {
+                    localStorage.setItem('kitchenflow_cached_tenant_data', JSON.stringify(matchedTenant));
+                  } catch {}
+
+                  try {
+                    await deleteDoc(userDocRef);
+                  } catch {}
+                  await setDoc(userDocRef, finalUserData, { merge: true });
+                }
+              } catch (tenantHealErr) {
+                console.warn("Aviso ao verificar auto-cura de tenant para o usuário:", tenantHealErr);
               }
             }
           }
@@ -1989,19 +2121,18 @@ const App: React.FC = () => {
           // Se após as buscas o usuário ainda não possuir perfil no Firestore, nós auto-criamos
           // um perfil padrão (CUSTOMER se for no marketplace, OWNER se for no painel) associado ao tenant correspondente
           if (!finalUserData && firebaseUser.email) {
-            const isMaster = firebaseUser.email === 'financeirorenanuk@gmail.com';
             const isMarketplaceRoute = window.location.pathname.startsWith('/marketplace');
             
             let role: UserRole = isMaster ? 'SAAS_ADMIN' : (isMarketplaceRoute ? 'CUSTOMER' : 'OWNER');
-            let tenantId = isMaster ? '' : (isMarketplaceRoute ? 'GLOBAL' : 'HCL1177LRQVPEKCTYRAHU7IGBQ42');
+            let tenantId = isMaster ? 'HCL1177LRQVPEKCTYRAHU7IGBQ42' : (isMarketplaceRoute ? 'GLOBAL' : 'default-tenant');
             let defaultName = firebaseUser.displayName || firebaseUser.email.split('@')[0] || (isMarketplaceRoute ? 'Cliente' : 'Lojista');
 
             // Verificar se é entregador cadastrado na coleção de couriers
-            const courierQuery = query(collection(db, 'couriers'), where('email', '==', firebaseUser.email.toLowerCase().trim()), limit(1));
+            const courierQuery = query(collection(db, 'couriers'), where('email', '==', cleanAuthEmail), limit(1));
             const courierSnap = await getDocs(courierQuery);
             if (!courierSnap.empty) {
               role = 'COURIER';
-              tenantId = courierSnap.docs[0].data().tenantId || 'HCL1177LRQVPEKCTYRAHU7IGBQ42';
+              tenantId = courierSnap.docs[0].data().tenantId || 'default-tenant';
               defaultName = courierSnap.docs[0].data().name || defaultName;
             }
 
@@ -2024,6 +2155,24 @@ const App: React.FC = () => {
           }
 
           if (finalUserData) {
+            // Garante que se não for SAAS_ADMIN, nenhum cache de outro tenant permaneça ativo
+            const isMasterUser = firebaseUser.email === 'financeirorenanuk@gmail.com' || finalUserData.role === 'SAAS_ADMIN';
+            if (!isMasterUser) {
+              setViewingTenantId(null);
+              setViewingTenantName(null);
+              setViewingTenantLogo(null);
+              try {
+                const cachedTenantRaw = localStorage.getItem('kitchenflow_cached_tenant_data');
+                if (cachedTenantRaw) {
+                  const parsedTenant = JSON.parse(cachedTenantRaw);
+                  if (parsedTenant?.id && parsedTenant.id !== finalUserData.tenantId) {
+                    localStorage.removeItem('kitchenflow_cached_tenant_data');
+                    setTenantData(null);
+                  }
+                }
+              } catch {}
+            }
+
             // Garante que o status do usuário seja online no Firestore
             if (finalUserData.status !== 'online') {
               finalUserData.status = 'online';
@@ -2035,7 +2184,6 @@ const App: React.FC = () => {
             }
 
             // Se for o gestor/admin principal (financeirorenanuk@gmail.com ou SAAS_ADMIN), garante vínculo a 'HCL1177LRQVPEKCTYRAHU7IGBQ42' (Viva la fome) e o cargo SAAS_ADMIN
-            const isMasterUser = firebaseUser.email === 'financeirorenanuk@gmail.com' || finalUserData.role === 'SAAS_ADMIN';
             if (isMasterUser) {
               let needsUpdate = false;
               const updatePayload: any = {};
@@ -2074,14 +2222,17 @@ const App: React.FC = () => {
                   console.warn(e);
                 }
 
-                // Se o usuário pertence a um tenant e ainda não carregamos, carregar do cache local com segurança
+                // Se o usuário pertence a um tenant, validar estritamente o cache local contra o tenantId do usuário
                 if (liveUserData.tenantId && liveUserData.tenantId !== 'GLOBAL') {
                   const cachedTenant = localStorage.getItem('kitchenflow_cached_tenant_data');
                   if (cachedTenant) {
                     try {
                       const parsed = JSON.parse(cachedTenant);
                       if (parsed && parsed.id === liveUserData.tenantId) {
-                        setTenantData(prev => prev || parsed);
+                        setTenantData(prev => (prev && prev.id === liveUserData.tenantId ? prev : parsed));
+                      } else if (liveUserData.role !== 'SAAS_ADMIN') {
+                        localStorage.removeItem('kitchenflow_cached_tenant_data');
+                        setTenantData(prev => (prev && prev.id === liveUserData.tenantId ? prev : null));
                       }
                     } catch (e) {
                       console.warn(e);
@@ -2118,24 +2269,46 @@ const App: React.FC = () => {
           try {
             const cachedUser = localStorage.getItem('kitchenflow_cached_user');
             if (cachedUser) {
-              setCurrentUserData(JSON.parse(cachedUser));
-              loaded = true;
+              const parsedCachedUser = JSON.parse(cachedUser);
+              if (!firebaseUser.email || (parsedCachedUser?.email || '').toLowerCase() === cleanAuthEmail) {
+                setCurrentUserData(parsedCachedUser);
+                loaded = true;
+                const cachedTenant = localStorage.getItem('kitchenflow_cached_tenant_data');
+                if (cachedTenant) {
+                  const parsedCachedTenant = JSON.parse(cachedTenant);
+                  if (parsedCachedTenant?.id === parsedCachedUser?.tenantId || parsedCachedUser?.role === 'SAAS_ADMIN') {
+                    setTenantData(parsedCachedTenant);
+                  }
+                }
+              }
             }
-            const cachedTenant = localStorage.getItem('kitchenflow_cached_tenant_data');
-            if (cachedTenant) setTenantData(JSON.parse(cachedTenant));
           } catch (e) {
             console.warn("Erro ao carregar do cache local:", e);
           }
 
           if (!loaded && firebaseUser) {
-            const isMaster = firebaseUser.email === 'financeirorenanuk@gmail.com';
             const fallbackRole: UserRole = isMaster ? 'SAAS_ADMIN' : 'OWNER';
+            let resolvedFallbackTenantId = isMaster ? 'HCL1177LRQVPEKCTYRAHU7IGBQ42' : 'default-tenant';
+            if (!isMaster) {
+              try {
+                const rawCachedTenants = localStorage.getItem('kitchenflow_saas_cached_tenants');
+                if (rawCachedTenants) {
+                  const parsedTenants = JSON.parse(rawCachedTenants) as Tenant[];
+                  const matched = parsedTenants.find(t =>
+                    t.id !== 'HCL1177LRQVPEKCTYRAHU7IGBQ42' &&
+                    ((t.email || '').toLowerCase().trim() === cleanAuthEmail ||
+                      (t.ownerId || '').toLowerCase().trim() === cleanAuthEmail)
+                  );
+                  if (matched?.id) resolvedFallbackTenantId = matched.id;
+                }
+              } catch {}
+            }
             const fallbackUser: User = {
               id: firebaseUser.uid,
               name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || (isMaster ? 'Master Admin' : 'Lojista'),
               email: firebaseUser.email || '',
               role: fallbackRole,
-              tenantId: 'HCL1177LRQVPEKCTYRAHU7IGBQ42',
+              tenantId: resolvedFallbackTenantId,
               permissions: isMaster ? ALL_MODULES.map(m => m.id) : ['dashboard_view', 'orders_view', 'menu_view', 'stock_view', 'finance_view', 'users_view'] as any,
               status: 'online',
               active: true,
@@ -2147,6 +2320,9 @@ const App: React.FC = () => {
       } else {
         setCurrentUserData(null);
         setTenantData(null);
+        setViewingTenantId(null);
+        setViewingTenantName(null);
+        setViewingTenantLogo(null);
         try {
           localStorage.removeItem('kitchenflow_cached_user');
           localStorage.removeItem('kitchenflow_cached_tenant_data');
@@ -2447,7 +2623,12 @@ const App: React.FC = () => {
     }
     // Resetar estados em memória para isolamento total
     setCurrentUserData(null);
+    setTenantData(null);
     setViewingTenantId(null);
+    setViewingTenantName(null);
+    setViewingTenantLogo(null);
+    setProductCategories([]);
+    setRawMaterialCategories([]);
     setOrders([]);
     setProducts([]);
     setTables([]);
@@ -8192,8 +8373,8 @@ const App: React.FC = () => {
           allowedModules={effectiveAllowedModules}
           isSuperAdmin={isSuperAdmin}
           isSaaSMode={currentProject === 'PLATFORM'}
-          restaurantName={currentProject === 'PLATFORM' ? 'KitchenFlow AI' : (viewingTenantName || tenantData?.name || adminSettings.companyName || 'KitchenFlow')}
-          logoUrl={currentProject === 'PLATFORM' ? undefined : (viewingTenantLogo || tenantData?.logoUrl || adminSettings.logoUrl)}
+          restaurantName={currentProject === 'PLATFORM' ? 'KitchenFlow AI' : ((isSuperAdmin && viewingTenantId ? viewingTenantName : null) || tenantData?.name || adminSettings.companyName || 'KitchenFlow')}
+          logoUrl={currentProject === 'PLATFORM' ? undefined : ((isSuperAdmin && viewingTenantId ? viewingTenantLogo : null) || tenantData?.logoUrl || adminSettings.logoUrl)}
           onProfileClick={() => setIsProfileOpen(true)}
           userPermissions={localUserPerms}
           isViewingTenant={Boolean(isSuperAdmin && viewingTenantId)}
@@ -8310,15 +8491,15 @@ const App: React.FC = () => {
                           <circle cx="50" cy="50" r="2" fill="#34d399" />
                         </svg>
                       ) : (
-                        (viewingTenantLogo || tenantData?.logoUrl || adminSettings.logoUrl) ? (
-                          <img src={viewingTenantLogo || tenantData?.logoUrl || adminSettings.logoUrl} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        ((isSuperAdmin && viewingTenantId ? viewingTenantLogo : null) || tenantData?.logoUrl || adminSettings.logoUrl) ? (
+                          <img src={(isSuperAdmin && viewingTenantId ? viewingTenantLogo : null) || tenantData?.logoUrl || adminSettings.logoUrl} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                         ) : (
-                          (viewingTenantName || tenantData?.name || adminSettings.companyName || 'G').substring(0, 1).toUpperCase()
+                          ((isSuperAdmin && viewingTenantId ? viewingTenantName : null) || tenantData?.name || adminSettings.companyName || 'G').substring(0, 1).toUpperCase()
                         )
                       )}
                     </div>
                     <span className="font-bold text-slate-800">
-                      {currentProject === 'PLATFORM' ? 'Saas Adm' : (viewingTenantName || tenantData?.name || adminSettings.companyName || 'Carregando...')}
+                      {currentProject === 'PLATFORM' ? 'Saas Adm' : ((isSuperAdmin && viewingTenantId ? viewingTenantName : null) || tenantData?.name || adminSettings.companyName || 'Carregando...')}
                     </span>
                   </div>
                   <button
@@ -8443,16 +8624,16 @@ const App: React.FC = () => {
               {!isKDSOnlyUser && (
                 <header className="flex justify-between items-center mb-4 bg-white p-6 rounded-[2.5rem] border shadow-sm">
                   <div className="flex items-center gap-4">
-                    {(viewingTenantLogo || tenantData?.logoUrl || adminSettings.logoUrl) ? (
-                      <img src={viewingTenantLogo || tenantData?.logoUrl || adminSettings.logoUrl} alt="" className="w-12 h-12 rounded-2xl object-cover border border-slate-100 shadow-xs shrink-0" referrerPolicy="no-referrer" />
+                    {((isSuperAdmin && viewingTenantId ? viewingTenantLogo : null) || tenantData?.logoUrl || adminSettings.logoUrl) ? (
+                      <img src={(isSuperAdmin && viewingTenantId ? viewingTenantLogo : null) || tenantData?.logoUrl || adminSettings.logoUrl} alt="" className="w-12 h-12 rounded-2xl object-cover border border-slate-100 shadow-xs shrink-0" referrerPolicy="no-referrer" />
                     ) : (
                       <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-xs shrink-0">
-                        {(viewingTenantName || tenantData?.name || adminSettings.companyName || 'KF').substring(0, 2).toUpperCase()}
+                        {((isSuperAdmin && viewingTenantId ? viewingTenantName : null) || tenantData?.name || adminSettings.companyName || 'KF').substring(0, 2).toUpperCase()}
                       </div>
                     )}
                     <div>
                       <h2 className="text-[10px] font-black text-indigo-600 uppercase tracking-[0.2em] mb-1">
-                        {viewingTenantName || tenantData?.name || adminSettings.companyName || 'Painel Lojista Profissional'}
+                        {(isSuperAdmin && viewingTenantId ? viewingTenantName : null) || tenantData?.name || adminSettings.companyName || 'Painel Lojista Profissional'}
                       </h2>
                       <h1 className="text-3xl font-black text-slate-800 tracking-tighter flex items-center gap-3">
                         <span className="text-slate-600">

@@ -698,12 +698,37 @@ async function startServer() {
 
       // B. Buscar usuário no Firestore (na coleção 'users' ou 'couriers')
       try {
-        const qUsers = clientQuery(getClientCollection(clientDb, 'users'), clientWhere('email', '==', trimmedEmail), clientLimit(1));
+        const qUsers = clientQuery(getClientCollection(clientDb, 'users'), clientWhere('email', '==', trimmedEmail));
         const userSnapshot = await getClientDocs(qUsers);
 
         if (!userSnapshot.empty) {
-          const docSnap = userSnapshot.docs[0];
-          const data = docSnap.data();
+          // Se houver múltiplos documentos para o mesmo e-mail (ex: doc pré-cadastrado usr_${tenantId}_owner e doc com UID antigo),
+          // priorizar o documento que possui um tenantId específico da loja (diferente do fallback legado HCL1177LRQVPEKCTYRAHU7IGBQ42 para não-masters)
+          let chosenDoc = userSnapshot.docs[0];
+          if (!isMaster && userSnapshot.docs.length > 1) {
+            const specificTenantDoc = userSnapshot.docs.find(d => {
+              const tId = d.data()?.tenantId;
+              return tId && tId !== 'HCL1177LRQVPEKCTYRAHU7IGBQ42' && tId !== 'GLOBAL';
+            });
+            if (specificTenantDoc) {
+              chosenDoc = specificTenantDoc;
+            }
+          }
+
+          const docSnap = chosenDoc;
+          const data = { ...docSnap.data() };
+
+          // Auto-cura de tenantId para lojistas não-master caso o doc tenha recebido o fallback legado
+          if (!isMaster && (!data.tenantId || data.tenantId === 'HCL1177LRQVPEKCTYRAHU7IGBQ42')) {
+            try {
+              const qTenantsByEmail = clientQuery(getClientCollection(clientDb, 'tenants'), clientWhere('email', '==', trimmedEmail), clientLimit(1));
+              const tSnap = await getClientDocs(qTenantsByEmail);
+              if (!tSnap.empty) {
+                data.tenantId = tSnap.docs[0].id;
+              }
+            } catch {}
+          }
+
           // Se as credenciais forem válidas no Firebase Auth OU se a senha digitada bater com o Firestore
           if (authVerified || data.password === trimmedPassword) {
             matchedUser = data;
@@ -758,7 +783,7 @@ async function startServer() {
             email: trimmedEmail,
             role: userRole,
             name: isMaster ? 'Renan SAAS Admin' : (trimmedEmail.split('@')[0] || 'Lojista'),
-            tenantId: isMaster ? '' : 'HCL1177LRQVPEKCTYRAHU7IGBQ42',
+            tenantId: isMaster ? 'HCL1177LRQVPEKCTYRAHU7IGBQ42' : '',
             active: true,
             status: 'online',
             createdAt: new Date()
@@ -827,6 +852,9 @@ async function startServer() {
         if (uid && uid !== oldDocId) {
           matchedUser.id = uid;
           try {
+            try {
+              await clientDeleteDoc(clientDoc(clientDb, 'users', uid));
+            } catch {}
             await clientSetDoc(clientDoc(clientDb, 'users', uid), matchedUser, { merge: true });
             if (oldDocId && oldDocId !== uid) {
               await clientDeleteDoc(clientDoc(clientDb, 'users', oldDocId));
@@ -881,11 +909,12 @@ async function startServer() {
   // Endpoint seguro para registro e sincronização de credenciais (e-mail e senha) no Firebase Auth e Firestore
   app.post("/api/auth/update-password", async (req, res) => {
     try {
-      const { userId, oldEmail, email, newPassword, name, avatar } = req.body;
+      const { userId, oldEmail, email, newPassword, name, avatar, tenantId: bodyTenantId, role: bodyRole, permissions: bodyPermissions } = req.body;
       const cleanEmail = email ? String(email).trim().toLowerCase() : '';
       const cleanOldEmail = oldEmail ? String(oldEmail).trim().toLowerCase() : '';
       const trimmedPassword = newPassword ? String(newPassword).trim() : '';
       let targetUid = userId ? String(userId).trim() : '';
+      let resolvedAuthUid = '';
 
       if (!targetUid && !cleanEmail && !cleanOldEmail) {
         return res.status(400).json({ error: "Identificador do usuário ou e-mail é obrigatório." });
@@ -894,7 +923,7 @@ async function startServer() {
         return res.status(400).json({ error: "A nova senha deve ter no mínimo 6 caracteres." });
       }
 
-      // 1. Localizar documento existente no Firestore para obter senha/email anteriores caso apenas um tenha sido alterado
+      // 1. Localizar documento existente no Firestore para obter senha/email/tenantId anteriores
       let existingUserData: any = null;
       let existingDocId = targetUid;
       const usersRef = getClientCollection(clientDb, "users");
@@ -908,19 +937,21 @@ async function startServer() {
           }
         }
         if (!existingUserData && cleanOldEmail) {
-          const qOld = clientQuery(usersRef, clientWhere("email", "==", cleanOldEmail), clientLimit(1));
+          const qOld = clientQuery(usersRef, clientWhere("email", "==", cleanOldEmail));
           const snapOld = await getClientDocs(qOld);
           if (!snapOld.empty) {
-            existingUserData = snapOld.docs[0].data();
-            existingDocId = snapOld.docs[0].id;
+            const preferred = snapOld.docs.find(d => d.data()?.tenantId && d.data()?.tenantId !== 'HCL1177LRQVPEKCTYRAHU7IGBQ42') || snapOld.docs[0];
+            existingUserData = preferred.data();
+            existingDocId = preferred.id;
           }
         }
         if (!existingUserData && cleanEmail) {
-          const qNew = clientQuery(usersRef, clientWhere("email", "==", cleanEmail), clientLimit(1));
+          const qNew = clientQuery(usersRef, clientWhere("email", "==", cleanEmail));
           const snapNew = await getClientDocs(qNew);
           if (!snapNew.empty) {
-            existingUserData = snapNew.docs[0].data();
-            existingDocId = snapNew.docs[0].id;
+            const preferred = snapNew.docs.find(d => d.data()?.tenantId && d.data()?.tenantId !== 'HCL1177LRQVPEKCTYRAHU7IGBQ42') || snapNew.docs[0];
+            existingUserData = preferred.data();
+            existingDocId = preferred.id;
           }
         }
       } catch (lookupErr) {
@@ -930,6 +961,7 @@ async function startServer() {
       const effectivePassword = trimmedPassword || existingUserData?.password || '';
       const effectiveEmail = cleanEmail || cleanOldEmail || existingUserData?.email || '';
       const previousEmail = cleanOldEmail || existingUserData?.email || effectiveEmail;
+      const effectiveName = (name && String(name).trim()) || existingUserData?.name || '';
       let authProviderSynced = false;
 
       // 2. Tentar sincronizar via Firebase Admin SDK (quando credenciais de serviço estão disponíveis)
@@ -953,10 +985,11 @@ async function startServer() {
 
         if (fbUser) {
           targetUid = fbUser.uid;
+          resolvedAuthUid = fbUser.uid;
           const updateAuthPayload: any = {};
           if (cleanEmail && cleanEmail !== fbUser.email) updateAuthPayload.email = cleanEmail;
           if (trimmedPassword) updateAuthPayload.password = trimmedPassword;
-          if (name) updateAuthPayload.displayName = String(name).trim();
+          if (effectiveName) updateAuthPayload.displayName = effectiveName;
           if (Object.keys(updateAuthPayload).length > 0) {
             await adminAuth.updateUser(targetUid, updateAuthPayload);
           }
@@ -965,9 +998,10 @@ async function startServer() {
           const created = await adminAuth.createUser({
             email: effectiveEmail,
             password: effectivePassword,
-            ...(name ? { displayName: String(name).trim() } : {})
+            ...(effectiveName ? { displayName: effectiveName } : {})
           });
           targetUid = created.uid;
+          resolvedAuthUid = created.uid;
           authProviderSynced = true;
         }
       } catch (adminErr: any) {
@@ -1011,7 +1045,10 @@ async function startServer() {
               if (signInResp.ok) {
                 const signInData: any = await signInResp.json();
                 let currentIdToken = signInData.idToken;
-                if (signInData.localId && !targetUid) targetUid = signInData.localId;
+                if (signInData.localId) {
+                  resolvedAuthUid = signInData.localId;
+                  targetUid = signInData.localId;
+                }
 
                 if (trimmedPassword && trimmedPassword !== candPass) {
                   const passUpdateResp = await fetch(
@@ -1022,6 +1059,7 @@ async function startServer() {
                       body: JSON.stringify({
                         idToken: currentIdToken,
                         password: trimmedPassword,
+                        ...(effectiveName ? { displayName: effectiveName } : {}),
                         returnSecureToken: true
                       })
                     }
@@ -1042,6 +1080,7 @@ async function startServer() {
                       body: JSON.stringify({
                         idToken: currentIdToken,
                         email: cleanEmail,
+                        ...(effectiveName ? { displayName: effectiveName } : {}),
                         returnSecureToken: true
                       })
                     }
@@ -1069,13 +1108,15 @@ async function startServer() {
                 body: JSON.stringify({
                   email: effectiveEmail,
                   password: effectivePassword,
+                  ...(effectiveName ? { displayName: effectiveName } : {}),
                   returnSecureToken: true
                 })
               }
             );
             if (signUpResp.ok) {
               const signUpData: any = await signUpResp.json();
-              if (signUpData?.localId && !targetUid) {
+              if (signUpData?.localId) {
+                resolvedAuthUid = signUpData.localId;
                 targetUid = signUpData.localId;
               }
               authProviderSynced = true;
@@ -1084,8 +1125,12 @@ async function startServer() {
         }
       }
 
-      // 4. Persistir alterações em TODOS os documentos correspondentes do usuário no Firestore (users, couriers, tenants)
+      // 4. Persistir alterações em TODOS os documentos correspondentes do usuário no Firestore (incluindo o doc com UID real do Firebase Auth!)
       try {
+        const resolvedTenantId = bodyTenantId || existingUserData?.tenantId || '';
+        const resolvedRole = bodyRole || existingUserData?.role || '';
+        const resolvedPermissions = bodyPermissions || existingUserData?.permissions || undefined;
+
         const firestoreUpdates: any = {
           active: true,
           updatedAt: new Date()
@@ -1095,7 +1140,10 @@ async function startServer() {
           firestoreUpdates.password = trimmedPassword;
           firestoreUpdates.mustChangePassword = false;
         }
-        if (name && String(name).trim()) firestoreUpdates.name = String(name).trim();
+        if (effectiveName) firestoreUpdates.name = effectiveName;
+        if (resolvedTenantId) firestoreUpdates.tenantId = resolvedTenantId;
+        if (resolvedRole) firestoreUpdates.role = resolvedRole;
+        if (resolvedPermissions) firestoreUpdates.permissions = resolvedPermissions;
         if (avatar !== undefined) {
           firestoreUpdates.avatar = avatar;
           firestoreUpdates.photoURL = avatar;
@@ -1103,21 +1151,49 @@ async function startServer() {
 
         const updatedDocIds = new Set<string>();
 
-        if (userId) {
-          const refById = clientDoc(clientDb, "users", String(userId).trim());
-          const snapById = await getClientDoc(refById);
+        const safeUpsertUserDoc = async (docId: string, payload: any) => {
+          const ref = clientDoc(clientDb, "users", docId);
+          try {
+            const snap = await getClientDoc(ref);
+            if (snap.exists() && payload.tenantId && snap.data()?.tenantId && snap.data()?.tenantId !== payload.tenantId) {
+              // Se o tenantId anterior estava corrompido, recriar o doc para respeitar a regra isTenantImmutable no update
+              await clientDeleteDoc(ref);
+              await clientSetDoc(ref, { ...snap.data(), ...payload, id: docId });
+            } else {
+              await clientSetDoc(ref, payload, { merge: true });
+            }
+            updatedDocIds.add(docId);
+          } catch {
+            try {
+              await clientDeleteDoc(ref);
+              await clientSetDoc(ref, { ...(existingUserData || {}), ...payload, id: docId });
+              updatedDocIds.add(docId);
+            } catch {}
+          }
+        };
+
+        // 4a. Garantir que o documento indexado pelo UID real do Firebase Auth exista com todos os dados e tenantId correto
+        if (resolvedAuthUid) {
+          await safeUpsertUserDoc(resolvedAuthUid, {
+            ...(existingUserData || {}),
+            ...firestoreUpdates,
+            id: resolvedAuthUid,
+            email: effectiveEmail
+          });
+        }
+
+        if (userId && !updatedDocIds.has(String(userId).trim())) {
+          const cleanUserId = String(userId).trim();
+          const snapById = await getClientDoc(clientDoc(clientDb, "users", cleanUserId));
           if (snapById.exists()) {
-            await clientSetDoc(refById, firestoreUpdates, { merge: true });
-            updatedDocIds.add(snapById.id);
+            await safeUpsertUserDoc(cleanUserId, firestoreUpdates);
           }
         }
 
         if (existingDocId && !updatedDocIds.has(existingDocId)) {
-          const refExisting = clientDoc(clientDb, "users", existingDocId);
-          const snapExisting = await getClientDoc(refExisting);
+          const snapExisting = await getClientDoc(clientDoc(clientDb, "users", existingDocId));
           if (snapExisting.exists()) {
-            await clientSetDoc(refExisting, firestoreUpdates, { merge: true });
-            updatedDocIds.add(existingDocId);
+            await safeUpsertUserDoc(existingDocId, firestoreUpdates);
           }
         }
 
@@ -1126,20 +1202,19 @@ async function startServer() {
           const snapByEm = await getClientDocs(qByEm);
           for (const d of snapByEm.docs) {
             if (!updatedDocIds.has(d.id)) {
-              await clientSetDoc(d.ref, firestoreUpdates, { merge: true });
-              updatedDocIds.add(d.id);
+              await safeUpsertUserDoc(d.id, firestoreUpdates);
             }
           }
         }
 
-        if (updatedDocIds.size === 0 && (userId || existingDocId) && effectiveEmail) {
-          const newDocId = String(userId || existingDocId).trim();
-          await clientSetDoc(clientDoc(clientDb, "users", newDocId), {
+        if (updatedDocIds.size === 0 && (resolvedAuthUid || userId || existingDocId) && effectiveEmail) {
+          const newDocId = String(resolvedAuthUid || userId || existingDocId).trim();
+          await safeUpsertUserDoc(newDocId, {
+            ...(existingUserData || {}),
             id: newDocId,
             email: effectiveEmail,
             ...firestoreUpdates
-          }, { merge: true });
-          updatedDocIds.add(newDocId);
+          });
         }
 
         // Sincronizar coleção 'couriers' caso seja entregador
@@ -1153,8 +1228,8 @@ async function startServer() {
         }
 
         // Se o usuário for proprietário/admin de um tenant e alterou o e-mail, atualizar também o documento do tenant
-        const userTenantId = existingUserData?.tenantId;
-        const userRole = existingUserData?.role;
+        const userTenantId = resolvedTenantId || existingUserData?.tenantId;
+        const userRole = resolvedRole || existingUserData?.role;
         if (cleanEmail && userTenantId && userTenantId !== 'GLOBAL' && (!userRole || ['OWNER', 'ADMIN', 'LOJISTA'].includes(userRole))) {
           const tenantRef = clientDoc(clientDb, "tenants", userTenantId);
           const tenantSnap = await getClientDoc(tenantRef);
@@ -1176,7 +1251,7 @@ async function startServer() {
 
       return res.json({
         success: true,
-        uid: targetUid || existingDocId || userId || effectiveEmail,
+        uid: resolvedAuthUid || targetUid || existingDocId || userId || effectiveEmail,
         email: effectiveEmail,
         authProviderSynced
       });

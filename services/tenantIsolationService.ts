@@ -802,6 +802,10 @@ export async function provisionNewTenantStandardized(
           userId: adminUserId,
           email: cleanEmail,
           newPassword: tempPassword,
+          name: initialAdminUser.name,
+          tenantId,
+          role: 'OWNER',
+          permissions: input.allowedModules,
         }),
       });
     } catch {}
