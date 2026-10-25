@@ -106,9 +106,7 @@ const DigitalMenuConfig: React.FC<DigitalMenuConfigProps> = ({
   const [totemCategoryFilter, setTotemCategoryFilter] = useState<string>('all');
   
   const categories = useMemo(() => {
-    const baseCats = (productCategories && productCategories.length > 0)
-      ? productCategories.filter(c => c && c !== 'Geral')
-      : ['Entradas', 'Buffet', 'Pratos Principais', 'Lanches', 'Batatas Recheadas', 'Pasteis', 'Bebidas'];
+    const baseCats = (productCategories || []).filter(c => c && c !== 'Geral');
     
     const currentOrder = settings.categoryOrder || [];
     const ordered = [...baseCats].sort((a, b) => {

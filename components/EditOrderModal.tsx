@@ -71,6 +71,7 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
     const finalOptions = options || [];
     const optionNames = finalOptions.map(o => `${(o.quantity && o.quantity > 1) ? `${o.quantity}x ` : ''}${o.name}`).sort().join(', ');
     const existingIndex = items.findIndex(i => 
+      !i.sentToKitchen &&
       i.productId === product.id && 
       (i.selectedOptions?.map(o => `${(o.quantity && o.quantity > 1) ? `${o.quantity}x ` : ''}${o.name}`).sort().join(', ') || '') === optionNames &&
       (i.observation || '') === (optionsModalObs || '')
@@ -102,7 +103,9 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
         quantity: optionsModalQty,
         price: itemPrice,
         category: product.category,
-        sentToKitchen: true,
+        sentToKitchen: false,
+        isNew: true,
+        kitchenDispatched: false,
         selectedOptions: finalOptions.length > 0 ? finalOptions : undefined,
         observation: optionsModalObs || undefined
       }]);
@@ -205,6 +208,45 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, products = [], o
   };
 
   const handleUpdateQuantity = (idx: number, delta: number) => {
+    const targetItem = items[idx];
+    if (!targetItem) return;
+
+    if (delta > 0 && targetItem.sentToKitchen) {
+      const targetOpts = (targetItem.selectedOptions || [])
+        .map(o => `${(o.quantity && o.quantity > 1) ? `${o.quantity}x ` : ''}${o.name}`)
+        .sort()
+        .join(', ');
+      const existingUnsentIdx = items.findIndex((it, i) =>
+        i !== idx &&
+        !it.sentToKitchen &&
+        it.productId === targetItem.productId &&
+        it.name === targetItem.name &&
+        (it.observation || '') === (targetItem.observation || '') &&
+        ((it.selectedOptions || [])
+          .map(o => `${(o.quantity && o.quantity > 1) ? `${o.quantity}x ` : ''}${o.name}`)
+          .sort()
+          .join(', ')) === targetOpts
+      );
+      if (existingUnsentIdx !== -1) {
+        setItems(items.map((it, i) => i === existingUnsentIdx ? { ...it, quantity: it.quantity + delta } : it));
+      } else {
+        setItems([
+          ...items,
+          {
+            ...targetItem,
+            id: `item-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+            quantity: delta,
+            sentToKitchen: false,
+            isNew: true,
+            batchNumber: undefined,
+            kitchenDispatched: false,
+            sentAt: undefined
+          }
+        ]);
+      }
+      return;
+    }
+
     setItems(items.map((i, index) => {
       if (index === idx) {
         const newQty = Math.max(0, i.quantity + delta);

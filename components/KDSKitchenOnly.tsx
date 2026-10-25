@@ -14,6 +14,7 @@ interface KDSKitchenOnlyProps {
   products: Product[];
   tables: Table[];
   onUpdateStatus: (id: string, status: 'pending' | 'preparing' | 'ready') => void;
+  onUpdateOrder?: (id: string, updates: Partial<Order>) => void;
   onLogout?: () => void;
   showLogoutButton?: boolean;
 }
@@ -47,6 +48,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
   products, 
   tables, 
   onUpdateStatus,
+  onUpdateOrder,
   onLogout,
   showLogoutButton = false
 }) => {
@@ -210,9 +212,12 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
     return ['all', ...Array.from(categories)];
   }, [products]);
 
-  // Filtro de pedidos por tipo e estação
+  // Filtro de pedidos por tipo e estação, separando rodadas/lotes adicionais em cards independentes
   const filteredKitchenOrders = useMemo(() => {
     const list = kitchenOrders.filter(order => {
+      const validSentItems = (order.items || []).filter(i => !i.cancelled && i.sentToKitchen !== false);
+      if (validSentItems.length === 0) return false;
+
       // 1. Filtro por tipo (TODOS, SALÃO, BALCÃO, DELIVERY, RETIRADA)
       if (filterType !== 'all') {
         const isRetirada = (order.deliveryMethod === 'retirada') || 
@@ -231,7 +236,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
 
       // 2. Filtro por praça / estação
       if (selectedStation !== 'all') {
-        const hasMatchingItem = (order.items || []).some(item => {
+        const hasMatchingItem = validSentItems.some(item => {
           const prod = products.find(p => p.id === item.productId || p.name.toLowerCase() === item.name.split(' (')[0].trim().toLowerCase());
           return prod?.category === selectedStation;
         });
@@ -241,8 +246,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
       return true;
     });
 
-    // Ordenação FIFO (primeiro que entra é o primeiro a ser produzido)
-    return list.sort((a, b) => {
+    const sortedOrders = list.sort((a, b) => {
       const dateA = safeParseDate(a.createdAt);
       const dateB = safeParseDate(b.createdAt);
       const timeA = dateA ? dateA.getTime() : 0;
@@ -253,6 +257,39 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
       if (dailyA !== dailyB) return dailyA - dailyB;
       return String(a.id).localeCompare(String(b.id));
     });
+
+    // Separar cada lote/rodada não despachado em um card individual contendo APENAS os itens daquela rodada
+    const batchCards: (Order & { mergedOrderIds?: string[]; activeBatchNumber?: number; batchCardKey?: string; originalOrder?: Order })[] = [];
+    for (const ord of sortedOrders) {
+      const allSentItems = (ord.items || []).filter(i => !i.cancelled && i.sentToKitchen !== false);
+      const undispatchedItems = allSentItems.filter(i => !i.kitchenDispatched);
+      const itemsToGroup = undispatchedItems.length > 0 ? undispatchedItems : allSentItems;
+
+      const batchesMap = new Map<number, typeof allSentItems>();
+      for (const item of itemsToGroup) {
+        const bNum = item.batchNumber || 1;
+        if (!batchesMap.has(bNum)) {
+          batchesMap.set(bNum, []);
+        }
+        batchesMap.get(bNum)!.push(item);
+      }
+
+      const sortedBatchNums = Array.from(batchesMap.keys()).sort((a, b) => a - b);
+      for (const bNum of sortedBatchNums) {
+        const bItems = batchesMap.get(bNum)!;
+        const batchSentAt = bItems[0]?.sentAt ? safeParseDate(bItems[0].sentAt) : null;
+        batchCards.push({
+          ...ord,
+          items: bItems,
+          createdAt: (bNum > 1 && batchSentAt) ? batchSentAt : ord.createdAt,
+          activeBatchNumber: bNum,
+          batchCardKey: `${ord.id}-batch-${bNum}`,
+          originalOrder: ord,
+        });
+      }
+    }
+
+    return batchCards;
   }, [kitchenOrders, filterType, selectedStation, products]);
 
   // Alerta sonoro quando um novo pedido entra na cozinha
@@ -374,11 +411,38 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
     );
   });
 
-  // Ação operacional única: DESPACHAR o pedido
-  const handleDispatch = (order: Order & { mergedOrderIds?: string[] }) => {
+  // Ação operacional única: DESPACHAR o pedido ou lote específico
+  const handleDispatch = (order: Order & { mergedOrderIds?: string[]; activeBatchNumber?: number; originalOrder?: Order }) => {
     const idsToUpdate = order.mergedOrderIds && Array.isArray(order.mergedOrderIds)
       ? order.mergedOrderIds
       : [order.id];
+
+    const activeBatchNum = order.activeBatchNumber;
+    const fullOrder = order.originalOrder || orders.find(o => o.id === order.id);
+
+    if (activeBatchNum !== undefined && fullOrder && onUpdateOrder) {
+      const allValidItems = (fullOrder.items || []).filter(i => !i.cancelled);
+      const remainingOtherBatches = allValidItems.filter(
+        i => i.sentToKitchen !== false && !i.kitchenDispatched && (i.batchNumber || 1) !== activeBatchNum
+      );
+
+      const updatedItems = allValidItems.map(i =>
+        (i.batchNumber || 1) === activeBatchNum
+          ? { ...i, kitchenDispatched: true, isNew: false }
+          : i
+      );
+
+      if (remainingOtherBatches.length > 0) {
+        onUpdateOrder(fullOrder.id, { items: updatedItems });
+        return;
+      } else {
+        onUpdateOrder(fullOrder.id, { items: updatedItems });
+        idsToUpdate.forEach((oid: string) => {
+          onUpdateStatus(oid, 'ready');
+        });
+        return;
+      }
+    }
 
     idsToUpdate.forEach((oid: string) => {
       onUpdateStatus(oid, 'ready');
@@ -609,7 +673,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
 
                 return (
                   <motion.article
-                    key={order.id}
+                    key={(order as any).batchCardKey || order.id}
                     initial={{ opacity: 0, scale: 0.96 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.94 }}
@@ -631,7 +695,7 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                     }`}>
                       {/* Linha 1: Número do Pedido + Tempo Decorrido */}
                       <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-baseline gap-1.5">
+                        <div className="flex items-baseline gap-1.5 flex-wrap">
                           <span className={`text-xs font-black uppercase tracking-wider ${
                             isLight ? 'text-slate-600' : 'text-zinc-400'
                           }`}>
@@ -642,6 +706,11 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
                           }`}>
                             {formatOrderNumber(order)}
                           </span>
+                          {(order as any).activeBatchNumber && (order as any).activeBatchNumber > 1 && (
+                            <span className="px-2 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider bg-amber-500 text-slate-950 border border-amber-600 shadow-xs">
+                              ⚡ ITEM ADICIONAL • {(order as any).activeBatchNumber}ª RODADA
+                            </span>
+                          )}
                         </div>
 
                         {/* Cronômetro com semáforo */}

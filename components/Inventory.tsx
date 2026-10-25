@@ -77,9 +77,7 @@ const Inventory: React.FC<InventoryProps> = memo(({
   orders = []
 }) => {
   const allProductCategories = useMemo(() => {
-    const baseCats = (productCategories && productCategories.length > 0)
-      ? productCategories.filter(c => c && c !== 'Geral')
-      : ['Entradas', 'Buffet', 'Pratos Principais', 'Lanches', 'Batatas Recheadas', 'Pasteis', 'Bebidas'];
+    const baseCats = (productCategories || []).filter(c => c && c !== 'Geral');
 
     const currentOrder = digitalMenuSettings.categoryOrder || [];
     
@@ -1089,7 +1087,7 @@ const Inventory: React.FC<InventoryProps> = memo(({
   const handleAddProductCategory = (name: string) => {
     const trimmed = name.trim();
     if (!trimmed || trimmed === 'Geral') return;
-    const current = (productCategories && productCategories.length > 0) ? productCategories : allProductCategories;
+    const current = (productCategories || []).filter(c => c && c !== 'Geral');
     if (!current.includes(trimmed)) {
       const nextCats = [...current, trimmed];
       setProductCategories(nextCats);
@@ -1112,7 +1110,7 @@ const Inventory: React.FC<InventoryProps> = memo(({
     }
 
     // 2. Update productCategories state & cloud
-    const current = (productCategories && productCategories.length > 0) ? productCategories : allProductCategories;
+    const current = (productCategories || []).filter(c => c && c !== 'Geral');
     const nextCats = current.map(c => c === oldName ? trimmed : c);
     setProductCategories(nextCats);
 
@@ -1165,10 +1163,10 @@ const Inventory: React.FC<InventoryProps> = memo(({
         };
         onUpdateDigitalMenuSettings(updatedMenuSettings);
 
-        // 3. Remove category from productCategories state & cloud
+        // 3. Remove category from productCategories state & cloud (allow empty array [])
         setProductCategories(prev => {
-          const current = (prev && prev.length > 0) ? prev : allProductCategories;
-          return current.filter(c => c !== category);
+          const current = Array.isArray(prev) ? prev : [];
+          return current.filter(c => c && c !== 'Geral' && c !== category);
         });
 
         if (selectedCategory === category) {

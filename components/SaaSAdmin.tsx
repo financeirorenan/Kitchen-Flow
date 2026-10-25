@@ -1796,13 +1796,36 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         return;
       }
 
-      await addDoc(collection(db, 'users'), {
+      const userId = `usr_${selectedTenantForUser.id}_${Date.now()}`;
+      const defaultPermissions = selectedTenantForUser.customModules || selectedTenantForUser.subscription?.allowedModules || ['dashboard_view'];
+
+      await setDoc(doc(db, 'users', userId), {
+        id: userId,
         email,
         name,
-        role,
+        role: role || 'ADMIN',
         tenantId: selectedTenantForUser.id,
-        createdAt: new Date()
-      });
+        password,
+        permissions: defaultPermissions,
+        status: 'offline',
+        active: true,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }, { merge: true });
+
+      try {
+        await fetch('/api/auth/update-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId,
+            email,
+            newPassword: password
+          })
+        });
+      } catch (syncErr) {
+        console.warn("Aviso ao sincronizar credencial no provedor Auth:", syncErr);
+      }
       
       setGeneratedUser({ email, password });
       setShowTenantUserModal(false);
@@ -1841,8 +1864,25 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
           permissions: selectedSaasPermissions,
           updatedAt: new Date()
         };
+        if (password && password.length >= 6) {
+          updateData.password = password;
+        }
 
         await setDoc(doc(db, 'users', editingSaaSUser.id), updateData, { merge: true });
+
+        if (password && password.length >= 6) {
+          try {
+            await fetch('/api/auth/update-password', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                userId: editingSaaSUser.id,
+                email,
+                newPassword: password
+              })
+            });
+          } catch {}
+        }
         
         setShowSaaSUserModal(false);
         setEditingSaaSUser(null);
@@ -1859,15 +1899,32 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         }
 
         const finalPassword = password || generateStrongRandomPassword();
+        const saasUserId = `saas_usr_${Date.now()}`;
 
-        await addDoc(collection(db, 'users'), {
+        await setDoc(doc(db, 'users', saasUserId), {
+          id: saasUserId,
           email,
           name,
+          password: finalPassword,
           role: 'SAAS_ADMIN',
           permissions: selectedSaasPermissions,
+          status: 'offline',
           createdAt: new Date(),
+          updatedAt: new Date(),
           active: true
-        });
+        }, { merge: true });
+
+        try {
+          await fetch('/api/auth/update-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: saasUserId,
+              email,
+              newPassword: finalPassword
+            })
+          });
+        } catch {}
         
         setGeneratedUser({ email, password: finalPassword });
         setShowSaaSUserModal(false);
@@ -2018,6 +2075,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   // Tenant Form states
   const [name, setName] = useState('');
   const [ownerId, setOwnerId] = useState('');
+  const [ownerPassword, setOwnerPassword] = useState('');
   const [selectedPlanId, setSelectedPlanId] = useState('');
   const [expiryDate, setExpiryDate] = useState('');
   const [logoUrl, setLogoUrl] = useState('');
@@ -2211,11 +2269,17 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
       if (editingTenant) {
         const tenantId = editingTenant.id;
         const clientNumber = editingTenant.clientNumber || 1;
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        const cleanedOwnerInput = (ownerId || '').trim().toLowerCase();
+        const isEmailInput = emailRegex.test(cleanedOwnerInput);
+        const resolvedAllowedModules = tenantModules.length > 0 ? tenantModules : selectedPlan.modules;
+
         const tenantData: Partial<Tenant> = {
           id: tenantId,
           clientNumber,
           name,
-          ownerId,
+          ownerId: isEmailInput ? cleanedOwnerInput : ownerId,
+          ...(isEmailInput ? { email: cleanedOwnerInput } : {}),
           planId: selectedPlanId,
           active: editingTenant.active !== false,
           logoUrl,
@@ -2230,11 +2294,48 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
             status: editingTenant.subscription?.status || 'active',
             startDate: editingTenant.subscription?.startDate || new Date(),
             expiryDate: new Date(expiryDate),
-            allowedModules: tenantModules.length > 0 ? tenantModules : selectedPlan.modules,
+            allowedModules: resolvedAllowedModules,
           },
         };
 
         await setDoc(doc(db, 'tenants', tenantId), tenantData, { merge: true });
+
+        // Sincronizar usuário proprietário da loja se e-mail ou nova senha foram informados na edição
+        if (isEmailInput || (ownerPassword && ownerPassword.trim().length >= 6)) {
+          const targetEmail = isEmailInput
+            ? cleanedOwnerInput
+            : ((editingTenant as any).email || `${name.toLowerCase().replace(/[^a-z0-9]/g, '')}@sistema.com`);
+          const adminDocId = `usr_${tenantId}_owner`;
+          const userPayload: any = {
+            id: adminDocId,
+            tenantId,
+            name: `Admin ${name}`,
+            email: targetEmail,
+            role: 'OWNER',
+            permissions: resolvedAllowedModules,
+            active: true,
+            updatedAt: new Date(),
+          };
+          if (ownerPassword && ownerPassword.trim().length >= 6) {
+            userPayload.password = ownerPassword.trim();
+          }
+          await setDoc(doc(db, 'users', adminDocId), userPayload, { merge: true });
+
+          if (ownerPassword && ownerPassword.trim().length >= 6) {
+            try {
+              await fetch('/api/auth/update-password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  userId: adminDocId,
+                  email: targetEmail,
+                  newPassword: ownerPassword.trim(),
+                }),
+              });
+            } catch {}
+          }
+        }
+
         addAuditLog(
           'Atualizou cadastro e permissões da loja',
           name,
@@ -2255,7 +2356,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         // Fluxo padronizado e idempotente de 10 etapas para criação de nova loja (Seções 12 e 13)
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         const rawOwnerEmail = (ownerId || '').trim().toLowerCase();
-        const fallbackEmail = `${name.toLowerCase().replace(/[^a-z0-9]/g, '')}@admin.com`;
+        const fallbackEmail = `${name.toLowerCase().replace(/[^a-z0-9]/g, '')}@sistema.com`;
         const resolvedOwnerEmail = emailRegex.test(rawOwnerEmail) ? rawOwnerEmail : fallbackEmail;
 
         const provisionResult = await provisionNewTenantStandardized(
@@ -2271,7 +2372,8 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
             allowedModules: tenantModules.length > 0 ? tenantModules : selectedPlan.modules,
             expiryDate: expiryDate ? new Date(expiryDate) : new Date(Date.now() + 30 * 86400000),
             autoAcceptOrders,
-            initialTablesCount: 12,
+            initialTablesCount: 0,
+            initialPassword: ownerPassword.trim() || undefined,
           },
           tenants,
           saasUsers
@@ -2333,6 +2435,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   const resetForm = () => {
     setName('');
     setOwnerId('');
+    setOwnerPassword('');
     setSelectedPlanId('');
     setExpiryDate('');
     setLogoUrl('');
@@ -2345,7 +2448,8 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   const handleEdit = (tenant: Tenant) => {
     setEditingTenant(tenant);
     setName(tenant.name);
-    setOwnerId(tenant.ownerId);
+    setOwnerId((tenant as any).email || tenant.ownerId || '');
+    setOwnerPassword('');
     setSelectedPlanId(tenant.planId || '');
     setExpiryDate(tenant.subscription.expiryDate.toISOString().split('T')[0]);
     setLogoUrl(tenant.logoUrl || '');
@@ -2378,11 +2482,13 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
   };
 
   const handleGenerateAccess = async (tenant: Tenant) => {
-    let email = `${tenant.name.toLowerCase().replace(/\s+/g, '')}@sistema.com`.trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const existingTenantEmail = ((tenant as any).email || (emailRegex.test(tenant.ownerId || '') ? tenant.ownerId : '') || '').trim().toLowerCase();
+    let email = existingTenantEmail || `${tenant.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '')}@sistema.com`.trim().toLowerCase();
     const password = generateStrongRandomPassword();
 
     try {
-      // Garantir e-mail absolutamente único na plataforma
+      // Garantir e-mail absolutamente único na plataforma (exceto se já pertencer a este mesmo tenant)
       let attempts = 0;
       let emailExists = true;
       while (emailExists && attempts < 10) {
@@ -2395,7 +2501,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         let foundConflict = false;
         if (!snapUser.empty) {
           const existingUser = snapUser.docs[0].data();
-          if (existingUser.tenantId !== tenant.id) {
+          if (existingUser.tenantId && existingUser.tenantId !== tenant.id) {
             foundConflict = true;
           }
         }
@@ -2406,7 +2512,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         if (foundConflict) {
           attempts++;
           const suffix = Math.floor(100 + Math.random() * 900);
-          email = `${tenant.name.toLowerCase().replace(/\s+/g, '')}${suffix}@sistema.com`.trim().toLowerCase();
+          email = `${tenant.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '')}${suffix}@sistema.com`.trim().toLowerCase();
         } else {
           emailExists = false;
         }
@@ -2415,7 +2521,7 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
       const q = query(collection(db, 'users'), where('email', '==', email));
       const snap = await getDocs(q);
       
-      let userId = tenant.ownerId || `user_${Date.now()}`;
+      let userId = `usr_${tenant.id}_owner`;
       if (!snap.empty) {
         userId = snap.docs[0].id;
       }
@@ -2427,7 +2533,8 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
         tenantId: tenant.id,
         name: `Admin ${tenant.name}`,
         email: email,
-        role: 'ADMIN',
+        password: password,
+        role: 'OWNER',
         permissions: permissions,
         status: 'offline',
         active: true,
@@ -2436,6 +2543,22 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
       };
 
       await setDoc(doc(db, 'users', userId), tenantUser, { merge: true });
+      await setDoc(doc(db, 'tenants', tenant.id), { email, ownerId: userId, updatedAt: new Date() }, { merge: true });
+
+      // Sincronizar imediatamente com Firebase Auth e Firestore via backend
+      try {
+        await fetch('/api/auth/update-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId,
+            email,
+            newPassword: password
+          })
+        });
+      } catch (syncErr) {
+        console.warn("Aviso ao sincronizar credencial gerada no provedor Auth:", syncErr);
+      }
 
       setGeneratedUser({ email, password });
       setShowUserGenModal(true);
@@ -5411,14 +5534,27 @@ const SaaSAdmin: React.FC<SaaSAdminProps> = memo(({
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">ID do Proprietário (UID Firebase)</label>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">E-mail de Acesso do Lojista (Login)</label>
                   <input 
-                    type="text" 
+                    type="email" 
                     required
                     className="w-full px-4 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold outline-none focus:border-indigo-500 transition-all"
-                    placeholder="Cole o UID do usuário aqui"
+                    placeholder="Ex: contato@pizzariadojoao.com.br"
                     value={ownerId}
                     onChange={(e) => setOwnerId(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                    {editingTenant ? 'Nova Senha do Lojista (Opcional)' : 'Senha Inicial (Opcional - Gerada se vazio)'}
+                  </label>
+                  <input 
+                    type="text" 
+                    minLength={6}
+                    className="w-full px-4 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold outline-none focus:border-indigo-500 transition-all"
+                    placeholder={editingTenant ? 'Deixe em branco para manter a senha atual' : 'Mín. 6 caracteres ou deixe vazio para gerar'}
+                    value={ownerPassword}
+                    onChange={(e) => setOwnerPassword(e.target.value)}
                   />
                 </div>
                 <div className="space-y-2">

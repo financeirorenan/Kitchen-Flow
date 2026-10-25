@@ -107,14 +107,14 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
     return tableRef ? String(tableRef.number) : tNum.slice(-4);
   }, [order.tableNumber, order.type, tables]);
 
-  // Group items by category (quando em preparo na cozinha e houver nova rodada, exibe apenas os itens pendentes de produção)
+  // Group items by category (exibe apenas os itens ativos deste card/lote, nunca exibindo itens removidos)
   const itemsByCategory = useMemo(() => {
     if (!order.items || order.items.length === 0) return {};
-    const sentItems = order.items.filter(i => i.sentToKitchen !== false);
+    const sentItems = order.items.filter(i => !i.cancelled && i.sentToKitchen !== false);
     const isCookingStage = order.status === 'pending' || order.status === 'preparing' || order.kitchenStatus === 'pending' || order.kitchenStatus === 'preparing';
-    const undispatched = sentItems.filter(i => !i.cancelled && !i.kitchenDispatched);
+    const undispatched = sentItems.filter(i => !i.kitchenDispatched);
     const sourceItems = (isCookingStage && undispatched.length > 0)
-      ? sentItems.filter(i => !i.kitchenDispatched)
+      ? undispatched
       : sentItems;
 
     return sourceItems.reduce<Record<string, typeof order.items>>((acc, item) => {
@@ -200,9 +200,9 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
                 💰 PAGO
               </span>
             )}
-            {((order as any).currentBatch > 1 || order.items.some(i => (i as any).batchNumber > 1)) && (
+            {(((order as any).activeBatchNumber && (order as any).activeBatchNumber > 1) || ((order as any).currentBatch > 1 && order.items.some(i => (i as any).batchNumber > 1))) && (
               <span className="px-1.5 py-0.5 rounded text-[8.5px] font-black uppercase tracking-wider bg-amber-500 text-white border border-amber-600">
-                ⚡ NOVO LOTE
+                ⚡ ITEM ADICIONAL {(order as any).activeBatchNumber > 1 ? `• ${(order as any).activeBatchNumber}ª RODADA` : ''}
               </span>
             )}
           </div>
@@ -443,7 +443,7 @@ const OrderCard: React.FC<OrderCardProps> = memo(({
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                onEditOrderInPDV(order);
+                onEditOrderInPDV((order as any).originalOrder || order);
               }}
               className="px-2 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded-md font-black text-[10px] uppercase transition-all shadow-xs flex items-center gap-1 cursor-pointer shrink-0"
               title="Abrir detalhes no PDV"
@@ -639,7 +639,7 @@ const KanbanColumn: React.FC<KanbanColumnProps> = memo(({
         {orders.length > 0 ? (
           orders.map((order, idx) => (
             <OrderCard
-              key={order.id || `kds-ord-${idx}`}
+              key={(order as any).batchCardKey || order.id || `kds-ord-${idx}`}
               order={order}
               isSelected={selectedOrderIds.includes(order.id)}
               onToggleSelect={onToggleSelectOrder}
@@ -773,14 +773,41 @@ const KDS: React.FC<KDSProps> = memo(({
       ? (order as any).mergedOrderIds
       : [order.id];
 
-    if (order.status === 'pending' || order.status === 'preparing' || order.kitchenStatus === 'pending' || order.kitchenStatus === 'preparing') {
+    const isCooking = order.status === 'pending' || order.status === 'preparing' || order.kitchenStatus === 'pending' || order.kitchenStatus === 'preparing';
+    if (isCooking) {
+      const activeBatchNum = (order as any).activeBatchNumber;
+      const fullOrder: Order | undefined = (order as any).originalOrder || orders.find(o => o.id === order.id);
+
+      if (activeBatchNum !== undefined && fullOrder && onUpdateOrder) {
+        const allValidItems = (fullOrder.items || []).filter(i => !i.cancelled);
+        const remainingOtherBatches = allValidItems.filter(
+          i => i.sentToKitchen !== false && !i.kitchenDispatched && (i.batchNumber || 1) !== activeBatchNum
+        );
+
+        const updatedItems = allValidItems.map(i =>
+          (i.batchNumber || 1) === activeBatchNum
+            ? { ...i, kitchenDispatched: true, isNew: false }
+            : i
+        );
+
+        if (remainingOtherBatches.length > 0) {
+          // Apenas este card de lote foi concluído; outros lotes continuam em preparo na cozinha
+          onUpdateOrder(fullOrder.id, { items: updatedItems });
+          return;
+        } else {
+          onUpdateOrder(fullOrder.id, { items: updatedItems });
+          ids.forEach(id => onUpdateStatus(id, 'ready'));
+          return;
+        }
+      }
+
       ids.forEach(id => onUpdateStatus(id, 'ready'));
     } else if (order.status === 'ready') {
       ids.forEach(id => onUpdateStatus(id, 'delivering'));
     } else if (order.status === 'delivering') {
       ids.forEach(id => onUpdateStatus(id, 'delivered'));
     }
-  }, [onUpdateStatus]);
+  }, [onUpdateStatus, onUpdateOrder, orders]);
 
   const handleBack = useCallback((order: Order) => {
     const ids: string[] = (order as any).mergedOrderIds && Array.isArray((order as any).mergedOrderIds)
@@ -917,16 +944,53 @@ const KDS: React.FC<KDSProps> = memo(({
       };
     }
 
+    // Na coluna Cozinha (preparing), cada lote/rodada não despachado gera um card individual contendo APENAS os itens daquela rodada
+    const preparingOrdersRaw = filteredOrders.filter(o => {
+      const activeItems = (o.items || []).filter(i => !i.cancelled && i.sentToKitchen !== false);
+      if (activeItems.length === 0) return false;
+      const isCooking = o.status === 'preparing' || o.status === 'pending' || ((o.kitchenStatus === 'preparing' || o.kitchenStatus === 'pending') && o.status !== 'ready' && o.status !== 'delivering' && o.status !== 'finished' && o.status !== 'cancelled');
+      return isCooking && isOrderFromCurrentShiftOrToday(o);
+    }).sort(sortByLaunchOrder);
+
+    const preparingBatchCards: Order[] = [];
+    for (const ord of preparingOrdersRaw) {
+      const sentItems = (ord.items || []).filter(i => !i.cancelled && i.sentToKitchen !== false);
+      const undispatched = sentItems.filter(i => !i.kitchenDispatched);
+      const itemsToGroup = undispatched.length > 0 ? undispatched : sentItems;
+
+      const batchesMap = new Map<number, typeof sentItems>();
+      for (const item of itemsToGroup) {
+        const bNum = item.batchNumber || 1;
+        if (!batchesMap.has(bNum)) {
+          batchesMap.set(bNum, []);
+        }
+        batchesMap.get(bNum)!.push(item);
+      }
+
+      const sortedBatchNumbers = Array.from(batchesMap.keys()).sort((a, b) => a - b);
+      for (const bNum of sortedBatchNumbers) {
+        const batchItems = batchesMap.get(bNum)!;
+        const batchSubtotal = batchItems.reduce((acc, it) => acc + (it.price * it.quantity), 0);
+        const batchSentAt = batchItems[0]?.sentAt ? safeParseDate(batchItems[0].sentAt) : null;
+        preparingBatchCards.push({
+          ...ord,
+          items: batchItems,
+          total: sortedBatchNumbers.length > 1 ? batchSubtotal : ord.total,
+          createdAt: (bNum > 1 && batchSentAt) ? batchSentAt : ord.createdAt,
+          activeBatchNumber: bNum,
+          batchCardKey: `${ord.id}-batch-${bNum}`,
+          originalOrder: ord,
+        } as any);
+      }
+    }
+
     return {
-      preparing: filteredOrders.filter(o => {
-        const isCooking = o.status === 'preparing' || o.status === 'pending' || ((o.kitchenStatus === 'preparing' || o.kitchenStatus === 'pending') && o.status !== 'ready' && o.status !== 'delivering' && o.status !== 'finished' && o.status !== 'cancelled');
-        return isCooking && isOrderFromCurrentShiftOrToday(o);
-      }).sort(sortByLaunchOrder),
+      preparing: preparingBatchCards,
       ready: filteredOrders.filter(o => 
-        o.status === 'ready' && isOrderFromCurrentShiftOrToday(o)
+        o.status === 'ready' && (o.items || []).some(i => !i.cancelled) && isOrderFromCurrentShiftOrToday(o)
       ).sort(sortByLaunchOrder),
       delivering: filteredOrders.filter(o => 
-        o.status === 'delivering' && isOrderFromCurrentShiftOrToday(o)
+        o.status === 'delivering' && (o.items || []).some(i => !i.cancelled) && isOrderFromCurrentShiftOrToday(o)
       ).sort(sortByLaunchOrder),
       delivered: filteredOrders.filter(o => {
         const isDeliveredOrFinished = o.status === 'delivered' || o.status === 'finished';

@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { generateReceiptHtml, handlePrintOrder, resolveOrderPayments } from '../services/printService';
 import { maskPhone } from '../utils/masks';
-import { formatOrderNumber, getOrderNumericId } from '../utils/deduplicate';
+import { formatOrderNumber, getOrderNumericId, deduplicateOrders } from '../utils/deduplicate';
 import EditOrderModal from './EditOrderModal';
 import { LiveTrackingMap } from './LiveTrackingMap';
 
@@ -185,7 +185,18 @@ const Delivery: React.FC<DeliveryProps> = memo(({
   const [newCourierEarningsPerDelivery, setNewCourierEarningsPerDelivery] = useState('0');
   const [newCourierVehicle, setNewCourierVehicle] = useState<'moto' | 'bike' | 'car'>('moto');
 
-  const deliveryOrders = useMemo(() => orders.filter(o => o.type === 'delivery'), [orders]);
+  const deliveryOrders = useMemo(() => {
+    return deduplicateOrders(orders)
+      .filter(o => o && o.type === 'delivery' && o.status !== 'cancelled' && !o.isSubTicket && !o.mergedIntoOrderId)
+      .map(o => {
+        const activeItems = (o.items || []).filter(i => !i.cancelled);
+        return {
+          ...o,
+          items: activeItems
+        };
+      })
+      .filter(o => o.items.length > 0);
+  }, [orders]);
 
   // Filtro dinâmico para a coluna de despacho
   const filteredDispatchOrders = useMemo(() => {

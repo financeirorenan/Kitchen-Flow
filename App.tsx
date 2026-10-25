@@ -539,8 +539,8 @@ const App: React.FC = () => {
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
   const [cashClosings, setCashClosings] = useState<CashClosingReport[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
-  const [productCategories, setProductCategories] = useState<string[]>(['Entradas', 'Buffet', 'Pratos Principais', 'Lanches', 'Batatas Recheadas', 'Pasteis', 'Bebidas']);
-  const [rawMaterialCategories, setRawMaterialCategories] = useState<string[]>(['Proteínas', 'Hortifruti', 'Laticínios', 'Grãos', 'Bebidas', 'Embalagens', 'Limpeza', 'Outros']);
+  const [productCategories, setProductCategories] = useState<string[]>([]);
+  const [rawMaterialCategories, setRawMaterialCategories] = useState<string[]>([]);
   const [cashSession, setCashSession] = useState<CashSession>({ isOpen: false, openingValue: 0, openedAt: null });
   const [showGlobalOpenCashModal, setShowGlobalOpenCashModal] = useState(false);
   const [pendingOrderToAcceptAfterCashOpen, setPendingOrderToAcceptAfterCashOpen] = useState<Order | null>(null);
@@ -1829,17 +1829,21 @@ const App: React.FC = () => {
         }
         if (s.productCategories && Array.isArray(s.productCategories)) {
           const cleanCats = s.productCategories.filter((c: string) => c && c !== 'Geral');
-          const resolvedCats = cleanCats.length > 0 ? cleanCats : ['Entradas', 'Buffet', 'Pratos Principais', 'Lanches', 'Batatas Recheadas', 'Pasteis', 'Bebidas'];
           setProductCategories(prev => {
-            if (JSON.stringify(prev) === JSON.stringify(resolvedCats)) return prev;
-            return resolvedCats;
+            if (JSON.stringify(prev) === JSON.stringify(cleanCats)) return prev;
+            return cleanCats;
           });
+        } else if (effectiveTenantId !== 'lojista') {
+          setProductCategories([]);
         }
         if (s.rawMaterialCategories && Array.isArray(s.rawMaterialCategories)) {
+          const cleanRawCats = s.rawMaterialCategories.filter(Boolean);
           setRawMaterialCategories(prev => {
-            if (JSON.stringify(prev) === JSON.stringify(s.rawMaterialCategories)) return prev;
-            return s.rawMaterialCategories;
+            if (JSON.stringify(prev) === JSON.stringify(cleanRawCats)) return prev;
+            return cleanRawCats;
           });
+        } else if (effectiveTenantId !== 'lojista') {
+          setRawMaterialCategories([]);
         }
         if (s.cashSession) {
           // Only update if we don't have pending writes to this specific field to avoid flipping back 
@@ -2282,10 +2286,10 @@ const App: React.FC = () => {
               }
               if (s.productCategories && Array.isArray(s.productCategories)) {
                 const cleanCats = s.productCategories.filter((c: string) => c && c !== 'Geral');
-                setProductCategories(cleanCats.length > 0 ? cleanCats : ['Entradas', 'Buffet', 'Pratos Principais', 'Lanches', 'Batatas Recheadas', 'Pasteis', 'Bebidas']);
+                setProductCategories(cleanCats);
               }
-              if (s.rawMaterialCategories) {
-                setRawMaterialCategories(s.rawMaterialCategories);
+              if (s.rawMaterialCategories && Array.isArray(s.rawMaterialCategories)) {
+                setRawMaterialCategories(s.rawMaterialCategories.filter(Boolean));
               }
             }
 
@@ -3010,8 +3014,8 @@ const App: React.FC = () => {
               ...existing,
               ...rawPayload,
               id: existing.id,
-              items: rawPayload.items && Array.isArray(rawPayload.items) && rawPayload.items.length > 0 
-                ? rawPayload.items 
+              items: Array.isArray(rawPayload.items)
+                ? rawPayload.items
                 : (existing.items || [])
             };
             const updated = [...prev];
@@ -3556,8 +3560,8 @@ const App: React.FC = () => {
     
     // Encontrar o número da mesa/comanda ou balcão
     const tableInfo = isCounter 
-      ? counterOrders.find(t => t.id === tableId || String(t.id) === String(tableId))
-      : tables.find(t => t.id === tableId || (t as any).docId === tableId || t.number === tableId || String(t.id) === String(tableId) || Number(t.id) === Number(tableId));
+      ? counterOrders.find(t => t.id === tableId || String(t.id) === String(tableId) || (t as any).docId === tableId || t.currentOrderId === String(tableId))
+      : tables.find(t => t.id === tableId || (t as any).docId === tableId || t.number === tableId || String(t.id) === String(tableId) || Number(t.id) === Number(tableId) || t.currentOrderId === String(tableId));
     
     const displayTableNumber = tableInfo ? tableInfo.number : (typeof tableId === 'number' ? tableId : (Number(String(tableId).replace(/\D/g, '')) || tableId));
     const now = new Date();
@@ -3608,7 +3612,7 @@ const App: React.FC = () => {
       } else {
         // Para balcão/delivery
         activeExistingOrder = orders.find(o => 
-          (o.id === tableId || o.docId === tableId || o.counterId === tableId || (tableInfo && o.counterId === tableInfo.id)) &&
+          (o.id === String(tableId) || o.docId === String(tableId) || String(o.counterId) === String(tableId) || (tableInfo && (String(o.counterId) === String(tableInfo.id) || o.id === tableInfo.currentOrderId))) &&
           o.status !== 'cancelled' && 
           o.status !== 'finished'
         );
@@ -3628,9 +3632,12 @@ const App: React.FC = () => {
       const nextBatchNumber = maxExistingBatch + 1;
       let hasNewKitchenItems = false;
 
-      // Construir a lista de itens atualizada sem nunca duplicar itens já existentes no pedido
+      // Construir a lista de itens atualizada separando quantidades adicionais em um novo lote (nextBatchNumber)
+      // para que o KDS exiba um card exclusivo apenas com os itens adicionados!
       const usedPrevIndices = new Set<number>();
-      const existingItems: OrderItem[] = items.filter(i => !i.cancelled).map((incomingItem, idx) => {
+      const existingItems: OrderItem[] = [];
+
+      items.filter(i => !i.cancelled).forEach((incomingItem, idx) => {
         const ensuredId = incomingItem.id || `item-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 5)}`;
         const matchIdx = prevItems.findIndex((prev, pIdx) => {
           if (usedPrevIndices.has(pIdx)) return false;
@@ -3640,6 +3647,7 @@ const App: React.FC = () => {
           return prev.productId === incomingItem.productId &&
             prev.name === incomingItem.name &&
             (prev.observation || '') === (incomingItem.observation || '') &&
+            (prev.batchNumber || 1) === (incomingItem.batchNumber || prev.batchNumber || 1) &&
             prevOpts === incOpts;
         });
 
@@ -3648,23 +3656,54 @@ const App: React.FC = () => {
           const prev = prevItems[matchIdx];
           const qtyIncreased = incomingItem.quantity > prev.quantity;
           const wasUnsent = !incomingItem.sentToKitchen && !prev.sentToKitchen;
-          if (qtyIncreased || wasUnsent) {
+
+          if (qtyIncreased && prev.sentToKitchen !== false) {
+            // Mantém o item original no lote original e cria um novo item separado para a quantidade adicionada no novo lote
+            existingItems.push({
+              ...prev,
+              ...incomingItem,
+              id: prev.id || ensuredId,
+              quantity: prev.quantity,
+              sentToKitchen: true,
+              isNew: prev.isNew ?? false,
+              batchNumber: prev.batchNumber || 1,
+              sentAt: prev.sentAt || now.toISOString(),
+              kitchenDispatched: prev.kitchenDispatched || (prev.sentToKitchen ? wasKitchenReady : false)
+            });
+            const addedQty = incomingItem.quantity - prev.quantity;
+            hasNewKitchenItems = true;
+            existingItems.push({
+              ...incomingItem,
+              id: `item-${Date.now()}-${idx}-batch${nextBatchNumber}-${Math.random().toString(36).substr(2, 4)}`,
+              quantity: addedQty,
+              sentToKitchen: true,
+              isNew: true,
+              batchNumber: nextBatchNumber,
+              sentAt: now.toISOString(),
+              kitchenDispatched: false
+            });
+            return;
+          }
+
+          if (wasUnsent) {
             hasNewKitchenItems = true;
           }
-          return {
+
+          existingItems.push({
             ...prev,
             ...incomingItem,
             id: prev.id || ensuredId,
             sentToKitchen: true,
-            isNew: (qtyIncreased || wasUnsent) ? true : false,
-            batchNumber: (qtyIncreased || wasUnsent) ? nextBatchNumber : (prev.batchNumber || 1),
-            sentAt: (qtyIncreased || wasUnsent) ? now.toISOString() : (prev.sentAt || now.toISOString()),
-            kitchenDispatched: (qtyIncreased || wasUnsent) ? false : (prev.kitchenDispatched || (prev.sentToKitchen ? wasKitchenReady : false))
-          };
+            isNew: wasUnsent ? true : (prev.isNew ?? false),
+            batchNumber: wasUnsent ? nextBatchNumber : (prev.batchNumber || 1),
+            sentAt: wasUnsent ? now.toISOString() : (prev.sentAt || now.toISOString()),
+            kitchenDispatched: wasUnsent ? false : (prev.kitchenDispatched || (prev.sentToKitchen ? wasKitchenReady : false))
+          });
+          return;
         }
 
         hasNewKitchenItems = true;
-        return {
+        existingItems.push({
           ...incomingItem,
           id: ensuredId,
           sentToKitchen: true,
@@ -3672,7 +3711,7 @@ const App: React.FC = () => {
           batchNumber: nextBatchNumber,
           sentAt: now.toISOString(),
           kitchenDispatched: false
-        };
+        });
       });
 
       const updatedDeliveryFee = effectiveDeliveryFee !== undefined ? effectiveDeliveryFee : (activeExistingOrder.deliveryFee || 0);
@@ -3743,18 +3782,34 @@ const App: React.FC = () => {
           }), { merge: true }).catch(e => console.warn("Erro ao atualizar mesa no Firestore:", e));
         }
       } else {
-        setCounterOrders(prev => prev.map(t => (t.id === tableId || String(t.id) === String(tableId)) ? {
-          ...t,
-          items: existingItems,
-          total: newItemsTotal,
-          currentOrderId: activeExistingOrder!.id,
-          customerName: effectiveCustomerName || t.customerName,
-          customerPhone: effectiveCustomerPhone || t.customerPhone,
-          customerAddress: effectiveCustomerAddress || t.customerAddress,
-          customerId: effectiveCustomerId || t.customerId,
-          deliveryFee: updatedDeliveryFee,
-          isDelivery: effectiveIsDelivery
-        } : t));
+        setCounterOrders(prev => {
+          const updatedList = prev.map(t => (
+            t.id === tableId ||
+            String(t.id) === String(tableId) ||
+            t.currentOrderId === activeExistingOrder!.id ||
+            (activeExistingOrder!.docId && t.currentOrderId === activeExistingOrder!.docId) ||
+            (activeExistingOrder!.counterId !== undefined && String(t.id) === String(activeExistingOrder!.counterId))
+          ) ? {
+            ...t,
+            items: existingItems,
+            total: newItemsTotal,
+            currentOrderId: activeExistingOrder!.id,
+            customerName: effectiveCustomerName || t.customerName,
+            customerPhone: effectiveCustomerPhone || t.customerPhone,
+            customerAddress: effectiveCustomerAddress || t.customerAddress,
+            customerId: effectiveCustomerId || t.customerId,
+            deliveryFee: updatedDeliveryFee,
+            isDelivery: effectiveIsDelivery
+          } : t);
+          // Deduplicar comandas que apontem para o mesmo currentOrderId
+          const seenOrderIds = new Set<string>();
+          return updatedList.filter(t => {
+            if (!t.currentOrderId) return true;
+            if (seenOrderIds.has(t.currentOrderId)) return false;
+            seenOrderIds.add(t.currentOrderId);
+            return true;
+          });
+        });
       }
 
       // 3. Persistência local e na nuvem
@@ -4429,7 +4484,36 @@ const App: React.FC = () => {
     }
 
     if (updates.items) {
-      updates.items = updates.items.filter(it => !it.cancelled);
+      const cleanItems = updates.items.filter(it => !it.cancelled);
+      const prevItems = (oldOrder?.items || []).filter(it => !it.cancelled);
+      const maxExistingBatch = prevItems.reduce((max, i) => Math.max(max, i.batchNumber || 1), (oldOrder as any)?.currentBatch || 1);
+      const nextBatch = maxExistingBatch + 1;
+      let addedNewBatch = false;
+
+      updates.items = cleanItems.map(it => {
+        if (!it.sentToKitchen) {
+          addedNewBatch = true;
+          return {
+            ...it,
+            sentToKitchen: true,
+            isNew: true,
+            batchNumber: it.batchNumber || nextBatch,
+            kitchenDispatched: false,
+            sentAt: it.sentAt || new Date().toISOString()
+          };
+        }
+        if (it.isNew && !it.kitchenDispatched && (it.batchNumber || 1) > maxExistingBatch) {
+          addedNewBatch = true;
+        }
+        return it;
+      });
+
+      if (addedNewBatch) {
+        updates.status = 'preparing';
+        updates.kitchenStatus = 'preparing';
+        updates.productionStatus = 'in_production';
+        (updates as any).currentBatch = nextBatch;
+      }
     }
     
     updates.updatedAt = new Date();
@@ -4461,15 +4545,29 @@ const App: React.FC = () => {
 
     setOrders(prev => prev.map(o => (o.id === targetId || o.docId === targetDocId || o.id === targetDocId || (o.docId && o.docId === targetId)) ? { ...o, ...updates } : o));
     
-    // Sincronizar mesa se for um pedido de mesa
+    // Sincronizar mesa e diningTables no Firestore se for um pedido de mesa
     if (updates.items) {
       const itemsSubtotal = updates.items.reduce((acc, it) => acc + (it.price * it.quantity), 0);
       if (oldOrder?.tableNumber || oldOrder?.type === 'table') {
+        const matchedTable = tables.find(t => String(t.number) === String(oldOrder?.tableNumber) || t.currentOrderId === targetId || t.currentOrderId === targetDocId);
         setTables(prev => prev.map(t => (String(t.number) === String(oldOrder?.tableNumber) || t.currentOrderId === targetId || t.currentOrderId === targetDocId) ? {
           ...t,
           items: updates.items || t.items,
           total: itemsSubtotal
         } : t));
+        if (matchedTable) {
+          const numTblId = typeof matchedTable.id === 'string' ? Number(matchedTable.id.replace(/\D/g, '')) : matchedTable.id;
+          if (!isNaN(numTblId)) {
+            localDb.diningTables.update(numTblId, { items: updates.items, total: itemsSubtotal } as any).catch(() => {});
+          }
+          if (effectiveTenantId && (matchedTable as any).docId) {
+            setDoc(doc(db, 'diningTables', (matchedTable as any).docId), cleanObject({
+              items: updates.items,
+              total: itemsSubtotal,
+              updatedAt: new Date()
+            }), { merge: true }).catch(() => {});
+          }
+        }
       }
       // Sincronizar comanda de balcão se aplicável
       setCounterOrders(prev => prev.map(c => (c.currentOrderId === targetId || c.currentOrderId === targetDocId || String(c.id) === String(targetId) || String(c.id) === String((oldOrder as any)?.counterId)) ? {
@@ -5080,24 +5178,18 @@ const App: React.FC = () => {
   };
 
   const handleDeleteTable = async (id: number | string) => {
-    // Robust search for the table in local state
     const numericId = typeof id === 'string' ? Number(id) : id;
     
-    // First, try to find by docId/firestoreId (exact match)
     let table = tables.find(t => (t as any).docId === id || (t as any)._firestoreId === id);
-    
-    // If not found, fall back to numeric ID
     if (!table) {
-      table = tables.find(t => t.id === id || (typeof t.id === 'number' && t.id === numericId));
+      table = tables.find(t => t.id === id || (typeof t.id === 'number' && t.id === numericId) || Number(t.number) === numericId);
     }
     
     if (!table) {
-      console.warn(`Table not found for deletion. ID input: ${id}`);
-      // Fallback: if id is clearly a docId string, try direct deletion
       if (typeof id === 'string' && isNaN(numericId)) {
+        setTables(prev => prev.filter(t => (t as any).docId !== id && (t as any)._firestoreId !== id));
         try {
           await deleteDoc(doc(db, 'diningTables', id));
-          return;
         } catch (e) {
           console.error("Direct delete failed:", e);
         }
@@ -5110,25 +5202,36 @@ const App: React.FC = () => {
       return;
     }
 
-    const effectiveTenantId = table.tenantId || viewingTenantId || currentUserData?.tenantId;
-    
+    const effectiveTenantId = table.tenantId || getCanonicalTenantId(currentUserData, viewingTenantId, tenantData);
+    const targetDocId = (table as any).docId || (table as any)._firestoreId || (typeof id === 'string' && isNaN(numericId) ? id : null);
+
+    // Atualização otimista imediata no estado e no IndexedDB
+    setTables(prev => prev.filter(t =>
+      t.id !== table!.id &&
+      t.number !== table!.number &&
+      (!targetDocId || ((t as any).docId !== targetDocId && (t as any)._firestoreId !== targetDocId))
+    ));
+    if (!isNaN(Number(table.id))) {
+      localDb.diningTables.delete(Number(table.id)).catch(() => {});
+    }
+
     if (effectiveTenantId) {
       try {
-        const docId = (table as any).docId || (table as any)._firestoreId || (typeof id === 'string' && isNaN(numericId) ? id : null);
-        
-        if (docId) {
-          await deleteDoc(doc(db, 'diningTables', docId));
-        } else {
-          // Fallback to query by numeric ID and tenantId
-          const q = query(
-            collection(db, 'diningTables'), 
-            where('id', '==', numericId), 
+        if (targetDocId) {
+          await deleteDoc(doc(db, 'diningTables', targetDocId));
+        }
+        if (!isNaN(Number(table.id))) {
+          const qById = query(
+            collection(db, 'diningTables'),
+            where('id', '==', Number(table.id)),
             where('tenantId', '==', effectiveTenantId)
           );
-          const snapshot = await getDocs(q);
-          const batch = writeBatch(db);
-          snapshot.docs.forEach(d => batch.delete(d.ref));
-          await batch.commit();
+          const snapById = await getDocs(qById);
+          if (!snapById.empty) {
+            const batch = writeBatch(db);
+            snapById.docs.forEach(d => batch.delete(d.ref));
+            await batch.commit();
+          }
         }
         addLog('u1', 'MESAS', `Mesa ${table.number} excluída`);
       } catch (error) {
@@ -5136,8 +5239,6 @@ const App: React.FC = () => {
         showToast("Erro ao excluir mesa. Verifique suas permissões.", 'error');
       }
     } else {
-      await localDb.diningTables.delete(numericId);
-      setTables(prev => prev.filter(t => t.id !== id && t.id !== numericId));
       addLog('u1', 'MESAS', `Mesa ${table.number} excluída (Local)`);
     }
   };
@@ -5163,7 +5264,13 @@ const App: React.FC = () => {
     const numericId = typeof id === 'string' ? Number(id) : id;
 
     const tableUpdates: Record<string, any> = { items: activeItems, status, total };
-    const existingTable = (!isCounter ? tables : counterOrders).find(t => t.id === id || t.id === numericId || (t as any).docId === id);
+    const existingTable = (!isCounter ? tables : counterOrders).find(t =>
+      t.id === id ||
+      t.id === numericId ||
+      String(t.id) === String(id) ||
+      (t as any).docId === id ||
+      t.currentOrderId === String(id)
+    );
     if (existingTable?.currentOrderId) {
       tableUpdates.currentOrderId = existingTable.currentOrderId;
     }
@@ -5180,15 +5287,34 @@ const App: React.FC = () => {
     }
 
     if (isCounter) {
-      const counterOrderId = existingTable?.currentOrderId || (pdvEditOrder ? pdvEditOrder.id : null) || (orders.some(o => o.id === String(id) || o.docId === String(id)) ? String(id) : null);
+      const matchedOrder = orders.find(o =>
+        o.status !== 'cancelled' &&
+        (
+          (existingTable?.currentOrderId && (o.id === existingTable.currentOrderId || o.docId === existingTable.currentOrderId)) ||
+          (pdvEditOrder && (o.id === pdvEditOrder.id || o.docId === pdvEditOrder.id)) ||
+          o.id === String(id) ||
+          o.docId === String(id) ||
+          String(o.counterId) === String(id) ||
+          (existingTable && String(o.counterId) === String(existingTable.id))
+        )
+      );
+      const counterOrderId = matchedOrder?.id || existingTable?.currentOrderId || (pdvEditOrder ? pdvEditOrder.id : null);
 
       setCounterOrders(prev => {
-        const match = prev.find(t => t.id === id || t.id === numericId || (counterOrderId && t.currentOrderId === counterOrderId));
+        const match = prev.find(t =>
+          t.id === id ||
+          t.id === numericId ||
+          String(t.id) === String(id) ||
+          (counterOrderId && t.currentOrderId === counterOrderId)
+        );
         if (match) {
-          return prev.map(t => (t.id === match.id) ? { ...t, ...tableUpdates } : t);
+          if (activeItems.length === 0 && status === 'available') {
+            return prev.filter(t => t.id !== match.id);
+          }
+          return prev.map(t => (t.id === match.id) ? { ...t, ...tableUpdates, currentOrderId: counterOrderId || t.currentOrderId } : t);
         }
         // Se for edição direta de um pedido já existente em orders, não criar comanda fantasma avulsa
-        if (counterOrderId || pdvEditOrder) {
+        if (counterOrderId || pdvEditOrder || activeItems.length === 0) {
           return prev;
         }
         return [...prev, {
@@ -5202,20 +5328,49 @@ const App: React.FC = () => {
         }];
       });
 
-      // Se houver pedido vinculado a esta comanda de balcão, atualiza no estado e no Firestore preservando taxas
+      // Se houver pedido vinculado a esta comanda de balcão, atualiza no estado e no Firestore preservando taxas e lotes
       if (counterOrderId) {
-        const targetOrd = orders.find(o => o.id === counterOrderId || o.docId === counterOrderId);
-        const fullOrderTotal = Math.max(0, total + (targetOrd?.deliveryFee || 0) + (targetOrd?.additionalFee || 0) - (targetOrd?.discount || 0));
+        if (activeItems.length === 0) {
+          await handleUpdateOrderStatus(counterOrderId, 'cancelled');
+          return;
+        }
+        const targetOrd = matchedOrder || orders.find(o => o.id === counterOrderId || o.docId === counterOrderId);
+        const existingOrdItems = targetOrd?.items || [];
+        const sentCounterItems = activeItems.filter(it => it.sentToKitchen !== false).map(it => {
+          const prevMatch = existingOrdItems.find(oi =>
+            Boolean(oi.id && it.id && oi.id === it.id) ||
+            (oi.productId === it.productId && oi.name === it.name && (oi.observation || '') === (it.observation || ''))
+          );
+          return prevMatch ? {
+            ...prevMatch,
+            ...it,
+            id: prevMatch.id || it.id,
+            batchNumber: it.batchNumber ?? prevMatch.batchNumber ?? 1,
+            isNew: it.isNew ?? prevMatch.isNew ?? false,
+            sentAt: it.sentAt ?? prevMatch.sentAt,
+            kitchenDispatched: it.kitchenDispatched ?? prevMatch.kitchenDispatched ?? false,
+            sentToKitchen: true
+          } : it;
+        });
+
+        // Se todos os itens já enviados foram removidos da comanda, cancelar o pedido no KDS
+        if (existingOrdItems.length > 0 && sentCounterItems.length === 0 && activeItems.every(it => !it.sentToKitchen)) {
+          await handleUpdateOrderStatus(counterOrderId, 'cancelled');
+          return;
+        }
+
+        const sentItemsSubtotal = sentCounterItems.reduce((acc, it) => acc + (it.price * it.quantity), 0);
+        const fullOrderTotal = Math.max(0, sentItemsSubtotal + (targetOrd?.deliveryFee || 0) + (targetOrd?.additionalFee || 0) - (targetOrd?.discount || 0));
         setOrders(prev => prev.map(o => (o.id === counterOrderId || o.docId === counterOrderId) ? {
           ...o,
-          items: activeItems,
+          items: sentCounterItems,
           total: fullOrderTotal,
           updatedAt: new Date()
         } : o));
-        localDb.orders.update(counterOrderId, { items: activeItems, total: fullOrderTotal, updatedAt: new Date() }).catch(() => {});
+        localDb.orders.update(counterOrderId, { items: sentCounterItems, total: fullOrderTotal, updatedAt: new Date() }).catch(() => {});
         if (effectiveTenantId) {
           setDoc(doc(db, 'orders', targetOrd?.docId || counterOrderId), cleanObject({
-            items: activeItems,
+            items: sentCounterItems,
             total: fullOrderTotal,
             updatedAt: new Date(),
             customerName: tableUpdates.customerName,
@@ -5226,17 +5381,35 @@ const App: React.FC = () => {
       }
     } else {
       // Local update
-      setTables(prev => prev.map(t => t.id === id || t.id === numericId || (t as any).docId === id ? { ...t, ...tableUpdates } : t));
+      const targetTableNumber = existingTable?.number ?? numericId;
+      const linkedTableOrder = orders.find(o =>
+        o.status !== 'cancelled' &&
+        o.status !== 'finished' &&
+        !o.isSettled &&
+        o.paymentStatus !== 'paid' &&
+        (
+          (existingTable?.currentOrderId && (o.id === existingTable.currentOrderId || o.docId === existingTable.currentOrderId)) ||
+          ((o.type === 'table' || !o.type) && String(o.tableNumber) === String(targetTableNumber))
+        )
+      );
+      const orderIdToSync = existingTable?.currentOrderId || linkedTableOrder?.id;
+
+      setTables(prev => prev.map(t => (t.id === id || t.id === numericId || String(t.id) === String(id) || (t as any).docId === id) ? { ...t, ...tableUpdates } : t));
       if (!isNaN(numericId)) {
         localDb.diningTables.update(numericId, tableUpdates).catch(e => console.warn("LocalDb table update error:", e));
       }
 
       // Se houver pedido ativo vinculado a esta mesa no KDS, sincroniza itens já enviados (inclusive quando zerados)
-      if (existingTable?.currentOrderId) {
-        const orderIdToSync = existingTable.currentOrderId;
+      if (orderIdToSync) {
         const sentItemsOnly = activeItems.filter(it => it.sentToKitchen !== false);
-        const currentOrderObj = orders.find(o => o.id === orderIdToSync || o.docId === orderIdToSync);
+        const currentOrderObj = linkedTableOrder || orders.find(o => o.id === orderIdToSync || o.docId === orderIdToSync);
         const existingOrderItems = currentOrderObj?.items || [];
+
+        if (activeItems.length === 0 || (existingOrderItems.length > 0 && sentItemsOnly.length === 0 && activeItems.every(it => !it.sentToKitchen))) {
+          await handleUpdateOrderStatus(orderIdToSync, 'cancelled');
+          return;
+        }
+
         const mergedOrderItems = sentItemsOnly.map(it => {
           const prevMatch = existingOrderItems.find(oi =>
             Boolean(oi.id && it.id && oi.id === it.id) ||
@@ -6509,7 +6682,7 @@ const App: React.FC = () => {
   }
 
   const handleAddUser = async (user: Partial<User>) => {
-    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    const effectiveTenantId = getCanonicalTenantId(currentUserData, viewingTenantId, tenantData);
     
     if (user.role === 'SAAS_ADMIN' || user.role === 'CUSTOMER') {
       showToast("Erro: Não é permitido cadastrar este cargo no painel do lojista.", "error");
@@ -6517,11 +6690,13 @@ const App: React.FC = () => {
     }
 
     const trimmedEmail = (user.email || '').trim().toLowerCase();
+    const rawPassword = (user as any).password ? String((user as any).password).trim() : '';
     const newUser: User = {
       id: user.id || `u${Date.now()}`,
       tenantId: effectiveTenantId || 't1',
       name: (user.name || '').trim(),
       email: trimmedEmail,
+      ...(rawPassword ? { password: rawPassword } : {}),
       role: user.role || 'WAITER',
       permissions: user.permissions || [],
       status: 'offline',
@@ -6549,11 +6724,26 @@ const App: React.FC = () => {
           throw new Error(`O e-mail "${trimmedEmail}" já está cadastrado como entregador.`);
         }
 
-        const { password: _discardPass, ...safeNewUser } = newUser as any;
-        await setDoc(doc(db, 'users', newUser.id), {
-          ...safeNewUser,
+        await setDoc(doc(db, 'users', newUser.id), cleanObject({
+          ...newUser,
           updatedAt: new Date()
-        });
+        }));
+
+        if (rawPassword && rawPassword.length >= 6) {
+          try {
+            await fetch('/api/auth/update-password', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                userId: newUser.id,
+                email: trimmedEmail,
+                newPassword: rawPassword
+              })
+            });
+          } catch (syncErr) {
+            console.warn("Aviso ao sincronizar senha do novo usuário no Auth:", syncErr);
+          }
+        }
 
         // Se for entregador, criar registro na coleção de couriers também
         if (newUser.role === 'COURIER') {
@@ -6561,7 +6751,7 @@ const App: React.FC = () => {
             id: newUser.id,
             tenantId: newUser.tenantId,
             name: newUser.name,
-            phone: '', // Pode ser preenchido depois
+            phone: '',
             status: 'available',
             active: true,
             createdAt: new Date()
@@ -6582,27 +6772,33 @@ const App: React.FC = () => {
   };
 
   const handleUpdateUser = async (id: string, updates: Partial<User>) => {
-    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+    const effectiveTenantId = getCanonicalTenantId(currentUserData, viewingTenantId, tenantData);
     
     if (updates.role === 'SAAS_ADMIN' || updates.role === 'CUSTOMER') {
       showToast("Erro: Não é permitido atualizar o cargo para SaaS Admin ou Cliente no painel do lojista.", "error");
       throw new Error("Não é permitido definir o cargo de usuários como SaaS Admin ou Cliente dentro do painel do lojista.");
     }
 
-    // Nunca persistir senha em texto puro no Firestore
+    const existingUser = users.find(u => u.id === id) || (currentUserData?.id === id ? currentUserData : undefined);
+    const oldEmail = (existingUser?.email || '').trim().toLowerCase();
+
     const finalUpdates = { ...updates };
     const requestedNewPassword = finalUpdates.password ? finalUpdates.password.trim() : '';
-    delete finalUpdates.password;
+    if (requestedNewPassword) {
+      finalUpdates.password = requestedNewPassword;
+    } else {
+      delete finalUpdates.password;
+    }
     if (finalUpdates.email) {
       finalUpdates.email = finalUpdates.email.trim().toLowerCase();
     }
 
-    if (effectiveTenantId && auth.currentUser?.uid) {
+    if (effectiveTenantId) {
       // Dobra check se alterou e-mail para um duplicado de outra pessoa
-      if (finalUpdates.email) {
+      if (finalUpdates.email && finalUpdates.email !== oldEmail) {
         const usersByEmailQuery = query(collection(db, 'users'), where('email', '==', finalUpdates.email));
         const usersByEmailSnap = await getDocs(usersByEmailQuery);
-        const duplicate = usersByEmailSnap.docs.some(doc => doc.id !== id);
+        const duplicate = usersByEmailSnap.docs.some(d => d.id !== id && d.data()?.email?.toLowerCase() !== oldEmail);
         if (duplicate) {
           showToast(`Erro: O e-mail "${finalUpdates.email}" já está cadastrado em nossa plataforma!`, "error");
           throw new Error(`O e-mail "${finalUpdates.email}" já está cadastrado.`);
@@ -6610,48 +6806,118 @@ const App: React.FC = () => {
 
         const couriersQuery = query(collection(db, 'couriers'), where('email', '==', finalUpdates.email));
         const couriersSnap = await getDocs(couriersQuery);
-        const courierDuplicate = couriersSnap.docs.some(doc => doc.id !== id);
+        const courierDuplicate = couriersSnap.docs.some(d => d.id !== id && d.data()?.email?.toLowerCase() !== oldEmail);
         if (courierDuplicate) {
           showToast(`Erro: O e-mail "${finalUpdates.email}" já está cadastrado como entregador!`, "error");
           throw new Error(`O e-mail "${finalUpdates.email}" já está cadastrado como entregador.`);
         }
       }
 
-      await updateDoc(doc(db, 'users', id), cleanObject({
+      const payloadToSave = cleanObject({
         ...finalUpdates,
         updatedAt: new Date()
-      }));
+      });
 
-      // Sincronizar com couriers se houver mudança de nome ou role
-      if (updates.role === 'COURIER' || (updates.name && users.find(u => u.id === id)?.role === 'COURIER')) {
-        const user = users.find(u => u.id === id);
-        if (user) {
-          const courierUpdate: any = { 
-            name: updates.name || user.name,
-            updatedAt: new Date()
-          };
-          if (updates.active !== undefined) courierUpdate.active = updates.active;
-          await setDoc(doc(db, 'couriers', id), courierUpdate, { merge: true });
+      await setDoc(doc(db, 'users', id), payloadToSave, { merge: true });
+
+      // Se havia outros documentos com o mesmo oldEmail do mesmo usuário, sincronizá-los também
+      if (oldEmail) {
+        try {
+          const prevEmailQuery = query(collection(db, 'users'), where('email', '==', oldEmail));
+          const prevEmailSnap = await getDocs(prevEmailQuery);
+          for (const uDoc of prevEmailSnap.docs) {
+            if (uDoc.id !== id && (!uDoc.data()?.tenantId || uDoc.data()?.tenantId === effectiveTenantId)) {
+              await setDoc(doc(db, 'users', uDoc.id), payloadToSave, { merge: true });
+            }
+          }
+        } catch (syncDocErr) {
+          console.warn("Aviso ao sincronizar documentos secundários do usuário:", syncDocErr);
         }
       }
 
-      // Se for o próprio usuário logado, tentar atualizar também no Firebase Auth diretamente
-      if (id === auth.currentUser?.uid) {
+      // Se o usuário atualizado for o proprietário/admin principal da loja e mudou o e-mail, atualizar no tenant também
+      const isStoreOwner =
+        id === `usr_${effectiveTenantId}_owner` ||
+        existingUser?.role === 'OWNER' ||
+        (oldEmail && tenantData?.email?.toLowerCase() === oldEmail);
+      if (isStoreOwner && finalUpdates.email && finalUpdates.email !== oldEmail) {
         try {
-          if (finalUpdates.email && finalUpdates.email !== auth.currentUser.email) {
-            await updateEmail(auth.currentUser, finalUpdates.email);
-          }
-          if (requestedNewPassword) {
-            await updatePassword(auth.currentUser, requestedNewPassword);
-          }
-        } catch (authErr) {
-          console.warn("Could not sync current user auth credentials directly:", authErr);
+          await setDoc(doc(db, 'tenants', effectiveTenantId), {
+            email: finalUpdates.email,
+            updatedAt: new Date()
+          }, { merge: true });
+        } catch (tErr) {
+          console.warn("Aviso ao sincronizar e-mail no documento do tenant:", tErr);
         }
+      }
+
+      const targetUserEmail = finalUpdates.email || oldEmail;
+      const emailChanged = Boolean(finalUpdates.email && finalUpdates.email !== oldEmail);
+      const passwordChanged = Boolean(requestedNewPassword && requestedNewPassword.length >= 6);
+
+      if (emailChanged || passwordChanged || finalUpdates.name) {
+        try {
+          await fetch('/api/auth/update-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: id,
+              oldEmail: oldEmail || targetUserEmail,
+              email: targetUserEmail,
+              newPassword: passwordChanged ? requestedNewPassword : undefined,
+              name: finalUpdates.name || existingUser?.name
+            })
+          });
+        } catch (syncErr) {
+          console.warn("Aviso ao sincronizar credenciais no Auth:", syncErr);
+        }
+      }
+
+      // Sincronizar com couriers se houver mudança de nome, email ou role
+      if (updates.role === 'COURIER' || existingUser?.role === 'COURIER') {
+        const courierUpdate: any = {
+          name: updates.name || existingUser?.name || '',
+          updatedAt: new Date()
+        };
+        if (finalUpdates.email) courierUpdate.email = finalUpdates.email;
+        if (requestedNewPassword) courierUpdate.password = requestedNewPassword;
+        if (updates.active !== undefined) courierUpdate.active = updates.active;
+        await setDoc(doc(db, 'couriers', id), courierUpdate, { merge: true });
+      }
+
+      // Se for o próprio usuário logado, atualizar também no estado atual, cache local e Firebase Auth
+      const isCurrentUser =
+        id === currentUserData?.id ||
+        id === auth.currentUser?.uid ||
+        (oldEmail && currentUserData?.email?.toLowerCase() === oldEmail);
+
+      if (isCurrentUser) {
+        if (auth.currentUser && !auth.currentUser.isAnonymous) {
+          try {
+            if (requestedNewPassword) {
+              await updatePassword(auth.currentUser, requestedNewPassword);
+            }
+          } catch (authErr) {
+            console.warn("Could not sync current user password directly on client SDK:", authErr);
+          }
+        }
+        setCurrentUserData(prev => {
+          if (!prev) return prev;
+          const next = { ...prev, ...finalUpdates };
+          try {
+            localStorage.setItem('kitchenflow_cached_user', JSON.stringify(next));
+            if (localStorage.getItem('kitchenflow_demo_user')) {
+              localStorage.setItem('kitchenflow_demo_user', JSON.stringify(next));
+            }
+          } catch (_) {}
+          return next;
+        });
       }
     } else {
       await localDb.users.update(id, finalUpdates);
-      setUsers(prev => prev.map(u => u.id === id ? { ...u, ...finalUpdates } : u));
     }
+
+    setUsers(prev => prev.map(u => u.id === id ? { ...u, ...finalUpdates } : u));
     showToast("Usuário atualizado com sucesso!");
     addLog('u1', 'USUARIOS', `Usuário atualizado: ${id}`);
   };
@@ -6835,12 +7101,13 @@ const App: React.FC = () => {
   };
 
   const handleUpdateProductCategories = async (newCategories: string[] | ((prev: string[]) => string[])) => {
+    lastWriteTimeRef.current = Date.now();
     setProductCategories(prev => {
       const rawResolved = typeof newCategories === 'function' ? newCategories(prev) : newCategories;
       const cleanResolved = (rawResolved || []).filter(c => c && c !== 'Geral');
       const resolved = cleanResolved;
       // Persist in localDb settings
-      const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+      const effectiveTenantId = getCanonicalTenantId(currentUserData, viewingTenantId, tenantData);
       localDb.settings.get(effectiveTenantId || 'global').then(s => {
         if (s) {
           localDb.settings.put({
@@ -6871,12 +7138,13 @@ const App: React.FC = () => {
   };
 
   const handleUpdateRawMaterialCategories = async (newCategories: string[] | ((prev: string[]) => string[])) => {
+    lastWriteTimeRef.current = Date.now();
     setRawMaterialCategories(prev => {
       const rawResolved = typeof newCategories === 'function' ? newCategories(prev) : newCategories;
       const cleanResolved = (rawResolved || []).filter(Boolean);
       const resolved = cleanResolved;
       // Persist in localDb settings
-      const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+      const effectiveTenantId = getCanonicalTenantId(currentUserData, viewingTenantId, tenantData);
       localDb.settings.get(effectiveTenantId || 'global').then(s => {
         if (s) {
           localDb.settings.put({
@@ -8725,6 +8993,7 @@ const App: React.FC = () => {
             products={products}
             tables={tables}
             onUpdateStatus={handleUpdateOrderStatus}
+            onUpdateOrder={handleUpdateOrder}
             onLogout={handleLogout}
             showLogoutButton={isKDSOnlyUser}
           />

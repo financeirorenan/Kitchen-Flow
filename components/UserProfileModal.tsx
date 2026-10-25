@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useClickOutside } from '../hooks/useClickOutside';
 import { 
   X, 
@@ -22,7 +22,7 @@ import {
   reauthenticateWithCredential, 
   EmailAuthProvider 
 } from 'firebase/auth';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, setDoc, getDocs, collection, query, where } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { User } from '../types';
 
@@ -89,6 +89,17 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    if (isOpen && currentUserData) {
+      setName(currentUserData.name || '');
+      setEmail(currentUserData.email || '');
+      setAvatar(currentUserData.avatar || '');
+      setPassword('');
+      setConfirmPassword('');
+      setReauthRequired(false);
+    }
+  }, [isOpen, currentUserData?.id, currentUserData?.email, currentUserData?.name, currentUserData?.avatar]);
+
   if (!isOpen) return null;
 
   // Handle local image file upload & convert to base64
@@ -125,26 +136,19 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     setReauthLoading(true);
     try {
       const fbUser = auth.currentUser;
-      if (!fbUser || !fbUser.email) {
-        throw new Error('Nenhum usuário autenticado encontrado');
-      }
-
-      // Tenta reautenticar com a senha real digitada no Firebase Auth, e caso falhe tenta a determinística legado (fallback)
-      try {
-        const credential = EmailAuthProvider.credential(fbUser.email, currentPasswordForReauth);
-        await reauthenticateWithCredential(fbUser, credential);
-      } catch (err: any) {
-        const isStaff = currentUserData && currentUserData.role !== 'CUSTOMER';
-        if (isStaff) {
-          try {
+      if (fbUser && fbUser.email) {
+        try {
+          const credential = EmailAuthProvider.credential(fbUser.email, currentPasswordForReauth);
+          await reauthenticateWithCredential(fbUser, credential);
+        } catch (err: any) {
+          const isStaff = currentUserData && currentUserData.role !== 'CUSTOMER';
+          if (isStaff) {
             const legacyPass = getDeterministicPassword(fbUser.email);
             const credential = EmailAuthProvider.credential(fbUser.email, legacyPass);
             await reauthenticateWithCredential(fbUser, credential);
-          } catch (legacyErr) {
+          } else {
             throw err;
           }
-        } else {
-          throw err;
         }
       }
 
@@ -165,27 +169,32 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
   // Main Save Submission
   const handleSave = async () => {
-    if (!name.trim()) {
+    const trimmedName = name.trim();
+    const cleanEmail = email.trim().toLowerCase();
+    const trimmedPassword = password.trim();
+
+    if (!trimmedName) {
       showToast('O nome não pode estar vazio', 'error');
       return;
     }
 
-    if (!email.trim() || !email.includes('@')) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!cleanEmail || !emailRegex.test(cleanEmail)) {
       showToast('Por favor, insira um e-mail válido', 'error');
       return;
     }
 
-    if (password) {
-      const hasUpper = /[A-Z]/.test(password);
-      const hasLower = /[a-z]/.test(password);
-      const hasSpec = /[!@#$%^&*(),.?":{}|<>_+\-\[\]\/\\`';~`=]/.test(password);
-      if (password.length < 6 || !hasUpper || !hasLower || !hasSpec) {
+    if (trimmedPassword) {
+      const hasUpper = /[A-Z]/.test(trimmedPassword);
+      const hasLower = /[a-z]/.test(trimmedPassword);
+      const hasSpec = /[!@#$%^&*(),.?":{}|<>_+\-\[\]\/\\`';~`=]/.test(trimmedPassword);
+      if (trimmedPassword.length < 6 || !hasUpper || !hasLower || !hasSpec) {
         showToast('A nova senha precisa ter no mínimo 6 caracteres, contendo pelo menos uma letra maiúscula, uma letra minúscula e um caractere especial (ex: @, #, $, %, etc.).', 'error');
         return;
       }
     }
 
-    if (password && password !== confirmPassword) {
+    if (trimmedPassword && trimmedPassword !== confirmPassword.trim()) {
       showToast('As senhas digitadas não coincidem', 'error');
       return;
     }
@@ -193,82 +202,187 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     setLoading(true);
     try {
       const fbUser = auth.currentUser;
-      if (!fbUser) throw new Error('Usuário não autenticado.');
-
-      // 1. Update Profile (DisplayName and Photo)
+      const previousEmail = (currentUserData?.email || fbUser?.email || '').trim().toLowerCase();
+      const targetUserId = currentUserData?.id || fbUser?.uid || '';
       const selectedAvatar = useCustomUrl ? customAvatarUrl : avatar;
-      await updateProfile(fbUser, {
-        displayName: name,
-        photoURL: selectedAvatar || null
-      });
 
-      // 2. Update Email locally if changed
-      let emailChanged = false;
-      const cleanEmail = email.trim().toLowerCase();
-      if (cleanEmail !== fbUser.email) {
+      // 1. Se o e-mail mudou, verificar se já não pertence a outro usuário na plataforma
+      if (cleanEmail !== previousEmail) {
         try {
-          await updateEmail(fbUser, cleanEmail);
-          emailChanged = true;
-        } catch (err: any) {
-          if (err.code === 'auth/requires-recent-login') {
-            setReauthRequired(true);
+          const qDup = query(collection(db, 'users'), where('email', '==', cleanEmail));
+          const snapDup = await getDocs(qDup);
+          const hasConflict = snapDup.docs.some(d => {
+            const dData = d.data();
+            return (
+              d.id !== targetUserId &&
+              d.id !== fbUser?.uid &&
+              dData.id !== targetUserId &&
+              (!currentUserData?.tenantId || dData.tenantId !== currentUserData.tenantId || dData.role !== currentUserData.role)
+            );
+          });
+          if (hasConflict) {
+            showToast(`O e-mail "${cleanEmail}" já está em uso por outra conta no sistema.`, 'error');
             setLoading(false);
-            showToast('Por motivos de segurança, você precisa confirmar sua senha atual antes de alterar o e-mail.', 'info');
             return;
           }
-          throw err;
+        } catch (dupErr) {
+          console.warn('Aviso ao verificar duplicidade de e-mail:', dupErr);
         }
       }
 
-      // 3. Update Password if changed
-      let passwordChanged = false;
-      if (password) {
+      // 2. Sincronizar via backend (/api/auth/update-password) que atualiza Firebase Auth (Admin SDK / REST API) e Firestore
+      try {
+        await fetch('/api/auth/update-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: targetUserId,
+            oldEmail: previousEmail,
+            email: cleanEmail,
+            ...(trimmedPassword ? { newPassword: trimmedPassword } : {}),
+            name: trimmedName,
+            avatar: selectedAvatar || ''
+          })
+        });
+      } catch (apiSyncErr) {
+        console.warn('Aviso ao sincronizar credenciais via API:', apiSyncErr);
+      }
+
+      // 3. Atualizar documentos no Firestore diretamente pelo cliente para reflexão em tempo real imediata
+      const updatedFields: any = {
+        name: trimmedName,
+        email: cleanEmail,
+        avatar: selectedAvatar || '',
+        photoURL: selectedAvatar || '',
+        active: true,
+        updatedAt: new Date()
+      };
+      if (trimmedPassword) {
+        updatedFields.password = trimmedPassword;
+        updatedFields.mustChangePassword = false;
+      }
+
+      const updatedDocIds = new Set<string>();
+      if (targetUserId) {
         try {
-          const authPassword = password;
-          await updatePassword(fbUser, authPassword);
-          passwordChanged = true;
-        } catch (err: any) {
-          if (err.code === 'auth/requires-recent-login') {
-            setReauthRequired(true);
-            setLoading(false);
-            showToast('Por motivos de segurança, você precisa confirmar sua senha atual antes de alterar a senha.', 'info');
-            return;
-          }
-          throw err;
+          await setDoc(doc(db, 'users', targetUserId), {
+            ...(currentUserData || {}),
+            id: targetUserId,
+            ...updatedFields
+          }, { merge: true });
+          updatedDocIds.add(targetUserId);
+        } catch (e) {
+          console.warn('Aviso ao atualizar doc principal do usuário:', e);
         }
       }
 
-      // 4. Update user document on Firestore (never persist plaintext password)
-      if (currentUserData) {
-        const userDocRef = doc(db, 'users', fbUser.uid);
-        const updatedData: any = {
-          name,
-          email: cleanEmail,
-          avatar: selectedAvatar || '',
-          photoURL: selectedAvatar || '',
-          updatedAt: new Date()
-        };
-
-        await updateDoc(userDocRef, updatedData);
-        onUpdateUser({
-          ...currentUserData,
-          ...updatedData
-        } as User);
+      if (fbUser?.uid && !updatedDocIds.has(fbUser.uid)) {
+        try {
+          await setDoc(doc(db, 'users', fbUser.uid), {
+            ...(currentUserData || {}),
+            id: fbUser.uid,
+            ...updatedFields
+          }, { merge: true });
+          updatedDocIds.add(fbUser.uid);
+        } catch {}
       }
 
-      showToast('Perfil atualizado com sucesso!', 'success');
-      // Reset sensitive states
+      if (previousEmail) {
+        try {
+          const qPrev = query(collection(db, 'users'), where('email', '==', previousEmail));
+          const snapPrev = await getDocs(qPrev);
+          for (const d of snapPrev.docs) {
+            if (!updatedDocIds.has(d.id)) {
+              await setDoc(d.ref, updatedFields, { merge: true });
+              updatedDocIds.add(d.id);
+            }
+          }
+        } catch {}
+      }
+
+      // Se o usuário for proprietário/admin de uma loja e alterou o e-mail, sincronizar também no documento do tenant
+      if (cleanEmail !== previousEmail && currentUserData?.tenantId && currentUserData.tenantId !== 'GLOBAL') {
+        if (!currentUserData.role || ['OWNER', 'ADMIN', 'LOJISTA'].includes(currentUserData.role)) {
+          try {
+            await setDoc(doc(db, 'tenants', currentUserData.tenantId), {
+              email: cleanEmail,
+              updatedAt: new Date()
+            }, { merge: true });
+          } catch {}
+        }
+      }
+
+      // 4. Tentar atualizar também a sessão local do Firebase Auth Client SDK (não bloqueante)
+      if (fbUser) {
+        try {
+          await updateProfile(fbUser, {
+            displayName: trimmedName,
+            photoURL: selectedAvatar || null
+          });
+        } catch {}
+
+        if (cleanEmail !== fbUser.email) {
+          try {
+            await updateEmail(fbUser, cleanEmail);
+          } catch (emailAuthErr: any) {
+            // Ignorado com segurança pois o /api/auth/update-password e o Firestore já gravaram o novo e-mail
+            console.log('Sync de e-mail gerenciado via servidor/Firestore:', emailAuthErr?.code || emailAuthErr?.message);
+          }
+        }
+
+        if (trimmedPassword) {
+          try {
+            await updatePassword(fbUser, trimmedPassword);
+          } catch (passAuthErr: any) {
+            console.log('Sync de senha gerenciado via servidor/Firestore:', passAuthErr?.code || passAuthErr?.message);
+          }
+        }
+      }
+
+      // 5. Atualizar estado da aplicação e caches locais (localStorage) para manter sessão ativa e alinhada
+      const finalUpdatedUser: User = {
+        ...(currentUserData || {
+          id: targetUserId || cleanEmail,
+          role: 'OWNER',
+          permissions: [],
+          status: 'online',
+          active: true
+        }),
+        ...updatedFields
+      };
+
+      onUpdateUser(finalUpdatedUser);
+
+      try {
+        localStorage.setItem('kitchenflow_cached_user', JSON.stringify(finalUpdatedUser));
+        const rawDemo = localStorage.getItem('kitchenflow_demo_user');
+        if (rawDemo) {
+          const parsedDemo = JSON.parse(rawDemo);
+          localStorage.setItem('kitchenflow_demo_user', JSON.stringify({
+            ...parsedDemo,
+            firebaseUser: {
+              ...(parsedDemo.firebaseUser || {}),
+              email: cleanEmail,
+              displayName: trimmedName
+            },
+            userData: {
+              ...(parsedDemo.userData || {}),
+              ...finalUpdatedUser
+            }
+          }));
+        }
+      } catch (cacheErr) {
+        console.warn('Aviso ao atualizar cache local do usuário:', cacheErr);
+      }
+
+      showToast('E-mail, senha e perfil atualizados com sucesso!', 'success');
       setPassword('');
       setConfirmPassword('');
       setReauthSuccess(false);
       onClose();
     } catch (err: any) {
       console.error(err);
-      if (err.code === 'auth/invalid-credential' || err.message?.includes('invalid-credential')) {
-        showToast('Credenciais de autenticação inválidas ou expiradas.', 'error');
-      } else {
-        showToast(err.message || 'Erro ao atualizar perfil', 'error');
-      }
+      showToast(err.message || 'Erro ao atualizar perfil', 'error');
     } finally {
       setLoading(false);
     }

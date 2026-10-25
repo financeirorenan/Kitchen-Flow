@@ -230,8 +230,8 @@ export function clonePlatformTemplatesForTenant(params: {
   return {
     admin,
     digitalMenu,
-    productCategories: [...PLATFORM_DEFAULT_TEMPLATES.suggestedProductCategories],
-    rawMaterialCategories: [...PLATFORM_DEFAULT_TEMPLATES.suggestedRawMaterialCategories],
+    productCategories: [],
+    rawMaterialCategories: [],
     notifications: { ...PLATFORM_DEFAULT_TEMPLATES.defaultNotificationPreferences },
   };
 }
@@ -478,6 +478,7 @@ export interface ProvisionTenantInput {
   expiryDate: Date | string;
   autoAcceptOrders?: boolean;
   initialTablesCount?: number;
+  initialPassword?: string;
   idempotencyKey?: string;
   actorId?: string;
   actorName?: string;
@@ -662,7 +663,7 @@ export async function provisionNewTenantStandardized(
     const charsUpper = 'ABCDEFGHJKMNPQRSTUVWXYZ';
     const charsNum = '23456789';
     const charsSpec = '!@#$%&*';
-    const tempPassword =
+    const generatedTempPassword =
       charsUpper[Math.floor(Math.random() * charsUpper.length)] +
       charsLower[Math.floor(Math.random() * charsLower.length)] +
       charsLower[Math.floor(Math.random() * charsLower.length)] +
@@ -671,6 +672,10 @@ export async function provisionNewTenantStandardized(
       charsSpec[Math.floor(Math.random() * charsSpec.length)] +
       charsUpper[Math.floor(Math.random() * charsUpper.length)] +
       charsNum[Math.floor(Math.random() * charsNum.length)];
+    const tempPassword =
+      input.initialPassword && input.initialPassword.trim().length >= 6
+        ? input.initialPassword.trim()
+        : generatedTempPassword;
 
     const adminUserId = `usr_${tenantId}_owner`;
     createdAdminId = adminUserId;
@@ -770,7 +775,7 @@ export async function provisionNewTenantStandardized(
       updatedAt: now,
     });
 
-    const tablesCount = input.initialTablesCount !== undefined ? input.initialTablesCount : 12;
+    const tablesCount = input.initialTablesCount !== undefined ? input.initialTablesCount : 0;
     for (let i = 1; i <= tablesCount; i++) {
       const tableDocId = `${tenantId}_table_${i}`;
       batch.set(doc(db, 'diningTables', tableDocId), {
@@ -788,12 +793,13 @@ export async function provisionNewTenantStandardized(
     committedToFirestore = true;
     stepsCompleted.push('7_ATOMIC_BATCH_COMMITTED');
 
-    // Sincronizar senha inicial no provedor Firebase Auth via endpoint backend (não bloqueante)
+    // Sincronizar senha inicial no provedor Firebase Auth e no documento de usuário via endpoint backend
     try {
       await fetch('/api/auth/update-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          userId: adminUserId,
           email: cleanEmail,
           newPassword: tempPassword,
         }),

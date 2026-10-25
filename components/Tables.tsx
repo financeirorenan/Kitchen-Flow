@@ -1234,7 +1234,9 @@ const Tables: React.FC<TablesProps> = memo(
       }
     };
 
-    // Sincronizar selectedTable com as props para evitar dados obsoletos
+    const lastLocalMutationAtRef = useRef<number>(0);
+
+    // Sincronizar selectedTable com as props para evitar dados obsoletos sem sobrescrever remoções/edições locais
     useEffect(() => {
       if (!selectedTable) return;
 
@@ -1257,6 +1259,16 @@ const Tables: React.FC<TablesProps> = memo(
       }
 
       if (updatedTable) {
+        // Sempre sincronizar currentOrderId assim que o pedido for criado na cozinha
+        if (updatedTable.currentOrderId && updatedTable.currentOrderId !== selectedTable.currentOrderId) {
+          setSelectedTable(prev => prev ? { ...prev, currentOrderId: updatedTable!.currentOrderId } : null);
+        }
+
+        // Evitar que snapshots atrasados do Firestore sobrescrevam remoções ou adições feitas há menos de 3.5s
+        if (Date.now() - lastLocalMutationAtRef.current < 3500) {
+          return;
+        }
+
         // Só atualiza se houver mudança real para evitar loops
         if (
           JSON.stringify(updatedTable.items) !==
@@ -1265,9 +1277,12 @@ const Tables: React.FC<TablesProps> = memo(
           updatedTable.total !== selectedTable.total
         ) {
           // Preservar itens não enviados adicionados localmente pelo usuário
-          const localUnsentItems = (selectedTable.items || []).filter(i => !i.sentToKitchen);
+          const localUnsentItems = (selectedTable.items || []).filter(i => !i.sentToKitchen && !i.cancelled);
           if (localUnsentItems.length === 0) {
-            setSelectedTable(updatedTable);
+            setSelectedTable({
+              ...updatedTable,
+              items: (updatedTable.items || []).filter(i => !i.cancelled)
+            });
           }
         }
       }
@@ -1425,18 +1440,38 @@ const Tables: React.FC<TablesProps> = memo(
           }
         }
 
-        const hasContent = (counter.items && counter.items.length > 0) || (counter.total && counter.total > 0) || counter.customerName;
+        const activeCounterItems = (counter.items || []).filter(i => !i.cancelled);
+        const hasContent = activeCounterItems.length > 0 || (counter.total && counter.total > 0) || counter.customerName;
         if (!hasContent) return;
 
-        // Se estiver vinculada a um pedido no KDS/orders, verificar se esse pedido já foi quitado
-        let matchingOrder: Order | undefined = undefined;
+        // Se estiver vinculada a um pedido no KDS/orders (por currentOrderId, id ou counterId), verificar se já foi quitado ou cancelado
+        const matchingOrder = (orders || []).find(o =>
+          o &&
+          (
+            (counter.currentOrderId && (o.id === counter.currentOrderId || (o as any).docId === counter.currentOrderId)) ||
+            o.id === String(counter.id) ||
+            (o as any).docId === String(counter.id) ||
+            String(o.counterId) === String(counter.id)
+          )
+        );
+
+        if (matchingOrder) {
+          if (matchingOrder.status === 'cancelled' || isOrderSettledWithPayment(matchingOrder)) {
+            return; // Pedido já cancelado ou quitado com pagamento no PDV
+          }
+          // Evitar duplicar caso outra entrada em counterOrders já tenha vinculado o mesmo pedido
+          if (linkedOrderIds.has(String(matchingOrder.id))) {
+            return;
+          }
+          linkedOrderIds.add(String(matchingOrder.id));
+          if (matchingOrder.docId) linkedOrderIds.add(String(matchingOrder.docId));
+        }
+
         if (counter.currentOrderId) {
-          matchingOrder = (orders || []).find(o => o && (o.id === counter.currentOrderId || (o as any).docId === counter.currentOrderId));
-          if (matchingOrder && isOrderSettledWithPayment(matchingOrder)) {
-            return; // Pedido já quitado com pagamento no PDV
+          if (linkedOrderIds.has(String(counter.currentOrderId)) && !matchingOrder) {
+            return;
           }
           linkedOrderIds.add(String(counter.currentOrderId));
-          if (matchingOrder && matchingOrder.docId) linkedOrderIds.add(String(matchingOrder.docId));
         }
 
         linkedCounterIds.add(String(counter.id));
@@ -1445,32 +1480,38 @@ const Tables: React.FC<TablesProps> = memo(
         const isRet = !isDel && !!counter.customerName && !counter.isDelivery;
         const orderType: 'balcao' | 'delivery' | 'takeout' = isDel ? 'delivery' : (isRet ? 'takeout' : 'balcao');
 
-        const totalAmount = (Number(counter.total) || 0) + (Number(counter.deliveryFee) || 0);
-        const totalItems = counter.items ? counter.items.reduce((acc, i) => acc + (i.quantity || 1), 0) : 0;
-        const createdAt = toSafeDate(counter.openedAt);
+        const activeMatchingOrderItems = (matchingOrder?.items || []).filter(i => !i.cancelled);
+        const itemsSubtotal = activeCounterItems.reduce((acc, i) => acc + (i.price * i.quantity), 0);
+        const totalAmount = itemsSubtotal + (Number(counter.deliveryFee) || 0);
+        const totalItems = activeCounterItems.reduce((acc, i) => acc + (i.quantity || 1), 0);
+        const createdAt = toSafeDate(counter.openedAt || matchingOrder?.createdAt);
 
         list.push({
           id: counter.id,
           source: 'counter',
           type: orderType,
-          displayNumber: counter.number ? `Comanda #${counter.number}` : `Comanda #${String(counter.id).slice(-4)}`,
-          dailyNumber: counter.number,
+          displayNumber: matchingOrder ? `Pedido ${formatOrderNumber(matchingOrder)}` : (counter.number ? `Comanda #${counter.number}` : `Comanda #${String(counter.id).slice(-4)}`),
+          dailyNumber: matchingOrder?.dailyNumber || counter.number,
           customerName: counter.customerName || matchingOrder?.customerName,
           customerPhone: counter.customerPhone || matchingOrder?.customerPhone,
           customerAddress: counter.customerAddress || matchingOrder?.customerAddress,
           deliveryFee: counter.deliveryFee || matchingOrder?.deliveryFee,
           total: totalAmount > 0 ? totalAmount : (Number(matchingOrder?.total) || 0),
-          itemsCount: totalItems > 0 ? totalItems : (matchingOrder?.items?.reduce((acc, i) => acc + (i.quantity || 1), 0) || 0),
+          itemsCount: totalItems > 0 ? totalItems : activeMatchingOrderItems.reduce((acc, i) => acc + (i.quantity || 1), 0),
           status: counter.status || matchingOrder?.status || 'occupied',
           createdAt: createdAt,
-          rawCounter: counter,
+          rawCounter: {
+            ...counter,
+            currentOrderId: counter.currentOrderId || matchingOrder?.id,
+            items: activeCounterItems.length > 0 ? activeCounterItems : activeMatchingOrderItems
+          },
           rawOrder: matchingOrder,
         });
       });
 
       // 2. Processar pedidos de orders (KDS / Delivery / Balcão) não vinculados às comandas acima
       (orders || []).forEach((ord) => {
-        if (!ord || ord.status === 'cancelled') return;
+        if (!ord || ord.status === 'cancelled' || ord.isSubTicket || ord.mergedIntoOrderId) return;
 
         // Apenas pedidos que não são de mesa física (balcão, delivery, retirada ou sem mesa associada)
         const isNonTable = ord.type === 'delivery' || ord.type === 'takeout' || (ord.type as any) === 'balcao' || !ord.tableNumber;
@@ -1479,10 +1520,13 @@ const Tables: React.FC<TablesProps> = memo(
         // Se já foi quitado com forma de pagamento
         if (isOrderSettledWithPayment(ord)) return;
 
+        const activeOrdItems = (ord.items || []).filter(i => !i.cancelled);
+        if (activeOrdItems.length === 0) return;
+
         // Evitar duplicidade se já capturado em counterOrders
         if (linkedOrderIds.has(String(ord.id)) || (ord.docId && linkedOrderIds.has(String(ord.docId)))) return;
         if (ord.counterId && linkedCounterIds.has(String(ord.counterId))) return;
-        if ((counterOrders || []).some(c => c && (c.currentOrderId === ord.id || String(c.id) === String(ord.id) || String(c.id) === String(ord.counterId)))) return;
+        if ((counterOrders || []).some(c => c && c.status !== 'available' && (c.currentOrderId === ord.id || String(c.id) === String(ord.id) || String(c.id) === String(ord.counterId)))) return;
 
         linkedOrderIds.add(String(ord.id));
 
@@ -1491,7 +1535,7 @@ const Tables: React.FC<TablesProps> = memo(
         const orderType: 'balcao' | 'delivery' | 'takeout' = isDel ? 'delivery' : (isRet ? 'takeout' : 'balcao');
 
         const totalAmount = Number(ord.total || 0);
-        const totalItems = ord.items ? ord.items.reduce((acc, i) => acc + (i.quantity || 1), 0) : 0;
+        const totalItems = activeOrdItems.reduce((acc, i) => acc + (i.quantity || 1), 0);
         const createdAt = toSafeDate(ord.createdAt);
 
         list.push({
@@ -1640,7 +1684,8 @@ const Tables: React.FC<TablesProps> = memo(
           .map((o) => `${(o.quantity && o.quantity > 1) ? `${o.quantity}x ` : ""}${o.name}`)
           .sort()
           .join(", ");
-        const existingIndex = selectedTable.items.findIndex(
+        const currentActiveItems = (selectedTable.items || []).filter(i => !i.cancelled);
+        const existingIndex = currentActiveItems.findIndex(
           (i) =>
             i.productId === product.id &&
             i.seat === activeSeat &&
@@ -1657,14 +1702,14 @@ const Tables: React.FC<TablesProps> = memo(
           product.price + finalOptions.reduce((acc, o) => acc + (o.price * (o.quantity || 1)), 0);
 
         if (existingIndex > -1) {
-          newItems = [...selectedTable.items];
+          newItems = [...currentActiveItems];
           newItems[existingIndex] = {
             ...newItems[existingIndex],
             quantity: newItems[existingIndex].quantity + qty,
           };
         } else {
           // Validate category conflict (log warning instead of blocking window.confirm)
-          const nameConflict = selectedTable.items.find((item) => {
+          const nameConflict = currentActiveItems.find((item) => {
             const otherProduct = products.find((p) => p.id === item.productId);
             return (
               otherProduct &&
@@ -1677,7 +1722,7 @@ const Tables: React.FC<TablesProps> = memo(
           }
 
           newItems = [
-            ...selectedTable.items,
+            ...currentActiveItems,
             {
               id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
               productId: product.id,
@@ -1687,6 +1732,7 @@ const Tables: React.FC<TablesProps> = memo(
               category: product.category,
               seat: activeSeat,
               sentToKitchen: false,
+              isNew: true,
               selectedOptions:
                 finalOptions.length > 0 ? finalOptions : undefined,
               observation: observation || undefined,
@@ -1697,6 +1743,7 @@ const Tables: React.FC<TablesProps> = memo(
           (acc, item) => acc + item.price * item.quantity,
           0,
         );
+        lastLocalMutationAtRef.current = Date.now();
         const updated = { ...selectedTable, items: newItems, total: newTotal };
         setSelectedTable(updated);
         onUpdateTable(selectedTable.id, newItems, "occupied", isCounterContext);
@@ -1838,68 +1885,160 @@ const Tables: React.FC<TablesProps> = memo(
       }
     };
 
+    const resolveLinkedOrderId = useCallback(
+      (tableObj: Table | null): string | number | undefined => {
+        if (!tableObj) return undefined;
+        if (pdvEditOrder) return pdvEditOrder.id;
+        if (tableObj.currentOrderId) return tableObj.currentOrderId;
+        const found = (orders || []).find(
+          (o) =>
+            o &&
+            o.status !== "cancelled" &&
+            o.status !== "finished" &&
+            !o.isSettled &&
+            o.paymentStatus !== "paid" &&
+            (o.id === String(tableObj.id) ||
+              o.docId === String(tableObj.id) ||
+              String(o.counterId) === String(tableObj.id) ||
+              (!isCounterContext &&
+                (o.type === "table" || !o.type) &&
+                String(o.tableNumber) === String(tableObj.number)))
+        );
+        return found?.id;
+      },
+      [pdvEditOrder, orders, isCounterContext]
+    );
+
     const removeItem = useCallback(
       (index: number) => {
         if (!selectedTable) return;
-        const newItems = selectedTable.items.filter((it, i) => i !== index && !it.cancelled);
+        const activeList = (selectedTable.items || []).filter((it) => !it.cancelled);
+        const newItems = activeList.filter((_, i) => i !== index);
 
         const newTotal = newItems.reduce(
           (acc, item) => acc + item.price * item.quantity,
           0,
         );
 
-        const updated = { ...selectedTable, items: newItems, total: newTotal };
+        lastLocalMutationAtRef.current = Date.now();
+        const nextStatus = newItems.length === 0 && !isCounterContext ? "available" : "occupied";
+        const updated = { ...selectedTable, items: newItems, total: newTotal, status: nextStatus as Table['status'] };
         setSelectedTable(updated);
-        onUpdateTable(selectedTable.id, newItems, "occupied", isCounterContext);
+        onUpdateTable(selectedTable.id, newItems, nextStatus as Table['status'], isCounterContext);
 
-        // Se estivermos editando um pedido ou houver pedido ativo na cozinha e ainda restarem itens, sincroniza imediatamente
-        const activeOrderId = pdvEditOrder ? pdvEditOrder.id : selectedTable.currentOrderId;
-        if (activeOrderId && onUpdateOrder && newItems.length > 0) {
+        // Sincronizar imediatamente com o pedido ativo na cozinha/logística/caixa (inclusive quando zerado!)
+        const activeOrderId = resolveLinkedOrderId(selectedTable);
+        if (activeOrderId && onUpdateOrder) {
           const currentDeliveryFee = isDeliveryOrder ? parseCurrency(deliveryFeeInput) : (selectedTable.deliveryFee || pdvEditOrder?.deliveryFee || 0);
-          onUpdateOrder(String(activeOrderId), {
-            items: newItems,
-            total: Math.max(0, newTotal + currentDeliveryFee + (additionalFee || 0) - (discount || 0))
-          });
+          const sentItemsRemaining = newItems.filter(it => it.sentToKitchen !== false);
+          if (newItems.length === 0 || (sentItemsRemaining.length === 0 && newItems.every(it => !it.sentToKitchen))) {
+            onUpdateOrder(String(activeOrderId), {
+              items: [],
+              total: 0,
+              status: "cancelled"
+            });
+          } else {
+            const sentSubtotal = sentItemsRemaining.reduce((acc, item) => acc + item.price * item.quantity, 0);
+            onUpdateOrder(String(activeOrderId), {
+              items: sentItemsRemaining,
+              total: Math.max(0, sentSubtotal + currentDeliveryFee + (additionalFee || 0) - (discount || 0))
+            });
+          }
         }
         if (showToast) {
           showToast("Item removido do pedido", "info");
         }
       },
-      [selectedTable, isCounterContext, onUpdateTable, pdvEditOrder, onUpdateOrder, showToast, isDeliveryOrder, deliveryFeeInput, additionalFee, discount],
+      [selectedTable, isCounterContext, onUpdateTable, pdvEditOrder, onUpdateOrder, showToast, isDeliveryOrder, deliveryFeeInput, additionalFee, discount, resolveLinkedOrderId],
     );
 
     const updateItemQuantity = useCallback(
       (index: number, delta: number) => {
         if (!selectedTable) return;
-        const targetItem = selectedTable.items[index];
+        const activeList = (selectedTable.items || []).filter(it => !it.cancelled);
+        const targetItem = activeList[index];
         if (!targetItem) return;
+
+        // Se o item já foi enviado à cozinha e o operador clicou em "+" para adicionar mais unidades,
+        // criamos/incrementamos um item não enviado (sentToKitchen: false) para que vá como novo card (nova rodada) ao KDS!
+        if (delta > 0 && targetItem.sentToKitchen) {
+          const targetOpts = (targetItem.selectedOptions || [])
+            .map((o) => `${(o.quantity && o.quantity > 1) ? `${o.quantity}x ` : ""}${o.name}`)
+            .sort()
+            .join(", ");
+          const existingUnsentIdx = activeList.findIndex(
+            (it, idx) =>
+              idx !== index &&
+              !it.sentToKitchen &&
+              it.productId === targetItem.productId &&
+              it.name === targetItem.name &&
+              (it.seat || "Geral") === (targetItem.seat || "Geral") &&
+              (it.observation || "") === (targetItem.observation || "") &&
+              ((it.selectedOptions || [])
+                .map((o) => `${(o.quantity && o.quantity > 1) ? `${o.quantity}x ` : ""}${o.name}`)
+                .sort()
+                .join(", ")) === targetOpts
+          );
+
+          let newItems: OrderItem[];
+          if (existingUnsentIdx !== -1) {
+            newItems = activeList.map((it, i) =>
+              i === existingUnsentIdx ? { ...it, quantity: it.quantity + delta } : it
+            );
+          } else {
+            newItems = [
+              ...activeList,
+              {
+                ...targetItem,
+                id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                quantity: delta,
+                sentToKitchen: false,
+                isNew: true,
+                batchNumber: undefined,
+                kitchenDispatched: false,
+                sentAt: undefined,
+              },
+            ];
+          }
+
+          const newTotal = newItems.reduce((acc, item) => acc + item.price * item.quantity, 0);
+          lastLocalMutationAtRef.current = Date.now();
+          const updated = { ...selectedTable, items: newItems, total: newTotal };
+          setSelectedTable(updated);
+          onUpdateTable(selectedTable.id, newItems, "occupied", isCounterContext);
+          return;
+        }
+
         const nextQty = targetItem.quantity + delta;
         if (nextQty <= 0) {
           removeItem(index);
           return;
         }
-        const newItems = selectedTable.items
-          .map((it, i) => (i === index ? { ...it, quantity: nextQty } : it))
-          .filter(it => !it.cancelled);
+        const newItems = activeList.map((it, i) => (i === index ? { ...it, quantity: nextQty } : it));
         const newTotal = newItems.reduce((acc, item) => acc + item.price * item.quantity, 0);
+        lastLocalMutationAtRef.current = Date.now();
         const updated = { ...selectedTable, items: newItems, total: newTotal };
         setSelectedTable(updated);
         onUpdateTable(selectedTable.id, newItems, "occupied", isCounterContext);
 
-        const activeOrderId = pdvEditOrder ? pdvEditOrder.id : selectedTable.currentOrderId;
+        const activeOrderId = resolveLinkedOrderId(selectedTable);
         if (activeOrderId && onUpdateOrder) {
+          const sentItemsRemaining = newItems.filter(it => it.sentToKitchen !== false);
+          const sentSubtotal = sentItemsRemaining.reduce((acc, item) => acc + item.price * item.quantity, 0);
           const currentDeliveryFee = isDeliveryOrder ? parseCurrency(deliveryFeeInput) : (selectedTable.deliveryFee || pdvEditOrder?.deliveryFee || 0);
           onUpdateOrder(String(activeOrderId), {
-            items: newItems,
-            total: Math.max(0, newTotal + currentDeliveryFee + (additionalFee || 0) - (discount || 0))
+            items: sentItemsRemaining,
+            total: Math.max(0, sentSubtotal + currentDeliveryFee + (additionalFee || 0) - (discount || 0))
           });
         }
       },
-      [selectedTable, isCounterContext, onUpdateTable, pdvEditOrder, onUpdateOrder, removeItem, isDeliveryOrder, deliveryFeeInput, additionalFee, discount],
+      [selectedTable, isCounterContext, onUpdateTable, pdvEditOrder, onUpdateOrder, removeItem, isDeliveryOrder, deliveryFeeInput, additionalFee, discount, resolveLinkedOrderId],
     );
 
     const startEditItem = async (index: number) => {
-      const item = selectedTable!.items[index];
+      const activeList = (selectedTable?.items || []).filter(it => !it.cancelled);
+      const item = activeList[index];
+      if (!item) return;
       setEditingItemIndex(index);
       setTempObs(item.observation || "");
       setTempSeat(item.seat || "Geral");
@@ -1928,24 +2067,33 @@ const Tables: React.FC<TablesProps> = memo(
         removeItem(idxToRemove);
         return;
       }
-      const newItems = [...selectedTable.items];
-      newItems[editingItemIndex] = {
-        ...newItems[editingItemIndex],
-        observation: tempObs.trim(),
-        seat: tempSeat.trim() || "Geral",
-        quantity: tempQty,
-        sentToKitchen: false, // Reset so it can be sent to the kitchen again if edited
-      };
-      const cleanItems = newItems.filter(it => !it.cancelled);
+      const activeList = (selectedTable.items || []).filter(it => !it.cancelled);
+      const targetItem = activeList[editingItemIndex];
+      if (!targetItem) {
+        setEditingItemIndex(null);
+        return;
+      }
+      const cleanItems = activeList.map((it, idx) =>
+        idx === editingItemIndex
+          ? {
+              ...it,
+              observation: tempObs.trim(),
+              seat: tempSeat.trim() || "Geral",
+              quantity: tempQty,
+              sentToKitchen: false, // Reset so it can be sent to the kitchen again if edited
+            }
+          : it
+      );
       const newTotal = cleanItems.reduce(
         (acc, item) => acc + item.price * item.quantity,
         0,
       );
+      lastLocalMutationAtRef.current = Date.now();
       const updated = { ...selectedTable, items: cleanItems, total: newTotal };
       setSelectedTable(updated);
       onUpdateTable(selectedTable.id, cleanItems, "occupied", isCounterContext);
 
-      const activeOrderId = pdvEditOrder ? pdvEditOrder.id : selectedTable.currentOrderId;
+      const activeOrderId = resolveLinkedOrderId(selectedTable);
       if (activeOrderId && onUpdateOrder) {
         const currentDeliveryFee = isDeliveryOrder ? parseCurrency(deliveryFeeInput) : (selectedTable.deliveryFee || pdvEditOrder?.deliveryFee || 0);
         onUpdateOrder(String(activeOrderId), {
@@ -2025,8 +2173,9 @@ const Tables: React.FC<TablesProps> = memo(
       };
 
       setIsSendingToKitchen(true);
+      lastLocalMutationAtRef.current = Date.now();
       // Se estivermos em modo de edição de pedido (pdvEditOrder), usar o ID do pedido diretamente
-      const targetId = pdvEditOrder ? pdvEditOrder.id : selectedTable.id;
+      const targetId = pdvEditOrder ? pdvEditOrder.id : (selectedTable.currentOrderId || selectedTable.id);
       onSendToKitchen(targetId, activeItems, isCounterContext, customerData);
 
       // Marcar itens como enviados no estado local da comanda/mesa
@@ -2090,10 +2239,38 @@ const Tables: React.FC<TablesProps> = memo(
         (additionalFee || 0) -
         (discount || 0);
 
-      const updatedItems = activeItems.map((item) => ({
-        ...item,
-        sentToKitchen: true,
-      }));
+      const hasUnsentItems = activeItems.some(it => !it.sentToKitchen);
+      if (hasUnsentItems) {
+        onSendToKitchen(pdvEditOrder.id, activeItems, isCounterContext, {
+          customerName: customerName ? customerName.trim() : undefined,
+          customerPhone: customerPhone ? customerPhone.trim() : undefined,
+          customerAddress: deliveryAddress ? deliveryAddress.trim() : undefined,
+          deliveryFee: isDeliveryOrder ? deliveryFeeVal : undefined,
+          customerId: selectedCustomerId || undefined,
+          isDelivery: isDeliveryOrder,
+        });
+      }
+
+      const prevItems = (pdvEditOrder.items || []).filter(i => !i.cancelled);
+      const maxExistingBatch = prevItems.reduce((max, i) => Math.max(max, i.batchNumber || 1), (pdvEditOrder as any)?.currentBatch || 1);
+      const nextBatch = maxExistingBatch + 1;
+
+      const updatedItems = activeItems.map((item) => {
+        if (!item.sentToKitchen) {
+          return {
+            ...item,
+            sentToKitchen: true,
+            isNew: true,
+            batchNumber: item.batchNumber || nextBatch,
+            kitchenDispatched: false,
+            sentAt: new Date().toISOString(),
+          };
+        }
+        return {
+          ...item,
+          sentToKitchen: true,
+        };
+      });
 
       onUpdateOrder(pdvEditOrder.id, {
         items: updatedItems,
