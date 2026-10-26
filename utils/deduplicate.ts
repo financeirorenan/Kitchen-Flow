@@ -109,6 +109,13 @@ export function deduplicateOrders(ordersList: Order[]): Order[] {
     if (clientOrderId) candidateKeys.push(`cid:${clientOrderId}`);
     if (signature) candidateKeys.push(signature);
     if (lineageKey) candidateKeys.push(lineageKey);
+    if (o.items && o.items.length > 0 && !o.isSubTicket) {
+      for (const it of o.items) {
+        if (it?.id && String(it.id).startsWith('item-') && !String(it.id).startsWith('item-edit-') && !String(it.id).startsWith('item-sync-')) {
+          candidateKeys.push(`itemId:${o.tenantId || ''}_${it.id}`);
+        }
+      }
+    }
 
     let matchedIdx: number | undefined;
     for (const k of candidateKeys) {

@@ -3747,7 +3747,7 @@ const App: React.FC = () => {
       ? counterOrders.find(t => t.id === tableId || String(t.id) === String(tableId) || (t as any).docId === tableId || t.currentOrderId === String(tableId))
       : tables.find(t => t.id === tableId || (t as any).docId === tableId || t.number === tableId || String(t.id) === String(tableId) || Number(t.id) === Number(tableId) || t.currentOrderId === String(tableId));
     
-    const displayTableNumber = tableInfo ? tableInfo.number : (typeof tableId === 'number' ? tableId : (Number(String(tableId).replace(/\D/g, '')) || tableId));
+    const displayTableNumber = tableInfo ? tableInfo.number : (typeof tableId === 'number' ? tableId : (/^\d+$/.test(String(tableId).trim()) ? Number(String(tableId).trim()) : tableId));
     const now = new Date();
 
     const effectiveCustomerName = (customerData?.customerName && customerData.customerName.trim()) || tableInfo?.customerName || undefined;
@@ -3799,6 +3799,19 @@ const App: React.FC = () => {
           (o.id === String(tableId) || o.docId === String(tableId) || String(o.counterId) === String(tableId) || (tableInfo && (String(o.counterId) === String(tableInfo.id) || o.id === tableInfo.currentOrderId))) &&
           o.status !== 'cancelled' && 
           o.status !== 'finished'
+        );
+      }
+    }
+
+    // Fallback por impressão digital de IDs de itens (garante 0% de chance de duplicar um pedido cujos itens já pertencem a um pedido ativo)
+    if (!activeExistingOrder && items && items.length > 0) {
+      const incomingItemIds = new Set(items.map(i => i.id).filter(id => id && !String(id).startsWith('item-edit-') && !String(id).startsWith('item-sync-')));
+      if (incomingItemIds.size > 0) {
+        activeExistingOrder = orders.find(o =>
+          o &&
+          o.status !== 'cancelled' &&
+          !o.isSubTicket &&
+          (o.items || []).some(oi => oi.id && incomingItemIds.has(oi.id))
         );
       }
     }
@@ -3923,15 +3936,49 @@ const App: React.FC = () => {
         currentBatch: hasNewKitchenItems ? nextBatchNumber : ((activeExistingOrder as any)?.currentBatch || maxExistingBatch)
       };
 
-      // Se o pedido já estava pago e teve seu valor alterado, manter o pagamento e o financeiro sincronizados sem duplicar
+      // Se o pedido já estava pago e teve seu valor alterado, adicionar apenas a diferença no pagamento (ou ajustar se reduzido) sem duplicar
       if ((activeExistingOrder.isSettled || activeExistingOrder.paymentStatus === 'paid') && Math.abs((activeExistingOrder.total || 0) - finalOrderTotal) > 0.01) {
         const payMethod = activeExistingOrder.paymentMethod || activeExistingOrder.payments?.[0]?.method || 'dinheiro';
-        updates.payments = [{ method: payMethod, amount: finalOrderTotal, timestamp: now }];
-        const matchingFin = financialRecords.filter(r => r.orderId === activeExistingOrder!.id || (activeExistingOrder!.docId && r.orderId === activeExistingOrder!.docId));
-        if (matchingFin.length > 0) {
-          handleUpdateFinancialRecord(matchingFin[0].id, { amount: finalOrderTotal, orderId: activeExistingOrder.id }).catch(() => {});
-          for (let i = 1; i < matchingFin.length; i++) {
-            handleDeleteFinancialRecord(matchingFin[i].id).catch(() => {});
+        const prevPayments = (activeExistingOrder.payments && activeExistingOrder.payments.length > 0)
+          ? activeExistingOrder.payments
+          : [{ method: payMethod, amount: Number(activeExistingOrder.total) || 0, timestamp: activeExistingOrder.paidAt || activeExistingOrder.createdAt || now }];
+        const prevPaidSum = prevPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+        const diffAmount = Number((finalOrderTotal - prevPaidSum).toFixed(2));
+
+        if (diffAmount > 0.01) {
+          updates.payments = [
+            ...prevPayments.map((p, idx) => ({
+              ...p,
+              id: (p as any).id || `fin-${activeExistingOrder!.id}-${p.method}-${p.amount}-${idx}`,
+              alreadyRecorded: true
+            })),
+            {
+              id: `fin-${activeExistingOrder.id}-${payMethod}-${diffAmount}-${prevPayments.length}`,
+              method: payMethod,
+              amount: diffAmount,
+              alreadyRecorded: true,
+              timestamp: now
+            } as any
+          ];
+          handleAddFinancialRecord({
+            id: `fin-${activeExistingOrder.id}-${payMethod}-${diffAmount}-${prevPayments.length}`,
+            type: 'income',
+            amount: diffAmount,
+            category: activeExistingOrder.type === 'delivery' ? 'Vendas Entrega' : (activeExistingOrder.type === 'takeout' ? 'Vendas Balcão' : 'Vendas Mesa'),
+            description: `Adicional Pedido #${activeExistingOrder.dailyNumber || activeExistingOrder.id.slice(-4)} - Pagamento: ${payMethod}`,
+            date: now,
+            paymentMethod: payMethod as any,
+            orderId: activeExistingOrder.id,
+            status: 'paid'
+          }).catch(() => {});
+        } else {
+          updates.payments = [{ method: payMethod, amount: finalOrderTotal, timestamp: now }];
+          const matchingFin = financialRecords.filter(r => r.orderId === activeExistingOrder!.id || (activeExistingOrder!.docId && r.orderId === activeExistingOrder!.docId));
+          if (matchingFin.length > 0) {
+            handleUpdateFinancialRecord(matchingFin[0].id, { amount: finalOrderTotal, orderId: activeExistingOrder.id }).catch(() => {});
+            for (let i = 1; i < matchingFin.length; i++) {
+              handleDeleteFinancialRecord(matchingFin[i].id).catch(() => {});
+            }
           }
         }
       }
@@ -4707,14 +4754,34 @@ const App: React.FC = () => {
     if (updates.paymentMethod || updates.total !== undefined) {
       const newTotal = updates.total !== undefined ? updates.total : (oldOrder?.total || 0);
       if (!updates.payments && oldOrder?.payments && oldOrder.payments.length > 0) {
-        const uniqueOldMethods = Array.from(new Set(oldOrder.payments.map(p => p.method)));
-        if (oldOrder.payments.length === 1 || uniqueOldMethods.length === 1 || updates.paymentMethod) {
-          const targetMethod = updates.paymentMethod || oldOrder.payments[oldOrder.payments.length - 1].method || oldOrder.paymentMethod || 'dinheiro';
-          updates.payments = [{
-            method: targetMethod,
-            amount: newTotal,
-            timestamp: oldOrder.payments[0].timestamp || new Date()
-          }];
+        const oldPaidSum = oldOrder.payments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+        const diffAmount = Number((newTotal - oldPaidSum).toFixed(2));
+        const targetMethod = updates.paymentMethod || oldOrder.payments[oldOrder.payments.length - 1].method || oldOrder.paymentMethod || 'dinheiro';
+
+        if (diffAmount > 0.01) {
+          updates.payments = [
+            ...oldOrder.payments.map((p, idx) => ({
+              ...p,
+              id: (p as any).id || `fin-${targetId}-${p.method}-${p.amount}-${idx}`,
+              alreadyRecorded: true
+            })),
+            {
+              id: `fin-${targetId}-${targetMethod}-${diffAmount}-${oldOrder.payments.length}`,
+              method: targetMethod,
+              amount: diffAmount,
+              alreadyRecorded: true,
+              timestamp: new Date()
+            } as any
+          ];
+        } else {
+          const uniqueOldMethods = Array.from(new Set(oldOrder.payments.map(p => p.method)));
+          if (oldOrder.payments.length === 1 || uniqueOldMethods.length === 1 || updates.paymentMethod) {
+            updates.payments = [{
+              method: targetMethod,
+              amount: newTotal,
+              timestamp: oldOrder.payments[0].timestamp || new Date()
+            }];
+          }
         }
       }
     }
@@ -4915,7 +4982,7 @@ const App: React.FC = () => {
         let newDescription = matchingRecords[0].description;
         if (finalMethod) {
           if (newDescription.includes("Pagamento:")) {
-            newDescription = newDescription.replace(/(Pagamento:\s*)([^\s,]+)/i, `$1${finalMethod}`);
+            newDescription = newDescription.replace(/(Pagamento:\s*)(.+)$/i, `$1${finalMethod}`);
           } else {
             newDescription = `${newDescription} - Pagamento: ${finalMethod}`;
           }
@@ -5684,7 +5751,7 @@ const App: React.FC = () => {
     try {
       const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || (isSuperAdmin ? `saas-admin-${user?.uid}` : null);
       const strId = String(tableId);
-      const numericId = Number(strId.replace(/\D/g, ''));
+      const numericId = /^\d+$/.test(strId.trim()) ? Number(strId.trim()) : NaN;
       const now = new Date();
       
       const table = isCounter 
@@ -6086,7 +6153,7 @@ const App: React.FC = () => {
 
     // 2. Identificar a mesa/comanda/pedido e seu docId para sincronização precisa
     const strTableId = String(tableId);
-    const numTableId = Number(strTableId.replace(/\D/g, ''));
+    const numTableId = /^\d+$/.test(strTableId.trim()) ? Number(strTableId.trim()) : NaN;
     const source = isCounter ? counterOrders : tables;
     
     let table = source.find(t => 
@@ -6180,6 +6247,21 @@ const App: React.FC = () => {
         existingOrderId = activeOrd.id;
       }
     }
+    // Fallback por impressão digital de IDs de itens (impede 100% que um pedido editado gere outro KDS-... duplicado)
+    if (!existingOrderId && table.items && table.items.length > 0) {
+      const itemIds = new Set(table.items.map(i => i.id).filter(id => id && !String(id).startsWith('item-edit-') && !String(id).startsWith('item-sync-')));
+      if (itemIds.size > 0) {
+        const fingerprintMatch = orders.find(o =>
+          o &&
+          o.status !== 'cancelled' &&
+          !o.isSubTicket &&
+          (o.items || []).some(oi => oi.id && itemIds.has(oi.id))
+        );
+        if (fingerprintMatch) {
+          existingOrderId = fingerprintMatch.id;
+        }
+      }
+    }
 
     // 1. Validar Estoque (Melhoria de Especialista em Testes)
     // Verificamos antes de gerar o pedido para evitar inconsistências
@@ -6237,7 +6319,45 @@ const App: React.FC = () => {
       shiftOpenedAt: cashSession.openedAt || undefined,
       paymentStatus: 'paid',
       paymentMethod: method,
-      payments: payments?.map(p => ({ ...p, timestamp: new Date() })),
+      payments: (() => {
+        // Se o pedido já tinha pagamento(s) quitado(s) num valor menor que finalTotal, mas 'payments' veio como uma única entrada do total cheio,
+        // dividir automaticamente preservando o pagamento anterior e lançando apenas a diferença do novo item!
+        const incomingPayments = payments || [{ method, amount: finalTotal }];
+        if (
+          incomingPayments.length === 1 &&
+          !(incomingPayments[0] as any).alreadyRecorded &&
+          activeOrderObj &&
+          (activeOrderObj.isSettled || activeOrderObj.paymentStatus === 'paid')
+        ) {
+          const prevOrderPayments = (activeOrderObj.payments && activeOrderObj.payments.length > 0)
+            ? activeOrderObj.payments
+            : (activeOrderObj.paymentMethod ? [{ method: activeOrderObj.paymentMethod, amount: Number(activeOrderObj.total) || 0 }] : []);
+          const prevPaidSum = prevOrderPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+          const diffAmount = Number((finalTotal - prevPaidSum).toFixed(2));
+          if (prevPaidSum > 0 && diffAmount > 0.01 && prevOrderPayments.length === 1) {
+            return [
+              {
+                ...prevOrderPayments[0],
+                id: (prevOrderPayments[0] as any).id || `fin-${targetOrderId}-${prevOrderPayments[0].method}-${prevOrderPayments[0].amount}-0`,
+                alreadyRecorded: true,
+                timestamp: (prevOrderPayments[0] as any).timestamp || activeOrderObj.paidAt || new Date()
+              },
+              {
+                id: `fin-${targetOrderId}-${method}-${diffAmount}-1`,
+                method,
+                amount: diffAmount,
+                alreadyRecorded: false,
+                timestamp: new Date()
+              }
+            ];
+          }
+        }
+        return incomingPayments.map((p, idx) => ({
+          ...p,
+          id: (p as any).id || `fin-${targetOrderId}-${p.method}-${p.amount}-${idx}`,
+          timestamp: (p as any).timestamp || new Date()
+        }));
+      })(),
       isFiscalIssued: fiscal,
       fiscalKey: undefined,
       customerId: customerId,
@@ -6579,44 +6699,52 @@ const App: React.FC = () => {
 
       // Financial Records: Antes de registrar o pagamento final (ou atualizado), remover quaisquer lançamentos financeiros antigos
       // deste mesmo pedido que não façam parte dos pagamentos parciais já registrados (evita duplicar pagamento ao editar pedido)
+      const finalOrderPayments = newOrder.payments || payments || [];
       const preservedPartialIds = new Set(
-        (payments || []).filter(p => (p as any).alreadyRecorded && (p as any).id).map(p => String((p as any).id))
+        finalOrderPayments.filter(p => (p as any).alreadyRecorded && (p as any).id).map(p => String((p as any).id))
       );
       const staleOrderRecords = financialRecords.filter(r =>
         r.orderId &&
         (r.orderId === newOrder.id || (newOrder.docId && r.orderId === newOrder.docId)) &&
         !preservedPartialIds.has(String(r.id))
       );
+      const staleOrderRecordIds = new Set(staleOrderRecords.map(r => String(r.id)));
       for (const staleRec of staleOrderRecords) {
         await handleDeleteFinancialRecord(staleRec.id).catch(() => {});
       }
 
-      if (payments && payments.length > 0) {
+      if (finalOrderPayments.length > 0) {
         const customerUpdates: Record<string, { totalDebit: number, transactions: CustomerTransaction[] }> = {};
         
-        for (let i = 0; i < payments.length; i++) {
-          const p = payments[i];
+        for (let i = 0; i < finalOrderPayments.length; i++) {
+          const p = finalOrderPayments[i];
           const currentCustomerId = p.customerId || customerId;
           const paymentRecordId = (p as any).id || `fin-${newOrder.id}-${p.method}-${p.amount}-${i}`;
+          const existsInKeptRecords = Boolean(
+            (p as any).alreadyRecorded &&
+            financialRecords.some(r => String(r.id) === String(paymentRecordId) && !staleOrderRecordIds.has(String(r.id)))
+          );
 
           const targetCustomer = currentCustomerId ? customers.find(c => c.id === currentCustomerId) : null;
           const originLabel = isRealDelivery ? 'Entrega' : (isCounter ? 'Balcão' : `Mesa ${tableNumber || tableId}`);
 
           if (p.method === 'conta_cliente' && currentCustomerId) {
-            if (!customerUpdates[currentCustomerId]) {
-              customerUpdates[currentCustomerId] = { totalDebit: 0, transactions: [] };
+            if (!existsInKeptRecords) {
+              if (!customerUpdates[currentCustomerId]) {
+                customerUpdates[currentCustomerId] = { totalDebit: 0, transactions: [] };
+              }
+              customerUpdates[currentCustomerId].totalDebit += p.amount;
+              customerUpdates[currentCustomerId].transactions.push({
+                id: `tr-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 5)}`,
+                type: 'debit',
+                amount: p.amount,
+                description: `Consumo Parcial ${originLabel} ${targetCustomer?.name ? `(${targetCustomer.name})` : ''} - Pedido #${newOrder.id}`,
+                date: new Date(),
+                items: newOrder.items?.map(it => ({ name: it.name, quantity: it.quantity, price: it.price }))
+              });
             }
-            customerUpdates[currentCustomerId].totalDebit += p.amount;
-            customerUpdates[currentCustomerId].transactions.push({
-              id: `tr-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 5)}`,
-              type: 'debit',
-              amount: p.amount,
-              description: `Consumo Parcial ${originLabel} ${targetCustomer?.name ? `(${targetCustomer.name})` : ''} - Pedido #${newOrder.id}`,
-              date: new Date(),
-              items: newOrder.items?.map(it => ({ name: it.name, quantity: it.quantity, price: it.price }))
-            });
 
-            if (!(p as any).alreadyRecorded) {
+            if (!existsInKeptRecords) {
               await handleAddFinancialRecord({
                 id: paymentRecordId,
                 type: 'income',
@@ -6631,7 +6759,7 @@ const App: React.FC = () => {
             } else if ((p as any).id) {
               await handleUpdateFinancialRecord((p as any).id, { orderId: newOrder.id }).catch(() => {});
             }
-          } else if (!(p as any).alreadyRecorded) {
+          } else if (!existsInKeptRecords) {
             await handleAddFinancialRecord({
               id: paymentRecordId,
               type: 'income',

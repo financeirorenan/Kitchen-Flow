@@ -499,7 +499,7 @@ const Tables: React.FC<TablesProps> = memo(
         },
       ];
 
-      const targetCloseId = pdvEditOrder ? pdvEditOrder.id : selectedTable!.id;
+      const targetCloseId = pdvEditOrder ? pdvEditOrder.id : (selectedTable!.currentOrderId || selectedTable!.id);
 
       onCloseTable(
         targetCloseId as any,
@@ -545,12 +545,33 @@ const Tables: React.FC<TablesProps> = memo(
         }));
         const cleanEditSubtotal = cleanEditItems.reduce((acc, it) => acc + it.price * it.quantity, 0);
 
-        // Se o pedido já está pago/quitado, NÃO carregar os pagamentos finais como partialPayments abertos,
-        // pois isso faria o modal de pagamento somar o novo valor ao valor antigo já pago.
+        // Se o pedido já possui pagamentos registrados (parciais ou já quitados), preservamos como partes já pagas (alreadyRecorded: true).
+        // Assim, se o atendente adicionar um novo item (ex: uma bebida), o modal de pagamento cobrará APENAS a diferença do novo item!
+        // Caso o total não tenha aumentado (ex: apenas trocando a forma de pagamento de um pedido já pago), openPayment permitirá selecionar a nova forma para o total.
         const isAlreadyPaidOrder = Boolean(pdvEditOrder.isSettled || pdvEditOrder.paymentStatus === "paid");
-        const openPartialPayments = isAlreadyPaidOrder
-          ? []
-          : (pdvEditOrder.payments || existingTable?.partialPayments || existingCounter?.partialPayments || []);
+        const rawExistingPayments = (pdvEditOrder.payments && pdvEditOrder.payments.length > 0)
+          ? pdvEditOrder.payments.map((p, idx) => ({
+              id: (p as any).id || `fin-${pdvEditOrder.id}-${p.method}-${p.amount}-${idx}`,
+              method: p.method,
+              amount: Number(p.amount) || 0,
+              customerId: p.customerId,
+              isPaid: true,
+              alreadyRecorded: true,
+              isFiscalIssued: (p as any).isFiscalIssued,
+              fiscalKey: (p as any).fiscalKey,
+              customerDocument: (p as any).customerDocument,
+            }))
+          : (isAlreadyPaidOrder && pdvEditOrder.paymentMethod)
+            ? [{
+                id: `fin-${pdvEditOrder.id}-${pdvEditOrder.paymentMethod}-${pdvEditOrder.total || cleanEditSubtotal}-0`,
+                method: pdvEditOrder.paymentMethod,
+                amount: Number(pdvEditOrder.total) || cleanEditSubtotal,
+                customerId: pdvEditOrder.customerId,
+                isPaid: true,
+                alreadyRecorded: true,
+              }]
+            : (existingTable?.partialPayments || existingCounter?.partialPayments || []);
+        const openPartialPayments = rawExistingPayments;
 
         const mockTable: Table = existingTable ? {
           ...existingTable,
@@ -2342,17 +2363,33 @@ const Tables: React.FC<TablesProps> = memo(
     const openPayment = useCallback(() => {
       if (!selectedTable) return;
       const existingParts = selectedTable.partialPayments || [];
-      const totalPaidSoFar = existingParts.reduce((acc, p) => acc + p.amount, 0);
+      const totalPaidSoFar = existingParts.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
       const baseTotal = selectedTable.total + (isDeliveryOrder && isCounterContext ? parseCurrency(deliveryFeeInput) : 0);
 
-      setSplitParts(existingParts);
-      if (existingParts.length > 0) {
-        setIsSplitting(true);
-      } else {
+      // Se o pedido já estava pago e o valor NÃO aumentou (baseTotal <= totalPaidSoFar + 0.01),
+      // significa que o operador clicou em Pagar apenas para alterar a forma de pagamento do pedido inteiro.
+      // Porém, se um novo item foi adicionado (baseTotal > totalPaidSoFar + 0.01), mantemos o valor já pago em splitParts
+      // e cobramos APENAS a diferença (baseTotal - totalPaidSoFar)!
+      const isEditingAlreadyPaidSameTotal = Boolean(
+        existingParts.length > 0 &&
+        existingParts.every((p) => p.alreadyRecorded) &&
+        baseTotal <= totalPaidSoFar + 0.01
+      );
+
+      if (isEditingAlreadyPaidSameTotal) {
+        setSplitParts([]);
         setIsSplitting(false);
+        setRemainingBalance(Math.max(0, baseTotal));
+      } else {
+        setSplitParts(existingParts);
+        if (existingParts.length > 0) {
+          setIsSplitting(true);
+        } else {
+          setIsSplitting(false);
+        }
+        setRemainingBalance(Math.max(0, Number((baseTotal - totalPaidSoFar).toFixed(2))));
       }
 
-      setRemainingBalance(Math.max(0, baseTotal - totalPaidSoFar));
       setAdditionalFee(0);
       setAdditionalFeeReason("");
       setShowReasonInput(false);
