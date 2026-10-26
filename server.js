@@ -1,14 +1,17 @@
-// Compatibility entrypoint for deployment environments configured with "server.js"
+// Compatibility entrypoint for Hostinger / Node.js deployment environments configured with "server.js"
 import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
 
+process.env.NODE_ENV = process.env.NODE_ENV || 'production';
+
 const require = createRequire(import.meta.url);
 const bundledServer = path.resolve(process.cwd(), 'dist/server.cjs');
+const builtIndex = path.resolve(process.cwd(), 'dist/index.html');
 
-if (!existsSync(bundledServer)) {
-  console.log('[KitchenFlow] dist/server.cjs not found. Triggering build now...');
+if (!existsSync(bundledServer) || !existsSync(builtIndex)) {
+  console.log('[KitchenFlow] Build artifacts not found in dist/. Triggering build now...');
   try {
     execSync('npm run build', { stdio: 'inherit' });
   } catch (e) {

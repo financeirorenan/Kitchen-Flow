@@ -54,32 +54,23 @@ export const PayrollSimulator: React.FC<PayrollSimulatorProps> = ({
       .reduce((sum, order) => sum + (order.total || 0), 0);
   }, [orders]);
 
-  // Auxiliar: obter valores com fallback de preset realista de mercado
+  // Auxiliar: obter valores reais configurados pelo lojista (sem salários fictícios)
   const getUserPayrollData = (user: User) => {
     const type = user.contractType || (
       user.role === 'WAITER' ? 'Horista' :
       user.role === 'COURIER' ? 'Diarista' : 'CLT'
     );
     
-    // Presets realistas de salários
-    const defaultSalary = user.baseSalary !== undefined ? user.baseSalary : (
-      user.role === 'ADMIN' || user.role === 'OWNER' || user.role === 'MANAGER' ? 3500 :
-      user.role === 'CHEF' ? 2800 :
-      user.role === 'CASHIER' ? 1900 :
-      user.role === 'STOCK_ANALYST' ? 2200 : 1800
-    );
-
-    const defaultHourly = user.hourlyRate !== undefined ? user.hourlyRate : 12;
-    const defaultDaily = user.dailyRate !== undefined ? user.dailyRate : 110;
-    const defaultCommission = user.commissionRate !== undefined ? user.commissionRate : (
-      user.role === 'WAITER' ? 8 : 0
-    );
-    const defaultBenefits = user.benefits !== undefined ? user.benefits : 380;
+    const defaultSalary = user.baseSalary !== undefined ? user.baseSalary : 0;
+    const defaultHourly = user.hourlyRate !== undefined ? user.hourlyRate : 0;
+    const defaultDaily = user.dailyRate !== undefined ? user.dailyRate : 0;
+    const defaultCommission = user.commissionRate !== undefined ? user.commissionRate : 0;
+    const defaultBenefits = user.benefits !== undefined ? user.benefits : 0;
     const defaultDiscounts = user.discounts !== undefined ? user.discounts : 0;
-    const defaultBank = user.bankInfo || 'Chave Pix (E-mail ou CPF)';
+    const defaultBank = user.bankInfo || 'Não informado';
 
-    const hSim = hoursSimulated[user.id] !== undefined ? hoursSimulated[user.id] : (user.workingHoursSimulated || 160);
-    const dSim = daysSimulated[user.id] !== undefined ? daysSimulated[user.id] : (user.workingDaysSimulated || 22);
+    const hSim = hoursSimulated[user.id] !== undefined ? hoursSimulated[user.id] : (user.workingHoursSimulated || 0);
+    const dSim = daysSimulated[user.id] !== undefined ? daysSimulated[user.id] : (user.workingDaysSimulated || 0);
 
     return {
       type,
@@ -104,18 +95,14 @@ export const PayrollSimulator: React.FC<PayrollSimulatorProps> = ({
     return activeStaffList.map(user => {
       const pData = getUserPayrollData(user);
       
-      // Calcular comissão individual sobre as vendas do restaurante se houver comissão configurada
-      // Exemplo: se houver comissão de 10% do garçom, dividimos as vendas de mesas ou dividimos proporcionalmente
-      // Para simular de forma fiel, calculamos a comissão individual com base no faturamento do restaurante
-      // e dividimos entre a quantidade de garçons para ser super realista, ou direto % do faturamento
-      const totalRestaurantSales = salesVolume30Days > 0 ? salesVolume30Days : 38500; // fallback realista se vazio
+      // Calcular comissão individual apenas sobre as vendas reais do restaurante
+      const totalRestaurantSales = salesVolume30Days > 0 ? salesVolume30Days : 0;
       
       let comissaoCalculada = 0;
-      if (pData.commissionRate > 0) {
+      if (pData.commissionRate > 0 && totalRestaurantSales > 0) {
         if (user.role === 'WAITER') {
-          // Garçons dividem a caixinha (ex: 8% do faturamento total de mesas ou proporcional)
           const waitersCount = activeStaffList.filter(u => u.role === 'WAITER').length || 1;
-          const tableSales = totalRestaurantSales * 0.6; // mesas representam ~60% das vendas
+          const tableSales = totalRestaurantSales * 0.6;
           comissaoCalculada = (tableSales * (pData.commissionRate / 100)) / waitersCount;
         } else {
           comissaoCalculada = totalRestaurantSales * (pData.commissionRate / 100);
@@ -137,15 +124,11 @@ export const PayrollSimulator: React.FC<PayrollSimulatorProps> = ({
       const descontos = pData.discounts;
       const salarioLiquido = Math.max(0, proventos - descontos);
 
-      // Custos corporativos adicionais (Encargos Trabalhistas Brasileiros CLT)
-      // CLT: FGTS (8%), INSS patronal estimado (20%), Proporcional Férias (11.11%), 13º salário (8.33%) = ~47% adicionais
-      // PJ: Sem encargos (0%)
-      // Diarista/Horista: encargos reduzidos ou 0% dependendo do regime (simulamos 10% para cobertura/provisão)
       let encargosEmpresa = 0;
       if (pData.type === 'CLT') {
         encargosEmpresa = salarioBruto * 0.474;
       } else if (pData.type === 'Horista' || pData.type === 'Diarista') {
-        encargosEmpresa = salarioBruto * 0.15; // Provisão básica
+        encargosEmpresa = salarioBruto * 0.15;
       }
 
       const custoTotalEmpresa = salarioBruto + encargosEmpresa + pData.benefits + comissaoCalculada;
@@ -172,9 +155,9 @@ export const PayrollSimulator: React.FC<PayrollSimulatorProps> = ({
     const totalBeneficios = analyzedStaff.reduce((sum, s) => sum + s.pData.benefits, 0);
     const totalComissoes = analyzedStaff.reduce((sum, s) => sum + s.comissaoCalculada, 0);
     
-    // Proporção de custo de pessoal com faturamento (Labor Cost Ratio)
-    const activeSales = salesVolume30Days > 0 ? salesVolume30Days : 38500;
-    const laborCostRatio = (totalCustoEmpresa / activeSales) * 100;
+    // Proporção de custo de pessoal com faturamento real (Labor Cost Ratio)
+    const activeSales = salesVolume30Days > 0 ? salesVolume30Days : 0;
+    const laborCostRatio = activeSales > 0 ? (totalCustoEmpresa / activeSales) * 100 : 0;
 
     return {
       totalLiquido,

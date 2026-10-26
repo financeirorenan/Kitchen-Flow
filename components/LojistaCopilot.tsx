@@ -273,25 +273,49 @@ export default function LojistaCopilot({
     amount: number;
   }
 
-  const activeTenantId = tenantId || tenantData?.id || currentUser?.tenantId || 't1';
+  const activeTenantId = tenantId || tenantData?.id || currentUser?.tenantId || 'default';
+
+  // Helper to detect and strip the 4 legacy fake default items if they were never explicitly saved by the lojista
+  const sanitizeLegacyFakeFixedCosts = (list: any[], hasCloudSavedFlag?: boolean): FixedCostItem[] => {
+    if (!Array.isArray(list)) return [];
+    if (hasCloudSavedFlag) return list;
+    const legacySignature = [
+      { name: "Aluguel da Loja", amount: 1800, type: "rent" },
+      { name: "Contas de Consumo (Água, Luz, Net)", amount: 700, type: "rent" },
+      { name: "Folha de Salários - Equipe", amount: 3500, type: "staff" },
+      { name: "Pró-labore de Sócios", amount: 1300, type: "staff" },
+    ];
+    const isExactLegacyMock =
+      list.length === 4 &&
+      legacySignature.every((sig) =>
+        list.some((item) => item && item.name === sig.name && Number(item.amount) === sig.amount && item.type === sig.type)
+      );
+    return isExactLegacyMock ? [] : list;
+  };
 
   const [fixedCostsList, setFixedCostsList] = useState<FixedCostItem[]>(() => {
+    const cloudSavedFlag = Boolean((adminSettings as any)?.fixedCostsSaved);
+    const cloudList = (adminSettings as any)?.fixedCostsList;
+    if (Array.isArray(cloudList)) {
+      return sanitizeLegacyFakeFixedCosts(cloudList, cloudSavedFlag);
+    }
     if (typeof window !== "undefined") {
+      const explicitSaved = localStorage.getItem(`copilot_fixed_costs_saved_${activeTenantId}`) === "true";
       const saved = localStorage.getItem(`copilot_fixed_costs_list_${activeTenantId}`);
       if (saved) {
         try {
-          return JSON.parse(saved);
+          const parsed = JSON.parse(saved);
+          const cleaned = sanitizeLegacyFakeFixedCosts(parsed, explicitSaved || cloudSavedFlag);
+          if (cleaned.length === 0 && parsed.length === 4 && !explicitSaved) {
+            localStorage.removeItem(`copilot_fixed_costs_list_${activeTenantId}`);
+          }
+          return cleaned;
         } catch (e) {
           console.error(e);
         }
       }
     }
-    return [
-      { id: `fc-1-${activeTenantId}`, name: "Aluguel da Loja", type: "rent", amount: 1800 },
-      { id: `fc-2-${activeTenantId}`, name: "Contas de Consumo (Água, Luz, Net)", type: "rent", amount: 700 },
-      { id: `fc-3-${activeTenantId}`, name: "Folha de Salários - Equipe", type: "staff", amount: 3500 },
-      { id: `fc-4-${activeTenantId}`, name: "Pró-labore de Sócios", type: "staff", amount: 1300 },
-    ];
+    return [];
   });
 
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -320,36 +344,88 @@ export default function LojistaCopilot({
   const monthlyStaff = computedStaffTotal;
 
   const [estimatedWastePercent, setEstimatedWastePercent] = useState(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem(`copilot_estimated_waste_${activeTenantId}`);
-      return saved ? parseFloat(saved) : 3.5;
+    const cloudWaste = (adminSettings as any)?.estimatedWastePercent;
+    if (typeof cloudWaste === "number" && !isNaN(cloudWaste)) {
+      return cloudWaste;
     }
-    return 3.5;
+    if (typeof window !== "undefined") {
+      const explicitSaved = localStorage.getItem(`copilot_fixed_costs_saved_${activeTenantId}`) === "true";
+      const saved = localStorage.getItem(`copilot_estimated_waste_${activeTenantId}`);
+      if (saved && explicitSaved) {
+        const parsed = parseFloat(saved);
+        return isNaN(parsed) ? 0 : parsed;
+      }
+    }
+    return 0;
   });
 
-  // Re-sync when activeTenantId changes so switching lojistas loads each lojista's isolated costs
-  React.useEffect(() => {
+  const persistFixedCostsForTenant = (nextList: FixedCostItem[], nextWaste: number = estimatedWastePercent) => {
+    const nextRent = nextList.filter(item => item.type === 'rent').reduce((sum, item) => sum + item.amount, 0);
+    const nextStaff = nextList.filter(item => item.type === 'staff').reduce((sum, item) => sum + item.amount, 0);
     if (typeof window !== "undefined") {
+      localStorage.setItem(`copilot_fixed_costs_saved_${activeTenantId}`, "true");
+      localStorage.setItem(`copilot_fixed_costs_list_${activeTenantId}`, JSON.stringify(nextList));
+      localStorage.setItem(`copilot_monthly_rent_${activeTenantId}`, nextRent.toString());
+      localStorage.setItem(`copilot_monthly_staff_${activeTenantId}`, nextStaff.toString());
+      localStorage.setItem(`copilot_estimated_waste_${activeTenantId}`, nextWaste.toString());
+    }
+    if (onUpdateSettings && adminSettings) {
+      onUpdateSettings({
+        ...adminSettings,
+        fixedCostsList: nextList,
+        estimatedWastePercent: nextWaste,
+        fixedCostsSaved: true
+      } as any);
+    }
+  };
+
+  // Re-sync when activeTenantId or cloud adminSettings.fixedCostsList changes so each lojista only sees their own real data
+  React.useEffect(() => {
+    const cloudSavedFlag = Boolean((adminSettings as any)?.fixedCostsSaved);
+    const cloudList = (adminSettings as any)?.fixedCostsList;
+    const cloudWaste = (adminSettings as any)?.estimatedWastePercent;
+
+    if (Array.isArray(cloudList)) {
+      const cleaned = sanitizeLegacyFakeFixedCosts(cloudList, cloudSavedFlag);
+      setFixedCostsList(cleaned);
+      if (typeof window !== "undefined") {
+        localStorage.setItem(`copilot_fixed_costs_list_${activeTenantId}`, JSON.stringify(cleaned));
+        if (cloudSavedFlag) {
+          localStorage.setItem(`copilot_fixed_costs_saved_${activeTenantId}`, "true");
+        }
+      }
+    } else if (typeof window !== "undefined") {
+      const explicitSaved = localStorage.getItem(`copilot_fixed_costs_saved_${activeTenantId}`) === "true";
       const savedList = localStorage.getItem(`copilot_fixed_costs_list_${activeTenantId}`);
       if (savedList) {
         try {
-          setFixedCostsList(JSON.parse(savedList));
+          const parsed = JSON.parse(savedList);
+          const cleaned = sanitizeLegacyFakeFixedCosts(parsed, explicitSaved);
+          setFixedCostsList(cleaned);
+          if (cleaned.length === 0 && parsed.length === 4 && !explicitSaved) {
+            localStorage.removeItem(`copilot_fixed_costs_list_${activeTenantId}`);
+          }
         } catch (e) {
           console.error(e);
+          setFixedCostsList([]);
         }
       } else {
-        setFixedCostsList([
-          { id: `fc-1-${activeTenantId}`, name: "Aluguel da Loja", type: "rent", amount: 1800 },
-          { id: `fc-2-${activeTenantId}`, name: "Contas de Consumo (Água, Luz, Net)", type: "rent", amount: 700 },
-          { id: `fc-3-${activeTenantId}`, name: "Folha de Salários - Equipe", type: "staff", amount: 3500 },
-          { id: `fc-4-${activeTenantId}`, name: "Pró-labore de Sócios", type: "staff", amount: 1300 },
-        ]);
+        setFixedCostsList([]);
       }
-
-      const savedWaste = localStorage.getItem(`copilot_estimated_waste_${activeTenantId}`);
-      setEstimatedWastePercent(savedWaste ? parseFloat(savedWaste) : 3.5);
+    } else {
+      setFixedCostsList([]);
     }
-  }, [activeTenantId]);
+
+    if (typeof cloudWaste === "number" && !isNaN(cloudWaste)) {
+      setEstimatedWastePercent(cloudWaste);
+    } else if (typeof window !== "undefined") {
+      const explicitSaved = localStorage.getItem(`copilot_fixed_costs_saved_${activeTenantId}`) === "true";
+      const savedWaste = localStorage.getItem(`copilot_estimated_waste_${activeTenantId}`);
+      setEstimatedWastePercent(savedWaste && explicitSaved ? (parseFloat(savedWaste) || 0) : 0);
+    } else {
+      setEstimatedWastePercent(0);
+    }
+  }, [activeTenantId, (adminSettings as any)?.fixedCostsList, (adminSettings as any)?.estimatedWastePercent, (adminSettings as any)?.fixedCostsSaved]);
 
   const [isConfigOpen, setIsConfigOpen] = useState(false);
 
@@ -2596,7 +2672,11 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                           setEditAmount(item.amount ? maskCurrency((item.amount * 100).toFixed(0)) : "");
                         };
                         const deleteItem = () => {
-                          setFixedCostsList(prev => prev.filter(c => c.id !== item.id));
+                          setFixedCostsList(prev => {
+                            const next = prev.filter(c => c.id !== item.id);
+                            persistFixedCostsForTenant(next, estimatedWastePercent);
+                            return next;
+                          });
                         };
 
                         return (
@@ -2635,7 +2715,11 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                                       type="button"
                                       onClick={() => {
                                         const val = parseCurrency(editAmount);
-                                        setFixedCostsList(prev => prev.map(c => c.id === item.id ? { ...c, name: editName, type: editType, amount: val } : c));
+                                        setFixedCostsList(prev => {
+                                          const next = prev.map(c => c.id === item.id ? { ...c, name: editName, type: editType, amount: val } : c);
+                                          persistFixedCostsForTenant(next, estimatedWastePercent);
+                                          return next;
+                                        });
                                         setEditingItemId(null);
                                       }}
                                       className="p-1 bg-green-500 text-white hover:bg-green-600 rounded-lg shadow-sm transition-all text-xs"
@@ -2748,7 +2832,11 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                               type: newType,
                               amount: val
                             };
-                            setFixedCostsList(prev => [...prev, newItem]);
+                            setFixedCostsList(prev => {
+                              const next = [...prev, newItem];
+                              persistFixedCostsForTenant(next, estimatedWastePercent);
+                              return next;
+                            });
                             setNewName("");
                             setNewAmount("");
                           }
@@ -2766,7 +2854,11 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                             type: newType,
                             amount: val
                           };
-                          setFixedCostsList(prev => [...prev, newItem]);
+                          setFixedCostsList(prev => {
+                            const next = [...prev, newItem];
+                            persistFixedCostsForTenant(next, estimatedWastePercent);
+                            return next;
+                          });
                           setNewName("");
                           setNewAmount("");
                         }}
@@ -2785,34 +2877,18 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                 <button
                   type="button"
                   onClick={() => {
-                    const defaultList = [
-                      { id: `fc-1-${activeTenantId}`, name: "Aluguel da Loja", type: "rent" as const, amount: 1800 },
-                      { id: `fc-2-${activeTenantId}`, name: "Contas de Consumo (Água, Luz, Net)", type: "rent" as const, amount: 700 },
-                      { id: `fc-3-${activeTenantId}`, name: "Folha de Salários - Equipe", type: "staff" as const, amount: 3500 },
-                      { id: `fc-4-${activeTenantId}`, name: "Pró-labore de Sócios", type: "staff" as const, amount: 1300 },
-                    ];
-                    setFixedCostsList(defaultList);
-                    setEstimatedWastePercent(3.5);
-                    if (typeof window !== "undefined") {
-                      localStorage.setItem(`copilot_fixed_costs_list_${activeTenantId}`, JSON.stringify(defaultList));
-                      localStorage.setItem(`copilot_monthly_rent_${activeTenantId}`, "2500");
-                      localStorage.setItem(`copilot_monthly_staff_${activeTenantId}`, "4800");
-                      localStorage.setItem(`copilot_estimated_waste_${activeTenantId}`, "3.5");
-                    }
+                    setFixedCostsList([]);
+                    setEstimatedWastePercent(0);
+                    persistFixedCostsForTenant([], 0);
                   }}
                   className="py-2 bg-slate-100 hover:bg-slate-200 rounded-xl font-extrabold text-[10px] uppercase tracking-wider text-slate-600 transition-all"
                 >
-                  Padrões
+                  Limpar Tudo
                 </button>
                 <button
                   type="button"
                   onClick={() => {
-                    if (typeof window !== "undefined") {
-                      localStorage.setItem(`copilot_fixed_costs_list_${activeTenantId}`, JSON.stringify(fixedCostsList));
-                      localStorage.setItem(`copilot_monthly_rent_${activeTenantId}`, computedRentTotal.toString());
-                      localStorage.setItem(`copilot_monthly_staff_${activeTenantId}`, computedStaffTotal.toString());
-                      localStorage.setItem(`copilot_estimated_waste_${activeTenantId}`, estimatedWastePercent.toString());
-                    }
+                    persistFixedCostsForTenant(fixedCostsList, estimatedWastePercent);
                     setIsConfigOpen(false);
                   }}
                   className="py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-extrabold text-[10px] uppercase tracking-wider rounded-xl transition-all shadow-md shadow-indigo-600/15"

@@ -31,13 +31,18 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
   const [editingSheetProduct, setEditingSheetProduct] = useState<Product | null>(null);
   const [view, setView] = useState<'dashboard' | 'assistant' | 'reports' | 'pizza'>('dashboard');
 
-  // Target profit margin state
+  const activeTenantKey = useMemo(() => {
+    const firstTenant = products.find(p => p.tenantId)?.tenantId || rawMaterials.find(r => r.tenantId)?.tenantId || 'default';
+    return firstTenant;
+  }, [products, rawMaterials]);
+
+  // Target profit margin state isolated per tenant
   const [targetMargins, setTargetMargins] = useState<{
     default: number;
     categories: Record<string, number>;
     products: Record<string, number>;
   }>(() => {
-    const saved = localStorage.getItem('kf_target_margins');
+    const saved = localStorage.getItem(`kf_target_margins_${activeTenantKey}`);
     if (saved) {
       try {
         return JSON.parse(saved);
@@ -47,19 +52,14 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
     }
     return {
       default: 60,
-      categories: {
-        'Bebidas': 40,
-        'Drinks': 40,
-        'Cervejas': 40,
-        'Sucos': 55
-      },
+      categories: {},
       products: {}
     };
   });
 
   useEffect(() => {
-    localStorage.setItem('kf_target_margins', JSON.stringify(targetMargins));
-  }, [targetMargins]);
+    localStorage.setItem(`kf_target_margins_${activeTenantKey}`, JSON.stringify(targetMargins));
+  }, [targetMargins, activeTenantKey]);
 
   const calculateProductCost = (product: Product | null | undefined, channel: 'all' | 'dine_in' | 'takeout_delivery' | 'delivery' | 'takeout' = 'all'): number => {
     if (!product) return 0;
@@ -92,11 +92,11 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
     return targetMargins.default || 60;
   };
 
-  // Pizza simulation states
+  // Pizza simulation states isolated per tenant
   const [pizzaSabor1, setPizzaSabor1] = useState<Product | null>(null);
   const [pizzaSabor2, setPizzaSabor2] = useState<Product | null>(null);
   const [pizzaPricingRule, setPizzaPricingRule] = useState<'highest' | 'average' | 'proportional'>('highest');
-  const [pizzaBaseCost, setPizzaBaseCost] = useState<number>(4.50);
+  const [pizzaBaseCost, setPizzaBaseCost] = useState<number>(0);
   const [simulatedPizzas, setSimulatedPizzas] = useState<Array<{
     id: string;
     name1: string;
@@ -107,7 +107,7 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
     profit: number;
     rule: string;
   }>>(() => {
-    const saved = localStorage.getItem('kf_simulated_pizzas');
+    const saved = localStorage.getItem(`kf_simulated_pizzas_${activeTenantKey}`);
     if (saved) {
       try {
         return JSON.parse(saved);
@@ -119,80 +119,16 @@ const CMVAnalysis: React.FC<CMVAnalysisProps> = memo(({ products, rawMaterials, 
   });
 
   useEffect(() => {
-    localStorage.setItem('kf_simulated_pizzas', JSON.stringify(simulatedPizzas));
-  }, [simulatedPizzas]);
-
-  const samplePizzaFlavors: Product[] = useMemo(() => [
-    {
-      id: "pz-marguerita",
-      tenantId: "",
-      name: "Pizza Marguerita Especial",
-      category: "Pizza",
-      price: 48.00,
-      cost: 11.50,
-      stock: 100,
-      minStock: 10,
-      unit: "un"
-    },
-    {
-      id: "pz-calabresa",
-      tenantId: "",
-      name: "Pizza de Calabresa Defumada",
-      category: "Pizza",
-      price: 49.90,
-      cost: 13.20,
-      stock: 100,
-      minStock: 10,
-      unit: "un"
-    },
-    {
-      id: "pz-quatroqueijos",
-      tenantId: "",
-      name: "Pizza Quatro Queijos Gourmet",
-      category: "Pizza",
-      price: 58.00,
-      cost: 21.80,
-      stock: 100,
-      minStock: 10,
-      unit: "un"
-    },
-    {
-      id: "pz-portuguesa",
-      tenantId: "",
-      name: "Pizza Portuguesa Tradicional",
-      category: "Pizza",
-      price: 52.00,
-      cost: 16.50,
-      stock: 100,
-      minStock: 10,
-      unit: "un"
-    },
-    {
-      id: "pz-camarao",
-      tenantId: "",
-      name: "Pizza de Camarão com Catupiry",
-      category: "Pizza",
-      price: 79.90,
-      cost: 32.40,
-      stock: 100,
-      minStock: 10,
-      unit: "un"
-    }
-  ], []);
+    localStorage.setItem(`kf_simulated_pizzas_${activeTenantKey}`, JSON.stringify(simulatedPizzas));
+  }, [simulatedPizzas, activeTenantKey]);
 
   const combinedPizzaProducts = useMemo(() => {
     const dbPizzas = products.filter(p => 
       (p.category || '').toLowerCase().includes('pizza') || 
       p.name.toLowerCase().includes('pizza')
     );
-    const all = [...dbPizzas];
-    samplePizzaFlavors.forEach(sample => {
-      if (!all.some(p => p.name.toLowerCase() === sample.name.toLowerCase())) {
-        all.push(sample);
-      }
-    });
-    return all;
-  }, [products, samplePizzaFlavors]);
+    return dbPizzas.length > 0 ? dbPizzas : products;
+  }, [products]);
 
   // Set default selected pizzas once the combined list loads
   useEffect(() => {

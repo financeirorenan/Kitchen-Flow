@@ -92,7 +92,10 @@ const getResendClient = () => {
   return new Resend(apiKey);
 };
 
-const isProduction = process.env.NODE_ENV === "production";
+const isBundledBuild =
+  (typeof __filename !== "undefined" && __filename.endsWith("server.cjs")) ||
+  (process.argv[1] ? process.argv[1].endsWith("server.cjs") || process.argv[1].endsWith("server.js") : false);
+const isProduction = process.env.NODE_ENV === "production" || isBundledBuild;
 
 // Safely read and parse the Firebase Applet Config to avoid experimental JSON import assertions in ESM
 let firebaseConfig: any = {};

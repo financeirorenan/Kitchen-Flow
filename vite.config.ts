@@ -1,56 +1,9 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { VitePWA } from "vite-plugin-pwa";
 
 export default defineConfig({
   plugins: [
-    react(),
-    VitePWA({
-      strategies: "injectManifest",
-      srcDir: "public",
-      filename: "sw.js",
-      registerType: "autoUpdate",
-      includeAssets: ["favicon.svg", "icon.svg", "icon-192.png", "icon-512.png", "manifest-courier.json"],
-      manifest: {
-        id: "/entregador",
-        name: "KitchenFlow Entregador - App de Rotas",
-        short_name: "KF Motoboy",
-        description: "Aplicativo profissional de entregas, navegação GPS em tempo real, controle de ganhos e alertas offline para entregadores.",
-        theme_color: "#FF4F18",
-        background_color: "#0A0A0A",
-        display: "standalone",
-        orientation: "portrait-primary",
-        start_url: "/entregador",
-        scope: "/",
-        icons: [
-          {
-            src: "/icon-192.png",
-            sizes: "192x192",
-            type: "image/png",
-            purpose: "any"
-          },
-          {
-            src: "/icon-512.png",
-            sizes: "512x512",
-            type: "image/png",
-            purpose: "any"
-          },
-          {
-            src: "/icon-512.png",
-            sizes: "512x512",
-            type: "image/png",
-            purpose: "maskable"
-          }
-        ]
-      },
-      injectManifest: {
-        globPatterns: ["**/*.{js,css,html,ico,png,svg,woff,woff2}"],
-        maximumFileSizeToCacheInBytes: 6 * 1024 * 1024
-      },
-      devOptions: {
-        enabled: false
-      }
-    })
+    react()
   ],
   resolve: {
     dedupe: ["react", "react-dom", "react-router-dom", "framer-motion", "motion"]

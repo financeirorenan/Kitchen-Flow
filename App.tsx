@@ -2356,128 +2356,9 @@ const App: React.FC = () => {
 
     const initDb = async () => {
       try {
-        const pCount = await localDb.products.count();
-        if (pCount === 0 && isMounted) {
-          // Popula com dados iniciais se estiver vazio
-          await localDb.products.bulkAdd(INITIAL_PRODUCTS);
-          await localDb.diningTables.bulkAdd(INITIAL_TABLES);
-          await localDb.couriers.bulkAdd(INITIAL_COURIERS);
-          await localDb.users.bulkAdd(INITIAL_USERS);
-          await localDb.auditLogs.bulkAdd(INITIAL_AUDIT_LOGS);
-          await localDb.rawMaterials.bulkAdd(INITIAL_RAW_MATERIALS);
-          await localDb.settings.add({ 
-            id: 'global', 
-            admin: adminSettings, 
-            digitalMenu: digitalMenuSettings 
-          });
-          await localDb.bankAccounts.add({
-            id: '1',
-            tenantId: 'default',
-            name: 'Caixa Principal',
-            bankName: 'Dinheiro',
-            initialBalance: 0,
-            currentBalance: 0,
-            createdAt: new Date()
-          });
-        }
-
-        // CARREGA APENAS SE NÃO ESTIVERMOS NO MODO NUVEM/TENANT (Para evitar sobrescrita)
-        if (!currentUserData?.tenantId && !viewingTenantId && isMounted) {
-          const [p, t, c, o, u, l, f, s, rm, cc, ba] = await Promise.all([
-            localDb.products.toArray(),
-            localDb.diningTables.toArray(),
-            localDb.couriers.toArray(),
-            localDb.orders.toArray(),
-            localDb.users.toArray(),
-            localDb.auditLogs.toArray(),
-            localDb.financialRecords.toArray(),
-            localDb.settings.get('global'),
-            localDb.rawMaterials.toArray(),
-            localDb.cashClosings.toArray(),
-            localDb.bankAccounts.toArray()
-          ]);
-
-          if (isMounted) {
-            setProducts(p);
-            setTables(t);
-            setCouriers(c);
-            const todayMidnight = new Date();
-            todayMidnight.setHours(0, 0, 0, 0);
-            let maxDailyLoaded = 0;
-            const todayOrdersAsc = o
-              .filter(item => {
-                const d = item.createdAt instanceof Date ? item.createdAt : new Date(item.createdAt);
-                return !isNaN(d.getTime()) && d >= todayMidnight;
-              })
-              .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-
-            todayOrdersAsc.forEach(item => {
-              if (item.dailyNumber && item.dailyNumber > maxDailyLoaded) {
-                maxDailyLoaded = item.dailyNumber;
-              }
-            });
-
-            const sanitizedOrders = o.map(item => {
-              const d = item.createdAt instanceof Date ? item.createdAt : new Date(item.createdAt);
-              if (!isNaN(d.getTime()) && d >= todayMidnight && (!item.dailyNumber || item.dailyNumber <= 0)) {
-                maxDailyLoaded += 1;
-                return { ...item, dailyNumber: maxDailyLoaded };
-              }
-              return item;
-            });
-
-            setOrders(sanitizedOrders.sort((a, b) => {
-              const tA = a.createdAt instanceof Date ? a.createdAt.getTime() : new Date(a.createdAt).getTime();
-              const tB = b.createdAt instanceof Date ? b.createdAt.getTime() : new Date(b.createdAt).getTime();
-              return (isNaN(tB) ? 0 : tB) - (isNaN(tA) ? 0 : tA);
-            }));
-            setUsers(u);
-            setAuditLogs(l.sort((a, b) => {
-              const tA = a.timestamp instanceof Date ? a.timestamp.getTime() : new Date(a.timestamp).getTime();
-              const tB = b.timestamp instanceof Date ? b.timestamp.getTime() : new Date(b.timestamp).getTime();
-              return (isNaN(tB) ? 0 : tB) - (isNaN(tA) ? 0 : tA);
-            }));
-            setFinancialRecords(f.sort((a, b) => {
-              const tA = a.date instanceof Date ? a.date.getTime() : new Date(a.date).getTime();
-              const tB = b.date instanceof Date ? b.date.getTime() : new Date(b.date).getTime();
-              return (isNaN(tB) ? 0 : tB) - (isNaN(tA) ? 0 : tA);
-            }));
-            setRawMaterials(rm);
-            setCashClosings(cc.sort((a, b) => {
-              const tA = a.closedAt instanceof Date ? a.closedAt.getTime() : new Date(a.closedAt).getTime();
-              const tB = b.closedAt instanceof Date ? b.closedAt.getTime() : new Date(b.closedAt).getTime();
-              return (isNaN(tB) ? 0 : tB) - (isNaN(tA) ? 0 : tA);
-            }));
-            setBankAccounts(ba);
-            
-            if (s) {
-              setAdminSettings(prev => ({
-                ...prev,
-                ...s.admin,
-                socialMedia: { ...prev.socialMedia, ...s.admin.socialMedia },
-                fiscal: { ...prev.fiscal, ...s.admin.fiscal },
-                printing: { ...prev.printing, ...s.admin.printing },
-                apis: { ...prev.apis, ...s.admin.apis }
-              }));
-              setDigitalMenuSettings(prev => ({ ...prev, ...s.digitalMenu }));
-              if (s.cashSession) {
-                setCashSession(s.cashSession);
-              }
-              if (s.productCategories && Array.isArray(s.productCategories)) {
-                const cleanCats = s.productCategories.filter((c: string) => c && c !== 'Geral');
-                setProductCategories(cleanCats);
-              }
-              if (s.rawMaterialCategories && Array.isArray(s.rawMaterialCategories)) {
-                setRawMaterialCategories(s.rawMaterialCategories.filter(Boolean));
-              }
-            }
-
-            // Clientes
-            const cust = await localDb.customers.toArray();
-            setCustomers(cust);
-
-            setIsDbLoaded(true);
-          }
+        // Isolamento Estrito Multi-Tenant: NUNCA popular localDb com INITIAL_PRODUCTS, INITIAL_USERS ou dados fictícios.
+        if (isMounted) {
+          setIsDbLoaded(true);
         }
       } catch (err) {
         console.error("DB Initialization Error:", err);
@@ -9285,7 +9166,7 @@ const App: React.FC = () => {
             plans={plans}
             saasConfig={saasConfig}
             currentUser={currentUserData}
-            onUpdateSettings={setAdminSettings}
+            onUpdateSettings={handleUpdateLogisticsSettings}
           />
         )}
         {pdvEditOrder === null && activeTab === 'users' && hasPermission('users_manage') && (
