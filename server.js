@@ -1,29 +1,35 @@
-// Compatibility entrypoint for Hostinger / Node.js deployment environments configured with "server.js"
-import { createRequire } from 'node:module';
-import { existsSync } from 'node:fs';
-import { execSync } from 'node:child_process';
-import path from 'node:path';
+// Compatibility entrypoint for Hostinger / LiteSpeed lsnode.js / Node.js environments configured with "server.js"
+const fs = require('node:fs');
+const path = require('node:path');
+const { execSync } = require('node:child_process');
 
 process.env.NODE_ENV = process.env.NODE_ENV || 'production';
 
-const require = createRequire(import.meta.url);
-const bundledServer = path.resolve(process.cwd(), 'dist/server.cjs');
-const builtIndex = path.resolve(process.cwd(), 'dist/index.html');
+const appRoot = __dirname || process.cwd();
+const bundledServer = fs.existsSync(path.resolve(appRoot, 'dist/server.cjs'))
+  ? path.resolve(appRoot, 'dist/server.cjs')
+  : path.resolve(process.cwd(), 'dist/server.cjs');
+const builtIndex = fs.existsSync(path.resolve(appRoot, 'dist/index.html'))
+  ? path.resolve(appRoot, 'dist/index.html')
+  : path.resolve(process.cwd(), 'dist/index.html');
 
-if (!existsSync(bundledServer) || !existsSync(builtIndex)) {
+if (!fs.existsSync(bundledServer) || !fs.existsSync(builtIndex)) {
   console.log('[KitchenFlow] Build artifacts not found in dist/. Triggering build now...');
   try {
-    execSync('npm run build', { stdio: 'inherit' });
+    execSync('npm run build', { cwd: appRoot, stdio: 'inherit' });
   } catch (e) {
     console.error('[KitchenFlow] Build failed:', e);
-    process.exit(1);
   }
 }
 
-if (existsSync(bundledServer)) {
-  require(bundledServer);
+const finalServerPath = fs.existsSync(path.resolve(appRoot, 'dist/server.cjs'))
+  ? path.resolve(appRoot, 'dist/server.cjs')
+  : path.resolve(process.cwd(), 'dist/server.cjs');
+
+if (fs.existsSync(finalServerPath)) {
+  module.exports = require(finalServerPath);
 } else {
-  console.error('[KitchenFlow] Critical: Failed to find or generate dist/server.cjs');
+  console.error('[KitchenFlow] Critical: Failed to find dist/server.cjs');
   process.exit(1);
 }
 

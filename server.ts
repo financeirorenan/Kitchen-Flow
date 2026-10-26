@@ -93,30 +93,46 @@ const getResendClient = () => {
 };
 
 const isBundledBuild =
-  (typeof __filename !== "undefined" && __filename.endsWith("server.cjs")) ||
-  (process.argv[1] ? process.argv[1].endsWith("server.cjs") || process.argv[1].endsWith("server.js") : false);
+  (typeof __filename !== "undefined" && (__filename.endsWith("server.cjs") || __filename.endsWith("server.js"))) ||
+  (process.argv[1] ? process.argv[1].endsWith("server.cjs") || process.argv[1].endsWith("server.js") || process.argv[1].includes("lsnode") || process.argv[1].includes("passenger") : false);
 const isProduction = process.env.NODE_ENV === "production" || isBundledBuild;
 
-// Safely read and parse the Firebase Applet Config to avoid experimental JSON import assertions in ESM
+// Prevent transient async errors from terminating the Node worker process (which causes 503 on Hostinger/LiteSpeed)
+process.on("unhandledRejection", (reason) => {
+  console.warn("[Server] Unhandled Rejection captured safely:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[Server] Uncaught Exception captured safely:", err);
+});
+
+// Safely read and parse the Firebase Applet Config across different working directories
 let firebaseConfig: any = {};
 try {
-  const configFile = path.resolve("firebase-applet-config.json");
-  if (fs.existsSync(configFile)) {
-    firebaseConfig = JSON.parse(fs.readFileSync(configFile, "utf8"));
+  const candidates = [
+    path.resolve("firebase-applet-config.json"),
+    typeof __dirname !== "undefined" ? path.resolve(__dirname, "firebase-applet-config.json") : "",
+    typeof __dirname !== "undefined" ? path.resolve(__dirname, "../firebase-applet-config.json") : ""
+  ].filter(Boolean);
+
+  for (const configFile of candidates) {
+    if (fs.existsSync(configFile)) {
+      firebaseConfig = JSON.parse(fs.readFileSync(configFile, "utf8"));
+      if (firebaseConfig && firebaseConfig.projectId) break;
+    }
   }
 } catch (e) {
   console.warn("Could not read firebase-applet-config.json from disk:", e);
 }
 
-if (!firebaseConfig || !firebaseConfig.projectId) {
+if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.apiKey) {
   firebaseConfig = {
     projectId: process.env.FIREBASE_PROJECT_ID || "gen-lang-client-0510005534",
-    appId: process.env.FIREBASE_APP_ID || "",
-    apiKey: process.env.FIREBASE_API_KEY || "",
+    appId: process.env.FIREBASE_APP_ID || "1:962186130985:web:d91f039ee615badecace38",
+    apiKey: process.env.FIREBASE_API_KEY || "AIzaSyB0W3IE_ska3PsdBytrBZySLp9_zeeRYyU",
     authDomain: process.env.FIREBASE_AUTH_DOMAIN || "gen-lang-client-0510005534.firebaseapp.com",
     firestoreDatabaseId: process.env.FIREBASE_DATABASE_ID || "ai-studio-a2f13cdd-6132-4b0a-bec9-cdb7d1da2816",
     storageBucket: process.env.FIREBASE_STORAGE_BUCKET || "gen-lang-client-0510005534.firebasestorage.app",
-    messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || "",
+    messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || "962186130985",
     measurementId: ""
   };
 }
@@ -162,7 +178,10 @@ const clientDb = initializeClientFirestore(
 
 async function startServer() {
   const app = express();
-  const port = Number(process.env.PORT) || 3000;
+  const rawPort = process.env.PORT;
+  const portOrSocket: string | number = rawPort
+    ? (isNaN(Number(rawPort)) ? rawPort : Number(rawPort))
+    : 3000;
 
   app.use(cors());
   app.use(compression());
@@ -2985,9 +3004,12 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
     });
   } else {
     const cwdDist = path.join(process.cwd(), "dist");
-    const distPath = fs.existsSync(cwdDist)
+    const dirnameDist = typeof __dirname !== "undefined"
+      ? (fs.existsSync(path.join(__dirname, "index.html")) ? __dirname : path.resolve(__dirname, "dist"))
+      : path.resolve("dist");
+    const distPath = fs.existsSync(path.join(cwdDist, "index.html"))
       ? cwdDist
-      : (typeof __dirname !== "undefined" ? __dirname : path.resolve("dist"));
+      : dirnameDist;
 
     if (fs.existsSync(distPath)) {
       app.use(express.static(distPath, {
@@ -3030,9 +3052,17 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
     }
   }
 
-  app.listen(port, "0.0.0.0", () => {
-    console.log(`Server running on http://0.0.0.0:${port}`);
-  });
+  // Call app.listen(portOrSocket, callback) without a hardcoded host argument when running in production/Hostinger
+  // so LiteSpeed lsnode.js / Passenger Unix domain sockets and TCP ports both bind cleanly without 503 errors
+  if (isProduction || typeof portOrSocket === "string") {
+    app.listen(portOrSocket, () => {
+      console.log(`Server running on ${portOrSocket}`);
+    });
+  } else {
+    app.listen(Number(portOrSocket), "0.0.0.0", () => {
+      console.log(`Server running on http://0.0.0.0:${portOrSocket}`);
+    });
+  }
 }
 
 startServer().catch((err) => {
