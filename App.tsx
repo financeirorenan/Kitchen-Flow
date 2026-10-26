@@ -8223,6 +8223,28 @@ const App: React.FC = () => {
     return <Login onLoginSuccess={() => {}} />;
   }
 
+  // 1b. Quando o usuário acaba de clicar em Logar (/login) ou está em transição de autenticação na rota /login,
+  // exibir o Splash Screen oficial do KitchenFlow AI em vez do site institucional.
+  if (user && (location.pathname === '/login' || (currentProject === 'WEBSITE' && !location.pathname.startsWith('/site') && !location.pathname.startsWith('/kitchenflow') && location.pathname !== '/'))) {
+    return (
+      <div className="min-h-screen bg-[#FF4F18] flex flex-col items-center justify-center p-6 text-white relative overflow-hidden select-none">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.18),transparent_55%)] pointer-events-none" />
+        <div className="flex flex-col items-center gap-6 z-10 text-center">
+          <div className="w-20 h-20 bg-white/10 backdrop-blur-md border border-white/25 rounded-3xl flex items-center justify-center shadow-2xl shadow-black/10">
+            <span className="text-4xl font-black tracking-tighter text-white drop-shadow-md">K</span>
+          </div>
+          <div className="space-y-1.5">
+            <h1 className="text-2xl font-black tracking-tighter text-white">KitchenFlow AI</h1>
+            <p className="text-white/85 font-black text-[10px] uppercase tracking-[0.25em] animate-pulse">
+              Preparando seu ambiente...
+            </p>
+          </div>
+          <div className="w-8 h-8 border-3 border-white/30 border-t-white rounded-full animate-spin mt-2" />
+        </div>
+      </div>
+    );
+  }
+
   // 2. Se o usuário está autenticado no Firebase Auth mas os dados no Firestore (currentUserData) ainda NÃO carregaram:
   // Mostramos tela de carregamento para garantir consistência e evitar mostrar plataforma nula ou vazia.
   if (user && !currentUserData && authLoading && !isPublicRoute) {
