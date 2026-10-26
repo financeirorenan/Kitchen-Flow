@@ -1,6 +1,6 @@
 /* KitchenFlow Courier & PWA Service Worker (InjectManifest + Offline Cache + Firestore Push) */
 const WB_MANIFEST = self.__WB_MANIFEST || [];
-const CACHE_NAME = 'kitchenflow-courier-pwa-v6';
+const CACHE_NAME = 'kitchenflow-courier-pwa-v7';
 const MAP_CACHE_NAME = 'kitchenflow-map-tiles-v2';
 const FONT_CACHE_NAME = 'kitchenflow-fonts-v2';
 
@@ -129,7 +129,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Only cache built static assets (/assets/*, icons, manifests, fonts) on same-origin
+  // Built static assets (/assets/*, icons, manifests, fonts) on same-origin: Network-first to avoid stale JS bundles
   const isStaticAsset =
     url.origin === self.location.origin &&
     (url.pathname.startsWith('/assets/') ||
@@ -140,18 +140,15 @@ self.addEventListener('fetch', (event) => {
 
   if (isStaticAsset) {
     event.respondWith(
-      caches.match(event.request).then((cached) => {
-        const fetchPromise = fetch(event.request)
-          .then((networkResponse) => {
-            if (networkResponse && networkResponse.status === 200) {
-              const copy = networkResponse.clone();
-              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-            }
-            return networkResponse;
-          })
-          .catch(() => cached);
-        return cached || fetchPromise;
-      })
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const copy = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          }
+          return networkResponse;
+        })
+        .catch(() => caches.match(event.request))
     );
   }
 });

@@ -8,7 +8,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 if (typeof window !== 'undefined') {
   if ('caches' in window) {
     const validCaches = [
-      'kitchenflow-courier-pwa-v6',
+      'kitchenflow-courier-pwa-v7',
       'kitchenflow-map-tiles-v2',
       'kitchenflow-fonts-v2'
     ];

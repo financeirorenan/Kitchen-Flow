@@ -1840,23 +1840,26 @@ const App: React.FC = () => {
             return next;
           });
         }
-        if (s.productCategories && Array.isArray(s.productCategories)) {
-          const cleanCats = s.productCategories.filter((c: string) => c && c !== 'Geral');
-          setProductCategories(prev => {
-            if (JSON.stringify(prev) === JSON.stringify(cleanCats)) return prev;
-            return cleanCats;
-          });
-        } else if (effectiveTenantId !== 'lojista') {
-          setProductCategories([]);
-        }
-        if (s.rawMaterialCategories && Array.isArray(s.rawMaterialCategories)) {
-          const cleanRawCats = s.rawMaterialCategories.filter(Boolean);
-          setRawMaterialCategories(prev => {
-            if (JSON.stringify(prev) === JSON.stringify(cleanRawCats)) return prev;
-            return cleanRawCats;
-          });
-        } else if (effectiveTenantId !== 'lojista') {
-          setRawMaterialCategories([]);
+        const isRecentCategoryWrite = Date.now() - lastWriteTimeRef.current <= 4000;
+        if (!isRecentCategoryWrite) {
+          if (s.productCategories && Array.isArray(s.productCategories)) {
+            const cleanCats = s.productCategories.filter((c: string) => c && c !== 'Geral');
+            setProductCategories(prev => {
+              if (JSON.stringify(prev) === JSON.stringify(cleanCats)) return prev;
+              return cleanCats;
+            });
+          } else if (effectiveTenantId !== 'lojista') {
+            setProductCategories([]);
+          }
+          if (s.rawMaterialCategories && Array.isArray(s.rawMaterialCategories)) {
+            const cleanRawCats = s.rawMaterialCategories.filter(Boolean);
+            setRawMaterialCategories(prev => {
+              if (JSON.stringify(prev) === JSON.stringify(cleanRawCats)) return prev;
+              return cleanRawCats;
+            });
+          } else if (effectiveTenantId !== 'lojista') {
+            setRawMaterialCategories([]);
+          }
         }
         if (s.cashSession) {
           // Only update if we don't have pending writes to this specific field to avoid flipping back 
@@ -7306,12 +7309,17 @@ const App: React.FC = () => {
         }
       }).catch(err => console.error("Error saving product categories:", err));
 
-      // Persist in Firestore settings if tenantId exists
+      // Persist in Firestore settings and publicStorefronts if tenantId exists
       if (effectiveTenantId) {
         setDoc(doc(db, 'settings', effectiveTenantId), {
           productCategories: resolved,
           updatedAt: new Date()
         }, { merge: true }).catch(err => console.error("Error syncing product categories to cloud:", err));
+
+        setDoc(doc(db, 'publicStorefronts', effectiveTenantId), {
+          productCategories: resolved,
+          updatedAt: new Date()
+        }, { merge: true }).catch(err => console.error("Error syncing product categories to publicStorefronts:", err));
       }
 
       return resolved;
