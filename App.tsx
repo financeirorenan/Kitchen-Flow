@@ -1733,6 +1733,78 @@ const App: React.FC = () => {
             return p;
           });
           col.setter(cleanedProducts);
+        } else if (col.name === 'diningTables') {
+          const normalizedTables = items.map((t: any) => {
+            const activeItems = (t.items || []).filter((i: any) => !i.cancelled);
+            const itemsSum = activeItems.reduce(
+              (acc: number, i: any) => acc + (Number(i.price) || 0) * (Number(i.quantity) || 1),
+              0
+            );
+            const paidPartialSum = (t.partialPayments || []).reduce(
+              (acc: number, p: any) => acc + (Number(p?.amount) || 0),
+              0
+            );
+            const effectiveTotal = activeItems.length > 0 ? itemsSum : (t.status === 'available' ? 0 : (Number(t.total) || 0));
+
+            // Se a mesa está como available mas ficou com saldo/itens residuais (ex: R$ 50.00)
+            // ou se está como occupied/billing mas sem nenhum item e total zero
+            if (
+              (t.status === 'available' && ((Number(t.total) || 0) > 0 || activeItems.length > 0 || paidPartialSum > 0)) ||
+              ((t.status === 'occupied' || t.status === 'billing') && activeItems.length === 0 && effectiveTotal <= 0)
+            ) {
+              const targetDocId = t.docId || t._firestoreId;
+              if (targetDocId && effectiveTenantId) {
+                setDoc(
+                  doc(db, 'diningTables', targetDocId),
+                  cleanObject({
+                    status: 'available',
+                    items: [],
+                    total: 0,
+                    currentOrderId: null,
+                    partialPayments: [],
+                    updatedAt: new Date()
+                  }),
+                  { merge: true }
+                ).catch(() => {});
+              }
+              return {
+                ...t,
+                status: 'available',
+                items: [],
+                total: 0,
+                currentOrderId: null,
+                partialPayments: []
+              };
+            }
+
+            // Se a mesa tem pagamento parcial menor que o total, garantir status 'billing' (amarela)
+            if (
+              effectiveTotal > 0 &&
+              paidPartialSum > 0 &&
+              paidPartialSum < effectiveTotal - 0.01 &&
+              t.status !== 'billing'
+            ) {
+              const targetDocId = t.docId || t._firestoreId;
+              if (targetDocId && effectiveTenantId) {
+                setDoc(
+                  doc(db, 'diningTables', targetDocId),
+                  cleanObject({ status: 'billing', total: effectiveTotal, updatedAt: new Date() }),
+                  { merge: true }
+                ).catch(() => {});
+              }
+              return {
+                ...t,
+                status: 'billing',
+                total: effectiveTotal
+              };
+            }
+
+            return {
+              ...t,
+              total: effectiveTotal
+            };
+          });
+          col.setter(normalizedTables);
         } else {
           col.setter(items);
         }
@@ -2997,12 +3069,19 @@ const App: React.FC = () => {
             });
 
             // Sincronizar mesa se o pedido for de mesa (somente se ainda não foi pago/fechado)
-            if (cloudOrder.type === 'table' && cloudOrder.tableNumber && !cloudOrder.isSettled && cloudOrder.paymentStatus !== 'paid') {
-              setTables(prev => prev.map(t => (t.number === cloudOrder.tableNumber || String(t.number) === String(cloudOrder.tableNumber) || t.currentOrderId === cloudOrder.id) ? {
-                ...t,
-                currentOrderId: cloudOrder.id,
-                status: (cloudOrder.status === 'delivered' || cloudOrder.status === 'finished' || cloudOrder.status === 'cancelled') ? t.status : 'occupied'
-              } : t));
+            if (cloudOrder.type === 'table' && cloudOrder.tableNumber && !cloudOrder.isSettled && cloudOrder.paymentStatus !== 'paid' && cloudOrder.status !== 'cancelled' && cloudOrder.status !== 'finished') {
+              setTables(prev => prev.map(t => {
+                if (t.number === cloudOrder.tableNumber || String(t.number) === String(cloudOrder.tableNumber) || t.currentOrderId === cloudOrder.id) {
+                  const paidPartialSum = (t.partialPayments || []).reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+                  const hasPartials = t.status === 'billing' || (paidPartialSum > 0 && paidPartialSum < (t.total || cloudOrder.total || 0) - 0.01);
+                  return {
+                    ...t,
+                    currentOrderId: cloudOrder.id,
+                    status: (cloudOrder.status === 'delivered') ? t.status : (hasPartials ? 'billing' : 'occupied')
+                  };
+                }
+                return t;
+              }));
             }
 
             setOrders(prev => {
@@ -5054,6 +5133,89 @@ const App: React.FC = () => {
     });
   }, [orders, financialRecords, tables, cashSession?.isOpen, cashSession?.openedAt, viewingTenantId, currentUserData?.tenantId, tenantData?.id]);
 
+  // Auto-reparo de status de mesas: libera mesas cujos pedidos já foram pagos/cancelados ou que ficaram presas sem itens,
+  // e garante cor amarela ('billing') quando houver pagamento parcial pendente
+  const healedTableStatesRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (tables.length === 0) return;
+    const effectiveTenantId = getCanonicalTenantId(currentUserData, viewingTenantId, tenantData);
+
+    tables.forEach(t => {
+      if (!t || t.status === 'cleaning') return;
+      const activeItems = (t.items || []).filter(i => !i.cancelled);
+      const itemsSum = activeItems.reduce((acc, i) => acc + (Number(i.price) || 0) * (Number(i.quantity) || 1), 0);
+      const paidPartialSum = (t.partialPayments || []).reduce((acc, p) => acc + (Number(p?.amount) || 0), 0);
+
+      const linkedOrd = t.currentOrderId
+        ? orders.find(o => o.id === t.currentOrderId || o.docId === t.currentOrderId)
+        : null;
+      const isLinkedOrdSettledOrCancelled = Boolean(
+        linkedOrd && (
+          linkedOrd.status === 'cancelled' ||
+          (linkedOrd.isSettled && linkedOrd.paymentStatus === 'paid' && Boolean(linkedOrd.paymentMethod || (linkedOrd.payments && linkedOrd.payments.length > 0)))
+        )
+      );
+      const hasActiveUnpaidOrderForTable = orders.some(o =>
+        o &&
+        o.status !== 'cancelled' &&
+        o.status !== 'finished' &&
+        !o.isSettled &&
+        o.paymentStatus !== 'paid' &&
+        (o.type === 'table' || o.type === 'dine_in' || !o.type) &&
+        String(o.tableNumber) === String(t.number)
+      );
+
+      const shouldResetToAvailable =
+        (t.status === 'available' && ((Number(t.total) || 0) > 0 || activeItems.length > 0 || paidPartialSum > 0)) ||
+        ((t.status === 'occupied' || t.status === 'billing') && (
+          (activeItems.length === 0 && itemsSum <= 0 && !hasActiveUnpaidOrderForTable) ||
+          (isLinkedOrdSettledOrCancelled && !hasActiveUnpaidOrderForTable)
+        ));
+
+      if (shouldResetToAvailable) {
+        const healKey = `reset_tbl_${effectiveTenantId}_${t.id}_${t.number}_${t.status}_${t.total}_${t.currentOrderId || ''}`;
+        if (healedTableStatesRef.current.has(healKey)) return;
+        healedTableStatesRef.current.add(healKey);
+
+        const resetPayload = {
+          status: 'available' as const,
+          items: [],
+          total: 0,
+          currentOrderId: null,
+          partialPayments: [],
+          updatedAt: new Date()
+        };
+
+        setTables(prev => prev.map(tb => (tb.id === t.id || tb.number === t.number) ? { ...tb, ...resetPayload } : tb));
+        const numId = typeof t.id === 'number' ? t.id : Number(String(t.id).replace(/\D/g, ''));
+        if (!isNaN(numId)) {
+          localDb.diningTables.update(numId, resetPayload as any).catch(() => {});
+        }
+        const targetDocId = (t as any).docId || (t as any)._firestoreId;
+        if (effectiveTenantId && targetDocId) {
+          setDoc(doc(db, 'diningTables', targetDocId), cleanObject(resetPayload), { merge: true }).catch(() => {});
+        }
+        return;
+      }
+
+      if (t.status === 'occupied' && itemsSum > 0 && paidPartialSum > 0 && paidPartialSum < itemsSum - 0.01) {
+        const healKey = `billing_tbl_${effectiveTenantId}_${t.id}_${paidPartialSum.toFixed(2)}_${itemsSum.toFixed(2)}`;
+        if (healedTableStatesRef.current.has(healKey)) return;
+        healedTableStatesRef.current.add(healKey);
+
+        setTables(prev => prev.map(tb => (tb.id === t.id || tb.number === t.number) ? { ...tb, status: 'billing', total: itemsSum } : tb));
+        const numId = typeof t.id === 'number' ? t.id : Number(String(t.id).replace(/\D/g, ''));
+        if (!isNaN(numId)) {
+          localDb.diningTables.update(numId, { status: 'billing', total: itemsSum } as any).catch(() => {});
+        }
+        const targetDocId = (t as any).docId || (t as any)._firestoreId;
+        if (effectiveTenantId && targetDocId) {
+          setDoc(doc(db, 'diningTables', targetDocId), cleanObject({ status: 'billing', total: itemsSum, updatedAt: new Date() }), { merge: true }).catch(() => {});
+        }
+      }
+    });
+  }, [tables, orders, viewingTenantId, currentUserData?.tenantId, tenantData?.id]);
+
   // Auto-reparo para pedidos duplicados em edições anteriores (mesmo dailyNumber, tipo e horário de criação) e pagamentos somados indevidamente
   const healedEditedOrdersRef = useRef<Set<string>>(new Set());
   useEffect(() => {
@@ -5395,7 +5557,6 @@ const App: React.FC = () => {
     const effectiveTenantId = viewingTenantId || currentUserData?.tenantId || (isSuperAdmin ? `saas-admin-${user?.uid}` : null);
     const numericId = typeof id === 'string' ? Number(id) : id;
 
-    const tableUpdates: Record<string, any> = { items: activeItems, status, total };
     const existingTable = (!isCounter ? tables : counterOrders).find(t =>
       t.id === id ||
       t.id === numericId ||
@@ -5403,13 +5564,39 @@ const App: React.FC = () => {
       (t as any).docId === id ||
       t.currentOrderId === String(id)
     );
-    if (existingTable?.currentOrderId) {
-      tableUpdates.currentOrderId = existingTable.currentOrderId;
+    const effectivePartials = partialPayments !== undefined ? partialPayments : existingTable?.partialPayments;
+    const paidPartialSum = (effectivePartials || []).reduce((acc, p) => acc + (Number(p?.amount) || 0), 0);
+    const computedStatus: Table['status'] =
+      status === 'available' || (!isCounter && activeItems.length === 0 && paidPartialSum <= 0)
+        ? 'available'
+        : (total > 0 && paidPartialSum > 0 && paidPartialSum < total - 0.01)
+          ? 'billing'
+          : status;
+
+    const tableUpdates: Record<string, any> =
+      computedStatus === 'available'
+        ? {
+            items: [],
+            status: 'available',
+            total: 0,
+            currentOrderId: null,
+            partialPayments: []
+          }
+        : {
+            items: activeItems,
+            status: computedStatus,
+            total
+          };
+
+    if (computedStatus !== 'available') {
+      if (existingTable?.currentOrderId) {
+        tableUpdates.currentOrderId = existingTable.currentOrderId;
+      }
+      if (partialPayments !== undefined) {
+        tableUpdates.partialPayments = partialPayments;
+      }
     }
-    if (partialPayments !== undefined) {
-      tableUpdates.partialPayments = partialPayments;
-    }
-    if (customerData) {
+    if (customerData && computedStatus !== 'available') {
       if (customerData.customerName !== undefined) tableUpdates.customerName = customerData.customerName;
       if (customerData.customerPhone !== undefined) tableUpdates.customerPhone = customerData.customerPhone;
       if (customerData.customerAddress !== undefined) tableUpdates.customerAddress = customerData.customerAddress;
@@ -5539,48 +5726,47 @@ const App: React.FC = () => {
 
         if (activeItems.length === 0 || (existingOrderItems.length > 0 && sentItemsOnly.length === 0 && activeItems.every(it => !it.sentToKitchen))) {
           await handleUpdateOrderStatus(orderIdToSync, 'cancelled');
-          return;
-        }
+        } else {
+          const mergedOrderItems = sentItemsOnly.map(it => {
+            const prevMatch = existingOrderItems.find(oi =>
+              Boolean(oi.id && it.id && oi.id === it.id) ||
+              (oi.productId === it.productId && oi.name === it.name && (oi.observation || '') === (it.observation || ''))
+            );
+            return prevMatch ? {
+              ...prevMatch,
+              ...it,
+              id: prevMatch.id || it.id,
+              batchNumber: it.batchNumber ?? prevMatch.batchNumber ?? 1,
+              isNew: it.isNew ?? prevMatch.isNew ?? false,
+              sentAt: it.sentAt ?? prevMatch.sentAt,
+              kitchenDispatched: it.kitchenDispatched ?? prevMatch.kitchenDispatched ?? false,
+              sentToKitchen: true
+            } : it;
+          });
+          const activeItemsTotal = mergedOrderItems.reduce((acc, it) => acc + (it.price * it.quantity), 0);
+          const fullTableOrderTotal = Math.max(0, activeItemsTotal + (currentOrderObj?.deliveryFee || 0) + (currentOrderObj?.additionalFee || 0) - (currentOrderObj?.discount || 0));
 
-        const mergedOrderItems = sentItemsOnly.map(it => {
-          const prevMatch = existingOrderItems.find(oi =>
-            Boolean(oi.id && it.id && oi.id === it.id) ||
-            (oi.productId === it.productId && oi.name === it.name && (oi.observation || '') === (it.observation || ''))
-          );
-          return prevMatch ? {
-            ...prevMatch,
-            ...it,
-            id: prevMatch.id || it.id,
-            batchNumber: it.batchNumber ?? prevMatch.batchNumber ?? 1,
-            isNew: it.isNew ?? prevMatch.isNew ?? false,
-            sentAt: it.sentAt ?? prevMatch.sentAt,
-            kitchenDispatched: it.kitchenDispatched ?? prevMatch.kitchenDispatched ?? false,
-            sentToKitchen: true
-          } : it;
-        });
-        const activeItemsTotal = mergedOrderItems.reduce((acc, it) => acc + (it.price * it.quantity), 0);
-        const fullTableOrderTotal = Math.max(0, activeItemsTotal + (currentOrderObj?.deliveryFee || 0) + (currentOrderObj?.additionalFee || 0) - (currentOrderObj?.discount || 0));
-
-        setOrders(prev => prev.map(o => (o.id === orderIdToSync || o.docId === orderIdToSync) ? {
-          ...o,
-          items: mergedOrderItems,
-          total: fullTableOrderTotal,
-          updatedAt: new Date()
-        } : o));
-
-        localDb.orders.update(orderIdToSync, {
-          items: mergedOrderItems,
-          total: fullTableOrderTotal,
-          updatedAt: new Date()
-        }).catch(() => {});
-
-        if (effectiveTenantId) {
-          const targetDocId = currentOrderObj?.docId || orderIdToSync;
-          setDoc(doc(db, 'orders', targetDocId), cleanObject({
+          setOrders(prev => prev.map(o => (o.id === orderIdToSync || o.docId === orderIdToSync) ? {
+            ...o,
             items: mergedOrderItems,
             total: fullTableOrderTotal,
             updatedAt: new Date()
-          }), { merge: true }).catch(e => console.warn("Erro ao sincronizar pedido de mesa no Firestore:", e));
+          } : o));
+
+          localDb.orders.update(orderIdToSync, {
+            items: mergedOrderItems,
+            total: fullTableOrderTotal,
+            updatedAt: new Date()
+          }).catch(() => {});
+
+          if (effectiveTenantId) {
+            const targetDocId = currentOrderObj?.docId || orderIdToSync;
+            setDoc(doc(db, 'orders', targetDocId), cleanObject({
+              items: mergedOrderItems,
+              total: fullTableOrderTotal,
+              updatedAt: new Date()
+            }), { merge: true }).catch(e => console.warn("Erro ao sincronizar pedido de mesa no Firestore:", e));
+          }
         }
       }
 
@@ -6041,7 +6227,8 @@ const App: React.FC = () => {
       String(t.id) === strTableId || 
       (!isNaN(numTableId) && t.id === numTableId) || 
       String(t.number) === strTableId || 
-      (t as any).docId === strTableId
+      (t as any).docId === strTableId ||
+      (t.currentOrderId && String(t.currentOrderId) === strTableId)
     );
 
     // Fallback se não encontrado no source principal
@@ -6050,7 +6237,8 @@ const App: React.FC = () => {
         String(t.id) === strTableId || 
         (!isNaN(numTableId) && t.id === numTableId) || 
         String(t.number) === strTableId || 
-        (t as any).docId === strTableId
+        (t as any).docId === strTableId ||
+        (t.currentOrderId && String(t.currentOrderId) === strTableId)
       );
     }
 
@@ -6061,9 +6249,16 @@ const App: React.FC = () => {
       if (matchedOrder) {
         const activeItems = (matchedOrder.items || []).filter(i => !i.cancelled);
         const itemsSum = activeItems.reduce((acc, i) => acc + (Number(i.price) || 0) * (Number(i.quantity) || 1), 0);
+        const realTableMatch = !isCounter
+          ? tables.find(t =>
+              (matchedOrder.tableNumber !== undefined && String(t.number) === String(matchedOrder.tableNumber)) ||
+              (t.currentOrderId && (String(t.currentOrderId) === String(matchedOrder.id) || String(t.currentOrderId) === String(matchedOrder.docId)))
+            )
+          : undefined;
         table = {
-          id: matchedOrder.id,
-          number: Number(matchedOrder.tableNumber) || matchedOrder.dailyNumber || 0,
+          ...(realTableMatch || {}),
+          id: realTableMatch?.id ?? matchedOrder.id,
+          number: realTableMatch?.number ?? (Number(matchedOrder.tableNumber) || matchedOrder.dailyNumber || 0),
           items: activeItems,
           total: itemsSum > 0 ? itemsSum : Math.max(0, (matchedOrder.total || 0) - (matchedOrder.deliveryFee || 0)),
           status: 'occupied',
@@ -6087,10 +6282,21 @@ const App: React.FC = () => {
       updatedAt: new Date()
     };
 
-    const docId = (table as any).docId || (typeof tableId === 'string' ? tableId : null);
+    const realDiningTable = !isCounter
+      ? tables.find(t =>
+          String(t.id) === String(table?.id) ||
+          String(t.id) === strTableId ||
+          (!isNaN(numTableId) && t.id === numTableId) ||
+          (table?.number !== undefined && String(t.number) === String(table.number)) ||
+          (t as any).docId === strTableId ||
+          (t.currentOrderId && (String(t.currentOrderId) === strTableId || (table?.currentOrderId && String(t.currentOrderId) === String(table.currentOrderId))))
+        )
+      : null;
+
+    const docId = (realDiningTable as any)?.docId || (realDiningTable as any)?._firestoreId || (table as any)?.docId || (table as any)?._firestoreId || null;
     const itemsSubtotal = (table.items || []).filter(i => !i.cancelled).reduce((acc, i) => acc + (Number(i.price) || 0) * (Number(i.quantity) || 1), 0);
     const finalTotal = (itemsSubtotal > 0 ? itemsSubtotal : table.total) + (deliveryInfo?.fee || 0) + (additionalFee || 0) - (discount || 0);
-    const tableNumber = table?.number || tableId;
+    const tableNumber = realDiningTable?.number ?? table?.number ?? tableId;
 
     const isRealDelivery = !!(deliveryInfo && (deliveryInfo.address || (deliveryInfo.fee && deliveryInfo.fee > 0)));
 
@@ -6299,7 +6505,13 @@ const App: React.FC = () => {
     // 1. UPDATE LOCAL REACT STATE INSTANTLY FOR OPTIMISTIC FEEDBACK
     setOrders(prev => deduplicateOrders([newOrder, ...prev.filter(o => o.id !== newOrder.id && o.docId !== newOrder.id && o.id !== targetOrderId && o.docId !== targetOrderId)]));
     if (!isCounter) {
-      setTables(prev => prev.map(t => (String(t.id) === String(tableId) || String(t.number) === String(tableNumber) || (t as any).docId === docId) ? { ...t, ...resetData } : t));
+      setTables(prev => prev.map(t => (
+        String(t.id) === String(tableId) ||
+        (realDiningTable && String(t.id) === String(realDiningTable.id)) ||
+        String(t.number) === String(tableNumber) ||
+        (docId && ((t as any).docId === docId || (t as any)._firestoreId === docId)) ||
+        (t.currentOrderId && (String(t.currentOrderId) === strTableId || String(t.currentOrderId) === String(targetOrderId)))
+      ) ? { ...t, ...resetData } : t));
     } else {
       setCounterOrders(prev => prev.filter(t => String(t.id) !== strTableId && (!isNaN(numTableId) ? t.id !== numTableId : true) && t.currentOrderId !== targetOrderId && (!newOrder.id || t.currentOrderId !== newOrder.id)));
     }
@@ -6387,7 +6599,12 @@ const App: React.FC = () => {
         await localDb.orders.put(newOrder);
         if (!isCounter) {
           await localDb.diningTables.toCollection().modify(t => {
-            if (String(t.id) === String(tableId) || String(t.number) === String(tableNumber)) {
+            if (
+              String(t.id) === String(tableId) ||
+              (realDiningTable && String(t.id) === String(realDiningTable.id)) ||
+              String(t.number) === String(tableNumber) ||
+              (t.currentOrderId && (String(t.currentOrderId) === strTableId || String(t.currentOrderId) === String(targetOrderId)))
+            ) {
               t.items = [];
               t.status = 'available';
               t.total = 0;
@@ -6548,16 +6765,22 @@ const App: React.FC = () => {
 
           if (!isCounter) {
             if (docId) {
-              batch.update(doc(db, 'diningTables', docId), resetData);
-            } else {
-              const q = query(
-                collection(db, 'diningTables'), 
-                where('tenantId', '==', effectiveTenantId),
-                where('number', '==', Number(tableNumber))
-              );
-              const snapshot = await getDocs(q);
-              for (const d of snapshot.docs) {
-                batch.update(d.ref, resetData);
+              batch.set(doc(db, 'diningTables', docId), cleanObject(resetData), { merge: true });
+            }
+            const q = query(
+              collection(db, 'diningTables'),
+              where('tenantId', '==', effectiveTenantId)
+            );
+            const snapshot = await getDocs(q);
+            for (const d of snapshot.docs) {
+              const dData = d.data();
+              if (
+                d.id === docId ||
+                String(dData.number) === String(tableNumber) ||
+                (realDiningTable && String(dData.id) === String(realDiningTable.id)) ||
+                (dData.currentOrderId && (String(dData.currentOrderId) === strTableId || String(dData.currentOrderId) === String(targetOrderId)))
+              ) {
+                batch.set(d.ref, cleanObject(resetData), { merge: true });
               }
             }
           }

@@ -438,6 +438,12 @@ const Tables: React.FC<TablesProps> = memo(
           };
           onSendToKitchen(targetId, selectedTable.items.filter(i => !i.cancelled), isCounterContext, customerData);
         }
+      } else if (!isCounterContext && !pdvEditOrder && selectedTable) {
+        const activeItems = (selectedTable.items || []).filter(i => !i.cancelled);
+        const hasPartials = (selectedTable.partialPayments || []).some(p => (Number(p.amount) || 0) > 0);
+        if (activeItems.length === 0 && !hasPartials) {
+          onUpdateTable(selectedTable.id, [], "available", false, []);
+        }
       }
 
       if (pdvEditOrder && onCancelPdvEdit) {
@@ -499,7 +505,11 @@ const Tables: React.FC<TablesProps> = memo(
         },
       ];
 
-      const targetCloseId = pdvEditOrder ? pdvEditOrder.id : (selectedTable!.currentOrderId || selectedTable!.id);
+      const targetCloseId = pdvEditOrder
+        ? pdvEditOrder.id
+        : isCounter
+          ? (selectedTable!.currentOrderId || selectedTable!.id)
+          : selectedTable!.id;
 
       onCloseTable(
         targetCloseId as any,
@@ -1249,7 +1259,7 @@ const Tables: React.FC<TablesProps> = memo(
         case "occupied":
           return "bg-rose-50 text-rose-700 border-rose-200";
         case "billing":
-          return "bg-amber-50 text-amber-700 border-amber-200";
+          return "bg-amber-100 text-amber-800 border-amber-300";
         case "cleaning":
           return "bg-slate-100 text-slate-500 border-slate-200";
       }
@@ -1326,8 +1336,7 @@ const Tables: React.FC<TablesProps> = memo(
       setIsCounterContext(false);
       setIsDeliveryOrder(false);
       if (table.status === "available") {
-        onUpdateTable(table.id, [], "occupied");
-        setSelectedTable({ ...table, status: "occupied", items: [], total: 0 });
+        setSelectedTable({ ...table, status: "occupied", items: [], total: 0, partialPayments: [] });
       } else {
         const activeOrder = (orders || []).find(o =>
           o &&
@@ -1764,10 +1773,18 @@ const Tables: React.FC<TablesProps> = memo(
           (acc, item) => acc + item.price * item.quantity,
           0,
         );
+        const paidPartialSum = (selectedTable.partialPayments || []).reduce(
+          (acc, p) => acc + (Number(p.amount) || 0),
+          0,
+        );
+        const nextStatus: Table["status"] =
+          paidPartialSum > 0 && paidPartialSum < newTotal - 0.01
+            ? "billing"
+            : "occupied";
         lastLocalMutationAtRef.current = Date.now();
-        const updated = { ...selectedTable, items: newItems, total: newTotal };
+        const updated = { ...selectedTable, items: newItems, total: newTotal, status: nextStatus };
         setSelectedTable(updated);
-        onUpdateTable(selectedTable.id, newItems, "occupied", isCounterContext);
+        onUpdateTable(selectedTable.id, newItems, nextStatus, isCounterContext);
 
         if (showOptionsModal) {
           setShowOptionsModal(false);
@@ -1941,11 +1958,20 @@ const Tables: React.FC<TablesProps> = memo(
           0,
         );
 
+        const paidPartialSum = (selectedTable.partialPayments || []).reduce(
+          (acc, p) => acc + (Number(p.amount) || 0),
+          0,
+        );
         lastLocalMutationAtRef.current = Date.now();
-        const nextStatus = newItems.length === 0 && !isCounterContext ? "available" : "occupied";
-        const updated = { ...selectedTable, items: newItems, total: newTotal, status: nextStatus as Table['status'] };
+        const nextStatus: Table["status"] =
+          newItems.length === 0 && !isCounterContext
+            ? "available"
+            : paidPartialSum > 0 && paidPartialSum < newTotal - 0.01
+              ? "billing"
+              : "occupied";
+        const updated = { ...selectedTable, items: newItems, total: newTotal, status: nextStatus };
         setSelectedTable(updated);
-        onUpdateTable(selectedTable.id, newItems, nextStatus as Table['status'], isCounterContext);
+        onUpdateTable(selectedTable.id, newItems, nextStatus, isCounterContext);
 
         // Sincronizar imediatamente com o pedido ativo na cozinha/logística/caixa (inclusive quando zerado!)
         const activeOrderId = resolveLinkedOrderId(selectedTable);
@@ -2023,10 +2049,18 @@ const Tables: React.FC<TablesProps> = memo(
           }
 
           const newTotal = newItems.reduce((acc, item) => acc + item.price * item.quantity, 0);
+          const paidPartialSum = (selectedTable.partialPayments || []).reduce(
+            (acc, p) => acc + (Number(p.amount) || 0),
+            0,
+          );
+          const nextStatus: Table["status"] =
+            paidPartialSum > 0 && paidPartialSum < newTotal - 0.01
+              ? "billing"
+              : "occupied";
           lastLocalMutationAtRef.current = Date.now();
-          const updated = { ...selectedTable, items: newItems, total: newTotal };
+          const updated = { ...selectedTable, items: newItems, total: newTotal, status: nextStatus };
           setSelectedTable(updated);
-          onUpdateTable(selectedTable.id, newItems, "occupied", isCounterContext);
+          onUpdateTable(selectedTable.id, newItems, nextStatus, isCounterContext);
           return;
         }
 
@@ -2037,10 +2071,18 @@ const Tables: React.FC<TablesProps> = memo(
         }
         const newItems = activeList.map((it, i) => (i === index ? { ...it, quantity: nextQty } : it));
         const newTotal = newItems.reduce((acc, item) => acc + item.price * item.quantity, 0);
+        const paidPartialSum = (selectedTable.partialPayments || []).reduce(
+          (acc, p) => acc + (Number(p.amount) || 0),
+          0,
+        );
+        const nextStatus: Table["status"] =
+          paidPartialSum > 0 && paidPartialSum < newTotal - 0.01
+            ? "billing"
+            : "occupied";
         lastLocalMutationAtRef.current = Date.now();
-        const updated = { ...selectedTable, items: newItems, total: newTotal };
+        const updated = { ...selectedTable, items: newItems, total: newTotal, status: nextStatus };
         setSelectedTable(updated);
-        onUpdateTable(selectedTable.id, newItems, "occupied", isCounterContext);
+        onUpdateTable(selectedTable.id, newItems, nextStatus, isCounterContext);
 
         const activeOrderId = resolveLinkedOrderId(selectedTable);
         if (activeOrderId && onUpdateOrder) {
@@ -2109,10 +2151,18 @@ const Tables: React.FC<TablesProps> = memo(
         (acc, item) => acc + item.price * item.quantity,
         0,
       );
+      const paidPartialSum = (selectedTable.partialPayments || []).reduce(
+        (acc, p) => acc + (Number(p.amount) || 0),
+        0,
+      );
+      const nextStatus: Table["status"] =
+        paidPartialSum > 0 && paidPartialSum < newTotal - 0.01
+          ? "billing"
+          : "occupied";
       lastLocalMutationAtRef.current = Date.now();
-      const updated = { ...selectedTable, items: cleanItems, total: newTotal };
+      const updated = { ...selectedTable, items: cleanItems, total: newTotal, status: nextStatus };
       setSelectedTable(updated);
-      onUpdateTable(selectedTable.id, cleanItems, "occupied", isCounterContext);
+      onUpdateTable(selectedTable.id, cleanItems, nextStatus, isCounterContext);
 
       const activeOrderId = resolveLinkedOrderId(selectedTable);
       if (activeOrderId && onUpdateOrder) {
@@ -2556,10 +2606,11 @@ const Tables: React.FC<TablesProps> = memo(
         setSelectedSplitQtys({});
         setCustomSplitValue("");
 
-        // Persistir pagamento parcial no objeto da mesa
-        const updatedTable = { ...selectedTable, partialPayments: updatedParts };
+        // Persistir pagamento parcial no objeto da mesa com status 'billing' (amarela)
+        const partialStatus: Table["status"] = "billing";
+        const updatedTable = { ...selectedTable, status: partialStatus, partialPayments: updatedParts };
         setSelectedTable(updatedTable);
-        onUpdateTable(selectedTable.id, selectedTable.items, "occupied", isCounterContext, updatedParts);
+        onUpdateTable(selectedTable.id, selectedTable.items, partialStatus, isCounterContext, updatedParts);
 
         if (newRemaining <= 0.01) {
           finishSplitPayment(updatedParts);
@@ -2693,10 +2744,11 @@ const Tables: React.FC<TablesProps> = memo(
 
         if (!isSplitting) setIsSplitting(true);
 
-        // Persistir pagamento parcial na mesa
-        const updatedTable = { ...selectedTable, partialPayments: updatedParts };
+        // Persistir pagamento parcial na mesa com status 'billing' (amarela)
+        const partialStatus: Table["status"] = "billing";
+        const updatedTable = { ...selectedTable, status: partialStatus, partialPayments: updatedParts };
         setSelectedTable(updatedTable);
-        onUpdateTable(selectedTable.id, selectedTable.items, "occupied", isCounterContext, updatedParts);
+        onUpdateTable(selectedTable.id, selectedTable.items, partialStatus, isCounterContext, updatedParts);
 
         if (newRemaining <= 0.01) {
           finishSplitPayment(updatedParts);
@@ -2944,10 +2996,11 @@ const Tables: React.FC<TablesProps> = memo(
 
         if (!isSplitting) setIsSplitting(true);
 
-        // Persistir pagamento parcial na mesa
-        const updatedTable = { ...selectedTable, partialPayments: updatedParts };
+        // Persistir pagamento parcial na mesa com status 'billing' (amarela)
+        const partialStatus: Table["status"] = "billing";
+        const updatedTable = { ...selectedTable, status: partialStatus, partialPayments: updatedParts };
         setSelectedTable(updatedTable);
-        onUpdateTable(selectedTable.id, selectedTable.items, "occupied", isCounterContext, updatedParts);
+        onUpdateTable(selectedTable.id, selectedTable.items, partialStatus, isCounterContext, updatedParts);
 
         if (newRemaining <= 0.01) {
           finishSplitPayment(updatedParts);
@@ -3230,42 +3283,88 @@ const Tables: React.FC<TablesProps> = memo(
               <Utensils size={10} /> Mapa de Mesas
             </h3>
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-1.5">
-              {filteredTables.map((table, idx) => (
-                <button
-                  key={
-                    (table as any).docId ||
-                    (table as any)._firestoreId ||
-                    table.id ||
-                    `table-${idx}`
-                  }
-                  onClick={() => openTable(table)}
-                  disabled={table.status === "cleaning"}
-                  className={`aspect-square p-1.5 rounded-xl border-2 transition-all flex flex-col items-center justify-center gap-0.5 hover:shadow-lg hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${getTableStatusColor(table.status)} shadow-sm`}
-                >
-                  <div className="text-current">
-                    {table.status === "available" ? (
-                      <Utensils size={16} />
-                    ) : table.status === "occupied" ? (
-                      <Users size={16} />
-                    ) : table.status === "billing" ? (
-                      <CreditCard size={16} />
-                    ) : (
-                      <Utensils size={16} className="animate-spin" />
-                    )}
-                  </div>
-                  <div className="text-center">
-                    <h3 className="text-sm font-black">Mesa {table.number}</h3>
-                    <p className="text-[6px] uppercase font-black tracking-widest opacity-60">
-                      {table.status}
-                    </p>
-                  </div>
-                  {table.total > 0 && (
-                    <div className="mt-0.5 text-[8px] font-black bg-white/60 px-1 py-0.5 rounded-md shadow-sm">
-                      R$ {table.total.toFixed(2)}
+              {filteredTables.map((table, idx) => {
+                const activeTableItems = (table.items || []).filter((i) => !i.cancelled);
+                const paidPartialSum = (table.partialPayments || []).reduce(
+                  (acc, p) => acc + (Number(p.amount) || 0),
+                  0,
+                );
+                const computedItemsTotal = activeTableItems.reduce(
+                  (acc, i) => acc + (Number(i.price) || 0) * (Number(i.quantity) || 1),
+                  0,
+                );
+                const effectiveTotal =
+                  activeTableItems.length > 0
+                    ? computedItemsTotal
+                    : table.status === "available"
+                      ? 0
+                      : Number(table.total) || 0;
+                const isPartiallyPaid =
+                  effectiveTotal > 0 &&
+                  (table.status === "billing" ||
+                    (paidPartialSum > 0 && paidPartialSum < effectiveTotal - 0.01));
+                const effectiveStatus: Table["status"] =
+                  table.status === "cleaning"
+                    ? "cleaning"
+                    : effectiveTotal <= 0 && activeTableItems.length === 0
+                      ? "available"
+                      : isPartiallyPaid
+                        ? "billing"
+                        : table.status;
+                const remainingTableBalance = Math.max(0, effectiveTotal - paidPartialSum);
+                const statusLabel =
+                  effectiveStatus === "available"
+                    ? "DISPONÍVEL"
+                    : effectiveStatus === "billing"
+                      ? "PAG. PARCIAL"
+                      : effectiveStatus === "occupied"
+                        ? "OCUPADA"
+                        : "LIMPEZA";
+
+                return (
+                  <button
+                    key={
+                      (table as any).docId ||
+                      (table as any)._firestoreId ||
+                      table.id ||
+                      `table-${idx}`
+                    }
+                    onClick={() => openTable({ ...table, status: effectiveStatus, total: effectiveTotal })}
+                    disabled={effectiveStatus === "cleaning"}
+                    className={`aspect-square p-1.5 rounded-xl border-2 transition-all flex flex-col items-center justify-center gap-0.5 hover:shadow-lg hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${getTableStatusColor(effectiveStatus)} shadow-sm`}
+                  >
+                    <div className="text-current">
+                      {effectiveStatus === "available" ? (
+                        <Utensils size={16} />
+                      ) : effectiveStatus === "occupied" ? (
+                        <Users size={16} />
+                      ) : effectiveStatus === "billing" ? (
+                        <CreditCard size={16} />
+                      ) : (
+                        <Utensils size={16} className="animate-spin" />
+                      )}
                     </div>
-                  )}
-                </button>
-              ))}
+                    <div className="text-center">
+                      <h3 className="text-sm font-black">Mesa {table.number}</h3>
+                      <p className="text-[6px] uppercase font-black tracking-widest opacity-75">
+                        {statusLabel}
+                      </p>
+                    </div>
+                    {effectiveStatus !== "available" && effectiveTotal > 0 && (
+                      <div className="mt-0.5 flex flex-col items-center gap-0.5">
+                        <div className="text-[8px] font-black bg-white/70 px-1 py-0.5 rounded-md shadow-sm">
+                          R$ {effectiveTotal.toFixed(2)}
+                        </div>
+                        {effectiveStatus === "billing" && remainingTableBalance > 0 && (
+                          <div className="text-[7px] font-black bg-amber-500 text-white px-1 py-0.2 rounded shadow-xs">
+                            Falta R$ {remainingTableBalance.toFixed(2)}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
