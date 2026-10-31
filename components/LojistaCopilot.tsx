@@ -271,14 +271,23 @@ export default function LojistaCopilot({
     name: string;
     type: 'rent' | 'staff';
     amount: number;
+    tenantId?: string;
   }
 
-  const activeTenantId = tenantId || tenantData?.id || currentUser?.tenantId || 'default';
+  const activeTenantId = (tenantId || tenantData?.id || currentUser?.tenantId || '').trim();
 
   // Helper to detect and strip the 4 legacy fake default items if they were never explicitly saved by the lojista
-  const sanitizeLegacyFakeFixedCosts = (list: any[], hasCloudSavedFlag?: boolean): FixedCostItem[] => {
+  const sanitizeLegacyFakeFixedCosts = (list: any[], hasCloudSavedFlag?: boolean, targetTenantId?: string): FixedCostItem[] => {
     if (!Array.isArray(list)) return [];
-    if (hasCloudSavedFlag) return list;
+    const tenantFiltered = targetTenantId
+      ? list.filter((item) => item && (!item.tenantId || item.tenantId === targetTenantId))
+      : list;
+    if (hasCloudSavedFlag) {
+      return tenantFiltered.map((item) => ({
+        ...item,
+        tenantId: targetTenantId || item.tenantId
+      }));
+    }
     const legacySignature = [
       { name: "Aluguel da Loja", amount: 1800, type: "rent" },
       { name: "Contas de Consumo (Água, Luz, Net)", amount: 700, type: "rent" },
@@ -286,36 +295,70 @@ export default function LojistaCopilot({
       { name: "Pró-labore de Sócios", amount: 1300, type: "staff" },
     ];
     const isExactLegacyMock =
-      list.length === 4 &&
+      tenantFiltered.length === 4 &&
       legacySignature.every((sig) =>
-        list.some((item) => item && item.name === sig.name && Number(item.amount) === sig.amount && item.type === sig.type)
+        tenantFiltered.some((item) => item && item.name === sig.name && Number(item.amount) === sig.amount && item.type === sig.type)
       );
-    return isExactLegacyMock ? [] : list;
+    if (isExactLegacyMock) return [];
+    return tenantFiltered.map((item) => ({
+      ...item,
+      tenantId: targetTenantId || item.tenantId
+    }));
   };
 
+  const purgeContaminatedLegacyKeys = (targetTenantId: string) => {
+    if (typeof window === "undefined" || !targetTenantId) return;
+    try {
+      localStorage.removeItem(`copilot_fixed_costs_list_${targetTenantId}`);
+      localStorage.removeItem(`copilot_fixed_costs_saved_${targetTenantId}`);
+      localStorage.removeItem(`copilot_estimated_waste_${targetTenantId}`);
+      localStorage.removeItem(`copilot_monthly_rent_${targetTenantId}`);
+      localStorage.removeItem(`copilot_monthly_staff_${targetTenantId}`);
+      localStorage.removeItem(`copilot_fixed_costs_list_default`);
+      localStorage.removeItem(`copilot_fixed_costs_saved_default`);
+    } catch (_) {}
+  };
+
+  const readIsolatedFixedCostsStorage = (targetTenantId: string): { list: FixedCostItem[]; waste: number; hasSaved: boolean } => {
+    if (typeof window === "undefined" || !targetTenantId) {
+      return { list: [], waste: 0, hasSaved: false };
+    }
+    purgeContaminatedLegacyKeys(targetTenantId);
+    try {
+      const raw = localStorage.getItem(`kf_fixed_costs_v3_${targetTenantId}`);
+      if (!raw) return { list: [], waste: 0, hasSaved: false };
+      const parsed = JSON.parse(raw);
+      if (!parsed || parsed.tenantId !== targetTenantId || !parsed.fixedCostsSaved) {
+        return { list: [], waste: 0, hasSaved: false };
+      }
+      const validList = Array.isArray(parsed.fixedCostsList)
+        ? parsed.fixedCostsList.filter((item: any) => item && item.tenantId === targetTenantId)
+        : [];
+      const cleaned = sanitizeLegacyFakeFixedCosts(validList, true, targetTenantId);
+      const validWaste = typeof parsed.estimatedWastePercent === "number" && !isNaN(parsed.estimatedWastePercent)
+        ? parsed.estimatedWastePercent
+        : 0;
+      return { list: cleaned, waste: validWaste, hasSaved: true };
+    } catch (e) {
+      console.error(e);
+      return { list: [], waste: 0, hasSaved: false };
+    }
+  };
+
+  const isCloudSettingsForActiveTenant = Boolean(
+    activeTenantId &&
+    (adminSettings as any)?.fixedCostsTenantId === activeTenantId &&
+    (!(adminSettings as any)?._tenantId || (adminSettings as any)?._tenantId === activeTenantId)
+  );
+
   const [fixedCostsList, setFixedCostsList] = useState<FixedCostItem[]>(() => {
+    if (!activeTenantId) return [];
     const cloudSavedFlag = Boolean((adminSettings as any)?.fixedCostsSaved);
     const cloudList = (adminSettings as any)?.fixedCostsList;
-    if (Array.isArray(cloudList)) {
-      return sanitizeLegacyFakeFixedCosts(cloudList, cloudSavedFlag);
+    if (isCloudSettingsForActiveTenant && cloudSavedFlag && Array.isArray(cloudList)) {
+      return sanitizeLegacyFakeFixedCosts(cloudList, cloudSavedFlag, activeTenantId);
     }
-    if (typeof window !== "undefined") {
-      const explicitSaved = localStorage.getItem(`copilot_fixed_costs_saved_${activeTenantId}`) === "true";
-      const saved = localStorage.getItem(`copilot_fixed_costs_list_${activeTenantId}`);
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          const cleaned = sanitizeLegacyFakeFixedCosts(parsed, explicitSaved || cloudSavedFlag);
-          if (cleaned.length === 0 && parsed.length === 4 && !explicitSaved) {
-            localStorage.removeItem(`copilot_fixed_costs_list_${activeTenantId}`);
-          }
-          return cleaned;
-        } catch (e) {
-          console.error(e);
-        }
-      }
-    }
-    return [];
+    return readIsolatedFixedCostsStorage(activeTenantId).list;
   });
 
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -329,50 +372,55 @@ export default function LojistaCopilot({
 
   const computedRentTotal = useMemo(() => {
     return fixedCostsList
-      .filter(item => item.type === 'rent')
+      .filter(item => item.type === 'rent' && (!item.tenantId || item.tenantId === activeTenantId))
       .reduce((sum, item) => sum + item.amount, 0);
-  }, [fixedCostsList]);
+  }, [fixedCostsList, activeTenantId]);
 
   const computedStaffTotal = useMemo(() => {
     return fixedCostsList
-      .filter(item => item.type === 'staff')
+      .filter(item => item.type === 'staff' && (!item.tenantId || item.tenantId === activeTenantId))
       .reduce((sum, item) => sum + item.amount, 0);
-  }, [fixedCostsList]);
+  }, [fixedCostsList, activeTenantId]);
 
   // Custom fixed monthly costs derived directly from lojista config
   const monthlyRent = computedRentTotal;
   const monthlyStaff = computedStaffTotal;
 
   const [estimatedWastePercent, setEstimatedWastePercent] = useState(() => {
+    if (!activeTenantId) return 0;
+    const cloudSavedFlag = Boolean((adminSettings as any)?.fixedCostsSaved);
     const cloudWaste = (adminSettings as any)?.estimatedWastePercent;
-    if (typeof cloudWaste === "number" && !isNaN(cloudWaste)) {
+    if (isCloudSettingsForActiveTenant && cloudSavedFlag && typeof cloudWaste === "number" && !isNaN(cloudWaste)) {
       return cloudWaste;
     }
-    if (typeof window !== "undefined") {
-      const explicitSaved = localStorage.getItem(`copilot_fixed_costs_saved_${activeTenantId}`) === "true";
-      const saved = localStorage.getItem(`copilot_estimated_waste_${activeTenantId}`);
-      if (saved && explicitSaved) {
-        const parsed = parseFloat(saved);
-        return isNaN(parsed) ? 0 : parsed;
-      }
-    }
-    return 0;
+    return readIsolatedFixedCostsStorage(activeTenantId).waste;
   });
 
   const persistFixedCostsForTenant = (nextList: FixedCostItem[], nextWaste: number = estimatedWastePercent) => {
-    const nextRent = nextList.filter(item => item.type === 'rent').reduce((sum, item) => sum + item.amount, 0);
-    const nextStaff = nextList.filter(item => item.type === 'staff').reduce((sum, item) => sum + item.amount, 0);
+    if (!activeTenantId) return;
+    const stampedList: FixedCostItem[] = nextList.map(item => ({
+      ...item,
+      tenantId: activeTenantId
+    }));
     if (typeof window !== "undefined") {
-      localStorage.setItem(`copilot_fixed_costs_saved_${activeTenantId}`, "true");
-      localStorage.setItem(`copilot_fixed_costs_list_${activeTenantId}`, JSON.stringify(nextList));
-      localStorage.setItem(`copilot_monthly_rent_${activeTenantId}`, nextRent.toString());
-      localStorage.setItem(`copilot_monthly_staff_${activeTenantId}`, nextStaff.toString());
-      localStorage.setItem(`copilot_estimated_waste_${activeTenantId}`, nextWaste.toString());
+      purgeContaminatedLegacyKeys(activeTenantId);
+      localStorage.setItem(
+        `kf_fixed_costs_v3_${activeTenantId}`,
+        JSON.stringify({
+          tenantId: activeTenantId,
+          fixedCostsSaved: true,
+          fixedCostsList: stampedList,
+          estimatedWastePercent: nextWaste,
+          updatedAt: Date.now()
+        })
+      );
     }
     if (onUpdateSettings && adminSettings) {
       onUpdateSettings({
         ...adminSettings,
-        fixedCostsList: nextList,
+        _tenantId: activeTenantId,
+        fixedCostsTenantId: activeTenantId,
+        fixedCostsList: stampedList,
         estimatedWastePercent: nextWaste,
         fixedCostsSaved: true
       } as any);
@@ -381,51 +429,62 @@ export default function LojistaCopilot({
 
   // Re-sync when activeTenantId or cloud adminSettings.fixedCostsList changes so each lojista only sees their own real data
   React.useEffect(() => {
+    if (!activeTenantId) {
+      setFixedCostsList([]);
+      setEstimatedWastePercent(0);
+      return;
+    }
+
+    purgeContaminatedLegacyKeys(activeTenantId);
+
     const cloudSavedFlag = Boolean((adminSettings as any)?.fixedCostsSaved);
     const cloudList = (adminSettings as any)?.fixedCostsList;
     const cloudWaste = (adminSettings as any)?.estimatedWastePercent;
+    const cloudTenantId = (adminSettings as any)?.fixedCostsTenantId;
+    const adminDocTenantId = (adminSettings as any)?._tenantId;
 
-    if (Array.isArray(cloudList)) {
-      const cleaned = sanitizeLegacyFakeFixedCosts(cloudList, cloudSavedFlag);
+    const isCloudValidForTenant = Boolean(
+      cloudSavedFlag &&
+      cloudTenantId === activeTenantId &&
+      (!adminDocTenantId || adminDocTenantId === activeTenantId)
+    );
+
+    if (isCloudValidForTenant && Array.isArray(cloudList)) {
+      const cleaned = sanitizeLegacyFakeFixedCosts(cloudList, true, activeTenantId);
+      const validWaste = typeof cloudWaste === "number" && !isNaN(cloudWaste) ? cloudWaste : 0;
       setFixedCostsList(cleaned);
+      setEstimatedWastePercent(validWaste);
       if (typeof window !== "undefined") {
-        localStorage.setItem(`copilot_fixed_costs_list_${activeTenantId}`, JSON.stringify(cleaned));
-        if (cloudSavedFlag) {
-          localStorage.setItem(`copilot_fixed_costs_saved_${activeTenantId}`, "true");
-        }
+        localStorage.setItem(
+          `kf_fixed_costs_v3_${activeTenantId}`,
+          JSON.stringify({
+            tenantId: activeTenantId,
+            fixedCostsSaved: true,
+            fixedCostsList: cleaned,
+            estimatedWastePercent: validWaste,
+            updatedAt: Date.now()
+          })
+        );
       }
-    } else if (typeof window !== "undefined") {
-      const explicitSaved = localStorage.getItem(`copilot_fixed_costs_saved_${activeTenantId}`) === "true";
-      const savedList = localStorage.getItem(`copilot_fixed_costs_list_${activeTenantId}`);
-      if (savedList) {
-        try {
-          const parsed = JSON.parse(savedList);
-          const cleaned = sanitizeLegacyFakeFixedCosts(parsed, explicitSaved);
-          setFixedCostsList(cleaned);
-          if (cleaned.length === 0 && parsed.length === 4 && !explicitSaved) {
-            localStorage.removeItem(`copilot_fixed_costs_list_${activeTenantId}`);
-          }
-        } catch (e) {
-          console.error(e);
-          setFixedCostsList([]);
-        }
-      } else {
-        setFixedCostsList([]);
-      }
+      return;
+    }
+
+    const localData = readIsolatedFixedCostsStorage(activeTenantId);
+    if (localData.hasSaved) {
+      setFixedCostsList(localData.list);
+      setEstimatedWastePercent(localData.waste);
     } else {
       setFixedCostsList([]);
-    }
-
-    if (typeof cloudWaste === "number" && !isNaN(cloudWaste)) {
-      setEstimatedWastePercent(cloudWaste);
-    } else if (typeof window !== "undefined") {
-      const explicitSaved = localStorage.getItem(`copilot_fixed_costs_saved_${activeTenantId}`) === "true";
-      const savedWaste = localStorage.getItem(`copilot_estimated_waste_${activeTenantId}`);
-      setEstimatedWastePercent(savedWaste && explicitSaved ? (parseFloat(savedWaste) || 0) : 0);
-    } else {
       setEstimatedWastePercent(0);
     }
-  }, [activeTenantId, (adminSettings as any)?.fixedCostsList, (adminSettings as any)?.estimatedWastePercent, (adminSettings as any)?.fixedCostsSaved]);
+  }, [
+    activeTenantId,
+    (adminSettings as any)?._tenantId,
+    (adminSettings as any)?.fixedCostsTenantId,
+    (adminSettings as any)?.fixedCostsList,
+    (adminSettings as any)?.estimatedWastePercent,
+    (adminSettings as any)?.fixedCostsSaved
+  ]);
 
   const [isConfigOpen, setIsConfigOpen] = useState(false);
 

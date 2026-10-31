@@ -1160,12 +1160,17 @@ const App: React.FC = () => {
     setViewingTenantId(tenantId);
     setViewingTenantName(name || null);
     setViewingTenantLogo(logo || null);
+    setAdminSettings(prev => ({
+      ...prev,
+      _tenantId: tenantId,
+      fixedCostsTenantId: tenantId,
+      fixedCostsList: [],
+      fixedCostsSaved: false,
+      estimatedWastePercent: 0,
+      companyName: name || prev.companyName,
+      logoUrl: logo || prev.logoUrl
+    } as any));
     if (name) {
-      setAdminSettings(prev => ({
-        ...prev,
-        companyName: name,
-        logoUrl: logo || prev.logoUrl
-      }));
       setDigitalMenuSettings(prev => ({
         ...prev,
         restaurantName: name,
@@ -1186,6 +1191,14 @@ const App: React.FC = () => {
     setViewingTenantId(null);
     setViewingTenantName(null);
     setViewingTenantLogo(null);
+    setAdminSettings(prev => ({
+      ...prev,
+      _tenantId: currentUserData?.tenantId || '',
+      fixedCostsTenantId: currentUserData?.tenantId || '',
+      fixedCostsList: [],
+      fixedCostsSaved: false,
+      estimatedWastePercent: 0
+    } as any));
     setCurrentProject('PLATFORM');
     setActiveTab('saas-admin');
     navigate('/saas');
@@ -1281,28 +1294,10 @@ const App: React.FC = () => {
     };
   }, [incomingDigitalOrders]);
 
+  const prevSyncedTenantIdRef = useRef<string | null>(null);
+
   // Carregar dados de todas as coleções do tenant quando mudar (Suporte SaaS / Multi-tenant)
   useEffect(() => {
-    // Reset states when switching tenants to avoid leaking previous tenant data or placeholders
-    setProducts([]);
-    setTables([]);
-    setCounterOrders([]);
-    setIncomingDigitalOrders([]);
-    setPdvEditOrder(null);
-    setCustomers([]);
-    setOrders([]);
-    setFinancialRecords([]);
-    setRawMaterials([]);
-    setBankAccounts([]);
-    setCouriers([]);
-    setAuditLogs([]);
-    setUsers([]);
-    setTenantData(null);
-    setProductCategories([]);
-    setRawMaterialCategories([]);
-    setCashClosings([]);
-    setCashSession({ isOpen: false, openingValue: 0, openedAt: null });
-
     // Se o usuário logado NÃO for Super Admin, jamais manter estado de inspeção de outro tenant
     if (currentUserData && !isSuperAdmin) {
       if (viewingTenantId) setViewingTenantId(null);
@@ -1313,6 +1308,30 @@ const App: React.FC = () => {
     // PRIORIDADE: Primeiro o ID canônico consolidado para todos os módulos (Caixa, KDS, Salão, Delivery)
     const effectiveTenantId = getCanonicalTenantId(currentUserData, isSuperAdmin ? viewingTenantId : null, tenantData);
     const canonicalStoreId = getCanonicalStoreId(effectiveTenantId);
+    const isTenantSwitch = prevSyncedTenantIdRef.current !== effectiveTenantId;
+
+    if (isTenantSwitch) {
+      prevSyncedTenantIdRef.current = effectiveTenantId;
+      // Reset states when switching tenants to avoid leaking previous tenant data or placeholders
+      setProducts([]);
+      setTables([]);
+      setCounterOrders([]);
+      setIncomingDigitalOrders([]);
+      setPdvEditOrder(null);
+      setCustomers([]);
+      setOrders([]);
+      setFinancialRecords([]);
+      setRawMaterials([]);
+      setBankAccounts([]);
+      setCouriers([]);
+      setAuditLogs([]);
+      setUsers([]);
+      setTenantData(null);
+      setProductCategories([]);
+      setRawMaterialCategories([]);
+      setCashClosings([]);
+      setCashSession({ isOpen: false, openingValue: 0, openedAt: null });
+    }
 
     // Try pre-populating tenantData immediately from SaaS cached tenants if matching effectiveTenantId
     let cachedSelectedTenant: Tenant | null = null;
@@ -1405,8 +1424,13 @@ const App: React.FC = () => {
         isCustomerAppEnabled: false,
         appFeePerOrder: 1.50,
         billingAccumulated: 0
-      }
-    });
+      },
+      _tenantId: effectiveTenantId,
+      fixedCostsTenantId: effectiveTenantId,
+      fixedCostsList: [],
+      fixedCostsSaved: false,
+      estimatedWastePercent: 0
+    } as any);
 
     setDigitalMenuSettings({
       primaryColor: '#E31B23',
@@ -1434,17 +1458,57 @@ const App: React.FC = () => {
       }
     });
 
-    // Also load local settings for this tenant if saved in IndexedDB
-    if (effectiveTenantId) {
+    // Also load local settings and cached tables/orders/products for this tenant immediately on reload/login
+    if (effectiveTenantId && effectiveTenantId !== 'default-tenant') {
+      try {
+        const cachedTablesRaw = localStorage.getItem(`kitchenflow_tables_${effectiveTenantId}`);
+        if (cachedTablesRaw) {
+          const parsedTables = JSON.parse(cachedTablesRaw);
+          if (Array.isArray(parsedTables) && parsedTables.length > 0) {
+            const validCachedTables = parsedTables
+              .filter((t: any) => t && (!t.tenantId || t.tenantId === effectiveTenantId || (effectiveTenantId === 'lojista' && t.tenantId === 't1')))
+              .sort((a: any, b: any) => Number(a.number || 0) - Number(b.number || 0));
+            if (validCachedTables.length > 0) {
+              setTables(prev => (prev.length === 0 ? validCachedTables : prev));
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("Cached tables read warning:", e);
+      }
+
+      localDb.diningTables.toArray().then(localTables => {
+        const tenantTables = (localTables || [])
+          .filter(t => t && (t.tenantId === effectiveTenantId || (effectiveTenantId === 'lojista' && t.tenantId === 't1')))
+          .sort((a, b) => Number(a.number || 0) - Number(b.number || 0));
+        if (tenantTables.length > 0) {
+          setTables(prev => (prev.length === 0 ? tenantTables : prev));
+        }
+      }).catch(() => {});
+
       localDb.settings.get(effectiveTenantId).then(localSettings => {
         if (localSettings) {
           if (localSettings.admin) {
+            const rawLocalAdmin = localSettings.admin as any;
+            const isLocalFixedCostsValid = Boolean(
+              rawLocalAdmin.fixedCostsSaved &&
+              rawLocalAdmin.fixedCostsTenantId === effectiveTenantId &&
+              Array.isArray(rawLocalAdmin.fixedCostsList)
+            );
+            const isolatedLocalFixedCosts = isLocalFixedCostsValid
+              ? rawLocalAdmin.fixedCostsList.filter((it: any) => it && (!it.tenantId || it.tenantId === effectiveTenantId))
+              : [];
             setAdminSettings(prev => ({
               ...prev,
               ...localSettings.admin,
+              _tenantId: effectiveTenantId,
+              fixedCostsTenantId: effectiveTenantId,
+              fixedCostsSaved: isLocalFixedCostsValid,
+              fixedCostsList: isolatedLocalFixedCosts,
+              estimatedWastePercent: isLocalFixedCostsValid ? (Number(rawLocalAdmin.estimatedWastePercent) || 0) : 0,
               companyName: initialName || localSettings.admin.companyName || prev.companyName,
               logoUrl: initialLogo || localSettings.admin.logoUrl || prev.logoUrl
-            }));
+            } as any));
           }
           if (localSettings.digitalMenu) {
             setDigitalMenuSettings(prev => ({
@@ -1804,7 +1868,52 @@ const App: React.FC = () => {
               total: effectiveTotal
             };
           });
-          col.setter(normalizedTables);
+
+          // Ordenar e desduplicar mesas por número (mantendo a que possui itens ativos ou atualização mais recente)
+          const byNumber = new Map<number, any>();
+          normalizedTables.forEach((t: any) => {
+            const num = Number(t.number) || Number(t.id) || 0;
+            if (num <= 0) return;
+            const existing = byNumber.get(num);
+            if (!existing) {
+              byNumber.set(num, t);
+            } else {
+              const existingActive = (existing.items || []).filter((i: any) => !i.cancelled).length;
+              const currentActive = (t.items || []).filter((i: any) => !i.cancelled).length;
+              if (currentActive > existingActive) {
+                byNumber.set(num, t);
+              }
+            }
+          });
+          const dedupedTables = Array.from(byNumber.values()).sort((a, b) => Number(a.number) - Number(b.number));
+
+          if (dedupedTables.length > 0) {
+            col.setter(dedupedTables);
+            try {
+              localStorage.setItem(`kitchenflow_tables_${effectiveTenantId}`, JSON.stringify(dedupedTables));
+            } catch {}
+            localDb.diningTables.bulkPut(dedupedTables).catch(() => {});
+          } else if (!snapshot.metadata.fromCache) {
+            // Se o servidor retornou 0 mesas, verificar se há mesas no cache local que ainda não subiram para a nuvem
+            try {
+              const cachedRaw = localStorage.getItem(`kitchenflow_tables_${effectiveTenantId}`);
+              const parsedCached = cachedRaw ? JSON.parse(cachedRaw) : [];
+              if (Array.isArray(parsedCached) && parsedCached.length > 0) {
+                col.setter(parsedCached);
+                // Re-sincronizar mesas locais com o Firestore em background
+                parsedCached.forEach((tb: any) => {
+                  if (tb && tb.number) {
+                    const docId = tb.docId || tb._firestoreId || `table_${effectiveTenantId}_${tb.number}`;
+                    setDoc(doc(db, 'diningTables', docId), cleanObject({ ...tb, tenantId: effectiveTenantId, updatedAt: new Date() }), { merge: true }).catch(() => {});
+                  }
+                });
+              } else {
+                col.setter([]);
+              }
+            } catch {
+              col.setter([]);
+            }
+          }
         } else {
           col.setter(items);
         }
@@ -1815,7 +1924,19 @@ const App: React.FC = () => {
         } else {
           handleFirestoreError(error, OperationType.LIST, col.name);
         }
-        // Fallback to localDb strictly filtered by effectiveTenantId if cloud snapshot fails
+        // Fallback to localStorage / localDb strictly filtered by effectiveTenantId if cloud snapshot fails
+        if (col.name === 'diningTables') {
+          try {
+            const cachedRaw = localStorage.getItem(`kitchenflow_tables_${effectiveTenantId}`);
+            if (cachedRaw) {
+              const parsed = JSON.parse(cachedRaw);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                col.setter(parsed);
+                return;
+              }
+            }
+          } catch {}
+        }
         if (localDb && (localDb as any)[col.name]) {
           (localDb as any)[col.name].toArray().then((localItems: any[]) => {
             const filtered = localItems.filter(it => it && (it.tenantId === effectiveTenantId || (effectiveTenantId === 'lojista' && it.tenantId === 't1')));
@@ -1875,6 +1996,15 @@ const App: React.FC = () => {
           // Explicitly remove legacy cashSession from nested admin object if it exists
           const cleanAdmin = { ...s.admin };
           if (cleanAdmin.cashSession) delete cleanAdmin.cashSession;
+
+          const isCloudFixedCostsValid = Boolean(
+            cleanAdmin.fixedCostsSaved &&
+            cleanAdmin.fixedCostsTenantId === effectiveTenantId &&
+            Array.isArray(cleanAdmin.fixedCostsList)
+          );
+          const isolatedCloudFixedCosts = isCloudFixedCostsValid
+            ? cleanAdmin.fixedCostsList.filter((it: any) => it && (!it.tenantId || it.tenantId === effectiveTenantId))
+            : [];
           
           setAdminSettings(prev => {
             const finalCompanyName = activeTenantName || cleanAdmin.companyName || prev.companyName;
@@ -1883,6 +2013,11 @@ const App: React.FC = () => {
             const next = {
               ...prev,
               ...cleanAdmin,
+              _tenantId: effectiveTenantId,
+              fixedCostsTenantId: effectiveTenantId,
+              fixedCostsSaved: isCloudFixedCostsValid,
+              fixedCostsList: isolatedCloudFixedCosts,
+              estimatedWastePercent: isCloudFixedCostsValid ? (Number(cleanAdmin.estimatedWastePercent) || 0) : 0,
               companyName: finalCompanyName,
               logoUrl: finalLogoUrl,
               // Deep merge nested objects to avoid overwriting them completely if firestore doc is partial
@@ -1891,7 +2026,7 @@ const App: React.FC = () => {
               printing: { ...(prev.printing || {}), ...(cleanAdmin.printing || {}) },
               apis: { ...(prev.apis || {}), ...(cleanAdmin.apis || {}) },
               saasIntegration: { ...(prev.saasIntegration || {}), ...(cleanAdmin.saasIntegration || {}) }
-            };
+            } as any;
             if (JSON.stringify(prev) === JSON.stringify(next)) return prev;
             return next;
           });
@@ -2020,7 +2155,19 @@ const App: React.FC = () => {
       plansUnsub();
       saasConfigUnsub();
     };
-  }, [currentUserData?.tenantId, viewingTenantId, isSuperAdmin]);
+  }, [currentUserData?.tenantId, viewingTenantId, isSuperAdmin, user?.uid]);
+
+  // Persistir estado atualizado das mesas do tenant no cache local para carregamento instantâneo ao recarregar a página
+  useEffect(() => {
+    const effectiveTenantId = getCanonicalTenantId(currentUserData, isSuperAdmin ? viewingTenantId : null, tenantData);
+    if (!effectiveTenantId || effectiveTenantId === 'default-tenant' || tables.length === 0) return;
+    const validTenantTables = tables.filter(t => t && (!t.tenantId || t.tenantId === effectiveTenantId || (effectiveTenantId === 'lojista' && t.tenantId === 't1')));
+    if (validTenantTables.length > 0) {
+      try {
+        localStorage.setItem(`kitchenflow_tables_${effectiveTenantId}`, JSON.stringify(validTenantTables));
+      } catch {}
+    }
+  }, [tables, currentUserData?.tenantId, viewingTenantId, isSuperAdmin, tenantData?.id]);
 
   // Monitorar estado de autenticação
   useEffect(() => {
@@ -4201,9 +4348,16 @@ const App: React.FC = () => {
   };
 
   const handleUpdateLogisticsSettings = async (updates: Partial<AdminSettings>) => {
+    const effectiveTenantId = getCanonicalTenantId(currentUserData, isSuperAdmin ? viewingTenantId : null, tenantData);
     // Remove cashSession from updates to prevent it from leaking into admin settings doc
-    const filteredUpdates = { ...updates };
-    if ((filteredUpdates as any).cashSession) delete (filteredUpdates as any).cashSession;
+    const filteredUpdates = { ...updates } as any;
+    if (filteredUpdates.cashSession) delete filteredUpdates.cashSession;
+    if (effectiveTenantId) {
+      filteredUpdates._tenantId = effectiveTenantId;
+      if (filteredUpdates.fixedCostsList !== undefined) {
+        filteredUpdates.fixedCostsTenantId = effectiveTenantId;
+      }
+    }
 
     const newSettings = { ...adminSettings, ...filteredUpdates };
     setAdminSettings(newSettings);
@@ -4212,13 +4366,12 @@ const App: React.FC = () => {
     const cleanAdminForCloud = { ...newSettings };
     if ((cleanAdminForCloud as any).cashSession) delete (cleanAdminForCloud as any).cashSession;
 
-    const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
     if (effectiveTenantId) {
       try {
-        await setDoc(doc(db, 'settings', effectiveTenantId), { 
+        await setDoc(doc(db, 'settings', effectiveTenantId), cleanObject({ 
           admin: cleanAdminForCloud,
           updatedAt: new Date() 
-        }, { merge: true });
+        }), { merge: true });
       } catch (e) {
         console.error("Error updating logistics settings:", e);
       }
@@ -5422,47 +5575,40 @@ const App: React.FC = () => {
         throw new Error("Falha ao calcular próximo número/ID da mesa.");
       }
 
-      // Aggressive check for duplicates in current state
-      if (tables.some(t => Number(t.number) === nextNumber)) {
-        console.warn(`Table number ${nextNumber} already exists in local state.`);
-        // Try to find the actual next available number
-        let safeNumber = nextNumber;
-        while (tables.some(t => Number(t.number) === safeNumber)) {
-          safeNumber++;
-        }
-        
-        const newTable: Table = {
-          id: nextId + (safeNumber - nextNumber),
-          number: safeNumber,
-          status: 'available',
-          items: [],
-          total: 0,
-          tenantId: effectiveTenantId
-        };
-        
-        await addDoc(collection(db, 'diningTables'), {
-          ...newTable,
-          updatedAt: new Date()
-        });
-        addLog('u1', 'MESAS', `Nova mesa adicionada: ${safeNumber}`);
-        return;
+      // Ensure unique number
+      let safeNumber = nextNumber;
+      while (tables.some(t => Number(t.number) === safeNumber)) {
+        safeNumber++;
       }
+      const safeId = nextId + (safeNumber - nextNumber);
+      const deterministicDocId = `table_${effectiveTenantId}_${safeNumber}`;
 
       const newTable: Table = {
-        id: nextId,
-        number: nextNumber,
+        id: safeId,
+        number: safeNumber,
         status: 'available',
         items: [],
         total: 0,
-        tenantId: effectiveTenantId
-      };
+        tenantId: effectiveTenantId,
+        docId: deterministicDocId
+      } as Table;
 
-      await addDoc(collection(db, 'diningTables'), {
+      // Atualização otimista imediata no estado, localStorage e IndexedDB
+      setTables(prev => {
+        const nextList = [...prev.filter(t => Number(t.number) !== safeNumber), newTable].sort((a, b) => Number(a.number) - Number(b.number));
+        try {
+          localStorage.setItem(`kitchenflow_tables_${effectiveTenantId}`, JSON.stringify(nextList));
+        } catch {}
+        return nextList;
+      });
+      localDb.diningTables.put(newTable).catch(() => {});
+
+      await setDoc(doc(db, 'diningTables', deterministicDocId), {
         ...newTable,
         updatedAt: new Date()
-      });
+      }, { merge: true });
       
-      addLog('u1', 'MESAS', `Nova mesa adicionada: ${nextNumber}`);
+      addLog('u1', 'MESAS', `Nova mesa adicionada: ${safeNumber}`);
     } catch (error) {
       console.error("Error adding table:", error);
       showToast("Erro ao adicionar mesa.", 'error');
@@ -5499,12 +5645,24 @@ const App: React.FC = () => {
     const effectiveTenantId = table.tenantId || getCanonicalTenantId(currentUserData, viewingTenantId, tenantData);
     const targetDocId = (table as any).docId || (table as any)._firestoreId || (typeof id === 'string' && isNaN(numericId) ? id : null);
 
-    // Atualização otimista imediata no estado e no IndexedDB
-    setTables(prev => prev.filter(t =>
-      t.id !== table!.id &&
-      t.number !== table!.number &&
-      (!targetDocId || ((t as any).docId !== targetDocId && (t as any)._firestoreId !== targetDocId))
-    ));
+    // Atualização otimista imediata no estado, localStorage e no IndexedDB
+    setTables(prev => {
+      const remaining = prev.filter(t =>
+        t.id !== table!.id &&
+        t.number !== table!.number &&
+        (!targetDocId || ((t as any).docId !== targetDocId && (t as any)._firestoreId !== targetDocId))
+      );
+      if (effectiveTenantId) {
+        try {
+          if (remaining.length > 0) {
+            localStorage.setItem(`kitchenflow_tables_${effectiveTenantId}`, JSON.stringify(remaining));
+          } else {
+            localStorage.removeItem(`kitchenflow_tables_${effectiveTenantId}`);
+          }
+        } catch {}
+      }
+      return remaining;
+    });
     if (!isNaN(Number(table.id))) {
       localDb.diningTables.delete(Number(table.id)).catch(() => {});
     }
@@ -9377,6 +9535,7 @@ const App: React.FC = () => {
         )}
         {pdvEditOrder === null && activeTab === 'merchant-copilot' && hasPermission('finance_view') && (
           <LojistaCopilot 
+            key={`copilot_${effectiveTenantId || 'default'}`}
             tenantId={effectiveTenantId}
             orders={orders} 
             products={products}

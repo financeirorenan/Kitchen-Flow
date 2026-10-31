@@ -86,20 +86,6 @@ export async function ensureLojistaTenantWithData(targetTenantId?: string) {
                 }, { merge: true });
               }
             }
-
-            const tenantTablesQuery = query(collection(db, 'diningTables'), where('tenantId', '==', tid));
-            const tenantTablesSnap = await getDocs(tenantTablesQuery);
-            if (!tenantTablesSnap.empty && tenantTablesSnap.size === INITIAL_TABLES.length) {
-              const allAvailableAndEmpty = tenantTablesSnap.docs.every(d => {
-                const data = d.data();
-                return data.status === 'available' && (!data.items || data.items.length === 0) && (!data.total || data.total === 0);
-              });
-              if (allAvailableAndEmpty) {
-                const batch = writeBatch(db);
-                tenantTablesSnap.docs.forEach(d => batch.delete(d.ref));
-                await batch.commit();
-              }
-            }
           }
           localStorage.setItem(cleanKey, 'true');
         } catch (cleanErr) {
