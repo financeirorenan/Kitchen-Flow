@@ -913,12 +913,8 @@ const KDS: React.FC<KDSProps> = memo(({
       return safeParseDate(cashSession.openedAt);
     })();
 
-    // Validação estrita: O pedido deve ter sido criado no turno atual ou hoje
+    // Validação estrita: O pedido deve ter sido criado no turno atual ou hoje (descarta pedidos órfãos de dias/turnos anteriores)
     const isOrderFromCurrentShiftOrToday = (o: Order): boolean => {
-      // Pedidos em fila de produção (pending ou preparing) NUNCA devem ser ocultados da cozinha!
-      if (o.status === 'pending' || o.status === 'preparing') return true;
-      // Pedidos prontos ou em entrega NUNCA devem ser ocultados do monitor logístico!
-      if (o.status === 'ready' || o.status === 'delivering') return true;
       const created = safeParseDate(o.createdAt);
       if (!created) return false;
       if (isToday(created)) return true;
@@ -948,6 +944,7 @@ const KDS: React.FC<KDSProps> = memo(({
     const preparingOrdersRaw = filteredOrders.filter(o => {
       const activeItems = (o.items || []).filter(i => !i.cancelled && i.sentToKitchen !== false);
       if (activeItems.length === 0) return false;
+      if (o.status === 'finished' || o.status === 'cancelled' || Boolean((o as any).finishedAt)) return false;
       const isCooking = o.status === 'preparing' || o.status === 'pending' || ((o.kitchenStatus === 'preparing' || o.kitchenStatus === 'pending') && o.status !== 'ready' && o.status !== 'delivering' && o.status !== 'finished' && o.status !== 'cancelled');
       return isCooking && isOrderFromCurrentShiftOrToday(o);
     }).sort(sortByLaunchOrder);
@@ -987,10 +984,10 @@ const KDS: React.FC<KDSProps> = memo(({
     return {
       preparing: preparingBatchCards,
       ready: filteredOrders.filter(o => 
-        o.status === 'ready' && (o.items || []).some(i => !i.cancelled) && isOrderFromCurrentShiftOrToday(o)
+        o.status === 'ready' && !Boolean((o as any).finishedAt) && (o.items || []).some(i => !i.cancelled) && isOrderFromCurrentShiftOrToday(o)
       ).sort(sortByLaunchOrder),
       delivering: filteredOrders.filter(o => 
-        o.status === 'delivering' && (o.items || []).some(i => !i.cancelled) && isOrderFromCurrentShiftOrToday(o)
+        o.status === 'delivering' && !Boolean((o as any).finishedAt) && (o.items || []).some(i => !i.cancelled) && isOrderFromCurrentShiftOrToday(o)
       ).sort(sortByLaunchOrder),
       delivered: filteredOrders.filter(o => {
         const isDeliveredOrFinished = o.status === 'delivered' || o.status === 'finished';
@@ -999,9 +996,10 @@ const KDS: React.FC<KDSProps> = memo(({
         if (o.kitchenStatus === 'preparing' || o.kitchenStatus === 'pending') return false;
         if (!isOrderFromCurrentShiftOrToday(o)) return false;
 
+        const createdDate = safeParseDate(o.createdAt);
         const completionDate = safeParseDate(o.completedAt || o.finishedAt || o.deliveredAt || o.createdAt);
         if (openedDate) {
-          return completionDate ? completionDate >= openedDate : true;
+          return Boolean(createdDate && createdDate >= openedDate) || Boolean(createdDate && isToday(createdDate) && completionDate && completionDate >= openedDate);
         }
         return completionDate ? isToday(completionDate) : true;
       }).sort(sortByLaunchOrder),

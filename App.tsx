@@ -1638,10 +1638,11 @@ const App: React.FC = () => {
     ];
 
     const unsubscribes = collectionsToSync.map(col => {
-      // Usar limit no nível do banco para garantir que a cota de leitura não seja excedida
-      const q = col.limit 
-        ? query(collection(db, col.name), where('tenantId', '==', effectiveTenantId), limit(col.limit))
-        : query(collection(db, col.name), where('tenantId', '==', effectiveTenantId));
+      const q = col.name === 'orders' && col.limit
+        ? query(collection(db, col.name), where('tenantId', '==', effectiveTenantId), orderBy('createdAt', 'desc'), limit(col.limit))
+        : col.limit 
+          ? query(collection(db, col.name), where('tenantId', '==', effectiveTenantId), limit(col.limit))
+          : query(collection(db, col.name), where('tenantId', '==', effectiveTenantId));
 
       return onSnapshot(q, (snapshot) => {
         let items = snapshot.docs.map(doc => {
@@ -1674,12 +1675,13 @@ const App: React.FC = () => {
         // Filtros client-side para substituir filtros de desigualdade do Firestore
         if (col.recentOnly) {
           if (col.name === 'orders') {
-            const yesterday = new Date();
-            yesterday.setHours(yesterday.getHours() - 36); // 36 horas
+            const sevenDaysAgo = new Date();
+            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
             items = items.filter(o => {
+              if (!o.createdAt) return false;
               const createdAt = o.createdAt instanceof Date ? o.createdAt : new Date(o.createdAt);
-              if (['pending', 'preparing', 'ready', 'delivering'].includes(o.status)) return true;
-              return createdAt >= yesterday;
+              if (isNaN(createdAt.getTime())) return false;
+              return createdAt >= sevenDaysAgo;
             });
           } else if (col.name === 'financialRecords') {
             const thirtyDaysAgo = new Date();
@@ -1780,22 +1782,48 @@ const App: React.FC = () => {
             return deduplicateOrders(updated);
           });
 
-          // Sincronizar comandas de balcão ativas em tempo real para múltiplos terminais e servidor
+          // Sincronizar comandas de balcão ativas em tempo real para múltiplos terminais e servidor (estritamente do turno/dia atual)
           setCounterOrders(prev => {
+            const startOfToday = new Date();
+            startOfToday.setHours(0, 0, 0, 0);
+            const shiftOpenDate = cashSessionRef.current?.isOpen && cashSessionRef.current?.openedAt
+              ? toSafeDate(cashSessionRef.current.openedAt)
+              : null;
+            const minActiveDate = shiftOpenDate && shiftOpenDate < startOfToday ? shiftOpenDate : startOfToday;
+
             const inactiveOrderIds = new Set(
               items
-                .filter((o: any) => o && (o.status === 'cancelled' || o.status === 'finished' || o.isSettled || o.paymentStatus === 'paid'))
+                .filter((o: any) => o && (
+                  o.status === 'cancelled' ||
+                  o.status === 'finished' ||
+                  Boolean(o.finishedAt) ||
+                  o.isSettled ||
+                  o.paymentStatus === 'paid' ||
+                  o.paymentStatus === 'completed' ||
+                  (o.status === 'delivered' && Boolean(o.paymentMethod || (o.payments && o.payments.length > 0))) ||
+                  !o.createdAt ||
+                  toSafeDate(o.createdAt) < minActiveDate
+                ))
                 .flatMap((o: any) => [String(o.id), o.docId ? String(o.docId) : '', o.counterId ? String(o.counterId) : ''].filter(Boolean))
             );
 
-            const activeUnsettled = items.filter((o: any) =>
-              o && 
-              (o.type === 'takeout' || o.type === 'delivery' || o.type === 'counter' || o.counterId || (!o.tableNumber && o.type !== 'table')) &&
-              o.status !== 'cancelled' && 
-              o.status !== 'finished' && 
-              !o.isSettled && 
-              o.paymentStatus !== 'paid'
-            );
+            const activeUnsettled = items.filter((o: any) => {
+              if (!o || !o.createdAt) return false;
+              const ordCreated = toSafeDate(o.createdAt);
+              if (ordCreated < minActiveDate) return false;
+              const hasActiveItems = Array.isArray(o.items) && o.items.some((it: any) => !it.cancelled);
+              if (!hasActiveItems) return false;
+              return (
+                (o.type === 'takeout' || o.type === 'delivery' || o.type === 'counter' || o.counterId || (!o.tableNumber && o.type !== 'table')) &&
+                o.status !== 'cancelled' && 
+                o.status !== 'finished' && 
+                !o.finishedAt &&
+                !(o.status === 'delivered' && Boolean(o.paymentMethod || (o.payments && o.payments.length > 0))) &&
+                !o.isSettled && 
+                o.paymentStatus !== 'paid' &&
+                o.paymentStatus !== 'completed'
+              );
+            });
 
             const updatedCounters = prev.filter(c =>
               c &&
@@ -3297,6 +3325,21 @@ const App: React.FC = () => {
             // Remover da fila de digitais pendentes se deixou de ser pending
             setIncomingDigitalOrders(prev => prev.filter(o => o.id !== change.doc.id && o.id !== cloudOrder.id));
 
+            const ordCreatedDate = cloudOrder.createdAt ? toSafeDate(cloudOrder.createdAt) : null;
+            const sevenDaysAgo = new Date();
+            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+            if (!ordCreatedDate || ordCreatedDate < sevenDaysAgo) {
+              return;
+            }
+
+            const startOfToday = new Date();
+            startOfToday.setHours(0, 0, 0, 0);
+            const shiftOpenDate = cashSessionRef.current?.isOpen && cashSessionRef.current?.openedAt
+              ? toSafeDate(cashSessionRef.current.openedAt)
+              : null;
+            const minActiveShiftDate = shiftOpenDate && shiftOpenDate < startOfToday ? shiftOpenDate : startOfToday;
+            const isFromActiveShiftOrToday = ordCreatedDate >= minActiveShiftDate;
+
             // Atualizar banco local e estado global em tempo real para sincronização entre Admin, Cozinha, Garçom e Entregas
             try {
               await localDb.orders.put(cloudOrder);
@@ -3312,8 +3355,8 @@ const App: React.FC = () => {
               table: cloudOrder.tableNumber
             });
 
-            // Sincronizar mesa se o pedido for de mesa (somente se ainda não foi pago/fechado)
-            if (cloudOrder.type === 'table' && cloudOrder.tableNumber && !cloudOrder.isSettled && cloudOrder.paymentStatus !== 'paid' && cloudOrder.status !== 'cancelled' && cloudOrder.status !== 'finished') {
+            // Sincronizar mesa se o pedido for de mesa (somente se for do turno/dia atual e ainda não foi pago/fechado)
+            if (isFromActiveShiftOrToday && cloudOrder.type === 'table' && cloudOrder.tableNumber && !cloudOrder.isSettled && cloudOrder.paymentStatus !== 'paid' && cloudOrder.status !== 'cancelled' && cloudOrder.status !== 'finished') {
               setTables(prev => prev.map(t => {
                 if (t.number === cloudOrder.tableNumber || String(t.number) === String(cloudOrder.tableNumber) || t.currentOrderId === cloudOrder.id) {
                   const paidPartialSum = (t.partialPayments || []).reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
@@ -8508,11 +8551,19 @@ const App: React.FC = () => {
       // Update UI state immediately (Optimistic update)
       lastWriteTimeRef.current = Date.now();
       setTables(updatedTables);
+      setCounterOrders([]);
       setCashSession(closedSession);
+      const closureTimestamp = new Date();
+      setOrders(prev => prev.map(o =>
+        (o && o.status !== 'cancelled' && o.status !== 'finished')
+          ? { ...o, status: 'finished', kitchenStatus: 'delivered', finishedAt: closureTimestamp, updatedAt: closureTimestamp }
+          : o
+      ));
 
       // Try LocalDB Updates as a unit
       try {
         await localDb.cashClosings.add(report);
+        await localDb.counterOrders.clear().catch(() => {});
         setCashClosings(prev => [report, ...prev]);
 
         // 1. ALWAYS create a "Fechamento de Caixa" record for the extrato
@@ -8608,8 +8659,12 @@ const App: React.FC = () => {
               }
             }
 
-            // 3.5 Encerrar pedidos do turno atual com proteção contra limites de cota
-            const activeSessionOrderIds = salesSinceOpen.map(o => o.docId || o.id).filter(Boolean);
+            // 3.5 Encerrar TODOS os pedidos do turno atual (pagos e comandas abertas do turno) com proteção contra limites de cota
+            const allOpenOrSessionOrders = orders.filter(o => o && o.status !== 'cancelled' && o.status !== 'finished');
+            const activeSessionOrderIds = Array.from(new Set([
+              ...salesSinceOpen.map(o => o.docId || o.id),
+              ...allOpenOrSessionOrders.map(o => o.docId || o.id)
+            ].filter(Boolean)));
             if (activeSessionOrderIds.length > 0) {
               const orderChunks = [];
               for (let i = 0; i < activeSessionOrderIds.length; i += 25) {
@@ -8620,8 +8675,9 @@ const App: React.FC = () => {
                 chunk.forEach(orderId => {
                   orderBatch.update(doc(db, 'orders', orderId), {
                     status: 'finished',
-                    finishedAt: new Date(),
-                    updatedAt: new Date()
+                    kitchenStatus: 'delivered',
+                    finishedAt: closureTimestamp,
+                    updatedAt: closureTimestamp
                   });
                 });
                 await orderBatch.commit().catch(e => console.warn("Aviso ao encerrar pedidos do turno na nuvem:", e));

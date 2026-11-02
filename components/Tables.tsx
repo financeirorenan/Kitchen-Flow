@@ -1401,12 +1401,14 @@ const Tables: React.FC<TablesProps> = memo(
       setActiveSeat("Geral");
     };
 
-    // Helper para verificar se o pedido possui forma de pagamento registrada e quitada
+    // Helper para verificar se o pedido já foi finalizado, cancelado ou possui pagamento registrado/quitado
     const isOrderSettledWithPayment = useCallback((ord: Order): boolean => {
       if (!ord) return true;
-      if (ord.status === 'cancelled') return true;
-      if (ord.isSettled === true && Boolean(ord.paymentMethod || (ord.payments && ord.payments.length > 0))) return true;
-      if ((ord.paymentStatus === 'paid' || ord.paymentStatus === 'completed') && Boolean(ord.paymentMethod || (ord.payments && ord.payments.length > 0))) return true;
+      if (ord.status === 'cancelled' || ord.status === 'finished') return true;
+      if (Boolean((ord as any).finishedAt)) return true;
+      if (ord.isSettled === true) return true;
+      if (ord.paymentStatus === 'paid' || ord.paymentStatus === 'completed') return true;
+      if (ord.status === 'delivered' && Boolean(ord.paymentMethod || (ord.payments && ord.payments.length > 0))) return true;
 
       // Se possui registro explícito de pagamentos que cobrem o total
       if (ord.payments && ord.payments.length > 0) {
@@ -1420,7 +1422,7 @@ const Tables: React.FC<TablesProps> = memo(
       return false;
     }, []);
 
-    // Comandas de Balcão, Delivery e Retirada que estão ABERTAS e SEM FORMA DE PAGAMENTO (100% sem duplicidade e sem sumir antes de pagar)
+    // Comandas de Balcão, Delivery e Retirada que estão ABERTAS e SEM FORMA DE PAGAMENTO no turno/dia atual
     const openUnpaidComandas = useMemo(() => {
       type ComandaCard = {
         id: string | number;
@@ -1440,9 +1442,12 @@ const Tables: React.FC<TablesProps> = memo(
         rawOrder?: Order;
       };
 
-      const toSafeDate = (d: any): Date => {
-        if (!d) return new Date();
-        if (d instanceof Date) return isNaN(d.getTime()) ? new Date() : d;
+      const toSafeDate = (d: any): Date | null => {
+        if (!d) return null;
+        if (d instanceof Date) return isNaN(d.getTime()) ? null : d;
+        if (typeof d === 'object' && typeof d.seconds === 'number') {
+          return new Date(d.seconds * 1000);
+        }
         if (typeof d?.toDate === 'function') {
           try {
             const converted = d.toDate();
@@ -1450,7 +1455,23 @@ const Tables: React.FC<TablesProps> = memo(
           } catch {}
         }
         const parsed = new Date(d);
-        return isNaN(parsed.getTime()) ? new Date() : parsed;
+        return isNaN(parsed.getTime()) ? null : parsed;
+      };
+
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const shiftOpenDate = cashSession?.isOpen && cashSession?.openedAt ? toSafeDate(cashSession.openedAt) : null;
+
+      // Verifica se uma data pertence ao turno de caixa atual ou ao dia de hoje (descartando comandas de dias/turnos anteriores)
+      const isFromCurrentShiftOrToday = (rawDate: any): boolean => {
+        const d = toSafeDate(rawDate);
+        if (!d) return false;
+        if (shiftOpenDate) {
+          // Se o caixa está aberto, aceita pedidos criados desde a abertura do turno ou hoje
+          const minAllowed = shiftOpenDate < startOfToday ? shiftOpenDate : startOfToday;
+          return d >= minAllowed;
+        }
+        return d >= startOfToday;
       };
 
       const list: ComandaCard[] = [];
@@ -1474,7 +1495,7 @@ const Tables: React.FC<TablesProps> = memo(
         const hasContent = activeCounterItems.length > 0 || (counter.total && counter.total > 0) || counter.customerName;
         if (!hasContent) return;
 
-        // Se estiver vinculada a um pedido no KDS/orders (por currentOrderId, id ou counterId), verificar se já foi quitado ou cancelado
+        // Se estiver vinculada a um pedido no KDS/orders (por currentOrderId, id ou counterId), verificar se já foi quitado, encerrado ou é de turno anterior
         const matchingOrder = (orders || []).find(o =>
           o &&
           (
@@ -1486,8 +1507,13 @@ const Tables: React.FC<TablesProps> = memo(
         );
 
         if (matchingOrder) {
-          if (matchingOrder.status === 'cancelled' || isOrderSettledWithPayment(matchingOrder)) {
-            return; // Pedido já cancelado ou quitado com pagamento no PDV
+          if (
+            matchingOrder.status === 'cancelled' ||
+            matchingOrder.status === 'finished' ||
+            isOrderSettledWithPayment(matchingOrder) ||
+            !isFromCurrentShiftOrToday(matchingOrder.createdAt)
+          ) {
+            return; // Pedido cancelado, finalizado, pago ou de turno/dia anterior
           }
           // Evitar duplicar caso outra entrada em counterOrders já tenha vinculado o mesmo pedido
           if (linkedOrderIds.has(String(matchingOrder.id))) {
@@ -1495,6 +1521,8 @@ const Tables: React.FC<TablesProps> = memo(
           }
           linkedOrderIds.add(String(matchingOrder.id));
           if (matchingOrder.docId) linkedOrderIds.add(String(matchingOrder.docId));
+        } else if (counter.openedAt && !isFromCurrentShiftOrToday(counter.openedAt)) {
+          return;
         }
 
         if (counter.currentOrderId) {
@@ -1514,7 +1542,7 @@ const Tables: React.FC<TablesProps> = memo(
         const itemsSubtotal = activeCounterItems.reduce((acc, i) => acc + (i.price * i.quantity), 0);
         const totalAmount = itemsSubtotal + (Number(counter.deliveryFee) || 0);
         const totalItems = activeCounterItems.reduce((acc, i) => acc + (i.quantity || 1), 0);
-        const createdAt = toSafeDate(counter.openedAt || matchingOrder?.createdAt);
+        const createdAt = toSafeDate(counter.openedAt || matchingOrder?.createdAt) || new Date();
 
         list.push({
           id: counter.id,
@@ -1541,13 +1569,16 @@ const Tables: React.FC<TablesProps> = memo(
 
       // 2. Processar pedidos de orders (KDS / Delivery / Balcão) não vinculados às comandas acima
       (orders || []).forEach((ord) => {
-        if (!ord || ord.status === 'cancelled' || ord.isSubTicket || ord.mergedIntoOrderId) return;
+        if (!ord || ord.status === 'cancelled' || ord.status === 'finished' || ord.isSubTicket || ord.mergedIntoOrderId) return;
+
+        // Apenas pedidos criados no turno atual ou hoje (nunca exibir comandas de dias/turnos anteriores)
+        if (!isFromCurrentShiftOrToday(ord.createdAt)) return;
 
         // Apenas pedidos que não são de mesa física (balcão, delivery, retirada ou sem mesa associada)
         const isNonTable = ord.type === 'delivery' || ord.type === 'takeout' || (ord.type as any) === 'balcao' || !ord.tableNumber;
         if (!isNonTable) return;
 
-        // Se já foi quitado com forma de pagamento
+        // Se já foi quitado ou encerrado
         if (isOrderSettledWithPayment(ord)) return;
 
         const activeOrdItems = (ord.items || []).filter(i => !i.cancelled);
@@ -1566,7 +1597,7 @@ const Tables: React.FC<TablesProps> = memo(
 
         const totalAmount = Number(ord.total || 0);
         const totalItems = activeOrdItems.reduce((acc, i) => acc + (i.quantity || 1), 0);
-        const createdAt = toSafeDate(ord.createdAt);
+        const createdAt = toSafeDate(ord.createdAt) || new Date();
 
         list.push({
           id: ord.id,
@@ -1591,7 +1622,7 @@ const Tables: React.FC<TablesProps> = memo(
         const timeB = b.createdAt.getTime();
         return (isNaN(timeB) ? 0 : timeB) - (isNaN(timeA) ? 0 : timeA);
       });
-    }, [counterOrders, orders, isOrderSettledWithPayment]);
+    }, [counterOrders, orders, isOrderSettledWithPayment, cashSession?.isOpen, cashSession?.openedAt]);
 
     const handleOpenUnpaidComanda = (comanda: typeof openUnpaidComandas[0]) => {
       resetCustomerFields();

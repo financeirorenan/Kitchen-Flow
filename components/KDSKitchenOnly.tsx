@@ -99,12 +99,18 @@ export const KDSKitchenOnly: React.FC<KDSKitchenOnlyProps> = ({
   // Keep track of order count to trigger chime on new orders
   const prevOrdersCountRef = useRef<number>(0);
 
-  // 1. Filtrar apenas pedidos ativos em produção na cozinha (exclui cancelados, prontos, entregues e finalizados)
+  // 1. Filtrar apenas pedidos ativos em produção na cozinha do turno/dia atual (exclui cancelados, prontos, entregues, finalizados e antigos)
   const kitchenOrders = useMemo(() => {
+    const cutoff = new Date();
+    cutoff.setHours(cutoff.getHours() - 18);
     const validOrders = deduplicateOrders(orders).filter(o => {
-      if (!o) return false;
+      if (!o || !o.createdAt) return false;
       if (o.isSubTicket || o.mergedIntoOrderId) return false;
-      if (o.status === 'finished' || o.status === 'cancelled') {
+      if (o.status === 'finished' || o.status === 'cancelled' || Boolean((o as any).finishedAt)) {
+        return false;
+      }
+      const createdDate = safeParseDate(o.createdAt);
+      if (createdDate < cutoff && !isToday(createdDate)) {
         return false;
       }
       if (o.kitchenStatus === 'preparing' || o.kitchenStatus === 'pending') {
