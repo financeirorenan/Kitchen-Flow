@@ -675,7 +675,33 @@ const App: React.FC = () => {
     });
   };
 
-  const [viewingTenantId, setViewingTenantId] = useState<string | null>(null);
+  const [viewingTenantId, setViewingTenantId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const path = window.location.pathname || '';
+      if (path.startsWith('/saas')) return null;
+      const parts = path.split('/').filter(Boolean);
+      const reserved = new Set([
+        'pdv', 'pos', 'mesas', 'tables', 'financeiro', 'finance', 'kds', 'kds-cozinha',
+        'entregas', 'delivery', 'estoque', 'inventory', 'fornecedores', 'suppliers',
+        'cardapio-digital', 'cardapio', 'clientes', 'customers', 'cmv', 'equipe', 'users',
+        'entregadores', 'couriers', 'fiscal', 'cupons-fiscais', 'fiscal-coupons', 'cupons',
+        'configuracoes', 'settings', 'admin-settings', 'marketplace', 'suporte', 'support',
+        'monitor-pedidos', 'order-monitor', 'monitor', 'relatorios', 'reports', 'insights',
+        'alertas', 'alerts', 'parceiros', 'partners', 'copilot', 'dashboard'
+      ]);
+      if (
+        (parts[0] === 'lojista' || parts[0] === 'painel' || parts[0] === 'admin' || parts[0] === 'loja') &&
+        parts[1] &&
+        !reserved.has(parts[1].toLowerCase())
+      ) {
+        return decodeURIComponent(parts[1]);
+      }
+      return sessionStorage.getItem('kf_viewing_tenant_id') || null;
+    } catch {
+      return null;
+    }
+  });
   const [viewingTenantName, setViewingTenantName] = useState<string | null>(null);
   const [viewingTenantLogo, setViewingTenantLogo] = useState<string | null>(null);
 
@@ -838,6 +864,9 @@ const App: React.FC = () => {
       return;
     }
     if (tab.startsWith('saas-')) {
+      try {
+        sessionStorage.removeItem('kf_viewing_tenant_id');
+      } catch (_) {}
       if (viewingTenantId) {
         setViewingTenantId(null);
         setViewingTenantName(null);
@@ -912,6 +941,9 @@ const App: React.FC = () => {
         navigate('/marketplace', { replace: true });
         return;
       }
+      try {
+        sessionStorage.removeItem('kf_viewing_tenant_id');
+      } catch (_) {}
       if (viewingTenantId) {
         setViewingTenantId(null);
         setViewingTenantName(null);
@@ -947,16 +979,27 @@ const App: React.FC = () => {
         const userTenantId = currentUserData.tenantId;
 
         if (isSuperAdmin) {
-          if (urlTenantParam && urlTenantParam !== viewingTenantId) {
-            setViewingTenantId(urlTenantParam);
+          if (urlTenantParam) {
+            try {
+              sessionStorage.setItem('kf_viewing_tenant_id', urlTenantParam);
+            } catch (_) {}
+            if (urlTenantParam !== viewingTenantId) {
+              setViewingTenantId(urlTenantParam);
+            }
           } else if (!urlTenantParam && !viewingTenantId) {
             const fallbackTenant = userTenantId || 'lojista';
+            try {
+              sessionStorage.setItem('kf_viewing_tenant_id', fallbackTenant);
+            } catch (_) {}
             setViewingTenantId(fallbackTenant);
             navigate(`/lojista/${fallbackTenant}`, { replace: true });
             return;
           }
         } else {
           // Lojista acessando o painel: limpar qualquer resquício de inspeção do Super Admin
+          try {
+            sessionStorage.removeItem('kf_viewing_tenant_id');
+          } catch (_) {}
           if (viewingTenantId || viewingTenantName || viewingTenantLogo) {
             setViewingTenantId(null);
             setViewingTenantName(null);
@@ -1156,7 +1199,12 @@ const App: React.FC = () => {
   }, [handleSelectTab]);
 
   const handleViewTenant = (tenantId: string, name?: string, logo?: string) => {
+    try {
+      sessionStorage.setItem('kf_viewing_tenant_id', tenantId);
+      localStorage.removeItem('kitchenflow_cached_tenant_data');
+    } catch (_) {}
     setPdvEditOrder(null);
+    setTenantData(null);
     setViewingTenantId(tenantId);
     setViewingTenantName(name || null);
     setViewingTenantLogo(logo || null);
@@ -1188,6 +1236,11 @@ const App: React.FC = () => {
 
   const handleStopViewingTenant = () => {
     const backupName = viewingTenantName || viewingTenantId || 'Parceiro';
+    try {
+      sessionStorage.removeItem('kf_viewing_tenant_id');
+      localStorage.removeItem('kitchenflow_cached_tenant_data');
+    } catch (_) {}
+    setTenantData(null);
     setViewingTenantId(null);
     setViewingTenantName(null);
     setViewingTenantLogo(null);
@@ -1459,7 +1512,7 @@ const App: React.FC = () => {
     });
 
     // Also load local settings and cached tables/orders/products for this tenant immediately on reload/login
-    if (effectiveTenantId && effectiveTenantId !== 'default-tenant') {
+    if (effectiveTenantId) {
       try {
         const cachedTablesRaw = localStorage.getItem(`kitchenflow_tables_${effectiveTenantId}`);
         if (cachedTablesRaw) {
@@ -1495,17 +1548,34 @@ const App: React.FC = () => {
               rawLocalAdmin.fixedCostsTenantId === effectiveTenantId &&
               Array.isArray(rawLocalAdmin.fixedCostsList)
             );
-            const isolatedLocalFixedCosts = isLocalFixedCostsValid
+            let isolatedLocalFixedCosts = isLocalFixedCostsValid
               ? rawLocalAdmin.fixedCostsList.filter((it: any) => it && (!it.tenantId || it.tenantId === effectiveTenantId))
               : [];
+            let finalFixedCostsSaved = isLocalFixedCostsValid;
+            let finalWastePercent = isLocalFixedCostsValid ? (Number(rawLocalAdmin.estimatedWastePercent) || 0) : 0;
+
+            if (!finalFixedCostsSaved) {
+              try {
+                const rawLs = localStorage.getItem(`kf_fixed_costs_v3_${effectiveTenantId}`);
+                if (rawLs) {
+                  const parsedLs = JSON.parse(rawLs);
+                  if (parsedLs && parsedLs.tenantId === effectiveTenantId && parsedLs.fixedCostsSaved && Array.isArray(parsedLs.fixedCostsList)) {
+                    isolatedLocalFixedCosts = parsedLs.fixedCostsList.filter((it: any) => it && it.tenantId === effectiveTenantId);
+                    finalFixedCostsSaved = true;
+                    finalWastePercent = Number(parsedLs.estimatedWastePercent) || 0;
+                  }
+                }
+              } catch (_) {}
+            }
+
             setAdminSettings(prev => ({
               ...prev,
               ...localSettings.admin,
               _tenantId: effectiveTenantId,
               fixedCostsTenantId: effectiveTenantId,
-              fixedCostsSaved: isLocalFixedCostsValid,
+              fixedCostsSaved: finalFixedCostsSaved,
               fixedCostsList: isolatedLocalFixedCosts,
-              estimatedWastePercent: isLocalFixedCostsValid ? (Number(rawLocalAdmin.estimatedWastePercent) || 0) : 0,
+              estimatedWastePercent: finalWastePercent,
               companyName: initialName || localSettings.admin.companyName || prev.companyName,
               logoUrl: initialLogo || localSettings.admin.logoUrl || prev.logoUrl
             } as any));
@@ -2002,9 +2072,25 @@ const App: React.FC = () => {
             cleanAdmin.fixedCostsTenantId === effectiveTenantId &&
             Array.isArray(cleanAdmin.fixedCostsList)
           );
-          const isolatedCloudFixedCosts = isCloudFixedCostsValid
+          let isolatedCloudFixedCosts = isCloudFixedCostsValid
             ? cleanAdmin.fixedCostsList.filter((it: any) => it && (!it.tenantId || it.tenantId === effectiveTenantId))
             : [];
+          let finalFixedCostsSaved = isCloudFixedCostsValid;
+          let finalWastePercent = isCloudFixedCostsValid ? (Number(cleanAdmin.estimatedWastePercent) || 0) : 0;
+
+          if (!finalFixedCostsSaved) {
+            try {
+              const rawLs = localStorage.getItem(`kf_fixed_costs_v3_${effectiveTenantId}`);
+              if (rawLs) {
+                const parsedLs = JSON.parse(rawLs);
+                if (parsedLs && parsedLs.tenantId === effectiveTenantId && parsedLs.fixedCostsSaved && Array.isArray(parsedLs.fixedCostsList)) {
+                  isolatedCloudFixedCosts = parsedLs.fixedCostsList.filter((it: any) => it && it.tenantId === effectiveTenantId);
+                  finalFixedCostsSaved = true;
+                  finalWastePercent = Number(parsedLs.estimatedWastePercent) || 0;
+                }
+              }
+            } catch (_) {}
+          }
           
           setAdminSettings(prev => {
             const finalCompanyName = activeTenantName || cleanAdmin.companyName || prev.companyName;
@@ -2015,9 +2101,9 @@ const App: React.FC = () => {
               ...cleanAdmin,
               _tenantId: effectiveTenantId,
               fixedCostsTenantId: effectiveTenantId,
-              fixedCostsSaved: isCloudFixedCostsValid,
+              fixedCostsSaved: finalFixedCostsSaved,
               fixedCostsList: isolatedCloudFixedCosts,
-              estimatedWastePercent: isCloudFixedCostsValid ? (Number(cleanAdmin.estimatedWastePercent) || 0) : 0,
+              estimatedWastePercent: finalWastePercent,
               companyName: finalCompanyName,
               logoUrl: finalLogoUrl,
               // Deep merge nested objects to avoid overwriting them completely if firestore doc is partial
@@ -2030,6 +2116,15 @@ const App: React.FC = () => {
             if (JSON.stringify(prev) === JSON.stringify(next)) return prev;
             return next;
           });
+        } else {
+          setAdminSettings(prev => ({
+            ...prev,
+            _tenantId: effectiveTenantId,
+            fixedCostsTenantId: effectiveTenantId,
+            fixedCostsSaved: false,
+            fixedCostsList: [],
+            estimatedWastePercent: 0
+          } as any));
         }
         if (s.digitalMenu) {
           setDigitalMenuSettings(prev => {
@@ -2745,7 +2840,7 @@ const App: React.FC = () => {
 
   const handleSaveSettings = async () => {
     try {
-      const effectiveTenantId = viewingTenantId || currentUserData?.tenantId;
+      const effectiveTenantId = getCanonicalTenantId(currentUserData, isSuperAdmin ? viewingTenantId : null, tenantData);
       const s = await localDb.settings.get(effectiveTenantId || 'global');
       
       // Ensure images are compressed before saving to Firestore (1MB limit)
@@ -2776,13 +2871,15 @@ const App: React.FC = () => {
       };
       const updatedAdmin = { 
         ...adminSettings, 
+        _tenantId: effectiveTenantId,
+        fixedCostsTenantId: effectiveTenantId,
         companyName: unifiedName,
         primaryColor: unifiedPrimaryColor,
         accentColor: unifiedAccentColor,
         logoUrl: unifiedLogo, 
         bannerUrl: unifiedBanner,
         coverUrl: unifiedBanner
-      };
+      } as any;
 
       // Keep active React states in sync immediately
       setDigitalMenuSettings(updatedDigitalMenu);

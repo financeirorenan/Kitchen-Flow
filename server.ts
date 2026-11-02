@@ -3007,49 +3007,57 @@ Forneça a resposta em formato JSON estrito correspondente ao esquema de respost
     const dirnameDist = typeof __dirname !== "undefined"
       ? (fs.existsSync(path.join(__dirname, "index.html")) ? __dirname : path.resolve(__dirname, "dist"))
       : path.resolve("dist");
-    const distPath = fs.existsSync(path.join(cwdDist, "index.html"))
-      ? cwdDist
-      : dirnameDist;
+    const resolveDistPath = () => {
+      if (fs.existsSync(path.join(cwdDist, "index.html"))) return cwdDist;
+      if (fs.existsSync(path.join(dirnameDist, "index.html"))) return dirnameDist;
+      return cwdDist;
+    };
 
-    if (fs.existsSync(distPath)) {
-      app.use(express.static(distPath, {
+    try {
+      fs.mkdirSync(cwdDist, { recursive: true });
+    } catch (_) {}
+
+    app.use((req, res, next) => {
+      const activeDist = resolveDistPath();
+      return express.static(activeDist, {
         maxAge: 0,
         etag: true,
-        setHeaders: (res, filePath) => {
+        setHeaders: (resObj, filePath) => {
           if (filePath.includes('/assets/')) {
-            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+            resObj.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
           } else if (filePath.endsWith('.html') || filePath.endsWith('sw.js') || filePath.endsWith('manifest.json')) {
-            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-            res.setHeader('Pragma', 'no-cache');
-            res.setHeader('Expires', '0');
+            resObj.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+            resObj.setHeader('Pragma', 'no-cache');
+            resObj.setHeader('Expires', '0');
           } else {
-            res.setHeader('Cache-Control', 'no-cache');
+            resObj.setHeader('Cache-Control', 'no-cache');
           }
         }
-      }));
+      })(req, res, next);
+    });
 
-      app.use((req, res) => {
-        if (req.method === "GET" && !req.path.startsWith("/api/")) {
-          const ext = path.extname(req.path).toLowerCase();
-          const staticAssetExtensions = ['.js', '.css', '.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg', '.woff', '.woff2', '.ttf', '.eot', '.mp3', '.mp4', '.webp', '.pdf', '.map', '.json'];
-          if (ext && staticAssetExtensions.includes(ext)) {
-            return res.status(404).send("Arquivo estático não encontrado.");
-          }
-          const indexPath = path.join(distPath, "index.html");
-          if (fs.existsSync(indexPath)) {
-            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-            res.setHeader('Pragma', 'no-cache');
-            res.setHeader('Expires', '0');
-            return res.sendFile(indexPath);
-          }
+    app.use((req, res) => {
+      if (req.method === "GET" && !req.path.startsWith("/api/")) {
+        const ext = path.extname(req.path).toLowerCase();
+        const staticAssetExtensions = ['.js', '.css', '.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg', '.woff', '.woff2', '.ttf', '.eot', '.mp3', '.mp4', '.webp', '.pdf', '.map', '.json'];
+        if (ext && staticAssetExtensions.includes(ext)) {
+          return res.status(404).send("Arquivo estático não encontrado.");
         }
-        res.status(404).json({ error: "Rota API não encontrada" });
-      });
-    } else {
-      app.use((_req, res) => {
-        res.status(500).send("Build do frontend não encontrado.");
-      });
-    }
+        const activeDist = resolveDistPath();
+        const indexPath = path.join(activeDist, "index.html");
+        if (fs.existsSync(indexPath)) {
+          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+          return res.sendFile(indexPath);
+        }
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        return res.status(200).set({ 'Content-Type': 'text/html; charset=utf-8' }).send(
+          `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="3"><title>KitchenFlow AI — Inicializando</title><style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#FF4F18;color:#fff;font-family:system-ui,-apple-system,sans-serif;text-align:center}.box{padding:24px}.spinner{width:36px;height:36px;border:3px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:s .8s linear infinite;margin:16px auto}@keyframes s{to{transform:rotate(360deg)}}</style></head><body><div class="box"><h2>KitchenFlow AI</h2><div class="spinner"></div><p>Finalizando compilação do painel... A página atualizará automaticamente em instantes.</p></div></body></html>`
+        );
+      }
+      res.status(404).json({ error: "Rota API não encontrada" });
+    });
   }
 
   // Call app.listen(portOrSocket, callback) without a hardcoded host argument when running in production/Hostinger

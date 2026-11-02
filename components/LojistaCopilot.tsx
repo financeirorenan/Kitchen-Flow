@@ -2,7 +2,7 @@ import React, { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Order, Product, FinancialRecord, AdminSettings, RawMaterial, Tenant, Plan, User } from "../types";
 import { db } from "../firebase";
-import { doc, updateDoc } from "firebase/firestore";
+import { doc, updateDoc, setDoc } from "firebase/firestore";
 import {
   TrendingUp,
   TrendingDown,
@@ -425,6 +425,21 @@ export default function LojistaCopilot({
         fixedCostsSaved: true
       } as any);
     }
+    setDoc(
+      doc(db, 'settings', activeTenantId),
+      {
+        admin: {
+          ...(adminSettings || {}),
+          _tenantId: activeTenantId,
+          fixedCostsTenantId: activeTenantId,
+          fixedCostsList: stampedList,
+          estimatedWastePercent: nextWaste,
+          fixedCostsSaved: true
+        },
+        updatedAt: new Date()
+      },
+      { merge: true }
+    ).catch(err => console.warn("[LojistaCopilot] Aviso ao sincronizar custos fixos na nuvem:", err));
   };
 
   // Re-sync when activeTenantId or cloud adminSettings.fixedCostsList changes so each lojista only sees their own real data
@@ -756,12 +771,21 @@ Como posso te ajudar a lucrar mais hoje? Pergunte abaixo ou clique em uma das su
     return { startDate, endDate, periodName, daysCount, previousStartDate, previousEndDate };
   }, [selectedPeriod]);
 
-  // Filters records & orders by selected date range
+  // Filters records & orders by selected date range and activeTenantId
   const filteredData = useMemo(() => {
     const { startDate, endDate, previousStartDate, previousEndDate, daysCount } = dateRange;
 
+    const belongsToActiveTenant = (itemTenantId?: string) => {
+      if (!activeTenantId) return true;
+      if (!itemTenantId) return true;
+      if (itemTenantId === activeTenantId) return true;
+      if (activeTenantId === 'lojista' && itemTenantId === 't1') return true;
+      return false;
+    };
+
     // Filter completed/delivered/paid orders (excluding cancelled, sub-tickets, or merged) in current and previous window
     const currentOrders = orders.filter(o => {
+      if (!belongsToActiveTenant(o.tenantId)) return false;
       if (!isCompletedOrder(o)) return false;
       const d = getOrderSafeDate(o);
       if (!d) return false;
@@ -769,27 +793,30 @@ Como posso te ajudar a lucrar mais hoje? Pergunte abaixo ou clique em uma das su
     });
 
     const previousOrders = orders.filter(o => {
+      if (!belongsToActiveTenant(o.tenantId)) return false;
       if (!isCompletedOrder(o)) return false;
       const d = getOrderSafeDate(o);
       if (!d) return false;
       return d >= previousStartDate && d <= previousEndDate;
     });
 
-    // Filter financial manual records
+    // Filter financial manual records strictly for activeTenantId
     const currentManual = manualRecords.filter(r => {
+      if (!belongsToActiveTenant(r.tenantId)) return false;
       const d = getSafeDate(r.date);
       if (!d) return false;
       return d >= startDate && d <= endDate;
     });
 
     const previousManual = manualRecords.filter(r => {
+      if (!belongsToActiveTenant(r.tenantId)) return false;
       const d = getSafeDate(r.date);
       if (!d) return false;
       return d >= previousStartDate && d <= previousEndDate;
     });
 
     return { currentOrders, previousOrders, currentManual, previousManual, daysCount };
-  }, [orders, manualRecords, dateRange]);
+  }, [orders, manualRecords, dateRange, activeTenantId]);
 
   // Financial intelligence calculation block
   const stats = useMemo(() => {
@@ -2731,11 +2758,9 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                           setEditAmount(item.amount ? maskCurrency((item.amount * 100).toFixed(0)) : "");
                         };
                         const deleteItem = () => {
-                          setFixedCostsList(prev => {
-                            const next = prev.filter(c => c.id !== item.id);
-                            persistFixedCostsForTenant(next, estimatedWastePercent);
-                            return next;
-                          });
+                          const next = fixedCostsList.filter(c => c.id !== item.id);
+                          setFixedCostsList(next);
+                          persistFixedCostsForTenant(next, estimatedWastePercent);
                         };
 
                         return (
@@ -2774,11 +2799,9 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                                       type="button"
                                       onClick={() => {
                                         const val = parseCurrency(editAmount);
-                                        setFixedCostsList(prev => {
-                                          const next = prev.map(c => c.id === item.id ? { ...c, name: editName, type: editType, amount: val } : c);
-                                          persistFixedCostsForTenant(next, estimatedWastePercent);
-                                          return next;
-                                        });
+                                        const next = fixedCostsList.map(c => c.id === item.id ? { ...c, name: editName, type: editType, amount: val, tenantId: activeTenantId } : c);
+                                        setFixedCostsList(next);
+                                        persistFixedCostsForTenant(next, estimatedWastePercent);
                                         setEditingItemId(null);
                                       }}
                                       className="p-1 bg-green-500 text-white hover:bg-green-600 rounded-lg shadow-sm transition-all text-xs"
@@ -2887,15 +2910,14 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                             if (val <= 0) return;
                             const newItem: FixedCostItem = {
                               id: `fc-${Date.now()}`,
-                              name: newName,
+                              name: newName.trim(),
                               type: newType,
-                              amount: val
+                              amount: val,
+                              tenantId: activeTenantId
                             };
-                            setFixedCostsList(prev => {
-                              const next = [...prev, newItem];
-                              persistFixedCostsForTenant(next, estimatedWastePercent);
-                              return next;
-                            });
+                            const next = [...fixedCostsList, newItem];
+                            setFixedCostsList(next);
+                            persistFixedCostsForTenant(next, estimatedWastePercent);
                             setNewName("");
                             setNewAmount("");
                           }
@@ -2909,15 +2931,14 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                           if (val <= 0) return;
                           const newItem: FixedCostItem = {
                             id: `fc-${Date.now()}`,
-                            name: newName,
+                            name: newName.trim(),
                             type: newType,
-                            amount: val
+                            amount: val,
+                            tenantId: activeTenantId
                           };
-                          setFixedCostsList(prev => {
-                            const next = [...prev, newItem];
-                            persistFixedCostsForTenant(next, estimatedWastePercent);
-                            return next;
-                          });
+                          const next = [...fixedCostsList, newItem];
+                          setFixedCostsList(next);
+                          persistFixedCostsForTenant(next, estimatedWastePercent);
                           setNewName("");
                           setNewAmount("");
                         }}
@@ -2947,7 +2968,36 @@ Para aumentar a eficiência da sua cozinha, recomendo focar nas seguintes açõe
                 <button
                   type="button"
                   onClick={() => {
-                    persistFixedCostsForTenant(fixedCostsList, estimatedWastePercent);
+                    let finalList = [...fixedCostsList];
+                    if (newName.trim()) {
+                      const pendingVal = parseCurrency(newAmount);
+                      if (pendingVal > 0) {
+                        const pendingItem: FixedCostItem = {
+                          id: `fc-${Date.now()}`,
+                          name: newName.trim(),
+                          type: newType,
+                          amount: pendingVal,
+                          tenantId: activeTenantId
+                        };
+                        finalList = [...finalList, pendingItem];
+                        setFixedCostsList(finalList);
+                        setNewName("");
+                        setNewAmount("");
+                      }
+                    }
+                    if (editingItemId && editName.trim()) {
+                      const editedVal = parseCurrency(editAmount);
+                      if (editedVal > 0) {
+                        finalList = finalList.map(it =>
+                          it.id === editingItemId
+                            ? { ...it, name: editName.trim(), type: editType, amount: editedVal, tenantId: activeTenantId }
+                            : it
+                        );
+                        setFixedCostsList(finalList);
+                        setEditingItemId(null);
+                      }
+                    }
+                    persistFixedCostsForTenant(finalList, estimatedWastePercent);
                     setIsConfigOpen(false);
                   }}
                   className="py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-extrabold text-[10px] uppercase tracking-wider rounded-xl transition-all shadow-md shadow-indigo-600/15"

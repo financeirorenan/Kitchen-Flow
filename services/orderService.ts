@@ -56,6 +56,37 @@ export const getCanonicalTenantId = (
     return clean;
   };
 
+  const RESERVED_SUBPATHS = new Set([
+    'pdv', 'pos', 'mesas', 'tables', 'financeiro', 'finance', 'kds', 'kds-cozinha',
+    'entregas', 'delivery', 'estoque', 'inventory', 'fornecedores', 'suppliers',
+    'cardapio-digital', 'cardapio', 'clientes', 'customers', 'cmv', 'equipe', 'users',
+    'entregadores', 'couriers', 'fiscal', 'cupons-fiscais', 'fiscal-coupons', 'cupons',
+    'configuracoes', 'settings', 'admin-settings', 'marketplace', 'suporte', 'support',
+    'monitor-pedidos', 'order-monitor', 'monitor', 'relatorios', 'reports', 'insights',
+    'alertas', 'alerts', 'parceiros', 'partners', 'copilot', 'dashboard'
+  ]);
+
+  const getUrlOrSessionViewingTenant = (): string | null => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const path = window.location.pathname || '';
+      if (path.startsWith('/saas')) return null;
+      const parts = path.split('/').filter(Boolean);
+      if (
+        (parts[0] === 'lojista' || parts[0] === 'painel' || parts[0] === 'admin' || parts[0] === 'loja') &&
+        parts[1] &&
+        !RESERVED_SUBPATHS.has(parts[1].toLowerCase())
+      ) {
+        return normalize(decodeURIComponent(parts[1]));
+      }
+      const sessionViewing = sessionStorage.getItem('kf_viewing_tenant_id');
+      if (sessionViewing) {
+        return normalize(sessionViewing);
+      }
+    } catch (_) {}
+    return null;
+  };
+
   const isSuperAdminUser =
     currentUserData?.role === 'SAAS_ADMIN' ||
     (typeof currentUserData?.email === 'string' &&
@@ -63,22 +94,25 @@ export const getCanonicalTenantId = (
 
   // 1. Explicit viewing tenant ONLY when authenticated user is Super Admin (SAAS_ADMIN)
   if (isSuperAdminUser) {
-    const normViewing = normalize(viewingTenantId);
+    const normViewing = normalize(viewingTenantId) || getUrlOrSessionViewingTenant();
     if (normViewing) return normViewing;
   }
 
-  // 2. Authenticated user's assigned tenant (strict priority for all tenant users)
-  const normUser = normalize(currentUserData?.tenantId);
-  if (normUser) return normUser;
-
-  // If currentUserData is loaded and is NOT Super Admin, never leak another tenant from cache
-  if (currentUserData && !isSuperAdminUser) {
-    return 'default-tenant';
+  // 2. Authenticated user's assigned tenant (strict priority for all non-Super-Admin tenant users)
+  if (!isSuperAdminUser) {
+    const normUser = normalize(currentUserData?.tenantId);
+    if (normUser) return normUser;
+    if (currentUserData) {
+      return 'default-tenant';
+    }
   }
 
-  // 3. Loaded tenant data (only if compatible with Super Admin or before user state hydration)
+  // 3. Loaded tenant data or Super Admin's own tenant fallback
   const normTenant = normalize(tenantData?.id);
   if (normTenant && isSuperAdminUser) return normTenant;
+
+  const normSuperUserTenant = normalize(currentUserData?.tenantId);
+  if (normSuperUserTenant) return normSuperUserTenant;
 
   // 4. Cached user & tenant from localStorage (prioritize cachedUser.tenantId over cachedTenant)
   try {
@@ -92,13 +126,16 @@ export const getCanonicalTenantId = (
           parsedUser.email.trim().toLowerCase() === 'financeirorenanuk@gmail.com');
 
       if (isCachedSuper) {
-        const normViewing = normalize(viewingTenantId);
+        const normViewing = normalize(viewingTenantId) || getUrlOrSessionViewingTenant();
         if (normViewing) return normViewing;
       }
 
       const normCachedUser = normalize(parsedUser?.tenantId);
-      if (normCachedUser) return normCachedUser;
+      if (normCachedUser && !isCachedSuper) return normCachedUser;
     }
+
+    const urlFallback = getUrlOrSessionViewingTenant();
+    if (urlFallback) return urlFallback;
 
     const cachedTenant = localStorage.getItem('kitchenflow_cached_tenant_data');
     if (cachedTenant) {
